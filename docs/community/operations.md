@@ -74,16 +74,47 @@ comunicó el mantenedor por una vía independiente:
 
 ```bash
 scripts/verify-release.sh --require-bundle \
-  --trusted-fingerprint <huella-completa-de-40-o-64-hex> <directorio-dist>
+  --expect-fingerprint <huella-completa-de-40-o-64-hex> <directorio-dist>
 ```
+
+`--expect-fingerprint` es el nombre actual; `--trusted-fingerprint` (HSP-267)
+es el **mismo mecanismo** y se conserva como alias. La huella debe publicarse
+**fuera** del bundle (otro canal, notas de otra publicación, una etiqueta
+firmada): la clave pública, `SHA256SUMS` y las firmas viajan juntas, así que
+quien manipula el `dist` puede sustituir las tres a la vez y la comprobación
+de firma por sí sola seguirá pasando.
 
 Con esta opción, la clave empaquetada `release-signing-key.asc` debe tener
 exactamente esa huella primaria (se ignoran mayúsculas y espacios); si no,
-el script falla con `does not match --trusted-fingerprint`. Sin la opción, un
+el script falla con `does not match --expect-fingerprint`. Sin la opción, un
 release re-firmado de forma coherente con una clave ajena sigue pasando, porque
 solo se comprueba integridad. En modo bundle, además, `mechanism`, `key_mode` y
 `fingerprint` de cada manifiesto por arquitectura deben coincidir con los de
 `release-bundle.json`.
+
+`scripts/test-release-bundle.sh` ejercita esa sustitución coherente (clave,
+`SHA256SUMS` y firmas reemplazados a la vez): pasa sin la opción y falla con
+ella; también cubre la manipulación de `manifest.json`, `SHA256SUMS`,
+`release-bundle.json` y los SBOM, con y sin re-firma del falsificador.
+
+**Árbol limpio.** La provenance registra `tree_clean` y el manifiesto lo
+repite. `scripts/package-oci.sh` y `scripts/release-bundle.sh` fallan con un
+árbol git sucio; `HODEI_ALLOW_DIRTY_TREE=1` lo permite sabiendo que se
+registrará `tree_clean=false`, y `verify-release.sh` rechaza ese release salvo
+con `--allow-dirty-tree` (que lo avisa). La arquitectura, `OCI_RUST_TARGET` y
+la plataforma de la imagen deben coincidir, y el verificador comprueba que el
+`rust_target` de la provenance construye la arquitectura del manifiesto.
+
+**Licencias.** `scripts/release-license-policy.json` es la política: un
+paquete con licencia `UNKNOWN` o fuera de la lista permitida (expresiones SPDX
+con `OR`, `AND`, `WITH`) hace fallar la generación y la verificación, salvo
+excepciones nombradas y justificadas (hoy `surrealdb` y `surrealdb-core`, con
+licencia BSL 1.1 sin expresión SPDX). La matriz registra el estado real de
+`surrealdb`: `present_in_cargo_toml`, `declared_by`, `rocksdb_in_resolved_graph`
+y `reachable_from_release_binary`. Mientras el binario enlace surrealdb/rocksdb,
+la afirmación «el SBOM OCI no contiene surrealdb ni rocksdb» queda como
+`NOT_RUN` con su motivo (la retirada, HSP-213, no está integrada en esta
+rama); cuando se integre, la comprobación pasa a verificar el SBOM de verdad.
 
 ### 1.3 Qué prueba la firma y qué no
 

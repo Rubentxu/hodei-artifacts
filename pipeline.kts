@@ -380,6 +380,9 @@ pipeline {
                         // (HSP-259, HSP-263): scripts contra tarballs reales.
                         "--test hsp259_installer",
                         "--test hsp263_release_bundle",
+                        // Politica de licencias, estado real de surrealdb,
+                        // arbol limpio y coherencia ARCH/target (HSP-289).
+                        "--test hsp289_release_policy",
                         // Prueba contra Dgraph real (HSP-181): sin
                         // HODEI_GRAPH_IT_ENDPOINT la suite se salta a si
                         // misma (exit 0); con la variable corre los tres

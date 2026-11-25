@@ -13,31 +13,44 @@
 #     architecture, plus the Homebrew formula and the release notes. Every
 #     per-architecture manifest listed in SHA256SUMS is verified as well.
 #
-# Usage: scripts/verify-release.sh [--require-bundle] [--trusted-fingerprint <fpr>]
+# Usage: scripts/verify-release.sh [--require-bundle]
+#                                  [--expect-fingerprint <fpr>] [--allow-dirty-tree]
 #                                  <dist-directory>
 #
 # `--require-bundle` fails when the directory is not a complete bundle, so a
 # stripped-down single-architecture directory cannot pass as a full release.
 #
-# The public key travels with the artifacts, so by itself it only proves
-# integrity. `--trusted-fingerprint <fpr>` (full fingerprint, communicated out
-# of band) additionally pins the signer: the packaged key must have exactly
-# that primary fingerprint, otherwise a release re-signed coherently with a
-# foreign key is rejected.
+# The public key, SHA256SUMS and the signatures travel together, so whoever
+# tampers with the dist can replace all of them coherently and the signature
+# check alone still passes: by itself it only proves integrity.
+# `--expect-fingerprint <fpr>` (full fingerprint published OUTSIDE the bundle:
+# release notes of another channel, a website, a signed tag...) pins the
+# signer: the packaged key must have exactly that primary fingerprint,
+# otherwise a release re-signed coherently with a foreign key is rejected.
+# `--trusted-fingerprint` (HSP-267) is the same mechanism under its first name
+# and stays as an alias; the two are not independent options.
+#
+# The release must have been built from a clean git tree (provenance
+# `tree_clean`); `--allow-dirty-tree` accepts a knowingly dirty build and
+# reports it. The licence matrix is re-checked against the licence policy
+# (scripts/release-license-policy.json).
 
 set -euo pipefail
 
-USAGE="usage: scripts/verify-release.sh [--require-bundle] [--trusted-fingerprint <fpr>] <dist-directory>"
+USAGE="usage: scripts/verify-release.sh [--require-bundle] [--expect-fingerprint <fpr>] [--allow-dirty-tree] <dist-directory>"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REQUIRE_BUNDLE=0
+ALLOW_DIRTY=0
 TRUSTED_FPR=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --require-bundle) REQUIRE_BUNDLE=1; shift ;;
-    --trusted-fingerprint)
+    --allow-dirty-tree) ALLOW_DIRTY=1; shift ;;
+    --expect-fingerprint|--trusted-fingerprint)
       [ $# -ge 2 ] || { echo "$USAGE" >&2; exit 1; }
       TRUSTED_FPR="$(printf '%s' "$2" | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
       if ! printf '%s' "$TRUSTED_FPR" | grep -Eq '^([0-9A-F]{40}|[0-9A-F]{64})$'; then
-        echo "error: --trusted-fingerprint must be a full OpenPGP fingerprint (40 or 64 hex digits)" >&2
+        echo "error: $1 must be a full OpenPGP fingerprint (40 or 64 hex digits)" >&2
         exit 1
       fi
       shift 2 ;;
@@ -114,7 +127,7 @@ if [ -n "$TRUSTED_FPR" ]; then
     | awk -F: '/^pub:/ {want=1; next} /^fpr:/ && want {print $10; want=0}')"
   if [ "$(printf '%s\n' "$PKT_FPRS" | grep -c .)" -ne 1 ] \
     || [ "$(printf '%s' "$PKT_FPRS" | tr '[:lower:]' '[:upper:]')" != "$TRUSTED_FPR" ]; then
-    echo "error: release-signing-key.asc fingerprint (${PKT_FPRS:-none}) does not match --trusted-fingerprint $TRUSTED_FPR" >&2
+    echo "error: release-signing-key.asc fingerprint (${PKT_FPRS:-none}) does not match --expect-fingerprint $TRUSTED_FPR" >&2
     exit 1
   fi
 fi
@@ -134,14 +147,17 @@ done
 
 # 3. Verify manifest correlation, SBOMs, license matrix, provenance and, for a
 #    bundle, the status of every component.
-python3 -I - "$CLEAN_DIR" "$BUNDLE" "${MANIFESTS[@]}" <<'PY'
+python3 -I - "$CLEAN_DIR" "$BUNDLE" "$SCRIPT_DIR" "$ALLOW_DIRTY" "${MANIFESTS[@]}" <<'PY'
 import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 
-clean_dir, bundle_path, manifest_paths = sys.argv[1], sys.argv[2], sys.argv[3:]
+clean_dir, bundle_path, script_dir, allow_dirty = sys.argv[1:5]
+manifest_paths = sys.argv[5:]
+allow_dirty = allow_dirty == "1"
 
 
 def die(msg):
@@ -206,6 +222,18 @@ def verify_arch_manifest(manifest_path):
     lic = load(license_path)
     if lic.get("total_packages", 0) <= 0 or "surrealdb_status" not in lic:
         die("invalid license_matrix")
+    # Licence policy: UNKNOWN or out-of-allowlist packages and a surrealdb/rocksdb
+    # exclusion claim that disagrees with the OCI SBOM are rejected.
+    policy = subprocess.run(
+        [sys.executable, "-I", os.path.join(script_dir, "release-license-matrix.py"), "check",
+         "--matrix", license_path, "--policy", os.path.join(script_dir, "release-license-policy.json"),
+         "--oci-cdx", oci_cdx_path],
+        capture_output=True, text=True)
+    if policy.returncode != 0:
+        die(f"licence policy check failed: {policy.stderr.strip() or policy.stdout.strip()}")
+    for line in policy.stdout.splitlines():
+        if line.startswith("NOT_RUN:"):
+            print(f"{line} [{m['arch']}]")
 
     prov = load(prov_path)
     if prov.get("_type") != "https://in-toto.io/Statement/v1":
@@ -217,6 +245,29 @@ def verify_arch_manifest(manifest_path):
         die("provenance tarball digest mismatch")
     if subjects.get(m["oci"]["archive"]) != m["oci"]["sha256"]:
         die("provenance oci archive digest mismatch")
+
+    # Source state and architecture coherence of the provenance (HSP-289).
+    params = prov.get("predicate", {}).get("buildDefinition", {}).get("externalParameters", {})
+    tree_clean = params.get("tree_clean")
+    if not isinstance(tree_clean, bool):
+        die("provenance lacks the boolean externalParameters.tree_clean")
+    if m.get("tree_clean") is not tree_clean:
+        die("manifest tree_clean disagrees with the provenance")
+    if not tree_clean and not allow_dirty:
+        die(f"{m['arch']} was built from a dirty git tree (tree_clean=false); "
+            "re-run with --allow-dirty-tree only for a knowingly unofficial build")
+    if not tree_clean:
+        print(f"WARNING: {m['arch']} was built from a dirty git tree (tree_clean=false)")
+    if params.get("arch") != m["arch"]:
+        die(f"provenance arch {params.get('arch')!r} differs from manifest arch {m['arch']!r}")
+    if params.get("commit") != m["commit"]:
+        die("provenance commit differs from the manifest commit")
+    target_arch = str(params.get("rust_target", "")).split("-", 1)[0]
+    if target_arch != m["arch"]:
+        die(f"provenance rust_target {params.get('rust_target')!r} does not build {m['arch']}")
+    plat = m["oci"].get("platform")
+    if plat is not None and plat != {"x86_64": "linux/amd64", "aarch64": "linux/arm64"}.get(m["arch"]):
+        die(f"oci platform {plat!r} does not match architecture {m['arch']!r}")
     return m
 
 

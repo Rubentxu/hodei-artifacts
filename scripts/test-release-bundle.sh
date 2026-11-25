@@ -53,18 +53,23 @@ echo "sha256:deadbeef" > $OCI.digest
 printf '{"spdxVersion":"SPDX-2.3","packages":[{"name":"a"}]}\n' > $OCI.spdx.json
 printf '{"spdxVersion":"SPDX-2.3","packages":[{"name":"b"}]}\n' > $ARCH-cargo.spdx.json
 printf '{"bomFormat":"CycloneDX","components":[{"name":"a"}]}\n' > $OCI.cdx.json
-printf '{"total_packages":3,"surrealdb_status":{"present_in_cargo_toml":true}}\n' > $OCI-licenses.json
+python3 -I "$ROOT/scripts/release-license-matrix.py" generate \\
+  --metadata "$ROOT/tests/fixtures/release/cargo-metadata-min.json" --out $OCI-licenses.json \\
+  --policy "$ROOT/scripts/release-license-policy.json" --root-package hodei-artifacts-api --oci-cdx $OCI.cdx.json
 sha() { sha256sum "\$1" | cut -d' ' -f1; }
 python3 -I - <<PY
 import json, hashlib, os
 def sha(p): return hashlib.sha256(open(p, "rb").read()).hexdigest()
 subjects = [{"name": n, "digest": {"sha256": sha(n)}} for n in ("$TARBALL", "$OCI.tar")]
 json.dump({"_type": "https://in-toto.io/Statement/v1", "subject": subjects,
-           "predicateType": "https://slsa.dev/provenance/v1", "predicate": {}},
+           "predicateType": "https://slsa.dev/provenance/v1",
+           "predicate": {"buildDefinition": {"externalParameters": {
+               "arch": "$ARCH", "commit": "$COMMIT", "rust_target": "$ARCH-unknown-linux-gnu.2.36",
+               "tree_clean": True}}}},
           open("$ARCH.provenance.json", "w"))
 ref = lambda n: {"filename": n, "sha256": sha(n)}
 json.dump({"name": "$BIN", "version": "$VERSION", "commit": "$COMMIT", "arch": "$ARCH",
-           "source_date_epoch": 0,
+           "tree_clean": True, "source_date_epoch": 0,
            "tarball": ref("$TARBALL"),
            "oci": {"image": "x", "digest": "sha256:deadbeef", "archive": "$OCI.tar",
                    "sha256": sha("$OCI.tar")},
@@ -90,6 +95,8 @@ export RELEASE_BUNDLE_TARBALL_CMD="$WORK/stub-tarball.sh"
 export RELEASE_BUNDLE_OCI_CMD="$WORK/stub-oci.sh"
 
 DIST="$WORK/dist"
+# The working tree of a developer is usually dirty; the stubs stand for a clean build.
+export HODEI_ALLOW_DIRTY_TREE=1
 "$BUNDLE_SH" "$DIST" > "$WORK/bundle.log" 2>&1 || { cat "$WORK/bundle.log" >&2; fail "release-bundle.sh failed"; }
 
 # 1. Single command produces every component, correlated.
@@ -171,6 +178,31 @@ build_forgery() { # <dir> <python-mutation of b (bundle) and mf (arch manifest)>
 import hashlib, json, os, sys
 d = sys.argv[1]; p = os.path.join(d, "release-bundle.json"); mp = os.path.join(d, sys.argv[3])
 b = json.load(open(p)); mf = json.load(open(mp)); fpr = os.environ["FORGER_FPR"]
+
+
+def walk(o):
+    if isinstance(o, dict):
+        yield o
+        for v in o.values():
+            yield from walk(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from walk(v)
+
+
+def edit(name, fn):
+    """Rewrite a JSON asset and keep every reference to it (manifest, bundle) coherent."""
+    path = os.path.join(d, name)
+    doc = json.load(open(path))
+    fn(doc)
+    json.dump(doc, open(path, "w"))
+    digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
+    for root in (b, mf):
+        for ref in walk(root):
+            if ref.get("filename") == name and "sha256" in ref:
+                ref["sha256"] = digest
+
+
 exec(sys.argv[2])
 # The forger also keeps the key reference consistent with the swapped key.
 key = next(c for c in b["components"] if c["component"] == "signing")["files"][0]
@@ -226,7 +258,7 @@ REAL_FPR="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1]))["
 if out="$("$VERIFY" --require-bundle --trusted-fingerprint "$REAL_FPR" "$WORK/f-coherent" 2>&1)"; then
   fail "accepted foreign-key release despite --trusted-fingerprint"
 fi
-echo "$out" | grep -q "does not match --trusted-fingerprint" || fail "wrong rejection reason: $out"
+echo "$out" | grep -q "does not match --expect-fingerprint" || fail "wrong rejection reason: $out"
 ok "--trusted-fingerprint rejects a coherent foreign-key release"
 "$VERIFY" --require-bundle --trusted-fingerprint "$REAL_FPR" "$DIST" >/dev/null 2>&1 \
   || fail "genuine release rejected with its own fingerprint"
@@ -237,5 +269,99 @@ if "$VERIFY" --require-bundle --trusted-fingerprint ABCD "$DIST" >/dev/null 2>&1
   fail "accepted a short --trusted-fingerprint"
 fi
 ok "--trusted-fingerprint requires a full fingerprint"
+
+# 8. --expect-fingerprint (published outside the bundle) is the same mechanism
+#    as --trusted-fingerprint: key, SHA256SUMS and every signature replaced
+#    coherently pass without it and FAIL with it.
+python3 -I - "$DIST" "$WORK/f-coherent" <<'PY' || fail "the coherent substitution must replace key, SHA256SUMS and signatures"
+import filecmp, os, sys
+real, forged = sys.argv[1:3]
+for name in ("release-signing-key.asc", "SHA256SUMS", "SHA256SUMS.asc", "release-bundle.json.asc"):
+    assert not filecmp.cmp(os.path.join(real, name), os.path.join(forged, name), shallow=False), name
+PY
+ok "the forged dist replaces public key, SHA256SUMS and signatures at once"
+if out="$("$VERIFY" --require-bundle --expect-fingerprint "$REAL_FPR" "$WORK/f-coherent" 2>&1)"; then
+  fail "accepted the coherent substitution despite --expect-fingerprint"
+fi
+echo "$out" | grep -q "does not match --expect-fingerprint" || fail "wrong rejection reason: $out"
+ok "--expect-fingerprint fails the coherent key+SHA256SUMS+signature substitution"
+"$VERIFY" --require-bundle --expect-fingerprint "$REAL_FPR" "$DIST" >/dev/null 2>&1 \
+  || fail "genuine release rejected with --expect-fingerprint"
+"$VERIFY" --require-bundle --expect-fingerprint "$(echo "$REAL_FPR" | sed 's/\(....\)/\1 /g')" "$DIST" >/dev/null 2>&1 \
+  || fail "fingerprint written in groups of four must be accepted"
+ok "--expect-fingerprint accepts the genuine release (case and spacing insensitive)"
+if "$VERIFY" --require-bundle --expect-fingerprint ABCD "$DIST" >/dev/null 2>&1; then
+  fail "accepted a short --expect-fingerprint"
+fi
+ok "--expect-fingerprint requires a full fingerprint"
+
+# 9. Manipulation of manifest.json, SHA256SUMS, release-bundle.json and the SBOM,
+#    without and with a coherent re-signature by the forger.
+m_manifest() { append "$1/$MANIFEST"; }
+m_manifest_nosig() { rm "$1/$MANIFEST.asc"; }
+m_manifest_edit() { # edit content, refresh SHA256SUMS, keep the old signatures
+  python3 -I - "$1" "$MANIFEST" <<'PY'
+import json, os, sys
+p = os.path.join(sys.argv[1], sys.argv[2]); m = json.load(open(p)); m["version"] = "9.9.9"; json.dump(m, open(p, "w"))
+PY
+  ( cd "$1" && mapfile -t n < <(awk '{print $2}' SHA256SUMS) && sha256sum "${n[@]}" > SHA256SUMS )
+}
+m_sums_drop() { grep -v " $OCI.spdx.json\$" "$1/SHA256SUMS" > "$1/S" && mv "$1/S" "$1/SHA256SUMS"; }
+m_bundle_edit() { sed -i 's/"partial"/"complete"/' "$1/release-bundle.json"; }
+m_sbom_cdx() { append "$1/$OCI.cdx.json"; }
+expect_reject "tampered manifest.json" m_manifest
+expect_reject "missing manifest signature" m_manifest_nosig
+expect_reject "edited manifest.json with refreshed SHA256SUMS but stale signature" m_manifest_edit
+expect_reject "SHA256SUMS without a listed SBOM (signature no longer matches)" m_sums_drop
+expect_reject "release-bundle.json edited without re-signing" m_bundle_edit
+expect_reject "tampered CycloneDX SBOM" m_sbom_cdx
+
+forge "SBOM replaced, hashes and signatures refreshed, manifest untouched" \
+  'open(os.path.join(d, "'"$OCI"'.spdx.json"), "w").write("{\"spdxVersion\":\"SPDX-2.3\",\"packages\":[{\"name\":\"evil\"}]}\n")' \
+  "sbom.oci_spdx sha256 mismatch"
+forge "manifest points at a different tarball digest" \
+  'mf["tarball"]["sha256"]="0"*64' "tarball sha256 mismatch"
+forge "manifest commit differs from its provenance" \
+  'mf["commit"]="f"*40' "provenance commit differs"
+forge "bundle commit differs from the manifests" \
+  'b["commit"]="f"*40' "does not belong to the bundle"
+forge "bundle component file digest altered" \
+  'next(c for c in b["components"] if c["component"]=="provenance" and c["status"]=="ok")["files"][0]["sha256"]="0"*64' "sha256 mismatch"
+
+# 10. Licence policy, source state and architecture coherence of a re-signed forgery.
+forge "licence matrix with an UNKNOWN package" \
+  'edit("'"$OCI"'-licenses.json", lambda x: x["packages"].append({"name":"mystery","version":"1.0.0","source":"registry","license":"UNKNOWN"}))' \
+  "licence policy"
+forge "licence matrix with a package outside the allowlist" \
+  'edit("'"$OCI"'-licenses.json", lambda x: x["packages"].append({"name":"copyleft","version":"1.0.0","source":"registry","license":"GPL-3.0-only"}))' \
+  "outside the allowlist"
+forge "licence matrix with a widened allowlist" \
+  'edit("'"$OCI"'-licenses.json", lambda x: x["policy"]["allowed"].append("GPL-3.0-only"))' \
+  "allowlist differs"
+forge "licence matrix claiming surrealdb is absent while the binary links it" \
+  'edit("'"$OCI"'-licenses.json", lambda x: x["surrealdb_status"].update({"reachable_from_release_binary":["surrealdb"]}))' \
+  "claims an SBOM exclusion"
+forge "OCI SBOM lists rocksdb although the matrix says it is not linked" \
+  'edit("'"$OCI"'.cdx.json", lambda x: x["components"].append({"name":"rocksdb"}))' \
+  "OCI SBOM lists rocksdb"
+forge "provenance of a dirty tree" \
+  'edit("'"$ARCH"'.provenance.json", lambda x: x["predicate"]["buildDefinition"]["externalParameters"].update({"tree_clean": False})); mf["tree_clean"]=False' \
+  "dirty git tree"
+forge "manifest and provenance disagree on tree_clean" \
+  'mf["tree_clean"]=False' "tree_clean disagrees"
+forge "provenance without tree_clean" \
+  'edit("'"$ARCH"'.provenance.json", lambda x: x["predicate"]["buildDefinition"]["externalParameters"].pop("tree_clean"))' \
+  "tree_clean"
+forge "provenance built for another architecture than the manifest" \
+  'edit("'"$ARCH"'.provenance.json", lambda x: x["predicate"]["buildDefinition"]["externalParameters"].update({"rust_target":"riscv64-unknown-linux-gnu"}))' \
+  "does not build"
+forge "manifest arch differs from the provenance arch" \
+  'edit("'"$ARCH"'.provenance.json", lambda x: x["predicate"]["buildDefinition"]["externalParameters"].update({"arch":"riscv64"}))' \
+  "provenance arch"
+# A knowingly dirty build is accepted only with the explicit flag.
+build_forgery "$WORK/f-dirty-ok" 'edit("'"$ARCH"'.provenance.json", lambda x: x["predicate"]["buildDefinition"]["externalParameters"].update({"tree_clean": False})); mf["tree_clean"]=False; b["signing"]["fingerprint"]=fpr; mf["signing"]["fingerprint"]=fpr'
+"$VERIFY" --require-bundle --allow-dirty-tree "$WORK/f-dirty-ok" 2>&1 | grep -q 'WARNING.*dirty git tree' \
+  || fail "--allow-dirty-tree must accept and report a dirty build"
+ok "--allow-dirty-tree accepts a dirty build only knowingly and reports it"
 
 echo "all $PASS checks passed"

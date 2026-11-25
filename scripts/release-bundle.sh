@@ -23,6 +23,10 @@
 #   RELEASE_GPG_HOME, RELEASE_GPG_KEY_ID  operator keyring (otherwise an
 #                                         ephemeral key is generated and shared
 #                                         with every stage)
+#   HODEI_ALLOW_DIRTY_TREE=1              build from a dirty tree anyway; the
+#                                         provenance then records
+#                                         tree_clean=false and verify-release.sh
+#                                         rejects it without --allow-dirty-tree
 #   RELEASE_BUNDLE_TARBALL_CMD            overrides the tarball stage (tests)
 #   RELEASE_BUNDLE_OCI_CMD                overrides the OCI stage (tests)
 #   RELEASE_BUNDLE_EXTRA_ARCHES           space-separated architectures built in
@@ -49,6 +53,11 @@ TARBALL_CMD="${RELEASE_BUNDLE_TARBALL_CMD:-$ROOT/scripts/package-release.sh}"
 OCI_CMD="${RELEASE_BUNDLE_OCI_CMD:-$ROOT/scripts/package-oci.sh}"
 
 cd "$ROOT"
+
+# Fail before the long stages, not after: package-oci.sh repeats the check.
+# shellcheck source=scripts/lib-release-tree.sh
+. "$ROOT/scripts/lib-release-tree.sh"
+release_require_clean_tree "$ROOT" "${1:-$ROOT/dist}" >/dev/null || exit 1
 
 for tool in gpg gpgv python3 sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || { echo "error: $tool is required" >&2; exit 1; }
@@ -348,6 +357,8 @@ GNUPGHOME="$RELEASE_GPG_HOME" gpg --batch --yes --armor --detach-sign -u "$RELEA
 
 # The bundle is only reported once it verifies from a clean directory.
 echo "==> verifying the bundle from a clean directory"
-"$ROOT/scripts/verify-release.sh" --require-bundle "$OUT_DIR"
+VERIFY_ARGS=(--require-bundle)
+[ "${HODEI_ALLOW_DIRTY_TREE:-0}" != "1" ] || VERIFY_ARGS+=(--allow-dirty-tree)
+"$ROOT/scripts/verify-release.sh" "${VERIFY_ARGS[@]}" "$OUT_DIR"
 echo
 echo "bundle: $OUT_DIR/$BUNDLE_NAME"
