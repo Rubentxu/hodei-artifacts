@@ -26,6 +26,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
 use base64::Engine as _;
+#[cfg(feature = "legacy")]
 use hodei_catalog::CatalogWriter;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;

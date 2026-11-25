@@ -138,7 +138,9 @@ fn surfaces_of_the_graph_profile() {
                 "POST",
                 "/api/v1/promotions",
                 &bearer,
-                &format!(r#"{{"repository":"releases","subject":"{subject}","digest":"{digest}"}}"#),
+                &format!(
+                    r#"{{"repository":"releases","subject":"{subject}","digest":"{digest}"}}"#
+                ),
             ),
         ),
     ];
