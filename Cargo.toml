@@ -37,7 +37,6 @@ members = [
     ".",
 ]
 exclude = [
-    "crates/artifact",
     "crates/distribution",
     "crates/repository",
     "crates/search",
