@@ -15,7 +15,13 @@
 
 ---
 
+## Production profile: Dgraph + S3 (HSP-314 F2)
+
+The default build and the release archive/OCI image are the **graph profile**: a Dgraph Alpha is the single metadata authority and the bytes live in S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). The embedded SurrealDB/RocksDB engine is opt-in (`--features legacy`) and is retired in HSP-314 F4. Deploy with [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (API only, bring your own Dgraph and S3) or the [Helm chart](charts/hodei-artifacts/README.md); see [`docs/community/operations.md`](docs/community/operations.md). The investigation surface, the risk facts and the CVE reactor are not wired on this profile yet (HSP-314 F3) and stay closed.
+
 ## 60-Second Quickstart (No Rust Required)
+
+> **Embedded lab, legacy only.** The lab below runs the embedded engine in a temporary directory, so it needs a binary built with `--features legacy`; the release archive (built without it) rejects the embedded profile. Use the graph profile above for a real service.
 
 Run an isolated local lab from the release archive — starts the server, mints an ephemeral JWT, creates `raw` + `maven2` repositories, publishes & pulls packages, and verifies digests:
 

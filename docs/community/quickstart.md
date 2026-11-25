@@ -9,10 +9,51 @@ Todo ocurre dentro de un directorio temporal: el `HOME`, la configuración, la
 base de datos, el almacén de bytes, los logs y el token. El comando de
 limpieza borra ese directorio y nada más.
 
-> **Estado:** este camino existe y se ejecuta de punta a punta en esta
-> versión. La distribución es el `tar.gz` que produce
-> `scripts/package-release.sh`: **no hay imagen OCI en esta versión**, así que
-> el camino reproducible es el paquete.
+> **Estado (HSP-314 F2).** El perfil productivo de Hodei es el **perfil de
+> grafo**: un Alpha de Dgraph como autoridad de metadatos y S3 para los bytes
+> (`RUN_MODE=dgraph`). El `tar.gz` de `scripts/package-release.sh` y la imagen
+> OCI se construyen **sin** el motor embebido (SurrealDB/RocksDB), así que ya no
+> pueden ejecutar el laboratorio de este tutorial, que levanta el perfil
+> embebido en un directorio temporal. El laboratorio sigue existiendo, pero
+> solo sobre un binario compilado con `--features legacy`, hasta que HSP-314 F4
+> lo retire. Para un servicio real, sigue el camino del perfil de grafo de la
+> sección siguiente.
+>
+> Hasta HSP-314 F3, la investigación, los hechos de riesgo y el reactor de CVE
+> no tienen cableado sobre Dgraph y siguen cerrados.
+
+## Camino productivo: el perfil de grafo con Compose
+
+Necesitas `podman compose` (o `docker compose`), `openssl` y la imagen
+(`scripts/package-oci.sh`). La pila completa
+([`compose.external.yaml`](../../compose.external.yaml)) levanta Dgraph
+Zero+Alpha con ACL, Garage como S3 de un solo nodo y la API:
+
+```bash
+cp compose.env.example .env          # y rellena los valores vacíos
+openssl rand -hex 32 > signing-key && chmod 0444 signing-key
+openssl rand -hex 32 > hmac-secret   && chmod 0444 hmac-secret
+# en .env: HODEI_SIGNING_KEY_FILE=./signing-key
+#          HODEI_DGRAPH_HMAC_SECRET_FILE=./hmac-secret
+podman compose -f compose.external.yaml up -d
+```
+
+Faltan tres pasos de Garage que haces tú (layout, bucket y clave de acceso:
+`garage layout`, `garage bucket create`, `garage key create`) y la contraseña de
+la cuenta ACL `groot` del Alpha, que nace con la de Dgraph por defecto: cámbiala
+y ponla en `HODEI_GRAPH__CREDENTIALS__PASSWORD`. Con tu propio Alpha y tu propio
+S3, usa [`compose.yaml`](../../compose.yaml), que solo declara la API. Los
+detalles están en [`operations.md`](operations.md) (sección 6) y en
+[`configuration.md`](configuration.md) (perfil `dgraph.toml`).
+
+> **Qué está contrastado.** El binario y la imagen en perfil de grafo se
+> ejecutaron contra un Dgraph y un S3 reales (`hsp237`, `hsp308`). Los ficheros
+> Compose se validan (`compose config`) y no llevan credenciales literales; la
+> pila completa no se ha levantado de punta a punta con Garage.
+
+## El laboratorio embebido (solo `legacy`)
+
+El resto de este tutorial describe el laboratorio sobre el perfil embebido.
 
 ## 1. Qué necesitas
 
@@ -236,7 +277,9 @@ publica no la tiene.
 El servicio está vivo pero una dependencia no está:
 
 1. **El catálogo o el almacén de bytes.** `503` aquí significa que el
-   catálogo no puede responder. Mira el log: el arranque dice qué ruta de
+   catálogo no puede responder. En el perfil de grafo, comprueba que el
+   Alpha (`graph.endpoint`) y el bucket S3 responden y que las credenciales
+   son las correctas; en el laboratorio embebido, el log dice qué ruta de
    datos usa (`rocksdb.path` y `content.cas_path`) y si el directorio
    existe y se puede escribir.
 2. **Un proxy sin salida.** Si el repositorio es *proxy* y su contenido no

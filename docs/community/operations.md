@@ -314,6 +314,12 @@ Códigos de salida: `0` sano, `1` daño encontrado o blobs excluidos, `2` error.
 
 ### 4.1 Copia
 
+> **Solo motor embebido (`legacy`).** `hodei-recovery` y su base RocksDB
+> pertenecen al motor embebido, que ya no está en el binario productivo. Se
+> distribuye en el archivo de herramientas de legado
+> (`scripts/package-legacy-tools.sh`) hasta HSP-314 F4. En el perfil de grafo la
+> copia es la de Dgraph (`deploy/dgraph/README.md`) y la del bucket S3.
+
 1. **Detén el servicio.** RocksDB bloquea la base: no hay copia en caliente.
 2. El directorio del almacén de contenido tiene que existir.
 3. `hodei-recovery --db <rocksdb> --cas <cas> backup --to <dir-nuevo>`. La copia
@@ -396,25 +402,34 @@ nuevo.
 El repositorio incluye dos ficheros Compose y un `compose.env.example` sin secretos (un `.env.example` lo veta la politica de ficheros de la maquina).
 Copia `compose.env.example` a `.env` y ajústalo antes de levantar nada.
 
-- `compose.yaml` (standalone): `podman compose up -d` levanta
-  `hodei-artifacts-api` como usuario `10001:10001`, con el rootfs de solo
-  lectura, un volumen con nombre (`hodei-artifacts-data`) para RocksDB y el CAS,
-  y un healthcheck sobre `/health/ready`. RocksDB y el CAS de ficheros son de
-  escritor único: no escales por encima de una réplica.
-- `compose.external.yaml` (Dgraph + S3 compatible con Garage): declara el
-  perfil externo sin rutas de RocksDB ni credenciales; `GARAGE_RPC_SECRET`,
-  `GARAGE_ADMIN_TOKEN`, `AWS_ACCESS_KEY_ID` y `AWS_SECRET_ACCESS_KEY` son
-  obligatorias y no tienen valor por defecto. Garage usa volúmenes separados
-  para `meta` y `data`.
+- `compose.yaml` (solo la API, perfil de grafo): `podman compose up -d`
+  levanta `hodei-artifacts-api` con `RUN_MODE=dgraph` como usuario
+  `10001:10001`, con el rootfs de solo lectura y un healthcheck sobre
+  `/health/ready`. El Alpha de Dgraph (`HODEI_GRAPH__ENDPOINT`,
+  `HODEI_GRAPH__CREDENTIALS__PASSWORD`) y el bucket S3 son los tuyos y las
+  variables que los nombran son obligatorias y no tienen valor por defecto. El
+  servicio falla cerrado (no está *ready*) mientras el Alpha o el almacén de
+  objetos no responden; no hay *fallback* a RocksDB ni al sistema de ficheros.
+- `compose.external.yaml` (pila completa): Dgraph Zero+Alpha con ACL (el secreto
+  HMAC se monta desde `HODEI_DGRAPH_HMAC_SECRET_FILE`), Garage como S3 de un
+  solo nodo y la API con `RUN_MODE=dgraph`. `GARAGE_RPC_SECRET`,
+  `GARAGE_ADMIN_TOKEN`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` y
+  `HODEI_GRAPH__CREDENTIALS__PASSWORD` son obligatorias y no tienen valor por
+  defecto. El layout, el bucket y la clave de Garage los creas tú
+  (`garage layout`, `garage bucket create`, `garage key create`); la cuenta
+  `groot` del Alpha nace con la contraseña por defecto de Dgraph, cámbiala.
 
-Límite conocido: hoy la API solo admite el backend de metadatos `rocksdb`;
-con `RUN_MODE=external` rechaza `dgraph` y termina con código distinto de cero
-(fallo cerrado). El perfil externo está declarado y validado, pero su camino
-feliz no se ha ejecutado.
+Los ficheros ya no declaran el perfil embebido (RocksDB + CAS en volumen): la
+imagen se construye sin la feature `legacy` y lo rechaza. La investigación, los
+hechos de riesgo y el reactor de CVE siguen cerrados en el perfil de grafo
+hasta HSP-314 F3.
 
-`scripts/compose-smoke.sh` comprueba con un runtime real el arranque no root con
-rootfs de solo lectura, el healthcheck, la persistencia tras `down`/`up` y el
-fallo cerrado ante un S3 inalcanzable y ante el perfil externo. Termina con 77
+`scripts/compose-smoke.sh` valida los dos ficheros, comprueba que no llevan
+credenciales literales y, con un runtime real, que el perfil de grafo falla
+cerrado ante un Alpha y un S3 inalcanzables (no *ready*, sin volumen
+`/app/data` y sin ser rechazado como backend no soportado). El camino feliz de
+la pila completa no está cubierto por el humo (necesita el arranque de Garage y
+de la ACL); lo cubren `hsp237` y `hsp308` con Dgraph y S3 reales. Termina con 77
 (`NOT_RUN`) si no hay Podman, proveedor de Compose o imagen.
 
 ### 6.1 Readiness y liveness con el perfil externo (HSP-237)

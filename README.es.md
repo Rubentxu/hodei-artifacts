@@ -15,7 +15,13 @@
 
 ---
 
+## Perfil productivo: Dgraph + S3 (HSP-314 F2)
+
+El build por defecto y el archivo/imagen OCI de release son el **perfil de grafo**: un Alpha de Dgraph es la autoridad única de los metadatos y los bytes viven en S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). El motor embebido SurrealDB/RocksDB es opt-in (`--features legacy`) y se retira en HSP-314 F4. Despliega con [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (solo la API, con tu Dgraph y tu S3) o el [chart de Helm](charts/hodei-artifacts/README.md); véase [`docs/community/operations.md`](docs/community/operations.md). La investigación, los hechos de riesgo y el reactor de CVE no están cableados en este perfil todavía (HSP-314 F3) y siguen cerrados.
+
 ## Quickstart en 60 segundos (sin compilar Rust)
+
+> **Laboratorio embebido, solo legacy.** El laboratorio de abajo levanta el motor embebido en un directorio temporal, así que necesita un binario compilado con `--features legacy`; el archivo de release (sin esa feature) rechaza el perfil embebido. Para un servicio real, usa el perfil de grafo de arriba.
 
 Levanta un laboratorio local aislado desde el paquete de release: arranca el servidor, acuña un JWT efímero, crea repositorios `raw` + `maven2`, publica y descarga paquetes y verifica sus digests:
 
