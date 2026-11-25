@@ -66,7 +66,7 @@ use kernel::Hrn;
 
 use crate::RiskError;
 use crate::impact_view::{
-    Freshness, ImpactAnswer, ImpactReadError, ImpactReader, ImpactRoute, ImpactSnapshot,
+    Freshness, ImpactAnswer, ImpactReadError, ImpactReader, ImpactRoute, ImpactRow, ImpactSnapshot,
     SubjectPath,
 };
 
@@ -698,6 +698,87 @@ impl DgraphImpactView {
             subjects,
             watermark: stored.route.watermark,
         }))
+    }
+
+    /// The advisories the materialized view says reach ONE subject, as
+    /// rows of the view.
+    ///
+    /// The lookup is ONE indexed round trip, not a scan: the root is
+    /// the exact index of `hodei.impact.route_node` (every route
+    /// records the nodes its walk traversed, which include every
+    /// subject it reached), and the tenant is a filter of the SAME
+    /// query. The cost is the routes that touch the subject, never the
+    /// routes of the account. The index is a candidate selector only:
+    /// each candidate is confirmed against the subjects it stored, so
+    /// a subject that was merely traversed is not reported as reached.
+    ///
+    /// The tenant is part of the question: a subject of another
+    /// account answers with the same empty a clean subject does, and
+    /// the query is not even sent.
+    pub async fn rows_reaching(
+        &self,
+        tenant: &Hrn,
+        subject: &Hrn,
+    ) -> Result<Vec<ImpactRow>, String> {
+        if subject.account_id() != tenant.account_id() {
+            return Ok(Vec::new());
+        }
+        let subject_text = subject.to_string();
+        let query = format!(
+            "{{ q(func: eq(hodei.impact.route_node, {})) @filter(eq(hodei.impact.tenant, {})) \
+             {{ hodei.impact.advisory hodei.impact.subjects hodei.impact.updated_at }} }}",
+            dql_string(&subject_text),
+            dql_string(&tenant.to_string()),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| error.to_string())?;
+        let candidates = response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut rows = Vec::new();
+        for candidate in candidates {
+            let advisory = candidate
+                .get("hodei.impact.advisory")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| "a route node has no advisory".to_owned())?;
+            let stored: Vec<&str> = match candidate.get("hodei.impact.subjects") {
+                Some(serde_json::Value::Array(values)) => values
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .collect(),
+                Some(serde_json::Value::String(value)) => vec![value.as_str()],
+                _ => Vec::new(),
+            };
+            let depth = stored.iter().find_map(|row| {
+                let (name, depth) = row.rsplit_once('|')?;
+                (name == subject_text)
+                    .then(|| depth.parse::<usize>().ok())
+                    .flatten()
+            });
+            let Some(depth) = depth else { continue };
+            let updated_at = candidate
+                .get("hodei.impact.updated_at")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|text| chrono::DateTime::parse_from_rfc3339(text).ok())
+                .map(|instant| instant.with_timezone(&chrono::Utc))
+                .unwrap_or_else(chrono::Utc::now);
+            rows.push(ImpactRow {
+                tenant: tenant.to_string(),
+                advisory: advisory.to_owned(),
+                subject: subject_text.clone(),
+                kind: if depth == 0 { "component" } else { "artifact" }.to_owned(),
+                depth,
+                updated_at,
+            });
+        }
+        rows.sort_by(|left, right| left.advisory.cmp(&right.advisory));
+        Ok(rows)
     }
 
     /// Whether the view of a tenant is up to date with the deltas the

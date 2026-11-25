@@ -237,6 +237,63 @@ impl<C: Connection> RiskFactsReader for SurrealRiskFacts<C> {
     }
 }
 
+/// The facts of a subject, read from the Dgraph impact view.
+///
+/// The same judgement as the embedded reader (it reuses [`facts_from`]):
+/// facts are `established` only when the account's view is complete up to
+/// the version the ledger has said and every advisory reaching the
+/// subject has a known severity. Anything else is UNKNOWN, never zero.
+pub struct DgraphRiskFacts {
+    view: std::sync::Arc<crate::dgraph_view::DgraphImpactView>,
+    catalog: std::sync::Arc<dyn AdvisoryCatalog>,
+}
+
+impl DgraphRiskFacts {
+    /// The reader over the view and the catalog of severities.
+    pub fn new(
+        view: std::sync::Arc<crate::dgraph_view::DgraphImpactView>,
+        catalog: std::sync::Arc<dyn AdvisoryCatalog>,
+    ) -> Self {
+        Self { view, catalog }
+    }
+}
+
+#[async_trait::async_trait]
+impl RiskFactsReader for DgraphRiskFacts {
+    async fn risk_facts(
+        &self,
+        tenant: &Hrn,
+        subject: &Hrn,
+    ) -> Result<SubjectFacts, RiskFactsError> {
+        // A subject of another account produces no facts and no
+        // information: the answer is the same unknown any stranger gets.
+        if subject.account_id() != tenant.account_id() {
+            return Ok(SubjectFacts::unknown());
+        }
+        let said = self
+            .view
+            .said_version(tenant)
+            .await
+            .map_err(RiskFactsError::Unavailable)?;
+        let rows = self
+            .view
+            .rows_reaching(tenant, subject)
+            .await
+            .map_err(RiskFactsError::Unavailable)?;
+        let view_is_current = self
+            .view
+            .is_current(tenant)
+            .await
+            .map_err(RiskFactsError::Unavailable)?;
+        Ok(facts_from(
+            &rows,
+            view_is_current,
+            said,
+            self.catalog.as_ref(),
+        ))
+    }
+}
+
 #[cfg(feature = "legacy")]
 #[cfg(test)]
 mod tests {
