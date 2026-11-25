@@ -582,6 +582,32 @@ pub(crate) async fn the_proxy_asset_at(
     .await
 }
 
+/// Resolves a proxy asset against an expected digest, refreshing the cache when needed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn the_proxy_asset_verified(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    expect_digest: Option<&str>,
+    force_fetch: bool,
+    correlation: &str,
+) -> Result<ProxyServed, ResolutionError> {
+    the_proxy_asset_as_verified(
+        state,
+        context.account().as_str(),
+        context.principal().subject().as_str(),
+        repository,
+        asset_path,
+        None,
+        None,
+        expect_digest,
+        force_fetch,
+        correlation,
+    )
+    .await
+}
+
 /// [`the_proxy_asset_at`] for a caller known by account and actor names.
 ///
 /// The proxy needs nothing else of the principal: the account scopes the
@@ -596,6 +622,35 @@ pub(crate) async fn the_proxy_asset_as(
     asset_path: &str,
     url: Option<Url>,
     accept: Option<&str>,
+    correlation: &str,
+) -> Result<ProxyServed, ResolutionError> {
+    the_proxy_asset_as_verified(
+        state,
+        account,
+        actor,
+        repository,
+        asset_path,
+        url,
+        accept,
+        None,
+        false,
+        correlation,
+    )
+    .await
+}
+
+/// Resolves an asset while enforcing an expected digest and optional refresh.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn the_proxy_asset_as_verified(
+    state: &AppState,
+    account: &str,
+    actor: &str,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    url: Option<Url>,
+    accept: Option<&str>,
+    expect_digest: Option<&str>,
+    force_fetch: bool,
     correlation: &str,
 ) -> Result<ProxyServed, ResolutionError> {
     use hodei_catalog::proxy_cache::{CacheDecision, CacheEntry, Context, decide, stale_allowed};
@@ -630,12 +685,20 @@ pub(crate) async fn the_proxy_asset_as(
     }
     let store = the_content_store(state)?;
     let current = the_current_asset_in(state, account, &repository.repo_key, asset_path).await?;
+    let digest_mismatch = expect_digest.is_some_and(|expected| {
+        current
+            .as_ref()
+            .is_some_and(|asset| asset.digest.value != expected)
+    });
 
     let upstream = match hodei_catalog::UpstreamConfig::of(&repository.config) {
         Ok(Some(upstream)) => upstream,
         _ => {
             return match current {
-                Some(asset) => Ok(ProxyServed::new(asset, CacheStatus::Hit)),
+                Some(asset) if !digest_mismatch => Ok(ProxyServed::new(asset, CacheStatus::Hit)),
+                Some(_) => Err(ResolutionError::BadGateway(
+                    "the cached content does not match the expected digest",
+                )),
                 None => Err(ResolutionError::BadGateway("the proxy is not configured")),
             };
         }
@@ -691,12 +754,21 @@ pub(crate) async fn the_proxy_asset_as(
     let known = match decision {
         CacheDecision::OutOfScope => return Err(ResolutionError::NotFound),
         CacheDecision::Fresh => {
-            plane.metrics.record_hit();
-            let asset = current.ok_or(ResolutionError::Internal)?;
-            return Ok(ProxyServed::new(asset, CacheStatus::Hit));
+            if !digest_mismatch && !force_fetch {
+                plane.metrics.record_hit();
+                let asset = current.ok_or(ResolutionError::Internal)?;
+                return Ok(ProxyServed::new(asset, CacheStatus::Hit));
+            }
+            None
         }
         CacheDecision::OfflineServe => {
             let asset = current.ok_or(ResolutionError::Internal)?;
+            if digest_mismatch {
+                plane.metrics.record_offline_miss();
+                return Err(ResolutionError::Offline(
+                    "the cached content does not match the expected digest",
+                ));
+            }
             if let Err(error) = store.verify(&asset.digest).await {
                 tracing::error!(
                     target: "hodei_artifacts::proxy",
@@ -721,6 +793,7 @@ pub(crate) async fn the_proxy_asset_as(
                 "the proxy is offline and does not hold a verified copy of that content",
             ));
         }
+        CacheDecision::Quarantined if digest_mismatch || force_fetch => None,
         CacheDecision::Quarantined => {
             plane.metrics.record_quarantined();
             return Err(ResolutionError::BadGateway(
@@ -728,6 +801,7 @@ pub(crate) async fn the_proxy_asset_as(
             ));
         }
         CacheDecision::Fetch => None,
+        CacheDecision::Revalidate(_) if digest_mismatch || force_fetch => None,
         CacheDecision::Revalidate(known) => Some(known),
     };
 
@@ -760,6 +834,7 @@ pub(crate) async fn the_proxy_asset_as(
                 overwrite,
                 url,
                 accept,
+                expect_digest,
             )
         })
         .await;
@@ -805,6 +880,7 @@ pub(crate) async fn the_proxy_asset_as(
                 );
             }
             if failure.is_upstream_error()
+                && !digest_mismatch
                 && let Some(asset) = current
                 && entry
                     .as_ref()
@@ -830,6 +906,11 @@ pub(crate) async fn the_proxy_asset_as(
     let asset = the_current_asset_in(state, account, &repository.repo_key, asset_path)
         .await?
         .ok_or(ResolutionError::Unavailable)?;
+    if expect_digest.is_some_and(|expected| asset.digest.value != expected) {
+        return Err(ResolutionError::BadGateway(
+            "the resolved content does not match the expected digest",
+        ));
+    }
     Ok(ProxyServed::new(asset, status))
 }
 
@@ -848,6 +929,7 @@ async fn fetch_and_publish(
     overwrite: bool,
     url: Option<Url>,
     accept: Option<&str>,
+    expect_digest: Option<&str>,
 ) -> crate::proxy::FlightResult {
     use crate::proxy::resolution::{self, Outcome};
 
@@ -862,7 +944,7 @@ async fn fetch_and_publish(
         correlation_id: correlation,
         accept,
         authorization: None,
-        expect_digest: None,
+        expect_digest,
         digest_path_prefix: None,
     };
     let outcome = match url {

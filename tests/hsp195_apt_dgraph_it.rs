@@ -31,20 +31,32 @@
 
 mod support;
 
+use std::collections::HashMap;
 use std::io::Write as _;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use axum::Router;
+use axum::body::Body;
+use axum::extract::OriginalUri;
+use axum::http::{StatusCode, header};
+use axum::response::Response;
+use axum::routing::get;
 use base64::Engine as _;
 use cedar_policy::Entities;
 use chrono::Utc;
+use flate2::Compression;
+use flate2::write::GzEncoder;
 use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
 use hodei_artifacts_api::blob_probe::BlobStoreProbe;
+use hodei_artifacts_api::proxy::dgraph_ledger::DgraphProvenanceLedger;
+use hodei_artifacts_api::proxy::fetch::{FetchLimits, ProxyFetcher};
+use hodei_artifacts_api::proxy::{ProxyPlane, egress::AllowedHost};
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
@@ -54,8 +66,9 @@ use hodei_authz::{
 };
 use hodei_catalog::apt;
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogWriter, DigestScope, PackageCoordinates, Publication,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    AllowAllAuthorizer, AptCasReference, AptGroupSnapshot, AptSnapshotKey, AptSnapshotStore,
+    CatalogReader, CatalogWriter, DigestScope, PackageCoordinates, Publication, RepositoryConfig,
+    RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
@@ -73,6 +86,8 @@ fn nonce() -> String {
         .as_nanos()
         .to_string()
 }
+
+static GRAPH_BOOTSTRAP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// One account per test and per run.
 fn account(tag: &str) -> String {
@@ -172,6 +187,25 @@ fn an_apt_descriptor(the_account: &str, repo_key: &str) -> RepositoryDescriptor 
     }
 }
 
+fn an_apt_group_descriptor(
+    the_account: &str,
+    repo_key: &str,
+    members: &[&str],
+) -> RepositoryDescriptor {
+    let mut config = RepositoryConfig::new(DigestScope::Global);
+    config.config_settings = serde_json::json!({"group": {"members": members}});
+    RepositoryDescriptor {
+        hrn: repository_hrn("hodei", "artifacts", "eu", the_account, repo_key),
+        account: the_account.to_string(),
+        repo_key: repo_key.to_string(),
+        format: RepositoryFormat::Apt,
+        mode: RepositoryMode::Group,
+        config,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The Debian fixtures: the pool grammar of the contract, and the minimal
 // `.deb` container hsp122 uses (ar with debian-binary, control.tar,
@@ -255,6 +289,124 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+#[derive(Clone)]
+struct ProxyFixture {
+    files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    hits: Arc<AtomicUsize>,
+}
+
+async fn serve_proxy_fixture(
+    axum::extract::State(fixture): axum::extract::State<ProxyFixture>,
+    uri: OriginalUri,
+) -> Response {
+    fixture.hits.fetch_add(1, Ordering::Relaxed);
+    match fixture
+        .files
+        .lock()
+        .expect("fixture files lock")
+        .get(uri.path().trim_start_matches('/'))
+        .cloned()
+    {
+        Some(bytes) => Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_LENGTH, bytes.len())
+            .body(Body::from(bytes))
+            .expect("fixture response"),
+        None => Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Body::empty())
+            .expect("fixture not found response"),
+    }
+}
+
+struct ProxyUpstream {
+    port: u16,
+    hits: Arc<AtomicUsize>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+impl ProxyUpstream {
+    fn start(files: HashMap<String, Vec<u8>>) -> Self {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .fallback(get(serve_proxy_fixture))
+            .with_state(ProxyFixture {
+                files: Arc::new(Mutex::new(files)),
+                hits: hits.clone(),
+            });
+        let listener = TcpListener::bind("127.0.0.1:0").expect("upstream listener");
+        let port = listener.local_addr().expect("upstream address").port();
+        listener
+            .set_nonblocking(true)
+            .expect("nonblocking listener");
+        let (shutdown, receiver) = tokio::sync::oneshot::channel();
+        let thread = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("upstream runtime");
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener).expect("tokio listener");
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async {
+                        let _ = receiver.await;
+                    })
+                    .await
+                    .expect("upstream serves");
+            });
+        });
+        Self {
+            port,
+            hits,
+            thread: Some(thread),
+            shutdown: Some(shutdown),
+        }
+    }
+
+    fn stop(mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            thread.join().expect("upstream thread stops");
+        }
+    }
+}
+
+fn signed_proxy_fixture(
+    package: &str,
+    version: &str,
+    pool_path: &str,
+    deb: &[u8],
+    signer: &hodei_artifacts_api::openpgp::MetadataSigner,
+) -> HashMap<String, Vec<u8>> {
+    let packages = format!(
+        "Package: {package}\nVersion: {version}\nArchitecture: amd64\nFilename: {pool_path}\nSize: {}\nSHA256: {}\nDescription: proxy fixture\n\n",
+        deb.len(), sha256_hex(deb)
+    )
+    .into_bytes();
+    let mut gzip = GzEncoder::new(Vec::new(), Compression::default());
+    gzip.write_all(&packages).expect("Packages gzip input");
+    let packages_gz = gzip.finish().expect("Packages gzip bytes");
+    let release = format!(
+        "Origin: Hodei fixture\nSuite: stable\nCodename: bookworm\nDate: Mon, 24 Nov 2026 10:00:00 UTC\nArchitectures: amd64\nComponents: main\nSHA256:\n {} {} main/binary-amd64/Packages\n {} {} main/binary-amd64/Packages.gz\n",
+        sha256_hex(&packages), packages.len(), sha256_hex(&packages_gz), packages_gz.len()
+    )
+    .into_bytes();
+    let signature = signer.sign_detached(&release).expect("upstream signature");
+    HashMap::from([
+        ("dists/bookworm/Release".into(), release),
+        ("dists/bookworm/Release.gpg".into(), signature),
+        ("dists/bookworm/main/binary-amd64/Packages".into(), packages),
+        (
+            "dists/bookworm/main/binary-amd64/Packages.gz".into(),
+            packages_gz,
+        ),
+        (pool_path.into(), deb.to_vec()),
+    ])
 }
 
 /// The armored OpenPGP body as raw bytes (what `gpg --dearmor` yields).
@@ -392,6 +544,102 @@ fn cedar_for(the_account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     )))
 }
 
+fn cedar_for_repositories(the_account: &str, repositories: &[&str]) -> Arc<dyn AuthorizerPort> {
+    let policy = repositories
+        .iter()
+        .flat_map(|repo_key| {
+            ["UploadAsset", "DownloadAsset"].map(|action| {
+                format!(
+                    r#"permit(principal == Iam::User::"hrn:hodei:iam::{the_account}:User/alice", action == Artifacts::Action::"{action}", resource == Artifacts::Repository::"hrn:hodei:artifacts:eu:{the_account}:repository/{repo_key}");"#
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Arc::new(SharedAuthorizer::new(Arc::new(
+        CedarAuthorizer::from_policies_unchecked(
+            &policy,
+            Entities::empty(),
+            Arc::new(HrnCedarMapper),
+        )
+        .expect("authorizer"),
+    )))
+}
+
+struct FailAptSnapshotPublish {
+    delegate: Arc<DgraphCatalogStore>,
+}
+
+#[async_trait]
+impl AptSnapshotStore for FailAptSnapshotPublish {
+    async fn current_apt_snapshot(
+        &self,
+        key: &AptSnapshotKey,
+    ) -> Result<Option<AptGroupSnapshot>, hodei_catalog::CatalogError> {
+        self.delegate.current_apt_snapshot(key).await
+    }
+
+    async fn apt_snapshot_by_revision(
+        &self,
+        key: &AptSnapshotKey,
+        revision: u64,
+    ) -> Result<Option<AptGroupSnapshot>, hodei_catalog::CatalogError> {
+        self.delegate.apt_snapshot_by_revision(key, revision).await
+    }
+
+    async fn apt_snapshot_by_packages_hash(
+        &self,
+        key: &AptSnapshotKey,
+        architecture: &str,
+        digest: &ContentDigest,
+    ) -> Result<Option<AptGroupSnapshot>, hodei_catalog::CatalogError> {
+        self.delegate
+            .apt_snapshot_by_packages_hash(key, architecture, digest)
+            .await
+    }
+
+    async fn publish_apt_snapshot(
+        &self,
+        _key: &AptSnapshotKey,
+        _expected_revision: Option<u64>,
+        _snapshot: AptGroupSnapshot,
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        Err(hodei_catalog::CatalogError::Unavailable {
+            detail: "injected APT snapshot publish failure".into(),
+        })
+    }
+}
+
+struct FailMetadataSigning {
+    delegate: hodei_artifacts_api::openpgp::MetadataSigner,
+}
+
+impl hodei_artifacts_api::openpgp::MetadataSigning for FailMetadataSigning {
+    fn key_asc(&self) -> Result<String, hodei_artifacts_api::openpgp::OpenPgpError> {
+        hodei_artifacts_api::openpgp::MetadataSigning::key_asc(&self.delegate)
+    }
+
+    fn fingerprint_hex(&self) -> String {
+        hodei_artifacts_api::openpgp::MetadataSigning::fingerprint_hex(&self.delegate)
+    }
+
+    fn sign_detached(
+        &self,
+        _data: &[u8],
+    ) -> Result<Vec<u8>, hodei_artifacts_api::openpgp::OpenPgpError> {
+        Err(hodei_artifacts_api::openpgp::OpenPgpError::Signing(
+            "injected metadata signing failure".into(),
+        ))
+    }
+
+    fn sign_cleartext(
+        &self,
+        text: &str,
+    ) -> Result<Vec<u8>, hodei_artifacts_api::openpgp::OpenPgpError> {
+        hodei_artifacts_api::openpgp::MetadataSigning::sign_cleartext(&self.delegate, text)
+    }
+}
+
 struct Vertical {
     app: Router,
     store: Arc<DgraphCatalogStore>,
@@ -430,6 +678,7 @@ impl Vertical {
             .to_string_lossy()
             .into_owned();
 
+        let _bootstrap_guard = GRAPH_BOOTSTRAP.lock().await;
         let state = bootstrap(
             &config,
             BootstrapConfig {
@@ -453,6 +702,209 @@ impl Vertical {
             }))
             .with_authorization(cedar_for(the_account, REPO));
 
+        Self {
+            app: build_router(state, &config),
+            store,
+            content,
+            tmp,
+        }
+    }
+
+    async fn mount_apt_proxy_group(the_account: &str, upstream_port: u16) -> Self {
+        let client = fresh_client().await.expect("the dgraph client connects");
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let content = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the CAS"));
+        let store = Arc::new(
+            open_store(client.clone())
+                .await
+                .with_probe(Arc::new(BlobStoreProbe::new(content.clone()))),
+        );
+        let proxy_key = "apt-proxy";
+        let mut proxy_config = RepositoryConfig::new(DigestScope::Global);
+        proxy_config.config_settings = serde_json::json!({
+            "proxy": {
+                "upstream": {
+                    "id": format!("apt-it-{upstream_port}"),
+                    "url": format!("http://127.0.0.1:{upstream_port}/"),
+                    "scopes": ["dists/", "pool/"]
+                },
+                "cache": {"ttl": {"metadata_secs": 300}}
+            },
+            "apt": {
+                "distributions": ["bookworm"],
+                "components": ["main"],
+                "architectures": ["amd64"]
+            }
+        });
+        store
+            .create_repository(
+                the_account,
+                RepositoryDescriptor {
+                    hrn: repository_hrn("hodei", "artifacts", "eu", the_account, proxy_key),
+                    account: the_account.to_string(),
+                    repo_key: proxy_key.to_string(),
+                    format: RepositoryFormat::Apt,
+                    mode: RepositoryMode::Proxy,
+                    config: proxy_config,
+                    created_at: Utc::now(),
+                    updated_at: Utc::now(),
+                },
+            )
+            .await
+            .expect("the APT proxy member is created");
+        let hosted_key = "apt-hosted";
+        store
+            .create_repository(the_account, an_apt_descriptor(the_account, hosted_key))
+            .await
+            .expect("the hosted APT member is created");
+        store
+            .create_repository(
+                the_account,
+                an_apt_group_descriptor(the_account, "apt-group", &[proxy_key, hosted_key]),
+            )
+            .await
+            .expect("the APT group is created");
+
+        let mut config = AppConfig::default();
+        config.security.raw_api_enabled = true;
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
+            .path()
+            .join("bootstrap-cas")
+            .to_string_lossy()
+            .into_owned();
+        let _bootstrap_guard = GRAPH_BOOTSTRAP.lock().await;
+        let state = bootstrap(
+            &config,
+            BootstrapConfig {
+                register_iam_schema: false,
+                schema_version: None,
+                validate_schemas: false,
+            },
+        )
+        .await
+        .expect("bootstrap must succeed");
+        let provenance = Arc::new(
+            DgraphProvenanceLedger::open(client.clone())
+                .await
+                .expect("the Dgraph provenance ledger opens"),
+        );
+        let proxy_plane = Arc::new(ProxyPlane::new(
+            ProxyFetcher::new(
+                hodei_artifacts_api::proxy::egress::EgressPolicy::new(vec![AllowedHost {
+                    host: "127.0.0.1".to_string(),
+                    port: Some(upstream_port),
+                    allow_private: true,
+                    allow_http: true,
+                }])
+                .expect("the fixture egress is allowed"),
+                FetchLimits {
+                    connect_timeout: Duration::from_secs(2),
+                    total_timeout: Duration::from_secs(30),
+                    max_bytes: 1 << 20,
+                },
+                4,
+            ),
+            provenance,
+        ));
+        let reader: Arc<dyn CatalogReader> = store.clone();
+        let writer: Arc<dyn CatalogWriter> = store.clone();
+        let snapshots: Arc<dyn AptSnapshotStore> = store.clone();
+        let state = state
+            .with_catalog(reader, writer)
+            .with_apt_snapshot_store(snapshots)
+            .with_content_store(content.clone())
+            .with_proxy_plane(proxy_plane)
+            .with_authenticator(Arc::new(ContractAuthenticator {
+                the_account: the_account.to_string(),
+            }))
+            .with_authorization(cedar_for_repositories(
+                the_account,
+                &[proxy_key, hosted_key, "apt-group"],
+            ));
+        Self {
+            app: build_router(state, &config),
+            store,
+            content,
+            tmp,
+        }
+    }
+
+    async fn mount_apt_group(the_account: &str) -> Self {
+        Self::mount_apt_group_with(the_account, None, false).await
+    }
+
+    async fn mount_apt_group_with(
+        the_account: &str,
+        signer: Option<Arc<dyn hodei_artifacts_api::openpgp::MetadataSigning>>,
+        fail_snapshot_publish: bool,
+    ) -> Self {
+        let client = fresh_client().await.expect("the dgraph client connects");
+        let tmp = tempfile::tempdir().expect("temp dir");
+        let content = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the CAS"));
+        let store = Arc::new(
+            open_store(client.clone())
+                .await
+                .with_probe(Arc::new(BlobStoreProbe::new(content.clone()))),
+        );
+        let member_a = "apt-member-a";
+        let member_b = "apt-member-b";
+        for member in [member_a, member_b] {
+            store
+                .create_repository(the_account, an_apt_descriptor(the_account, member))
+                .await
+                .expect("the APT member is created");
+        }
+        store
+            .create_repository(
+                the_account,
+                an_apt_group_descriptor(the_account, "apt-group", &[member_a, member_b]),
+            )
+            .await
+            .expect("the APT group is created");
+
+        let mut config = AppConfig::default();
+        config.security.raw_api_enabled = true;
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
+            .path()
+            .join("bootstrap-cas")
+            .to_string_lossy()
+            .into_owned();
+        let _bootstrap_guard = GRAPH_BOOTSTRAP.lock().await;
+        let state = bootstrap(
+            &config,
+            BootstrapConfig {
+                register_iam_schema: false,
+                schema_version: None,
+                validate_schemas: false,
+            },
+        )
+        .await
+        .expect("bootstrap must succeed");
+        let reader: Arc<dyn CatalogReader> = store.clone();
+        let writer: Arc<dyn CatalogWriter> = store.clone();
+        let snapshots: Arc<dyn AptSnapshotStore> = if fail_snapshot_publish {
+            Arc::new(FailAptSnapshotPublish {
+                delegate: store.clone(),
+            })
+        } else {
+            store.clone()
+        };
+        let mut state = state
+            .with_catalog(reader, writer)
+            .with_apt_snapshot_store(snapshots)
+            .with_content_store(content.clone())
+            .with_authenticator(Arc::new(ContractAuthenticator {
+                the_account: the_account.to_string(),
+            }))
+            .with_authorization(cedar_for_repositories(
+                the_account,
+                &[member_a, member_b, "apt-group"],
+            ));
+        if let Some(signer) = signer {
+            state = state.with_metadata_signer(signer);
+        }
         Self {
             app: build_router(state, &config),
             store,
@@ -978,7 +1430,7 @@ async fn foreign_and_broken_apt_state_is_never_valid() {
         "ruta del pool que no dicta el control 409, mismos bytes eco 200 y bytes distintos en una ruta publicada 409 (la versión es para siempre)",
     );
 
-    // InRelease is not part of this contract: 404, never a silent yes.
+    // The legacy hosted surface does not publish InRelease.
     let inrelease = call(
         my_port,
         "GET",
@@ -987,7 +1439,7 @@ async fn foreign_and_broken_apt_state_is_never_valid() {
     );
     assert_eq!(
         inrelease.status, 404,
-        "the hosted apt surface has no InRelease"
+        "the legacy apt surface has no InRelease"
     );
 
     // The read side fails closed: with the record blob gone, the indices
@@ -1395,4 +1847,734 @@ async fn the_apt_reads_match_the_contract_for_the_published_state() {
         "the_apt_reads_match_the_contract_for_the_published_state",
         "lecturas apt segun el contrato: las publicaciones (con la version 3.0~beta+1) dejan las filas, los digests y el listado ordenado que dicen los bytes y la gramatica; otro contenido en la ruta publicada es conflicto y la inmutabilidad se respeta",
     );
+}
+
+fn apt_snapshot_fixture(account: &str, revision: u64, digest: &str) -> AptGroupSnapshot {
+    let cas = |suffix: &str| AptCasReference {
+        location: hodei_catalog::BlobLocation::new(
+            account,
+            DigestScope::Global,
+            ContentDigest {
+                algorithm: hodei_evidence::DigestAlgorithm::Sha256,
+                value: format!("{digest}{suffix}"),
+            },
+        ),
+        size_bytes: 10,
+    };
+    AptGroupSnapshot {
+        revision,
+        digest: ContentDigest {
+            algorithm: hodei_evidence::DigestAlgorithm::Sha256,
+            value: format!("snapshot{revision}"),
+        },
+        release: cas("a"),
+        signature: cas("b"),
+        packages_by_arch: [("amd64".to_string(), cas("c"))].into_iter().collect(),
+        pool_by_path: Default::default(),
+        members: vec![],
+    }
+}
+
+#[tokio::test]
+async fn hsp295_apt_snapshot_cas_concurrency_and_history() {
+    let Some(client) = fresh_client().await else {
+        return;
+    };
+    let store = Arc::new(open_store(client).await);
+    let key = AptSnapshotKey {
+        account: account("hsp295"),
+        group: "apt-group".into(),
+        distribution: "bookworm".into(),
+        principal_subject: "hrn:hodei:iam:test:User/apt".into(),
+    };
+    let left = apt_snapshot_fixture(&key.account, 1, "left");
+    let right = apt_snapshot_fixture(&key.account, 1, "right");
+    let (left_result, right_result) = tokio::join!(
+        store.publish_apt_snapshot(&key, None, left.clone()),
+        store.publish_apt_snapshot(&key, None, right.clone()),
+    );
+    assert_ne!(
+        left_result.is_ok(),
+        right_result.is_ok(),
+        "exactly one publisher wins: {left_result:?} / {right_result:?}"
+    );
+    let winner = if left_result.is_ok() { left } else { right };
+    let loser = if left_result.is_err() {
+        left_result
+    } else {
+        right_result
+    };
+    assert!(
+        matches!(
+            loser,
+            Err(hodei_catalog::CatalogError::PreconditionFailed { .. })
+        ),
+        "loser must observe CAS failure: {loser:?}"
+    );
+    assert_eq!(
+        store.current_apt_snapshot(&key).await.unwrap(),
+        Some(winner.clone())
+    );
+    assert_eq!(
+        store.apt_snapshot_by_revision(&key, 1).await.unwrap(),
+        Some(winner.clone())
+    );
+    let indexed = winner.packages_by_arch.get("amd64").unwrap();
+    assert_eq!(
+        store
+            .apt_snapshot_by_packages_hash(&key, "amd64", &indexed.location.digest)
+            .await
+            .unwrap(),
+        Some(winner.clone())
+    );
+    let next_left = apt_snapshot_fixture(&key.account, 2, "next-left");
+    let next_right = apt_snapshot_fixture(&key.account, 2, "next-right");
+    let (next_left_result, next_right_result) = tokio::join!(
+        store.publish_apt_snapshot(&key, Some(1), next_left.clone()),
+        store.publish_apt_snapshot(&key, Some(1), next_right.clone()),
+    );
+    assert_ne!(
+        next_left_result.is_ok(),
+        next_right_result.is_ok(),
+        "exactly one revision-2 publisher wins: {next_left_result:?} / {next_right_result:?}"
+    );
+    let next_winner = if next_left_result.is_ok() {
+        next_left
+    } else {
+        next_right
+    };
+    let next_loser = if next_left_result.is_err() {
+        next_left_result
+    } else {
+        next_right_result
+    };
+    assert!(
+        matches!(
+            next_loser,
+            Err(hodei_catalog::CatalogError::PreconditionFailed { .. })
+        ),
+        "revision-2 loser must observe CAS failure: {next_loser:?}"
+    );
+    assert_eq!(
+        store.current_apt_snapshot(&key).await.unwrap(),
+        Some(next_winner.clone())
+    );
+    assert_eq!(
+        store.apt_snapshot_by_revision(&key, 2).await.unwrap(),
+        Some(next_winner)
+    );
+    assert_eq!(
+        store.apt_snapshot_by_revision(&key, 1).await.unwrap(),
+        Some(winner.clone())
+    );
+    assert_eq!(
+        store
+            .apt_snapshot_by_packages_hash(&key, "amd64", &indexed.location.digest)
+            .await
+            .unwrap(),
+        Some(winner)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_group_snapshot_stays_coherent_during_publication() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let the_account = account("hsp295-group");
+    let vertical = Vertical::mount_apt_group(&the_account).await;
+    let port = serve_over_tcp(&vertical).await;
+    let key = call(port, "GET", "/apt/apt-group/key.asc", None);
+    assert_eq!(key.status, 200, "{}", text_of(&key));
+    let verification_dir = next("apt-group-release-signature");
+    std::fs::create_dir_all(&verification_dir).expect("the signature verification directory");
+    std::fs::write(
+        verification_dir.join("keyring.bin"),
+        dearmor(&text_of(&key)),
+    )
+    .expect("the group keyring is written");
+
+    let packages: Vec<(String, Vec<u8>)> = (0..8)
+        .map(|index| {
+            let bytes = a_package(&format!("race-pkg-{index}"), "1.0.0");
+            let control = apt::read_deb_control(&bytes).expect("the package control parses");
+            let pool =
+                apt::pool_path_for(&control.package, &control.version, &control.architecture)
+                    .expect("the canonical pool path");
+            (pool, bytes)
+        })
+        .collect();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(packages.len() + 1));
+    std::thread::scope(|scope| {
+        for (pool, bytes) in &packages {
+            let barrier = barrier.clone();
+            scope.spawn(move || {
+                barrier.wait();
+                let answer = call(
+                    port,
+                    "PUT",
+                    &format!("/apt/apt-member-a/{pool}"),
+                    Some(bytes),
+                );
+                assert_eq!(
+                    answer.status,
+                    200,
+                    "concurrent APT package publication failed: {}",
+                    text_of(&answer)
+                );
+            });
+        }
+        barrier.wait();
+
+        for iteration in 0..12 {
+            let inrelease = call(port, "GET", "/apt/apt-group/dists/bookworm/InRelease", None);
+            assert_eq!(inrelease.status, 200, "InRelease iteration {iteration}");
+            let signed_path = verification_dir.join(format!("inrelease-{iteration}"));
+            let extracted_path = verification_dir.join(format!("release-{iteration}"));
+            std::fs::write(&signed_path, &inrelease.body).expect("InRelease is written");
+            let verdict = Command::new("gpgv")
+                .arg("--keyring")
+                .arg(verification_dir.join("keyring.bin"))
+                .arg("--output")
+                .arg(&extracted_path)
+                .arg(&signed_path)
+                .env("LC_ALL", "C")
+                .output()
+                .expect("gpgv runs");
+            assert!(
+                verdict.status.success(),
+                "InRelease iteration {iteration}: {}",
+                String::from_utf8_lossy(&verdict.stderr)
+            );
+            let release = std::fs::read(&extracted_path).expect("gpgv extracts the signed Release");
+            let release =
+                apt::parse_release(std::str::from_utf8(&release).expect("Release is UTF-8"))
+                    .expect("the signed Release parses");
+            let (packages_digest, packages_size) = release
+                .sha256_entries
+                .get("main/binary-amd64/Packages")
+                .expect("InRelease pins the amd64 Packages index");
+
+            let by_hash = call(
+                port,
+                "GET",
+                &format!(
+                    "/apt/apt-group/dists/bookworm/main/binary-amd64/by-hash/SHA256/{packages_digest}"
+                ),
+                None,
+            );
+            assert_eq!(
+                by_hash.status,
+                200,
+                "by-hash iteration {iteration}: {}",
+                text_of(&by_hash)
+            );
+            assert_eq!(by_hash.body.len() as u64, *packages_size);
+            assert_eq!(sha256_hex(&by_hash.body), *packages_digest);
+
+            let stanzas = apt::parse_packages_stanzas(&text_of(&by_hash))
+                .expect("the pinned Packages index parses");
+            for stanza in stanzas {
+                let field = |name: &str| {
+                    stanza
+                        .raw
+                        .lines()
+                        .find_map(|line| line.strip_prefix(&format!("{name}: ")))
+                        .unwrap_or_else(|| panic!("{} stanza lacks {name}", stanza.package))
+                        .to_owned()
+                };
+                let expected_size: usize = field("Size").parse().expect("the package size parses");
+                let expected_digest = field("SHA256");
+                let pool = call(
+                    port,
+                    "GET",
+                    &format!("/apt/apt-group/{}", stanza.filename),
+                    None,
+                );
+                assert_eq!(
+                    pool.status, 200,
+                    "pool path {} remains available",
+                    stanza.filename
+                );
+                assert_eq!(
+                    pool.body.len(),
+                    expected_size,
+                    "pool size for {}",
+                    stanza.package
+                );
+                assert_eq!(
+                    sha256_hex(&pool.body),
+                    expected_digest,
+                    "pool digest for {}",
+                    stanza.package
+                );
+            }
+        }
+    });
+
+    let release = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(release.status, 200, "{}", text_of(&release));
+    let signature = call(
+        port,
+        "GET",
+        "/apt/apt-group/dists/bookworm/Release.gpg",
+        None,
+    );
+    assert_eq!(signature.status, 200, "{}", text_of(&signature));
+    let release_file = verification_dir.join("final-release");
+    let signature_file = verification_dir.join("final-signature");
+    std::fs::write(&release_file, &release.body).expect("the final Release is written");
+    std::fs::write(&signature_file, &signature.body).expect("the final signature is written");
+    assert!(
+        gpgv_verdict(&verification_dir, "final-signature", "final-release"),
+        "the stable final Release verifies against the group key"
+    );
+    let release = apt::parse_release(&text_of(&release)).expect("the final Release parses");
+    let (packages_digest, packages_size) = release
+        .sha256_entries
+        .get("main/binary-amd64/Packages")
+        .expect("Release pins the final Packages index");
+    let packages = call(
+        port,
+        "GET",
+        "/apt/apt-group/dists/bookworm/main/binary-amd64/Packages",
+        None,
+    );
+    assert_eq!(packages.status, 200);
+    assert_eq!(packages.body.len() as u64, *packages_size);
+    assert_eq!(sha256_hex(&packages.body), *packages_digest);
+
+    let mut reconfigured = vertical
+        .store
+        .repository(&the_account, "apt-group")
+        .await
+        .expect("the group is readable")
+        .config;
+    reconfigured.config_settings = serde_json::json!({"group": {"members": ["apt-member-b"]}});
+    let updated = vertical
+        .store
+        .update_config(&the_account, "apt-group", reconfigured)
+        .await
+        .expect("the authorized group configuration is updated");
+    assert_eq!(updated.config.version, 2);
+
+    let revoked_release = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(revoked_release.status, 200, "{}", text_of(&revoked_release));
+    let revoked_packages = call(
+        port,
+        "GET",
+        "/apt/apt-group/dists/bookworm/main/binary-amd64/Packages",
+        None,
+    );
+    assert_eq!(revoked_packages.status, 200);
+    assert!(!text_of(&revoked_packages).contains("race-pkg-0"));
+    let revoked_by_hash = call(
+        port,
+        "GET",
+        &format!(
+            "/apt/apt-group/dists/bookworm/main/binary-amd64/by-hash/SHA256/{packages_digest}"
+        ),
+        None,
+    );
+    assert_eq!(revoked_by_hash.status, 404);
+    let revoked_pool = call(
+        port,
+        "GET",
+        "/apt/apt-group/pool/main/r/race-pkg-0/race-pkg-0_1.0.0_amd64.deb",
+        None,
+    );
+    assert_eq!(revoked_pool.status, 404);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_group_by_hash_is_scoped_to_its_group() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let the_account = account("hsp295-revocation");
+    let vertical = Vertical::mount_apt_group(&the_account).await;
+    let port = serve_over_tcp(&vertical).await;
+
+    vertical
+        .store
+        .create_repository(
+            &the_account,
+            an_apt_group_descriptor(&the_account, "outside-group", &["apt-member-a"]),
+        )
+        .await
+        .expect("the other group is created");
+    let foreign_index = b"this digest belongs only to another APT group\n";
+    let foreign_digest = vertical
+        .content
+        .put(foreign_index)
+        .await
+        .expect("the foreign index is stored in the shared CAS");
+    let foreign_reference = AptCasReference {
+        location: hodei_catalog::BlobLocation::new(
+            &the_account,
+            DigestScope::Global,
+            foreign_digest.clone(),
+        ),
+        size_bytes: foreign_index.len() as u64,
+    };
+    let outside_key = AptSnapshotKey {
+        account: the_account.clone(),
+        group: "outside-group".into(),
+        distribution: "bookworm".into(),
+        principal_subject: format!("hrn:hodei:iam::{the_account}:User/alice"),
+    };
+    vertical
+        .store
+        .publish_apt_snapshot(
+            &outside_key,
+            None,
+            AptGroupSnapshot {
+                revision: 1,
+                digest: foreign_digest.clone(),
+                release: foreign_reference.clone(),
+                signature: foreign_reference.clone(),
+                packages_by_arch: [("amd64".into(), foreign_reference.clone())]
+                    .into_iter()
+                    .collect(),
+                pool_by_path: Default::default(),
+                members: vec![hodei_catalog::AptSnapshotMember {
+                    repository: "apt-member-a".into(),
+                    package: "foreign-index".into(),
+                    version: "1.0".into(),
+                    content: foreign_reference,
+                }],
+            },
+        )
+        .await
+        .expect("the outside group registers its own Packages hash");
+
+    let foreign_hash = call(
+        port,
+        "GET",
+        &format!(
+            "/apt/apt-group/dists/bookworm/main/binary-amd64/by-hash/SHA256/{}",
+            foreign_digest.value
+        ),
+        None,
+    );
+    assert_eq!(
+        foreign_hash.status, 404,
+        "a digest registered only by another group is not served"
+    );
+}
+
+async fn assert_failed_group_snapshot_is_not_served(
+    vertical: &Vertical,
+    the_account: &str,
+    expected_status: StatusCode,
+) {
+    let port = serve_over_tcp(vertical).await;
+    let package = a_package("failure-probe", "1.0.0");
+    let pool_path = "pool/main/failure-probe/failure-probe_1.0.0_amd64.deb";
+    let uploaded = call(
+        port,
+        "PUT",
+        &format!("/apt/apt-member-a/{pool_path}"),
+        Some(&package),
+    );
+    assert_eq!(uploaded.status, 200, "{}", text_of(&uploaded));
+
+    let failed = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(failed.status, expected_status, "{}", text_of(&failed));
+    assert!(!text_of(&failed).contains("Package: failure-probe"));
+
+    let key = AptSnapshotKey {
+        account: the_account.to_string(),
+        group: "apt-group".into(),
+        distribution: "bookworm".into(),
+        principal_subject: format!("hrn:hodei:iam::{the_account}:User/alice"),
+    };
+    assert_eq!(
+        vertical.store.current_apt_snapshot(&key).await.unwrap(),
+        None,
+        "the failed attempt must not move the Dgraph current pointer"
+    );
+    let pool_key = AptSnapshotKey {
+        distribution: "__pool__".into(),
+        ..key.clone()
+    };
+    assert_eq!(
+        vertical
+            .store
+            .current_apt_snapshot(&pool_key)
+            .await
+            .unwrap(),
+        None,
+        "the failed attempt must not publish a pool snapshot"
+    );
+
+    for path in [
+        "/apt/apt-group/dists/bookworm/Release",
+        "/apt/apt-group/dists/bookworm/main/binary-amd64/Packages",
+    ] {
+        let answer = call(port, "GET", path, None);
+        assert_eq!(
+            answer.status,
+            expected_status,
+            "{path}: {}",
+            text_of(&answer)
+        );
+        assert!(!text_of(&answer).contains("failure-probe"));
+    }
+    let by_hash = call(
+        port,
+        "GET",
+        &format!(
+            "/apt/apt-group/dists/bookworm/main/binary-amd64/by-hash/SHA256/{}",
+            "0".repeat(64)
+        ),
+        None,
+    );
+    assert_ne!(by_hash.status, StatusCode::OK, "{}", text_of(&by_hash));
+    assert!(!text_of(&by_hash).contains("failure-probe"));
+    let pool = call(port, "GET", &format!("/apt/apt-group/{pool_path}"), None);
+    assert_ne!(pool.status, StatusCode::OK, "{}", text_of(&pool));
+    assert!(!text_of(&pool).contains("failure-probe"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_group_signing_failure_is_not_served() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let the_account = account("hsp295-sign-failure");
+    let signer = hodei_artifacts_api::openpgp::MetadataSigner::generate("failure fixture")
+        .expect("fixture signer");
+    let vertical = Vertical::mount_apt_group_with(
+        &the_account,
+        Some(Arc::new(FailMetadataSigning { delegate: signer })),
+        false,
+    )
+    .await;
+    assert_failed_group_snapshot_is_not_served(
+        &vertical,
+        &the_account,
+        StatusCode::INTERNAL_SERVER_ERROR,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_group_snapshot_publish_failure_is_not_served() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let the_account = account("hsp295-store-failure");
+    let vertical = Vertical::mount_apt_group_with(&the_account, None, true).await;
+    assert_failed_group_snapshot_is_not_served(
+        &vertical,
+        &the_account,
+        StatusCode::SERVICE_UNAVAILABLE,
+    )
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_proxy_precedes_hosted_with_persisted_provenance() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let the_account = account("hsp295-proxy-hosted");
+    let package = "precedence-pkg";
+    let version = "1.0.0";
+    let pool_path = "pool/main/precedence-pkg/precedence-pkg_1.0.0_amd64.deb";
+    let proxy_bytes = a_package(package, version);
+    let hosted_bytes = build_deb(concat!(
+        "Package: precedence-pkg\n",
+        "Version: 1.0.0\n",
+        "Architecture: amd64\n",
+        "Description: hosted fallback bytes\n",
+    ));
+    assert_ne!(proxy_bytes, hosted_bytes);
+    let signer = hodei_artifacts_api::openpgp::MetadataSigner::generate("Upstream fixture")
+        .expect("fixture signer");
+    let upstream = ProxyUpstream::start(signed_proxy_fixture(
+        package,
+        version,
+        pool_path,
+        &proxy_bytes,
+        &signer,
+    ));
+    let vertical = Vertical::mount_apt_proxy_group(&the_account, upstream.port).await;
+    let port = serve_over_tcp(&vertical).await;
+    let hosted = call(
+        port,
+        "PUT",
+        &format!("/apt/apt-hosted/{pool_path}"),
+        Some(&hosted_bytes),
+    );
+    assert_eq!(hosted.status, 200, "{}", text_of(&hosted));
+
+    let release = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(release.status, 200, "{}", text_of(&release));
+    let packages = call(
+        port,
+        "GET",
+        "/apt/apt-group/dists/bookworm/main/binary-amd64/Packages",
+        None,
+    );
+    assert_eq!(packages.status, 200, "{}", text_of(&packages));
+    assert!(text_of(&packages).contains(&format!("SHA256: {}", sha256_hex(&proxy_bytes))));
+    assert!(!text_of(&packages).contains(&sha256_hex(&hosted_bytes)));
+    let pool = call(port, "GET", &format!("/apt/apt-group/{pool_path}"), None);
+    assert_eq!(pool.status, 200, "{}", text_of(&pool));
+    assert_eq!(pool.body, proxy_bytes);
+    let release_data = apt::parse_release(&text_of(&release)).expect("Release parses");
+    let expected_packages_digest = sha256_hex(&packages.body);
+    assert_eq!(
+        release_data.sha256_entries["main/binary-amd64/Packages"].0,
+        expected_packages_digest
+    );
+
+    let key = AptSnapshotKey {
+        account: the_account.clone(),
+        group: "apt-group".into(),
+        distribution: "bookworm".into(),
+        principal_subject: format!("hrn:hodei:iam::{the_account}:User/alice"),
+    };
+    let snapshot = vertical
+        .store
+        .current_apt_snapshot(&key)
+        .await
+        .unwrap()
+        .expect("the Dgraph group snapshot persists");
+    let member = snapshot
+        .members
+        .iter()
+        .find(|member| member.package == package)
+        .expect("snapshot records the winning package");
+    assert_eq!(member.repository, "apt-proxy");
+
+    let ledger = DgraphProvenanceLedger::open(fresh_client().await.expect("ledger client"))
+        .await
+        .expect("Dgraph provenance ledger opens");
+    let receipts =
+        hodei_catalog::ProvenanceLedger::receipts_of(&ledger, &the_account, "apt-proxy", pool_path)
+            .await
+            .expect("persisted Dgraph receipts are readable");
+    let receipt = receipts
+        .iter()
+        .find(|receipt| receipt.digest.value == sha256_hex(&proxy_bytes))
+        .expect("proxy receipt with winning bytes persists in Dgraph");
+    assert_eq!(receipt.upstream_id, format!("apt-it-{}", upstream.port));
+    assert_eq!(receipt.digest.value, sha256_hex(&proxy_bytes));
+    assert_ne!(receipt.digest.value, sha256_hex(&hosted_bytes));
+    upstream.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_proxy_group_revocation_blocks_cached_package() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let account = account("hsp295-proxy-revocation");
+    let package = "cached-proxy-pkg";
+    let version = "1.0.0";
+    let pool_path = "pool/main/c/cached-proxy-pkg/cached-proxy-pkg_1.0.0_amd64.deb";
+    let deb = a_package(package, version);
+    let signer = hodei_artifacts_api::openpgp::MetadataSigner::generate(
+        "Upstream fixture <upstream@example.local>",
+    )
+    .expect("fixture signer");
+    let upstream = ProxyUpstream::start(signed_proxy_fixture(
+        package, version, pool_path, &deb, &signer,
+    ));
+    let vertical = Vertical::mount_apt_proxy_group(&account, upstream.port).await;
+    let port = serve_over_tcp(&vertical).await;
+
+    let release = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(release.status, 200, "{}", text_of(&release));
+    let old_packages_digest = apt::parse_release(&text_of(&release))
+        .expect("the proxy group Release parses")
+        .sha256_entries
+        .get("main/binary-amd64/Packages")
+        .expect("Release pins Packages")
+        .0
+        .clone();
+    let packages = call(
+        port,
+        "GET",
+        "/apt/apt-group/dists/bookworm/main/binary-amd64/Packages",
+        None,
+    );
+    assert_eq!(packages.status, 200, "{}", text_of(&packages));
+    assert!(text_of(&packages).contains("Package: cached-proxy-pkg"));
+
+    let cached_package = call(port, "GET", &format!("/apt/apt-group/{pool_path}"), None);
+    assert_eq!(cached_package.status, 200, "{}", text_of(&cached_package));
+    assert_eq!(cached_package.body, deb);
+    assert_eq!(
+        cached_package.header("x-hodei-cache").as_deref(),
+        Some("miss")
+    );
+    let upstream_hits = upstream.hits.load(Ordering::Relaxed);
+    let cached_again = call(port, "GET", &format!("/apt/apt-group/{pool_path}"), None);
+    assert_eq!(cached_again.status, 200);
+    assert_eq!(cached_again.body, cached_package.body);
+    assert_eq!(cached_again.header("x-hodei-cache").as_deref(), Some("hit"));
+    assert_eq!(upstream.hits.load(Ordering::Relaxed), upstream_hits);
+
+    let mut config = vertical
+        .store
+        .repository(&account, "apt-group")
+        .await
+        .expect("group descriptor")
+        .config;
+    vertical
+        .store
+        .create_repository(&account, an_apt_descriptor(&account, "unrelated-apt"))
+        .await
+        .expect("unrelated hosted member");
+    config.config_settings = serde_json::json!({"group": {"members": ["unrelated-apt"]}});
+    let updated = vertical
+        .store
+        .update_config(&account, "apt-group", config)
+        .await
+        .expect("the authorized Dgraph group config is updated");
+    assert_eq!(updated.config.version, 2);
+
+    let revoked_release = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(revoked_release.status, 200, "{}", text_of(&revoked_release));
+    let new_release = apt::parse_release(&text_of(&revoked_release))
+        .expect("the reconfigured group Release parses");
+    let new_packages_digest = new_release
+        .sha256_entries
+        .get("main/binary-amd64/Packages")
+        .expect("the new Release pins Packages");
+    assert_ne!(new_packages_digest.0, old_packages_digest);
+
+    let revoked_packages = call(
+        port,
+        "GET",
+        "/apt/apt-group/dists/bookworm/main/binary-amd64/Packages",
+        None,
+    );
+    assert_eq!(
+        revoked_packages.status,
+        200,
+        "{}",
+        text_of(&revoked_packages)
+    );
+    assert!(!text_of(&revoked_packages).contains("Package: cached-proxy-pkg"));
+
+    let revoked_by_hash = call(
+        port,
+        "GET",
+        &format!(
+            "/apt/apt-group/dists/bookworm/main/binary-amd64/by-hash/SHA256/{old_packages_digest}"
+        ),
+        None,
+    );
+    assert_eq!(revoked_by_hash.status, 404, "{}", text_of(&revoked_by_hash));
+
+    let revoked = call(port, "GET", &format!("/apt/apt-group/{pool_path}"), None);
+    assert_eq!(revoked.status, 404, "{}", text_of(&revoked));
+    assert!(revoked.header("x-hodei-cache").is_none());
+    assert_eq!(upstream.hits.load(Ordering::Relaxed), upstream_hits);
+    upstream.stop();
 }
