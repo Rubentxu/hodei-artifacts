@@ -651,9 +651,69 @@ def cmd_explain(args):
         print(f"  {'':<28} porque {gate['reason']}")
 
 
+UNKNOWN = "UNKNOWN"
+
+
+def _number_or_unknown(raw):
+    if raw is None or raw == "" or raw == UNKNOWN:
+        return UNKNOWN
+    try:
+        return int(raw)
+    except ValueError:
+        return UNKNOWN
+
+
+def read_phases(path):
+    """Per-gate measured phases written by test-affected.sh (HSP-290).
+
+    Rows are gate, phase, status, duration_ms, cpu_user_ms, cpu_sys_ms,
+    max_rss_kib. A resource the host could not measure is UNKNOWN, never 0.
+    """
+    phases = {}
+    if not path or not os.path.exists(path):
+        return phases
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            parts = line.rstrip("\n").split("\t")
+            if len(parts) < 7:
+                continue
+            gate, phase, status, duration, user, sys_ms, rss = parts[:7]
+            phases.setdefault(gate, []).append(
+                {
+                    "phase": phase,
+                    "status": status,
+                    "duration_ms": int(duration or 0),
+                    "cpu_user_ms": _number_or_unknown(user),
+                    "cpu_sys_ms": _number_or_unknown(sys_ms),
+                    "max_rss_kib": _number_or_unknown(rss),
+                }
+            )
+    return phases
+
+
+def gate_resources(phases):
+    """Gate-level CPU and RSS from its phases: UNKNOWN if any phase that ran is UNKNOWN."""
+    measured = [phase for phase in phases if phase["status"] != "NOT_RUN"]
+    if not measured:
+        return {"cpu_user_ms": UNKNOWN, "cpu_sys_ms": UNKNOWN, "max_rss_kib": UNKNOWN}
+
+    def total(key):
+        values = [phase[key] for phase in measured]
+        return UNKNOWN if any(value == UNKNOWN for value in values) else sum(values)
+
+    rss_values = [phase["max_rss_kib"] for phase in measured]
+    return {
+        "cpu_user_ms": total("cpu_user_ms"),
+        "cpu_sys_ms": total("cpu_sys_ms"),
+        "max_rss_kib": UNKNOWN if any(v == UNKNOWN for v in rss_values) else max(rss_values),
+    }
+
+
 def cmd_report(args):
     with open(args.plan, encoding="utf-8") as handle:
         plan = json.load(handle)
+
+    phase_rows = read_phases(getattr(args, "phases", None))
 
     results = {}
     if args.results and os.path.exists(args.results):
@@ -695,6 +755,10 @@ def cmd_report(args):
         entry["exit_code"] = exit_code
         if note:
             entry["note"] = note
+        measured = phase_rows.get(gate["gate"])
+        if measured:
+            entry["phases"] = measured
+            entry.update(gate_resources(measured))
         gates.append(entry)
 
     if any(gate["status"] == "FAIL" for gate in gates):
@@ -775,6 +839,7 @@ def main():
     report = subparsers.add_parser("report", help="escribe el informe JSON")
     report.add_argument("--plan", required=True)
     report.add_argument("--results", default="")
+    report.add_argument("--phases", default="")
     report.add_argument("--out", required=True)
     report.add_argument("--mode", default="run")
     report.add_argument("--limits", default="none")
