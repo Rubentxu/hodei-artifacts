@@ -600,11 +600,11 @@ async fn open_content_store(
 ///   the mode the IAM-over-graph ITs (HSP-186) certify.
 /// - The IAM schema registration: it writes through the same missing port,
 ///   so a deployment that asks for it stops with the blocker named.
-/// - The evidence reader, the investigation, the reactor and the legacy
-///   repository registry: their Dgraph stores exist (`HSP-188/206`) or their
-///   wiring is not done yet; the surfaces answer with their default closed
-///   behavior and the profile does not open a local engine to make them
-///   answer.
+/// - The investigation and the legacy repository registry: their wiring is
+///   not done yet; the surfaces answer with their default closed behavior
+///   and the profile does not open a local engine to make them answer. (The
+///   evidence reader, the risk facts and the CVE reactor are wired over
+///   Dgraph: HSP-314 F3a/F3b.)
 async fn bootstrap_graph_profile(
     config: &AppConfig,
     bootstrap_config: BootstrapConfig,
@@ -683,13 +683,13 @@ async fn bootstrap_graph_profile(
         );
     }
     let app_state = configure_production_security(app_state, config)?;
-    // The investigation limits travel without the surface: the graph
-    // profile has no evidence reader over the alpha yet, so the endpoint
+    // The investigation limits travel without the surface: the endpoint
     // answers with its default closed behavior and no local engine is
     // opened to give it an answer.
     let app_state = app_state.with_investigation_limits(config.investigation.clone());
     let app_state = crate::risk_facts::wire_graph_risk_facts(app_state, config, &graph).await?;
     let app_state = crate::evidence_dgraph::wire_graph_evidence_reader(app_state, &graph).await?;
+    let app_state = crate::reactor_dgraph::wire_graph_reactor(app_state, config, &graph).await?;
     if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
         tracing::error!(
             "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"

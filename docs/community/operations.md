@@ -420,9 +420,9 @@ Copia `compose.env.example` a `.env` y ajústalo antes de levantar nada.
   `groot` del Alpha nace con la contraseña por defecto de Dgraph, cámbiala.
 
 Los ficheros ya no declaran el perfil embebido (RocksDB + CAS en volumen): la
-imagen se construye sin la feature `legacy` y lo rechaza. La investigación, los
-hechos de riesgo y el reactor de CVE siguen cerrados en el perfil de grafo
-hasta HSP-314 F3.
+imagen se construye sin la feature `legacy` y lo rechaza. La investigación sigue
+cerrada en el perfil de grafo hasta HSP-314 F3; los hechos de riesgo y el
+reactor de CVE ya corren sobre Dgraph.
 
 `scripts/compose-smoke.sh` valida los dos ficheros, comprueba que no llevan
 credenciales literales y, con un runtime real, que el perfil de grafo falla

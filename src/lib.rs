@@ -45,6 +45,7 @@ pub mod public_url;
 pub mod quota;
 pub mod quota_dgraph;
 pub mod raw;
+pub mod reactor_dgraph;
 pub mod readiness;
 pub mod recovery;
 pub mod repository;

@@ -154,9 +154,10 @@ con los demás ficheros de `config/` (la imagen copia el directorio entero),
 y la imagen fija `RUN_MODE=dgraph` por defecto (HSP-314 F2): sin Alpha, sin
 credenciales y sin almacén de objetos accesibles, el arranque falla cerrado.
 
-> **Superficies cerradas hasta F3.** La investigación, los hechos de riesgo y
-> el reactor de CVE no tienen cableado sobre Dgraph todavía (HSP-314 F3) y
-> siguen cerrados en este perfil.
+> **Superficies cerradas hasta F3.** La investigación no tiene cableado sobre
+> Dgraph todavía (HSP-314 F3) y sigue cerrada en este perfil. Los hechos de
+> riesgo y el reactor de CVE (`POST /api/v1/advisories/accept`) sí corren sobre
+> Dgraph (HSP-314 F3a y F3b-3).
 
 Lo que el perfil declara:
 

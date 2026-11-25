@@ -18,8 +18,8 @@ limpieza borra ese directorio y nada más.
 > motor embebido solo existe con `--features legacy` hasta que HSP-314 F4 lo
 > retire.
 >
-> Hasta HSP-314 F3, la investigación, los hechos de riesgo y el reactor de CVE
-> no tienen cableado sobre Dgraph y siguen cerrados.
+> Hasta HSP-314 F3, la investigación no tiene cableado sobre Dgraph y sigue
+> cerrada. Los hechos de riesgo y el reactor de CVE sí corren sobre Dgraph.
 
 ## Camino productivo: el perfil de grafo con Compose
 

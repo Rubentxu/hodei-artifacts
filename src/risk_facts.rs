@@ -87,15 +87,11 @@ pub fn to_trust_facts(facts: &SubjectFacts) -> RiskFacts {
 /// (`trust.risk_catalog_file`, the same rule as the embedded profile: an
 /// unreadable catalog leaves the facts UNKNOWN, it does not stop the boot).
 ///
-/// # What this does NOT do yet (F3b)
-///
-/// Nothing maintains the impact view on this profile: the reactor that
-/// consumes the relation deltas and calls `rebuild_advisory` is not wired.
-/// Until it is, a deployment has no materialized routes, the view is never
-/// "current", and the facts stay `established: false` ("not measured"), which
-/// is exactly what [`crate::risk_facts::UnmeasuredRiskFacts`] said. The
-/// difference is that a view somebody DID materialize (an operator tool, the
-/// reactor once wired) is now read instead of ignored, and always fail-closed.
+/// The impact view this reader consults is maintained by the reactor wired
+/// in [`crate::reactor_dgraph`] (HSP-314 F3b-3): until an advisory has been
+/// accepted the tenant has no materialized routes, the view is never
+/// "current", and the facts stay `established: false` ("not measured"),
+/// always fail-closed.
 pub async fn wire_graph_risk_facts(
     state: crate::app_state::AppState,
     config: &crate::config::AppConfig,

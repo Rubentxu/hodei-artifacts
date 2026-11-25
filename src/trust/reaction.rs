@@ -831,6 +831,26 @@ impl VulnerabilityReactor {
     /// store cannot open: a cycle without its durable outbox would lose
     /// what a crash leaves behind.
     pub async fn over_dgraph(parts: DgraphReactorParts) -> Result<Self, ReactorError> {
+        let ledger: Arc<dyn TrustLedger> = parts.trust.clone();
+        Self::over_dgraph_with_ledger(parts, ledger).await
+    }
+
+    /// Builds the cycle over the graph authority, writing the concessions
+    /// through `ledger` instead of the bare store.
+    ///
+    /// The serving path reads the book through a cache that sweeps its
+    /// entries on every write that passes through it; a revocation the
+    /// reactor wrote around that cache would stay admitted until the
+    /// entry expires. The profile hands the SAME ledger the service
+    /// serves from; the validity sweep still reads the bare store.
+    ///
+    /// # Errors
+    ///
+    /// The same as [`Self::over_dgraph`].
+    pub async fn over_dgraph_with_ledger(
+        parts: DgraphReactorParts,
+        ledger: Arc<dyn TrustLedger>,
+    ) -> Result<Self, ReactorError> {
         let DgraphReactorParts {
             client,
             namespace,
@@ -878,7 +898,7 @@ impl VulnerabilityReactor {
             cases,
             decisions,
             plane,
-            ledger: trust,
+            ledger,
             evidence,
             risk_facts,
             limits,
