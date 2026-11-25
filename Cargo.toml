@@ -856,11 +856,14 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp241_community_quickstart"
 path = "tests/hsp241_community_quickstart.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp243_user_guides"
 path = "tests/hsp243_user_guides.rs"
+
+[[test]]
+name = "hsp243_user_guides_recipes"
+path = "tests/hsp243_user_guides_recipes.rs"
 required-features = ["legacy"]
 
 [[test]]

@@ -272,10 +272,10 @@ pipeline {
                 sh("rm -rf target/uat")
                 sh(
                     "cargo test --workspace " + listOf(
-                                                "--test binary_contract",
+                        "--test binary_contract",
                         "--test distribution_contract",
                         "--test startup_errors",
-"--test crash_recovery",
+                        "--test crash_recovery",
                         "--test har02_catalog_contract",
                         "--test hsp116_localstack_fidelity",
                         "--test hsp116_s3_contract",
@@ -297,6 +297,14 @@ pipeline {
                         // Imagen OCI reproducible, perfiles declarativos y
                         // smoke de despliegue real con Podman (HSP-242).
                         "--test hsp242_oci_image",
+                        // El camino comunitario (HSP-241) sobre el perfil de
+                        // grafo: el tarball real sin legacy contra un Dgraph y
+                        // un S3 propios levantados con podman (sin podman el
+                        // script sale 77 y la prueba lo dice: NOT_RUN visible).
+                        // Con la documentacion que lee HSP-243, que no
+                        // necesita ni Dgraph ni legacy.
+                        "--test hsp241_community_quickstart",
+                        "--test hsp243_user_guides",
                         // Release verificable: SBOM SPDX/CycloneDX, provenance,
                         // matriz de licencias y firma OpenPGP (HSP-244).
                         "--test hsp244_verifiable_release",
@@ -453,7 +461,7 @@ pipeline {
                         "--test hsp89_investigation_freshness",
                         "--test hsp134_risk_facts_e2e",
                         "--test hsp142_capability_matrix",
-                        "--test hsp243_user_guides",
+                        "--test hsp243_user_guides_recipes",
                         "--test hsp288_native_guides",
                         "--test bootstrap_integration",
                         "--test production_auth",
@@ -550,11 +558,6 @@ pipeline {
                         "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
-                        // El camino comunitario (HSP-241): el script que
-                        // el tutorial dice a la comunidad ejecutar,
-                        // contra el binario real: publica, descarga,
-                        // comprueba los digests, reinicia y limpia.
-                        "--test hsp241_community_quickstart",
                     ).joinToString(" ")
                 )
                 // Y la otra cara (HSP-213): en el arbol con `legacy` --el
