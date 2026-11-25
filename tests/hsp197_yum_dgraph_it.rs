@@ -33,10 +33,9 @@
 //!   the same bytes echo 200. The outbox census is per tenant
 //!   (`eq(hodei.catalog.outbox.tenant)`, the HSP-220 lesson) and the plan
 //!   probe confirms the exact indexes.
-//! - Parity: the same yum state seeded at store level answers identically
-//!   on Dgraph and on the Surreal reference (rows, digests and the
-//!   ordered listing the `primary` assembles from), and an immutable
-//!   path conflicts on both engines.
+//! - Contract reads: the published yum state seeded at store level answers
+//!   what the grammar and the publication say (rows, digests and the
+//!   ordered listing the `primary` assembles from), and an immutable path conflicts.
 
 mod support;
 
@@ -67,14 +66,12 @@ use hodei_catalog::{
     AllowAllAuthorizer, CatalogReader, CatalogWriter, DigestScope, PackageCoordinates, Publication,
     RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
 use sha2::Digest as _;
 use support::{Answer, Curl};
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 
 /// The run: one per execution, so no test meets what another left behind.
@@ -645,10 +642,12 @@ impl Vertical {
 
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -1681,11 +1680,14 @@ async fn the_yum_queries_are_scoped_keyed_and_indexed() {
 }
 
 // ---------------------------------------------------------------------------
-// Parity: the same yum state on both engines answers the same.
+// Contract reads: the published yum state answers what the grammar and the
+// publication say (HSP-314 F4: this used to compare against a second
+// reference engine; every expected value now derives from the published
+// bytes and the yum grammar).
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_yum_reads_match_the_surreal_reference() {
+async fn the_yum_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
         return;
     };
@@ -1696,48 +1698,37 @@ async fn the_yum_reads_match_the_surreal_reference() {
         .await
         .expect("the dgraph repository is created");
 
-    let tmp = tempfile::tempdir().expect("tmp");
-    let db = loop {
-        match Surreal::new::<RocksDb>(tmp.path().join("db")).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                break db;
-            }
-            Err(error) => {
-                eprintln!("the surreal reference retries its open: {error}");
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
-    let reference = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    reference.initialize().await.expect("initialize");
-    reference
-        .create_repository(&mine, an_rpm_descriptor(&mine, REPO))
-        .await
-        .expect("the surreal repository is created");
-
-    // The same three packages (one with the guard-hostile path) on the
-    // two engines.
+    // Three packages (one with the guard-hostile path).
     let rpms = [
         a_rpm("parity-one", "1.0", "1"),
         a_rpm("parity-two", "2.0", "1"),
         a_tilde_rpm(),
     ];
+    let mut expected_rows: Vec<(String, String)> = Vec::new();
+    let mut records: Vec<(String, String)> = Vec::new();
     for rpm in &rpms {
         let metadata = yum::parse_rpm(rpm).expect("the header parses");
         let expected = yum::pool_path_for(&metadata).expect("the pool path");
         let (graph_pool, graph_rpm, graph_record) =
             publish_rpm_pair(&graph, &mine, REPO, rpm).await;
-        let (reference_pool, reference_rpm, reference_record) =
-            publish_rpm_pair(&reference, &mine, REPO, rpm).await;
         assert_eq!(graph_pool, expected);
-        assert_eq!(reference_pool, expected);
-        assert_eq!(graph_rpm.value, reference_rpm.value);
-        assert_eq!(graph_record.value, reference_record.value);
+        // The published digests are those of the bytes and of the record
+        // the grammar assembles from them.
+        let rpm_digest = ContentDigest::of_bytes(rpm);
+        let record_digest = ContentDigest::of_bytes(
+            yum::package_record(&metadata, &expected, rpm.len() as u64, &rpm_digest.value)
+                .as_bytes(),
+        );
+        assert_eq!(graph_rpm, rpm_digest);
+        assert_eq!(graph_record, record_digest);
+        expected_rows.push((expected.clone(), rpm_digest.value.clone()));
+        expected_rows.push((yum::record_path_for(&expected), record_digest.value.clone()));
+        records.push((yum::record_path_for(&expected), record_digest.value.clone()));
     }
+    expected_rows.sort();
+    records.sort();
 
-    // The immutable path: the same identity, other bytes, conflicts the
-    // same way on both engines.
+    // The immutable path: the same identity, other bytes, conflicts.
     {
         let mut fields = rpm_fields("parity-one", "1.0", "1");
         fields[3] = TestHeaderField {
@@ -1763,28 +1754,26 @@ async fn the_yum_reads_match_the_surreal_reference() {
             precondition: None,
             subject: None,
         };
-        let graph_verdict = graph.publish(&mine, conflict.clone()).await;
-        let reference_verdict = reference.publish(&mine, conflict).await;
+        let verdict = graph.publish(&mine, conflict).await;
         assert!(
-            graph_verdict.is_err() && reference_verdict.is_err(),
-            "the immutable path conflicts on both engines: graph {:?} / surreal {:?}",
-            graph_verdict.map(|_| ()),
-            reference_verdict.map(|_| ()),
+            verdict.is_err(),
+            "the immutable path conflicts: {:?}",
+            verdict.map(|_| ()),
         );
     }
 
-    // The assembled index: the same rows produce the same listing order
-    // (the handler's own assembly rule), so the primary derives equal on
-    // both engines.
+    // The listing: every published path, ascending, with its digest, and
+    // the index assembled from its `.record` rows is the published records.
     let mine_records = graph
         .assets_under(&mine, REPO, "pool/")
         .await
         .expect("the graph window");
-    let reference_records = reference
-        .assets_under(&mine, REPO, "pool/")
-        .await
-        .expect("the reference window");
-    assert_eq!(mine_records.len(), reference_records.len());
+    let listed: Vec<(String, String)> = mine_records
+        .iter()
+        .map(|row| (row.asset_path.clone(), row.digest.value.clone()))
+        .collect();
+    assert_eq!(listed, expected_rows, "the listing is what was published");
+    assert_eq!(mine_records.len(), 6);
     let index_of = |rows: &[hodei_catalog::AssetRecord]| -> String {
         let mut out = String::new();
         for row in rows {
@@ -1796,17 +1785,21 @@ async fn the_yum_reads_match_the_surreal_reference() {
         }
         out
     };
+    let mut expected_index = String::new();
+    for (path, digest) in &records {
+        expected_index.push_str(&format!("{path}\n{digest}\n"));
+    }
     assert_eq!(
         index_of(&mine_records),
-        index_of(&reference_records),
-        "the listing the index assembles from is identical on both engines"
+        expected_index,
+        "the listing the index assembles from is the published records, in order"
     );
     assert!(
         index_of(&mine_records).contains(TILDE_RECORD),
-        "the epoch/tilde/plus record is part of the parity state"
+        "the epoch/tilde/plus record is part of the published state"
     );
     record_evidence(
-        "the_yum_reads_match_the_surreal_reference",
-        "paridad yum: las mismas publicaciones (con la ruta pool/hello-tilde-1:1.0.0~rc1+dfsg-1.x86_64.rpm) dejan las mismas filas, los mismos digests y el mismo listado ordenado en Dgraph y en la referencia Surreal; otro contenido en la ruta publicada conflicto en ambos y la inmutabilidad se respeta igual",
+        "the_yum_reads_match_the_contract_for_the_published_state",
+        "lecturas yum segun el contrato: las publicaciones (con la ruta pool/hello-tilde-1:1.0.0~rc1+dfsg-1.x86_64.rpm) dejan las filas, los digests y el listado ordenado que dicen los bytes y la gramatica; otro contenido en la ruta publicada es conflicto y la inmutabilidad se respeta",
     );
 }

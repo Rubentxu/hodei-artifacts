@@ -249,13 +249,9 @@ pipeline {
                         "--test hsp314_f3c_investigation_wiring_it",
                         "--test hsp220_drain_outbox_it",
                         "--test hsp314_surface_probe",
-                    ).joinToString(" ") + " -- --test-threads=1"
-                )
-                // HSP-314 F2: los IT que montan tiendas a mano con el motor
-                // embebido solo se compilan con `--features legacy`; corren en
-                // su propio comando (mismo gate de endpoint, un solo hilo).
-                sh(
-                    "cargo test --workspace --features legacy " + listOf(
+                        // HSP-314 F4 S3: catalogo y formatos sobre Dgraph real, sin
+                        // `legacy` (la paridad con el motor embebido es ya una asercion
+                        // directa del contrato).
                         "--test hsp187_catalog_dgraph_it",
                         "--test hsp190_oci_catalog_dgraph_it",
                         "--test hsp191_maven_dgraph_it",

@@ -15,7 +15,8 @@
 //!   duplica nada; un blob del CAS sin metadata de catálogo queda
 //!   **huérfano seguro**: detectable por censo, y el catálogo sigue
 //!   sirviendo lo que sí tiene;
-//! - la paridad de lectura con la referencia Surreal para el mismo estado.
+//! - las lecturas del estado publicado dicen lo que el contrato del catálogo
+//!   dice (repository, asset, versión, referencia y etiqueta).
 //!
 //! El slice es Raw: Repository, Asset, Version, BlobReference y outbox.
 //! Los demás formatos no están migrados.
@@ -41,17 +42,15 @@ use hodei_authz::{
     PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, AssetRecord, BlobReference, CatalogReader, CatalogWriter, DigestScope,
-    PackageCoordinates, PackageVersion, Publication, RepositoryConfig, RepositoryDescriptor,
-    RepositoryFormat, RepositoryMode, repository_hrn,
+    AssetRecord, BlobReference, CatalogReader, CatalogWriter, DigestScope, PackageCoordinates,
+    PackageVersion, Publication, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
+    RepositoryMode, TrustState, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphAuditOutbox, SurrealCatalogStore};
+use hodei_catalog_storage::DgraphAuditOutbox;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 use kernel::application::ports::clock::{CountingIdGenerator, FixedClock, Identity};
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -311,10 +310,12 @@ impl Vertical {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -975,14 +976,16 @@ async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
 }
 
 // ---------------------------------------------------------------------------
-// La paridad de lectura con la referencia Surreal.
+// Lo que el contrato dice de las lecturas del estado publicado.
 // ---------------------------------------------------------------------------
 
-/// El mismo estado escrito en los dos almacenes se lee igual: la
-/// referencia Surreal (HSP-96) y el port Dgraph dicen lo mismo de
-/// repository, asset, versión y referencia.
+/// Las lecturas del catálogo Dgraph devuelven exactamente lo que el contrato
+/// del catálogo dice del estado publicado: repository, asset, versión,
+/// referencia y etiqueta. (HSP-314 F4: antes se comparaban con un segundo
+/// motor; ahora cada valor esperado se deriva del descriptor y de la
+/// publicación, que es de donde el contrato lo saca.)
 #[tokio::test]
-async fn the_dgraph_reads_match_the_surreal_reference_for_the_same_state() {
+async fn the_dgraph_reads_match_the_contract_for_the_published_state() {
     let Some(_) = config_from_env() else {
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
         return;
@@ -992,141 +995,98 @@ async fn the_dgraph_reads_match_the_surreal_reference_for_the_same_state() {
     let path = "parity/app.bin";
     let content = b"the same state in two engines";
 
-    // El port Dgraph.
     let client = fresh_client().await.expect("the client connects");
     let dgraph = open_store(client.clone()).await;
+    let descriptor = a_descriptor(&account, repo);
     dgraph
-        .create_repository(&account, a_descriptor(&account, repo))
+        .create_repository(&account, descriptor.clone())
         .await
         .expect("the dgraph repository");
 
-    // La referencia Surreal, sobre su motor persistente.
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-    let surreal = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    surreal.initialize().await.expect("the surreal catalog");
-    surreal
-        .create_repository(&account, a_descriptor(&account, repo))
-        .await
-        .expect("the surreal repository");
-
     let publication = a_publication(&account, repo, path, content);
-    let dgraph_outcome = dgraph
-        .publish(&account, publication.clone())
-        .await
-        .expect("dgraph publish");
-    let surreal_outcome = surreal
+    let expected_digest = ContentDigest::of_bytes(content);
+    let outcome = dgraph
         .publish(&account, publication)
         .await
-        .expect("surreal publish");
+        .expect("dgraph publish");
 
-    // El mismo contenido declarado en las dos.
-    assert_eq!(dgraph_outcome.asset.digest, surreal_outcome.asset.digest);
-    assert_eq!(
-        dgraph_outcome.version.digest,
-        surreal_outcome.version.digest
-    );
-    assert_eq!(
-        dgraph_outcome.reference.digest,
-        surreal_outcome.reference.digest
-    );
-    assert!(dgraph_outcome.created && surreal_outcome.created);
+    // El contenido declarado es el de la publicación.
+    assert_eq!(outcome.asset.digest, expected_digest);
+    assert_eq!(outcome.version.digest, expected_digest);
+    assert_eq!(outcome.reference.digest, expected_digest);
+    assert!(outcome.created, "the first publication creates the asset");
 
-    // Y las lecturas dicen lo mismo.
-    let dgraph_repo = dgraph
+    // El repositorio se lee como se creó.
+    let repository = dgraph
         .repository(&account, repo)
         .await
         .expect("dgraph repository");
-    let surreal_repo = surreal
-        .repository(&account, repo)
-        .await
-        .expect("surreal repository");
-    assert_eq!(dgraph_repo.account, surreal_repo.account);
-    assert_eq!(dgraph_repo.repo_key, surreal_repo.repo_key);
-    assert_eq!(dgraph_repo.format, surreal_repo.format);
-    assert_eq!(dgraph_repo.mode, surreal_repo.mode);
-    assert_eq!(dgraph_repo.hrn, surreal_repo.hrn);
-    assert_eq!(dgraph_repo.config.version, surreal_repo.config.version);
-    assert_eq!(
-        dgraph_repo.config.digest_scope,
-        surreal_repo.config.digest_scope
-    );
+    assert_eq!(repository.account, account);
+    assert_eq!(repository.repo_key, repo);
+    assert_eq!(repository.format, RepositoryFormat::Raw);
+    assert_eq!(repository.mode, RepositoryMode::Hosted);
+    assert_eq!(repository.hrn, descriptor.hrn);
+    assert_eq!(repository.config.version, 1);
+    assert_eq!(repository.config.digest_scope, DigestScope::Global);
 
-    let dgraph_asset: AssetRecord = dgraph
+    // El asset: cuenta, repositorio, ruta, coordenadas, digest y tamaño de
+    // la publicación; sin sujeto porque la publicación no declara ninguno.
+    let asset: AssetRecord = dgraph
         .asset(&account, repo, path)
         .await
         .expect("dgraph asset");
-    let surreal_asset: AssetRecord = surreal
-        .asset(&account, repo, path)
-        .await
-        .expect("surreal asset");
-    assert_eq!(dgraph_asset.account, surreal_asset.account);
-    assert_eq!(dgraph_asset.repository, surreal_asset.repository);
-    assert_eq!(dgraph_asset.asset_path, surreal_asset.asset_path);
-    assert_eq!(dgraph_asset.coordinates, surreal_asset.coordinates);
-    assert_eq!(dgraph_asset.digest, surreal_asset.digest);
-    assert_eq!(dgraph_asset.size_bytes, surreal_asset.size_bytes);
-    assert_eq!(dgraph_asset.subject, surreal_asset.subject);
+    let coordinates = PackageCoordinates {
+        package_name: "pkg".to_string(),
+        package_version: "1.0.0".to_string(),
+    };
+    assert_eq!(asset.account, account);
+    assert_eq!(asset.repository, repo);
+    assert_eq!(asset.asset_path, path);
+    assert_eq!(asset.coordinates, coordinates);
+    assert_eq!(asset.digest, expected_digest);
+    assert_eq!(asset.size_bytes, content.len() as u64);
+    assert_eq!(asset.subject, None);
 
-    let dgraph_version: PackageVersion = dgraph
-        .version(&account, repo, &dgraph_asset.coordinates)
+    let version: PackageVersion = dgraph
+        .version(&account, repo, &asset.coordinates)
         .await
         .expect("dgraph version");
-    let surreal_version: PackageVersion = surreal
-        .version(&account, repo, &surreal_asset.coordinates)
-        .await
-        .expect("surreal version");
-    assert_eq!(dgraph_version.digest, surreal_version.digest);
-    assert_eq!(dgraph_version.size_bytes, surreal_version.size_bytes);
-    assert_eq!(dgraph_version.coordinates, surreal_version.coordinates);
+    assert_eq!(version.digest, expected_digest);
+    assert_eq!(version.size_bytes, content.len() as u64);
+    assert_eq!(version.coordinates, coordinates);
 
-    let dgraph_reference: BlobReference = dgraph
+    // La referencia: un artefacto recién admitido está en cuarentena y su
+    // ámbito es el del repositorio.
+    let reference: BlobReference = dgraph
         .reference(&account, repo, path)
         .await
         .expect("dgraph reference");
-    let surreal_reference: BlobReference = surreal
-        .reference(&account, repo, path)
-        .await
-        .expect("surreal reference");
-    assert_eq!(dgraph_reference.digest, surreal_reference.digest);
-    assert_eq!(dgraph_reference.scope, surreal_reference.scope);
-    assert_eq!(dgraph_reference.size_bytes, surreal_reference.size_bytes);
-    assert_eq!(dgraph_reference.trust_state, surreal_reference.trust_state);
-    assert_eq!(dgraph_reference.account, surreal_reference.account);
-    assert_eq!(dgraph_reference.repository, surreal_reference.repository);
-    assert_eq!(dgraph_reference.asset_path, surreal_reference.asset_path);
+    assert_eq!(reference.digest, expected_digest);
+    assert_eq!(reference.scope, DigestScope::Global);
+    assert_eq!(reference.size_bytes, content.len() as u64);
+    assert_eq!(reference.trust_state, TrustState::Quarantined);
+    assert_eq!(reference.account, account);
+    assert_eq!(reference.repository, repo);
+    assert_eq!(reference.asset_path, path);
 
-    // La etiqueta mutable se mueve en las dos, y las dos dicen lo mismo:
-    // la misma etiqueta apunta a la misma versión en los dos motores.
-    let dgraph_tag = dgraph
-        .move_tag(&account, repo, "stable", dgraph_asset.coordinates.clone())
+    // La etiqueta mutable se mueve y apunta a la versión pedida.
+    let moved = dgraph
+        .move_tag(&account, repo, "stable", asset.coordinates.clone())
         .await
         .expect("dgraph tag");
-    let surreal_tag = surreal
-        .move_tag(&account, repo, "stable", surreal_asset.coordinates.clone())
-        .await
-        .expect("surreal tag");
-    assert_eq!(dgraph_tag.account, surreal_tag.account);
-    assert_eq!(dgraph_tag.repository, surreal_tag.repository);
-    assert_eq!(dgraph_tag.tag_name, surreal_tag.tag_name);
-    assert_eq!(dgraph_tag.coordinates, surreal_tag.coordinates);
+    assert_eq!(moved.account, account);
+    assert_eq!(moved.repository, repo);
+    assert_eq!(moved.tag_name, "stable");
+    assert_eq!(moved.coordinates, coordinates);
 
-    let dgraph_tag_read = dgraph
+    let read = dgraph
         .tag(&account, repo, "stable")
         .await
         .expect("dgraph tag read");
-    let surreal_tag_read = surreal
-        .tag(&account, repo, "stable")
-        .await
-        .expect("surreal tag read");
-    assert_eq!(dgraph_tag_read.coordinates, surreal_tag_read.coordinates);
+    assert_eq!(read.coordinates, coordinates);
 
-    let dgraph_tags = dgraph.tags(&account, repo).await.expect("dgraph tags");
-    let surreal_tags = surreal.tags(&account, repo).await.expect("surreal tags");
-    assert_eq!(dgraph_tags.len(), surreal_tags.len());
-    assert_eq!(dgraph_tags.len(), 1);
-    assert_eq!(dgraph_tags[0].coordinates, surreal_tags[0].coordinates);
+    let tags = dgraph.tags(&account, repo).await.expect("dgraph tags");
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].tag_name, "stable");
+    assert_eq!(tags[0].coordinates, coordinates);
 }

@@ -22,8 +22,8 @@
 //!   scoping por cuenta, consulta acotada con FIXTURE DISTRACTORA (muchos
 //!   paquetes de otros tenants con las mismas claves → sin scan global; el
 //!   probe de plan confirma el índice exacto, patrón hsp191/hsp193), cursor
-//!   estable en los listados y paridad de lectura con la referencia
-//!   Surreal para el mismo estado PyPI.
+//!   estable en los listados y lecturas del estado PyPI según el
+//!   contrato.
 //! - los DOS fixes de hsp193 (la publicación settled y las líneas de la
 //!   consulta de efectos) ya vienen en la base: aquí NO se reintroducen.
 //!   El camino PyPI ejercita la frontera por OTRO lado: el documento del
@@ -71,12 +71,10 @@ use hodei_catalog::{
     PackageCoordinates, Precondition, Publication, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -593,10 +591,12 @@ impl Vertical {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -1481,35 +1481,17 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la paridad de lectura con la referencia Surreal para el mismo
-// estado PyPI.
+// AC2: las lecturas del estado PyPI dicen lo que el contrato dice.
 // ---------------------------------------------------------------------------
 
-async fn the_surreal_reference() -> (TempDir, SurrealCatalogStore) {
-    let tmp = tempfile::tempdir().expect("tmp");
-    let db = loop {
-        match Surreal::new::<RocksDb>(tmp.path().join("db")).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                break db;
-            }
-            Err(error) => {
-                eprintln!("the surreal reference retries its open: {error}");
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
-    let store = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    store.initialize().await.expect("initialize");
-    (tmp, store)
-}
-
-/// La misma secuencia de publicaciones PyPI contra el almacén pedido: las
+/// La secuencia de publicaciones PyPI contra el almacén pedido: las
 /// distribuciones de cada versión y una instantánea del documento por
 /// estado; el proyecto del medio lleva una segunda instantánea (el yank
 /// simulado al nivel del documento) que deja la primera en la historia.
+/// Devuelve, por proyecto, el digest de la instantánea vigente.
 macro_rules! seed_the_pypi_state {
-    ($store:expr, $account:expr, $repo:expr) => {
+    ($store:expr, $account:expr, $repo:expr) => {{
+        let mut pointers: Vec<(&'static str, ContentDigest)> = Vec::new();
         for (project, version, second_state) in [
             ("parity-one", "1.0", false),
             ("parity-two", "2.0", true),
@@ -1541,7 +1523,8 @@ macro_rules! seed_the_pypi_state {
                 an_entry(&the_wheel_file(project, version), &wheel, Some(">=3.9")),
                 an_entry(&the_sdist_file(project, version), &sdist, Some(">=3.9")),
             ];
-            publish_a_document_snapshot($store, $account, $repo, project, &entries, None).await;
+            let mut current =
+                publish_a_document_snapshot($store, $account, $repo, project, &entries, None).await;
             if second_state {
                 // La mutación de metadata: la versión queda retirada
                 // (PEP 592) y el documento se mueve CON la precondición
@@ -1558,7 +1541,7 @@ macro_rules! seed_the_pypi_state {
                     .await
                     .expect("the pointer")
                     .digest;
-                publish_a_document_snapshot(
+                current = publish_a_document_snapshot(
                     $store,
                     $account,
                     $repo,
@@ -1568,22 +1551,25 @@ macro_rules! seed_the_pypi_state {
                 )
                 .await;
             }
+            pointers.push((project, current));
         }
-    };
+        pointers
+    }};
 }
 
-/// El mismo estado PyPI en los dos motores responde lo mismo: el listado
-/// por rango, el puntero del documento, la distribución por coordenadas y
-/// la búsqueda exacta.
+/// El estado PyPI publicado responde lo que el contrato dice: el listado
+/// por rango (los nueve caminos, ordenados, con el digest de lo publicado),
+/// el puntero del documento (la última instantánea), la distribución por
+/// coordenadas y la búsqueda exacta. HSP-314 F4: antes se comparaba con un
+/// segundo motor; ahora los valores esperados salen de lo publicado.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_pypi_reads_match_the_surreal_reference() {
+async fn the_pypi_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
         return;
     };
     let account = account("parity");
 
     let dgraph = Arc::new(open_store(client.clone()).await);
-    let (_tmp, surreal) = the_surreal_reference().await;
 
     let repo = "pypi-hosted";
     let descriptor = a_descriptor(
@@ -1594,55 +1580,60 @@ async fn the_pypi_reads_match_the_surreal_reference() {
         serde_json::json!({}),
     );
     dgraph
-        .create_repository(&account, descriptor.clone())
-        .await
-        .expect("the dgraph repository");
-    surreal
         .create_repository(&account, descriptor)
         .await
-        .expect("the surreal repository");
+        .expect("the dgraph repository");
 
-    // El mismo estado, con la MISMA secuencia de publicaciones en los dos
-    // motores.
-    seed_the_pypi_state!(dgraph.as_ref(), &account, repo);
-    seed_the_pypi_state!(&surreal, &account, repo);
+    let pointers = seed_the_pypi_state!(dgraph.as_ref(), &account, repo);
 
-    // El listado por rango dice LO MISMO en los dos motores: los caminos,
-    // en el mismo orden, con los mismos digests.
+    // El listado por rango: los caminos publicados, en orden, con el
+    // digest de lo publicado. Los documentos llevan el de su instantánea
+    // vigente; las distribuciones, el de sus bytes y su tamaño.
     let dgraph_assets = dgraph
         .assets_under(&account, repo, "")
         .await
         .expect("the dgraph listing");
-    let surreal_assets = surreal
-        .assets_under(&account, repo, "")
-        .await
-        .expect("the surreal listing");
-    let dgraph_view: Vec<(String, String, u64)> = dgraph_assets
+    let dgraph_view: Vec<(String, String)> = dgraph_assets
         .iter()
-        .map(|asset| {
-            (
-                asset.asset_path.clone(),
-                asset.digest.value.clone(),
-                asset.size_bytes,
-            )
-        })
+        .map(|asset| (asset.asset_path.clone(), asset.digest.value.clone()))
         .collect();
-    let surreal_view: Vec<(String, String, u64)> = surreal_assets
-        .iter()
-        .map(|asset| {
-            (
-                asset.asset_path.clone(),
-                asset.digest.value.clone(),
-                asset.size_bytes,
-            )
-        })
-        .collect();
+    let mut expected_view: Vec<(String, String)> = Vec::new();
+    let mut expected_sizes: Vec<(String, u64)> = Vec::new();
+    for (project, version, _) in [
+        ("parity-one", "1.0", ()),
+        ("parity-two", "2.0", ()),
+        ("parity-three", "3.0", ()),
+    ] {
+        let wheel = a_wheel(project, version, Some(">=3.9"), 42);
+        let sdist = an_sdist(project, version, Some(">=3.9"), 42);
+        let pointer = pointers
+            .iter()
+            .find(|(name, _)| *name == project)
+            .expect("the project was seeded");
+        expected_view.push((project.to_string(), pointer.1.value.clone()));
+        for (file, bytes) in [
+            (the_wheel_file(project, version), wheel),
+            (the_sdist_file(project, version), sdist),
+        ] {
+            let path = format!("{project}/{file}");
+            expected_view.push((path.clone(), ContentDigest::of_bytes(&bytes).value));
+            expected_sizes.push((path, bytes.len() as u64));
+        }
+    }
+    expected_view.sort();
     assert_eq!(
-        dgraph_view, surreal_view,
-        "the ranged listing is the same in both engines"
+        dgraph_view, expected_view,
+        "the ranged listing is every published path, in order, with its digest"
     );
     // Tres proyectos x (documento + wheel + sdist).
     assert_eq!(dgraph_view.len(), 9);
+    for (path, size) in &expected_sizes {
+        let asset = dgraph_assets
+            .iter()
+            .find(|asset| &asset.asset_path == path)
+            .expect("the distribution is listed");
+        assert_eq!(asset.size_bytes, *size, "the size of {path}");
+    }
 
     // El puntero del documento y la distribución por coordenadas.
     for (project, version, _) in [
@@ -1654,13 +1645,14 @@ async fn the_pypi_reads_match_the_surreal_reference() {
             .asset(&account, repo, project)
             .await
             .expect("the dgraph pointer");
-        let surreal_pointer = surreal
-            .asset(&account, repo, project)
-            .await
-            .expect("the surreal pointer");
+        let expected_pointer = &pointers
+            .iter()
+            .find(|(name, _)| *name == project)
+            .expect("the project was seeded")
+            .1;
         assert_eq!(
-            dgraph_pointer.digest.value, surreal_pointer.digest.value,
-            "the document pointer is the same in both engines"
+            &dgraph_pointer.digest, expected_pointer,
+            "the document pointer is the last published snapshot"
         );
         let coordinates = PackageCoordinates {
             package_name: format!("{project}/{}", the_wheel_file(project, version)),
@@ -1670,17 +1662,14 @@ async fn the_pypi_reads_match_the_surreal_reference() {
             .version(&account, repo, &coordinates)
             .await
             .expect("the dgraph version");
-        let surreal_version = surreal
-            .version(&account, repo, &coordinates)
-            .await
-            .expect("the surreal version");
         assert_eq!(
-            dgraph_version.digest.value, surreal_version.digest.value,
-            "the distribution by coordinates is the same in both engines"
+            dgraph_version.digest,
+            ContentDigest::of_bytes(&a_wheel(project, version, Some(">=3.9"), 42)),
+            "the distribution by coordinates is the published wheel"
         );
     }
 
-    // La búsqueda exacta por paquete dice lo mismo.
+    // La búsqueda exacta por paquete devuelve solo la distribución pedida.
     let repositories = dgraph.repositories(&account).await.expect("the listing");
     let query = SearchQuery::new()
         .with_package_name(format!(
@@ -1692,28 +1681,21 @@ async fn the_pypi_reads_match_the_surreal_reference() {
         .search(&account, &repositories, &query)
         .await
         .expect("the dgraph search");
-    let surreal_repositories = surreal
-        .repositories(&account)
-        .await
-        .expect("the surreal listing");
-    let surreal_page = surreal
-        .search(&account, &surreal_repositories, &query)
-        .await
-        .expect("the surreal search");
     let dgraph_hits: Vec<String> = dgraph_page
         .results
         .iter()
         .map(|hit| hit.asset_path.clone())
         .collect();
-    let surreal_hits: Vec<String> = surreal_page
-        .results
-        .iter()
-        .map(|hit| hit.asset_path.clone())
-        .collect();
-    assert_eq!(dgraph_hits, surreal_hits);
+    assert_eq!(
+        dgraph_hits,
+        vec![format!(
+            "parity-one/{}",
+            the_wheel_file("parity-one", "1.0")
+        )]
+    );
     assert_eq!(dgraph_page.total, Some(1));
     record_evidence(
-        "the_pypi_reads_match_the_surreal_reference",
-        "paridad de lectura con la referencia Surreal: listado por rango (9 filas, mismos caminos y digests), puntero del documento, distribución por coordenadas y búsqueda exacta de acuerdo en los dos motores; el yank del proyecto del medio es una segunda instantánea con precondición del digest vigente",
+        "the_pypi_reads_match_the_contract_for_the_published_state",
+        "lecturas PyPI segun el contrato: listado por rango (9 filas, caminos y digests publicados), puntero del documento = ultima instantanea, distribucion por coordenadas y busqueda exacta; el yank del proyecto del medio es una segunda instantanea con precondicion del digest vigente",
     );
 }

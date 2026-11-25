@@ -17,8 +17,8 @@
 //!   asset — dos escritores concurrentes no la rompen.
 //! - **AC2** la republicación inmutable (una versión no se reescribe), el
 //!   outbox atómico que acompaña a cada commit, el cursor estable en los
-//!   listados, el scoping por cuenta y la paridad de lectura con la
-//!   referencia Surreal para el mismo estado npm.
+//!   listados, el scoping por cuenta y las lecturas del estado npm según
+//!   el contrato.
 //! - los DISTRACTORES (muchos paquetes de otras cuentas con las mismas
 //!   claves de repositorio y los mismos nombres) no causan scan global:
 //!   la raíz de cada consulta es eq(account/repository) por índice, y el
@@ -58,14 +58,12 @@ use hodei_catalog::{
     PackageCoordinates, Precondition, Publication, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::{DgraphCatalogStore, SurrealCatalogStore};
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use hodei_hub::blob::FileBlobStore;
 use serde_json::{Value, json};
 use sha2::Sha512;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
@@ -462,10 +460,12 @@ impl Vertical {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut config = AppConfig::default();
         config.security.raw_api_enabled = true;
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        config.graph = config_from_env();
+        config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
 
@@ -1545,60 +1545,39 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la paridad de lectura con la referencia Surreal para el mismo
-// estado npm.
+// AC2: las lecturas del estado npm dicen lo que el contrato dice.
 // ---------------------------------------------------------------------------
 
-async fn the_surreal_reference() -> (TempDir, SurrealCatalogStore) {
-    let tmp = tempfile::tempdir().expect("tmp");
-    let db = loop {
-        match Surreal::new::<RocksDb>(tmp.path().join("db")).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                break db;
-            }
-            Err(error) => {
-                eprintln!("the surreal reference retries its open: {error}");
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
-    let store = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    store.initialize().await.expect("initialize");
-    (tmp, store)
-}
-
-/// El mismo estado npm en los dos motores responde lo mismo: el puntero
-/// del packument, el tarball por coordenadas, las instantáneas (la
-/// historia inmutable de los packuments) y la secuencia de páginas.
+/// El estado npm publicado responde lo que el contrato dice: el puntero del
+/// packument es la última instantánea (su digest y su tamaño), el tarball y
+/// la instantánea vigente se leen por coordenadas, y la caminata de páginas
+/// por cursor de clave recorre cada ruta publicada una vez y en orden.
+/// HSP-314 F4: antes se comparaba con un segundo motor; ahora los
+/// valores esperados salen de lo que la prueba publicó.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn the_npm_reads_match_the_surreal_reference() {
+async fn the_npm_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
         return;
     };
     let account = account("parity");
 
     let dgraph = Arc::new(open_store(client.clone()).await);
-    let (_tmp, surreal) = the_surreal_reference().await;
 
     let repo = "npm-hosted";
     let descriptor = a_descriptor(&account, repo, RepositoryFormat::Npm, serde_json::json!({}));
     dgraph
-        .create_repository(&account, descriptor.clone())
-        .await
-        .expect("the dgraph repository");
-    surreal
         .create_repository(&account, descriptor)
         .await
-        .expect("the surreal repository");
+        .expect("the dgraph repository");
 
-    // El mismo estado, con la MISMA secuencia de publicaciones en los dos
-    // motores: el tarball de cada versión y una instantánea del packument
+    // El estado: el tarball de cada versión y una instantánea del packument
     // por estado; la del widget lleva una segunda instantánea (el tag
     // `beta` movido) que deja la primera en la historia.
     let name = PackageName::parse("parity-widget", true).expect("a name");
     let other = PackageName::parse("parity-other", true).expect("a name");
     let now = "2026-01-01T00:00:00Z";
+    let mut widget_current: Option<(ContentDigest, u64)> = None;
+    let mut widget_tarball = Vec::new();
     for (package, version, tags) in [
         (&name, "1.0.0", Vec::new()),
         (&name, "1.1.0", vec![("beta", "1.1.0")]),
@@ -1606,86 +1585,77 @@ async fn the_npm_reads_match_the_surreal_reference() {
     ] {
         let tarball = format!("parity tarball of {}@{version}", package.full()).into_bytes();
         publish_a_tarball(&*dgraph, &account, repo, package, version, &tarball).await;
-        publish_a_tarball(&surreal, &account, repo, package, version, &tarball).await;
         let document = a_packument(package, &[(version, tarball.as_slice())], &tags, now);
         // La segunda instantánea del widget se publica CON la precondición
         // del digest vigente, como hace la superficie al mutar metadatos.
-        let (dgraph_previous, surreal_previous) = if version == "1.1.0" {
-            (
+        let previous = if version == "1.1.0" {
+            Some(
                 dgraph
                     .asset(&account, repo, package.full())
                     .await
                     .expect("the dgraph pointer")
                     .digest,
-                surreal
-                    .asset(&account, repo, package.full())
-                    .await
-                    .expect("the surreal pointer")
-                    .digest,
             )
         } else {
-            (ContentDigest::sha256(""), ContentDigest::sha256(""))
+            None
         };
-        publish_a_packument_snapshot(
+        let snapshot = publish_a_packument_snapshot(
             &*dgraph,
             &account,
             repo,
             package,
             &document,
-            (version == "1.1.0").then_some(&dgraph_previous),
+            previous.as_ref(),
         )
         .await;
-        publish_a_packument_snapshot(
-            &surreal,
-            &account,
-            repo,
-            package,
-            &document,
-            (version == "1.1.0").then_some(&surreal_previous),
-        )
-        .await;
+        if package.full() == name.full() {
+            let size = serde_json::to_vec(&document).expect("serializes").len() as u64;
+            widget_current = Some((snapshot, size));
+            widget_tarball = tarball;
+        }
     }
+    let (current_digest, current_size) = widget_current.expect("the widget has a snapshot");
 
-    // Por puntero de ruta: la misma instantánea vigente en los dos.
+    // Por puntero de ruta: la instantánea vigente es la última publicada.
     let dgraph_pointer = dgraph
         .asset(&account, repo, "parity-widget")
         .await
         .expect("the dgraph pointer");
-    let surreal_pointer = surreal
-        .asset(&account, repo, "parity-widget")
-        .await
-        .expect("the surreal pointer");
-    assert_eq!(dgraph_pointer.digest.value, surreal_pointer.digest.value);
-    assert_eq!(dgraph_pointer.size_bytes, surreal_pointer.size_bytes);
+    assert_eq!(dgraph_pointer.digest, current_digest);
+    assert_eq!(dgraph_pointer.size_bytes, current_size);
 
-    // Por coordenadas: el tarball y la instantánea vigente dicen lo mismo
-    // en los dos motores.
-    for coordinates in [
-        PackageCoordinates {
-            package_name: "parity-widget".to_string(),
-            package_version: "1.1.0".to_string(),
-        },
-        PackageCoordinates {
-            package_name: format!("parity-widget{}", npm::PACKUMENT_COORDINATES_SUFFIX),
-            package_version: dgraph_pointer.digest.value.clone(),
-        },
+    // Por coordenadas: el tarball y la instantánea vigente dicen lo
+    // publicado.
+    for (coordinates, digest, size) in [
+        (
+            PackageCoordinates {
+                package_name: "parity-widget".to_string(),
+                package_version: "1.1.0".to_string(),
+            },
+            ContentDigest::of_bytes(&widget_tarball),
+            widget_tarball.len() as u64,
+        ),
+        (
+            PackageCoordinates {
+                package_name: format!("parity-widget{}", npm::PACKUMENT_COORDINATES_SUFFIX),
+                package_version: dgraph_pointer.digest.value.clone(),
+            },
+            current_digest.clone(),
+            current_size,
+        ),
     ] {
         let dgraph_version = dgraph
             .version(&account, repo, &coordinates)
             .await
             .expect("the dgraph version");
-        let surreal_version = surreal
-            .version(&account, repo, &coordinates)
-            .await
-            .expect("the surreal version");
-        assert_eq!(dgraph_version.digest, surreal_version.digest);
-        assert_eq!(dgraph_version.size_bytes, surreal_version.size_bytes);
+        assert_eq!(dgraph_version.digest, digest);
+        assert_eq!(dgraph_version.size_bytes, size);
     }
 
-    // La secuencia de páginas: la referencia por offsets, el grafo por
-    // cursores de clave; la caminata entera es la misma.
+    // La secuencia de páginas por cursores de clave: cada ruta publicada
+    // (tres tarballs y dos punteros de packument) una vez, en orden, y el
+    // total es el de las rutas.
     let repositories = dgraph.repositories(&account).await.expect("the repos");
-    let surreal_repositories = surreal.repositories(&account).await.expect("the repos");
     let mut dgraph_page = dgraph
         .search(
             &account,
@@ -1694,69 +1664,41 @@ async fn the_npm_reads_match_the_surreal_reference() {
         )
         .await
         .expect("the dgraph page");
-    let mut surreal_page = surreal
-        .search(
-            &account,
-            &surreal_repositories,
-            &SearchQuery::new().with_repository(repo).with_limit(2),
-        )
-        .await
-        .expect("the surreal page");
-    assert_eq!(dgraph_page.total, surreal_page.total);
+    let mut expected: Vec<String> = vec![
+        name.tarball_path("1.0.0"),
+        name.tarball_path("1.1.0"),
+        other.tarball_path("2.0.0"),
+        name.full().to_string(),
+        other.full().to_string(),
+    ];
+    expected.sort();
+    assert_eq!(dgraph_page.total, Some(expected.len()));
     let mut keyed: Vec<String> = dgraph_page
         .results
         .iter()
         .map(|hit| hit.asset_path.clone())
         .collect();
-    let mut offseted: Vec<String> = surreal_page
-        .results
-        .iter()
-        .map(|hit| hit.asset_path.clone())
-        .collect();
-    let mut offset = 2usize;
-    while dgraph_page.more || surreal_page.more {
-        if dgraph_page.more {
-            let last = dgraph_page.results.last().expect("a page with rows");
-            dgraph_page = dgraph
-                .search(
-                    &account,
-                    &repositories,
-                    &SearchQuery::new()
-                        .with_repository(repo)
-                        .with_limit(2)
-                        .with_cursor(search_cursor(repo, &last.asset_path)),
-                )
-                .await
-                .expect("the keyed page");
-            keyed.extend(dgraph_page.results.iter().map(|hit| hit.asset_path.clone()));
-        }
-        if surreal_page.more {
-            surreal_page = surreal
-                .search(
-                    &account,
-                    &surreal_repositories,
-                    &SearchQuery::new()
-                        .with_repository(repo)
-                        .with_limit(2)
-                        .with_offset(offset),
-                )
-                .await
-                .expect("the offset page");
-            offset += 2;
-            offseted.extend(
-                surreal_page
-                    .results
-                    .iter()
-                    .map(|hit| hit.asset_path.clone()),
-            );
-        }
+    while dgraph_page.more {
+        let last = dgraph_page.results.last().expect("a page with rows");
+        dgraph_page = dgraph
+            .search(
+                &account,
+                &repositories,
+                &SearchQuery::new()
+                    .with_repository(repo)
+                    .with_limit(2)
+                    .with_cursor(search_cursor(repo, &last.asset_path)),
+            )
+            .await
+            .expect("the keyed page");
+        keyed.extend(dgraph_page.results.iter().map(|hit| hit.asset_path.clone()));
     }
     assert_eq!(
-        keyed, offseted,
-        "the same npm state pages the same, by key or by offset"
+        keyed, expected,
+        "paging by key walks every published npm path once, in order"
     );
     record_evidence(
-        "the_npm_reads_match_the_surreal_reference",
-        "paridad Surreal del estado npm (puntero del packument, tarball por coordenadas, instantánea vigente e historia, secuencia de páginas cursor vs offset): idéntica",
+        "the_npm_reads_match_the_contract_for_the_published_state",
+        "lecturas npm segun el contrato (puntero del packument = ultima instantanea, tarball y instantanea vigente por coordenadas, caminata de paginas por cursor = rutas publicadas ordenadas)",
     );
 }

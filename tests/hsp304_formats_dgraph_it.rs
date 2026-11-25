@@ -235,10 +235,12 @@ impl Vertical {
         let tmp = tempfile::tempdir().expect("temp dir");
         let mut app_config = AppConfig::default();
         app_config.security.raw_api_enabled = true;
-        app_config.repository.durable = false;
-        app_config.rocksdb.path = tmp
+        // The graph profile is the only authority: the bootstrap connects to the
+        // same alpha the test seeds and its catalog is replaced just below.
+        app_config.graph = config_from_env();
+        app_config.content.cas_path = tmp
             .path()
-            .join("hodei.rocksdb")
+            .join("bootstrap-cas")
             .to_string_lossy()
             .into_owned();
         let state = bootstrap(
