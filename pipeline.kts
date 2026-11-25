@@ -403,6 +403,10 @@ pipeline {
                         // la matriz 401/403/cuenta ajena/413 de las escrituras.
                         "--test hsp304_terraform_init",
                         "--test hsp304_format_access",
+                        // URLs de zip firmadas del mirror de providers: ligadas a
+                        // ruta, repositorio, cuenta y expiracion; rotacion; falla
+                        // cerrado sin clave; sin secretos en el log.
+                        "--test hsp313_signed_archive_url",
                         "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
                         "--test hsp125_replication_spike",

@@ -146,7 +146,13 @@ fn the_terraform_mirror_proxy_caches_the_provider_and_serves_it_byte_for_byte() 
     )]);
     let token = support::token(support::FIRST_ACCOUNT, "alice");
     let allowed = format!("127.0.0.1:{};private;http", upstream.port);
-    let mut service = deployment.start(&[("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())]);
+    let ring = support::the_signing_ring();
+    let mut environment: Vec<(&str, &str)> = vec![("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())];
+    environment.extend(
+        ring.iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    );
+    let mut service = deployment.start(&environment);
     let port = service.port;
 
     let zip_path =
@@ -187,7 +193,21 @@ fn the_terraform_mirror_proxy_caches_the_provider_and_serves_it_byte_for_byte() 
         &token,
     );
     assert_eq!(version_doc.status, 200, "{}", text_of(&version_doc));
-    assert_eq!(version_doc.body, version);
+    // The version document is the upstream's, with the archive URL replaced by
+    // a signed one (the real client sends no credential for the archive).
+    let served: serde_json::Value = serde_json::from_slice(&version_doc.body).expect("JSON");
+    let declared: serde_json::Value = serde_json::from_slice(&version).expect("JSON");
+    let signed = served["archives"]["linux_amd64"]["url"]
+        .as_str()
+        .expect("a url");
+    assert!(
+        signed.starts_with("terraform-provider-null_3.2.1_linux_amd64.zip?hodei_exp="),
+        "{signed}"
+    );
+    assert!(signed.contains("hodei_sig="), "{signed}");
+    let mut unsigned = served.clone();
+    unsigned["archives"]["linux_amd64"]["url"] = declared["archives"]["linux_amd64"]["url"].clone();
+    assert_eq!(unsigned, declared, "nothing else of the document changes");
 
     // A mirror is read-only: the protocol has no writes.
     let put = call(port, "PUT", &zip_path, &token);

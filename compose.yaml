@@ -28,6 +28,9 @@ services:
       - "${HODEI_BIND_ADDR:-127.0.0.1}:${HODEI_PORT:-3000}:3000"
     volumes:
       - hodei-artifacts-data:/app/data
+      # The secret that signs the archive URLs of the Terraform mirror: a file
+      # the operator generates (`openssl rand -hex 32`), mounted read-only.
+      - ${HODEI_SIGNING_KEY_FILE:?set HODEI_SIGNING_KEY_FILE to a file with the signing secret (openssl rand -hex 32)}:/run/secrets/hodei-signing-key:ro
     environment:
       RUN_MODE: ${RUN_MODE:-standalone}
       HODEI_SERVER__REQUEST_TIMEOUT_SECS: ${HODEI_SERVER__REQUEST_TIMEOUT_SECS:-30}
@@ -39,6 +42,8 @@ services:
       HODEI_SECURITY__ADMIN_API_ENABLED: ${HODEI_SECURITY__ADMIN_API_ENABLED:-false}
       HODEI_SECURITY__RAW_API_ENABLED: ${HODEI_SECURITY__RAW_API_ENABLED:-false}
       HODEI_SECURITY__OCI_API_ENABLED: ${HODEI_SECURITY__OCI_API_ENABLED:-false}
+      HODEI_SIGNING__KEYS__0__ID: ${HODEI_SIGNING_KEY_ID:-primary}
+      HODEI_SIGNING__KEYS__0__SECRET_FILE: /run/secrets/hodei-signing-key
     healthcheck:
       test:
         [

@@ -47,6 +47,7 @@ pub mod repository_surreal;
 pub mod resolution;
 pub mod risk_facts;
 pub mod router;
+pub mod signed_url;
 pub mod trust;
 
 pub use app_state::AppState;

@@ -466,6 +466,56 @@ El test necesita `HSP237_PROFILE_E2E=1` (lo fija el script); sin ella se salta.
 El script termina con 77 (`NOT_RUN`) si falta Podman o las imágenes. La evidencia
 queda en `target/uat/hsp237-profile-e2e/`.
 
+### 6.2 La clave de firma del mirror de Terraform (HSP-313)
+
+El mirror de providers entrega al cliente Terraform URLs de zip firmadas y de
+vida corta, porque Terraform no envía credenciales al descargar el archivo. La
+clave que las firma es un secreto del operador (sección `[signing]` de
+[`configuration.md`](configuration.md)); sin ella el mirror no emite URLs de zip
+y el documento de versión responde `503`.
+
+- **Compose**: `compose.yaml` y `compose.external.yaml` exigen
+  `HODEI_SIGNING_KEY_FILE`, la ruta de un fichero con el secreto, sin valor por
+  defecto (un valor por defecto sería una clave compartida). Se monta de solo
+  lectura en `/run/secrets/hodei-signing-key`. Genéralo con
+  `openssl rand -hex 32 > signing-key` y haz que lo pueda leer el UID 10001 de
+  la imagen. `scripts/compose-smoke.sh` genera su propia clave efímera en un
+  directorio temporal y la borra al terminar.
+- **Helm**: `signing.existingSecret` nombra un Secret existente (el chart no
+  crea ninguno) y `signing.keys` lista, por orden, `{ id, secretKey }`; la
+  primera firma. Crea el Secret con
+  `kubectl create secret generic hodei-signing --from-literal=signing-key="$(openssl rand -hex 32)"`.
+  Sin `signing.existingSecret` no se configura ninguna clave y el mirror falla
+  cerrado.
+- **Réplicas**: todas reciben el mismo anillo. Una URL emitida por una réplica
+  la verifica cualquier otra; con anillos distintos, la mitad de las
+  descargas fallarían con 403.
+- **Rotación** (tres pasos, sin cortar las URLs en vuelo) y retirada de una
+  clave filtrada: ver la sección 5.9 de [`configuration.md`](configuration.md).
+- **Qué mirar en el log**: al arrancar, `the signed URLs of the provider mirror
+  are enabled` (con el TTL) o `no signing key is configured`. Nunca aparecen el
+  secreto ni la firma: el log de peticiones solo nombra la ruta, y la query de
+  la URL firmada no se registra. Un canje rechazado deja una línea
+  `a signed archive URL was refused` con el repositorio y el motivo genérico
+  (caducada, firma que no coincide, clave desconocida), y el cliente recibe
+  siempre el mismo `403`.
+
+**Nota de migración (actualizar a una versión con HSP-313).** Una instalación
+que ya servía providers de Terraform y se actualiza **sin** `[signing]` deja de
+poder instalarlos: el mirror falla cerrado y el documento de versión
+(`<versión>.json`) pasa a responder `503` (el índice y la lectura autenticada
+del zip siguen igual). Para no cortar el servicio, configura la clave **antes**
+de actualizar:
+
+1. Genera el secreto con `openssl rand -hex 32` y entrégalo como fichero o
+   variable (Compose: `HODEI_SIGNING_KEY_FILE`; Helm: `signing.existingSecret`).
+2. Declara `[signing]` con esa clave en todas las réplicas, con el mismo anillo.
+3. Actualiza, y comprueba en el log `the signed URLs of the provider mirror are
+   enabled` y no `no signing key is configured`.
+
+Con Compose, el fichero se exige con `:?`: sin `HODEI_SIGNING_KEY_FILE`,
+`compose up` falla en vez de arrancar sin clave.
+
 ## 7. Documentos relacionados
 
 - [`configuration.md`](configuration.md): claves, variables y perfiles.

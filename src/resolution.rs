@@ -371,11 +371,19 @@ pub(crate) async fn the_repository_in(
     repository: &str,
     served: &[RepositoryFormat],
 ) -> Result<RepositoryDescriptor, ResolutionError> {
+    the_repository_of(state, context.account().as_str(), repository, served).await
+}
+
+/// [`the_repository_in`] for an account that is known by its name: the
+/// capability URLs carry a signed account, not a verified principal.
+pub(crate) async fn the_repository_of(
+    state: &AppState,
+    account: &str,
+    repository: &str,
+    served: &[RepositoryFormat],
+) -> Result<RepositoryDescriptor, ResolutionError> {
     let (reader, _) = the_catalog(state)?;
-    let descriptor = match reader
-        .repository(context.account().as_str(), repository)
-        .await
-    {
+    let descriptor = match reader.repository(account, repository).await {
         Ok(descriptor) => descriptor,
         Err(CatalogError::Missing { .. }) | Err(CatalogError::Denied { .. }) => {
             return Err(ResolutionError::NotFound);
@@ -467,11 +475,19 @@ pub(crate) async fn the_current_asset(
     repository: &str,
     asset_path: &str,
 ) -> Result<Option<AssetRecord>, ResolutionError> {
+    the_current_asset_in(state, context.account().as_str(), repository, asset_path).await
+}
+
+/// [`the_current_asset`] for an account that is known by its name: the
+/// capability URLs carry a signed account, not a verified principal.
+pub(crate) async fn the_current_asset_in(
+    state: &AppState,
+    account: &str,
+    repository: &str,
+    asset_path: &str,
+) -> Result<Option<AssetRecord>, ResolutionError> {
     let (reader, _) = the_catalog(state)?;
-    match reader
-        .asset(context.account().as_str(), repository, asset_path)
-        .await
-    {
+    match reader.asset(account, repository, asset_path).await {
         Ok(asset) => Ok(Some(asset)),
         Err(CatalogError::Missing { .. }) => Ok(None),
         Err(_) => Err(ResolutionError::Unavailable),
@@ -553,6 +569,35 @@ pub(crate) async fn the_proxy_asset_at(
     accept: Option<&str>,
     correlation: &str,
 ) -> Result<ProxyServed, ResolutionError> {
+    the_proxy_asset_as(
+        state,
+        context.account().as_str(),
+        context.principal().subject().as_str(),
+        repository,
+        asset_path,
+        url,
+        accept,
+        correlation,
+    )
+    .await
+}
+
+/// [`the_proxy_asset_at`] for a caller known by account and actor names.
+///
+/// The proxy needs nothing else of the principal: the account scopes the
+/// catalog and the cache, and the actor is the name on the receipt. A
+/// capability URL carries exactly those two, signed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn the_proxy_asset_as(
+    state: &AppState,
+    account: &str,
+    actor: &str,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    url: Option<Url>,
+    accept: Option<&str>,
+    correlation: &str,
+) -> Result<ProxyServed, ResolutionError> {
     use hodei_catalog::proxy_cache::{CacheDecision, CacheEntry, Context, decide, stale_allowed};
 
     use crate::proxy::cache::PathKey;
@@ -584,8 +629,7 @@ pub(crate) async fn the_proxy_asset_at(
         return Err(ResolutionError::NotFound);
     }
     let store = the_content_store(state)?;
-    let account = context.account().as_str();
-    let current = the_current_asset(state, context, &repository.repo_key, asset_path).await?;
+    let current = the_current_asset_in(state, account, &repository.repo_key, asset_path).await?;
 
     let upstream = match hodei_catalog::UpstreamConfig::of(&repository.config) {
         Ok(Some(upstream)) => upstream,
@@ -698,7 +742,6 @@ pub(crate) async fn the_proxy_asset_at(
     }
 
     let (_, writer) = the_catalog(state)?;
-    let actor = context.principal().subject().as_str();
     let overwrite = current.is_some();
     let flight = plane
         .flights
@@ -784,7 +827,7 @@ pub(crate) async fn the_proxy_asset_at(
         }
     };
 
-    let asset = the_current_asset(state, context, &repository.repo_key, asset_path)
+    let asset = the_current_asset_in(state, account, &repository.repo_key, asset_path)
         .await?
         .ok_or(ResolutionError::Unavailable)?;
     Ok(ProxyServed::new(asset, status))

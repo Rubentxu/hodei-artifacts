@@ -407,6 +407,25 @@ pub async fn bootstrap(
             .the_public_url()
             .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
     );
+    // The ring that signs the archive URLs of the provider mirror. A key that
+    // is named and cannot be read stops the boot; no key at all is allowed
+    // and is announced, because the mirror then refuses to issue archive
+    // URLs and a Terraform client cannot install from it.
+    let signed_urls = config
+        .signing
+        .the_ring()
+        .map_err(|error| BootstrapError::Initialization(format!("signing keys: {error}")))?;
+    if signed_urls.is_configured() {
+        info!(
+            ttl_secs = signed_urls.ttl_secs(),
+            "the signed URLs of the provider mirror are enabled"
+        );
+    } else {
+        warn!(
+            "no signing key is configured: the Terraform provider mirror will not issue archive URLs and its version documents answer 503; add a key to [signing]"
+        );
+    }
+    let app_state = app_state.with_signed_urls(signed_urls);
     if config.quota.max_stored_bytes_per_account.is_some()
         || config.quota.max_concurrent_uploads_per_account.is_some()
     {
