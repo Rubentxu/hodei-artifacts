@@ -212,6 +212,7 @@ pipeline {
                         "--test hsp134_risk_facts_e2e",
                         "--test hsp142_capability_matrix",
                         "--test hsp243_user_guides",
+                        "--test hsp288_native_guides",
                     ).joinToString(" ")
                 )
             }

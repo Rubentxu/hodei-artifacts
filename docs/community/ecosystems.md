@@ -61,8 +61,8 @@ expone en tiempo de ejecución en `GET /api/v1/capabilities`:
 
 ### Maven 2 (`maven2`)
 
-- **Estado:** `VERIFIED` (ejercitado por `tests/hsp243_user_guides.rs` y `tests/hsp109_maven_e2e.rs`)
-- **Versión de cliente:** Apache Maven `3.9+`
+- **Estado:** `VERIFIED` (ejercitado por `tests/hsp243_user_guides.rs`, `tests/hsp109_maven_e2e.rs` y, con el cliente real, `tests/hsp288_native_guides.rs`)
+- **Versión de cliente:** Apache Maven `3.9+` (verificado con `mvn` 3.9.9, HSP-288)
 - **Política de upstream:** `proxy.allowed_hosts` + `settings.upstream` (`id`, `url`, `scopes`, `require_checksum`)
 - **Rutas reales:**
   - `hosted`: `PUT /repository/{repo}/{groupPath}/{artifact}/{version}/{file}` y `GET /repository/{repo}/...`
@@ -96,12 +96,31 @@ curl -sS -H "Authorization: Bearer ${HODEI_TOKEN}" \
 sha256sum demo-1.0.0.jar downloaded.jar
 ```
 
+**Ejemplo con cliente nativo (`mvn`, laboratorio local `127.0.0.1`):** publica y resuelve con el propio Maven; parte de `demo-1.0.0.pom` y `demo-1.0.0.jar` en el directorio actual y del repositorio `doc-maven` creado en el paso 1. `tests/hsp288_native_guides.rs` ejecuta este bloque tal cual.
+
+```bash
+# Credencial en un settings.xml local con permisos 600 (nunca en argumentos)
+printf '<settings><servers><server><id>hodei</id><configuration><httpHeaders><property><name>Authorization</name><value>Bearer %s</value></property></httpHeaders></configuration></server></servers></settings>' "${HODEI_TOKEN}" > settings.xml
+chmod 600 settings.xml
+
+# Publicar POM y JAR con mvn deploy-file
+mvn -B -s settings.xml org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file \
+  -Dfile=demo-1.0.0.jar -DpomFile=demo-1.0.0.pom -DrepositoryId=hodei \
+  -Durl="http://127.0.0.1:${PORT}/repository/doc-maven"
+
+# Resolver con mvn dependency:get (queda en el repositorio local) y comparar bytes
+mvn -B -s settings.xml org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get \
+  -Dartifact=com.acme:demo:1.0.0 -Dtransitive=false \
+  -DremoteRepositories="hodei::default::http://127.0.0.1:${PORT}/repository/doc-maven"
+cmp demo-1.0.0.jar "${HOME}/.m2/repository/com/acme/demo/1.0.0/demo-1.0.0.jar"
+```
+
 ---
 
 ### npm (`npm`)
 
-- **Estado:** `VERIFIED` (ejercitado por `tests/hsp243_user_guides.rs` y `tests/hsp111_npm_e2e.rs`)
-- **Versión de cliente:** `npm` `10+`
+- **Estado:** `VERIFIED` (ejercitado por `tests/hsp243_user_guides.rs`, `tests/hsp111_npm_e2e.rs` y, con el cliente real, `tests/hsp288_native_guides.rs`)
+- **Versión de cliente:** `npm` `10+` (verificado con `npm` 11.12.1, HSP-288)
 - **Política de upstream:** `proxy.allowed_hosts` + `settings.upstream` (`id`, `url`, `scopes`, `require_checksum`)
 - **Rutas reales:**
   - `hosted`: `PUT /npm/{repo}/{package}` (con `@scope%2fpkg` para paquetes con scope), `GET /npm/{repo}/{package}`, `GET /npm/{repo}/{package}/-/{tarball}`
@@ -134,15 +153,31 @@ curl -sS -H "Authorization: Bearer ${HODEI_TOKEN}" \
   -o demo-1.0.0.tgz
 ```
 
+**Ejemplo con cliente nativo (`npm`, laboratorio local `127.0.0.1`):** publica e instala con el propio `npm`; parte del directorio `demo-npm/` (con `package.json` de `@acme/demo` 1.0.0) y del repositorio `doc-npm` creado en el paso 1. `tests/hsp288_native_guides.rs` ejecuta este bloque tal cual.
+
+```bash
+# Credencial en un npmrc local con permisos 600 (nunca en argumentos)
+printf 'registry=http://127.0.0.1:%s/npm/doc-npm/\n//127.0.0.1:%s/npm/doc-npm/:_authToken=%s\n' "${PORT}" "${PORT}" "${HODEI_TOKEN}" > npmrc
+chmod 600 npmrc
+
+# Publicar con npm publish
+npm publish ./demo-npm --userconfig ./npmrc
+
+# Instalar en un proyecto consumidor (npm verifica el integrity SRI)
+mkdir -p consumer
+(cd consumer && npm install @acme/demo@1.0.0 --userconfig ../npmrc)
+test -f consumer/node_modules/@acme/demo/package.json
+```
+
 ---
 
 ### PyPI (`pypi`)
 
-- **Estado:** `VERIFIED` (ejercitado por `tests/hsp243_user_guides.rs` y `tests/hsp112_pypi_e2e.rs`)
-- **Versión de cliente:** `pip` `24+` / `twine` `5+`
+- **Estado:** `VERIFIED` (ejercitado por `tests/hsp243_user_guides.rs`, `tests/hsp112_pypi_e2e.rs` y, con los clientes reales, `tests/hsp288_native_guides.rs`)
+- **Versión de cliente:** `pip` `24+` / `twine` `5+` (verificado con `pip` 26.1.2 y `twine` 7.0.0, HSP-288)
 - **Política de upstream:** `proxy.allowed_hosts` + `settings.upstream` (`id`, `url`, `scopes`, `require_checksum`)
 - **Rutas reales:**
-  - `hosted`: `POST /pypi/{repo}/` (multipart `:action=file_upload`, `sha256_digest`, `content`), `GET /pypi/{repo}/simple/{project}/`, `GET /pypi/{repo}/packages/...`
+  - `hosted`: `POST /pypi/{repo}/` (multipart `:action=file_upload`, `sha256_digest`, `content`), `GET /pypi/{repo}/simple/{project}/`, `GET /pypi/{repo}/files/{project}/{filename}`
   - `proxy`: `GET /pypi/{repo}/simple/...`
   - `group`: `GET /pypi/{repo}/simple/...`
   - Límite de carga: `max_body_size` (10 MiB) + `256 KiB` de margen multipart.
@@ -172,6 +207,30 @@ curl -sS -X POST "http://127.0.0.1:${PORT}/pypi/doc-pypi/" \
 # 3. Consultar índice Simple (PEP 503)
 curl -sS -H "Authorization: Bearer ${HODEI_TOKEN}" \
   "http://127.0.0.1:${PORT}/pypi/doc-pypi/simple/demo-pkg/"
+
+# 4. Descargar el wheel y comprobar que son los mismos bytes
+curl -sS -H "Authorization: Bearer ${HODEI_TOKEN}" \
+  "http://127.0.0.1:${PORT}/pypi/doc-pypi/files/demo-pkg/demo_pkg-1.0.0-py3-none-any.whl" \
+  -o downloaded.whl
+cmp demo_pkg-1.0.0-py3-none-any.whl downloaded.whl
+```
+
+**Ejemplo con cliente nativo (`twine` + `pip`, laboratorio local `127.0.0.1`):** publica con `twine`, descarga el wheel con `pip download` y compara los bytes; parte de `demo_pkg-1.0.0-py3-none-any.whl` en el directorio actual y del repositorio `doc-pypi` creado en el paso 1. `tests/hsp288_native_guides.rs` ejecuta este bloque tal cual.
+
+```bash
+# Credencial en un netrc local con permisos 600 (nunca en argumentos)
+printf 'machine 127.0.0.1 login __token__ password %s\n' "${HODEI_TOKEN}" > netrc
+chmod 600 netrc
+
+# Publicar con twine (usuario y contraseña por entorno)
+TWINE_USERNAME=__token__ TWINE_PASSWORD="${HODEI_TOKEN}" \
+  twine upload --non-interactive --repository-url "http://127.0.0.1:${PORT}/pypi/doc-pypi/" \
+  demo_pkg-1.0.0-py3-none-any.whl
+
+# Descargar el wheel con pip y comparar bytes con el original
+NETRC="${PWD}/netrc" pip download --no-deps --no-cache-dir --disable-pip-version-check \
+  --index-url "http://127.0.0.1:${PORT}/pypi/doc-pypi/simple/" -d downloaded demo-pkg==1.0.0
+cmp demo_pkg-1.0.0-py3-none-any.whl downloaded/demo_pkg-1.0.0-py3-none-any.whl
 ```
 
 ---

@@ -1447,13 +1447,13 @@ fn redact_private_key_blocks(text: &str) -> String {
         out.push_str("[REDACTED]");
         let body_start = start + BEGIN.len();
         let tail = &rest[body_start..];
-        rest = match tail.find(END).and_then(|end| {
-            let after_end = &tail[end + END.len()..];
-            after_end.find(KEY).map(|k| &after_end[k + KEY.len()..])
-        }) {
-            Some(remaining) => remaining,
-            None => "",
-        };
+        rest = tail
+            .find(END)
+            .and_then(|end| {
+                let after_end = &tail[end + END.len()..];
+                after_end.find(KEY).map(|k| &after_end[k + KEY.len()..])
+            })
+            .unwrap_or_default();
     }
     out.push_str(rest);
     out
