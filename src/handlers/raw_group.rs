@@ -36,12 +36,15 @@ use hodei_catalog::{
     RepositoryMode,
 };
 
-use super::raw::{CacheStatus, ProxyServed, RawApiError, the_current_asset, the_proxy_asset};
 use crate::app_state::AppState;
+use crate::resolution::{
+    CacheStatus, ProxyServed, ResolutionError as RawApiError, the_current_asset,
+    the_namespace_policy, the_proxy_asset, the_reservation_explanation,
+};
 
 /// Como acabo la consulta a un miembro.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Step {
+pub(crate) enum Step {
     /// El miembro tenia la ruta.
     Hit,
     /// El miembro dijo con certeza que no la tiene.
@@ -66,7 +69,7 @@ impl Step {
 }
 
 /// Lo que gano una resolucion de grupo.
-pub(super) struct Won {
+pub(crate) struct Won {
     /// El miembro hoja que tenia la ruta.
     pub member: RepositoryDescriptor,
     /// Lo que el miembro sirve en esa ruta.
@@ -76,7 +79,7 @@ pub(super) struct Won {
 }
 
 /// La resolucion: lo que gano (o el error) y el orden de lo consultado.
-pub(super) struct Resolution {
+pub(crate) struct Resolution {
     /// El resultado.
     pub outcome: Result<Won, RawApiError>,
     /// Cada miembro consultado, en orden, con su resultado.
@@ -101,7 +104,7 @@ pub(super) fn trail_text(trail: &[(String, Step)]) -> String {
 
 /// Deja en la auditoria el rastro de una resolucion: que grupo, en que
 /// version de su configuracion, que miembros se consultaron y como acabo.
-pub(super) fn record_resolution(
+pub(crate) fn record_resolution(
     state: &AppState,
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
@@ -222,7 +225,7 @@ async fn the_members(
 ///
 /// El grupo ya paso la decision de Cedar y el filtro de formato y ambito
 /// de `the_repository`; aqui solo se recorren sus miembros.
-pub(super) async fn the_group_asset(
+pub(crate) async fn the_group_asset(
     state: &AppState,
     context: &VerifiedContext,
     group: &RepositoryDescriptor,
@@ -285,7 +288,7 @@ pub(super) async fn the_governed_leaves(
     RawApiError,
 > {
     let leaves = the_leaves(state, context, group).await?;
-    let Some(policy) = super::raw::the_namespace_policy(&group.config)? else {
+    let Some(policy) = the_namespace_policy(&group.config)? else {
         return Ok((leaves, Vec::new(), None));
     };
     let judgement = policy.judge(group.format, asset_path);
@@ -316,7 +319,7 @@ pub(super) fn the_group_reservation_explanation(
         denied = ?denied,
         "a reserved namespace is not served from the public members of the group"
     );
-    RawApiError::ReservedNamespace(super::raw::the_reservation_explanation(judgement, denied))
+    RawApiError::ReservedNamespace(the_reservation_explanation(judgement, denied))
 }
 
 /// El miembro se lee como se leeria por su ruta directa: esta release solo

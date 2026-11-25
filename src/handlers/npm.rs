@@ -47,17 +47,17 @@ use hodei_evidence::domain::content::ContentDigest;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha512};
 
-use super::raw::{
-    RawApiError, Resolved, apply_cache_headers, apply_common_headers, apply_group_headers, hex_of,
-    the_admission_error, the_blob_error, the_catalog, the_content_store, the_context,
-    the_current_asset, the_decision, the_publication_error, the_repository_in, the_resolved_asset,
-    write_the_content,
-};
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
 use crate::public_url::TheOrigin;
 use crate::raw::{conditional, path};
+use crate::resolution::{
+    ResolutionError as RawApiError, ResolvedAsset, WrittenContent, apply_common_headers,
+    apply_origin_headers, authorize_repository, hex_of, resolve_asset, the_admission_error,
+    the_blob_error, the_catalog, the_content_store, the_context, the_current_asset, the_decision,
+    the_publication_error, the_repository_in, write_content,
+};
 
 /// Cuantas veces se reintenta una escritura del packument que pierde la
 /// carrera con otra.
@@ -366,7 +366,7 @@ async fn read(
     origin: &TheOrigin,
     correlation: &str,
 ) -> Result<Response, Failure> {
-    the_decision(
+    let _decision = authorize_repository(
         state,
         context,
         crate::actions::download_asset(),
@@ -374,19 +374,19 @@ async fn read(
     )?;
     let requested = repository.repo_key.clone();
     let asset_path = route.asset_path().ok_or(RawApiError::NotFound)?;
-    let Resolved {
+    let ResolvedAsset {
         asset,
-        served,
-        resolved_by,
+        digest,
+        origin: resolution_origin,
         repository: backing,
-    } = the_resolved_asset(state, context, repository, &asset_path, correlation).await?;
+    } = resolve_asset(state, context, repository, &asset_path, correlation).await?;
     // La compuerta de confianza va antes de las condiciones de lectura: un
     // 304 diria que el contenido existe.
-    crate::trust::admit(state, context.account().as_str(), &backing, &asset.digest)
+    crate::trust::admit(state, context.account().as_str(), &backing, &digest)
         .await
         .map_err(the_admission_error)?;
 
-    let etag = conditional::the_etag(&asset.digest);
+    let etag = conditional::the_etag(&digest);
     match conditional::the_read_condition(
         conditional::the_if_match(headers).as_deref(),
         conditional::the_if_none_match(headers).as_deref(),
@@ -396,8 +396,7 @@ async fn read(
         conditional::ReadOutcome::NotModified => {
             let mut response = StatusCode::NOT_MODIFIED.into_response();
             apply_common_headers(&mut response, &etag, correlation);
-            apply_cache_headers(&mut response, &served);
-            apply_group_headers(&mut response, &resolved_by);
+            apply_origin_headers(&mut response, &resolution_origin);
             return Ok(response);
         }
         conditional::ReadOutcome::Serve => {}
@@ -465,8 +464,7 @@ async fn read(
 
     let mut response = (StatusCode::OK, Body::from(body)).into_response();
     apply_common_headers(&mut response, &etag, correlation);
-    apply_cache_headers(&mut response, &served);
-    apply_group_headers(&mut response, &resolved_by);
+    apply_origin_headers(&mut response, &resolution_origin);
     response
         .headers_mut()
         .insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -551,7 +549,7 @@ where
         }
         let bytes =
             serde_json::to_vec(&Value::Object(packument)).map_err(|_| RawApiError::Internal)?;
-        let (digest, length) = write_the_content(
+        let WrittenContent { digest, length } = write_content(
             state,
             context.account().as_str(),
             Body::from(bytes),
@@ -729,7 +727,7 @@ async fn publish_version(
     }
 
     // 1. El tarball, como contenido inmutable en su propia ruta.
-    let (digest, length) = write_the_content(
+    let WrittenContent { digest, length } = write_content(
         state,
         context.account().as_str(),
         Body::from(bytes.clone()),

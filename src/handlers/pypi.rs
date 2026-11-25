@@ -55,7 +55,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::Engine as _;
-use hodei_authz::{Credentials, VerifiedContext, verify_principal};
+use hodei_authz::VerifiedContext;
 use hodei_catalog::{
     CatalogError, PackageCoordinates, Precondition, Publication, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, UpstreamConfig,
@@ -66,16 +66,17 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use super::raw::{
-    RawApiError, apply_common_headers, hex_of, the_admission_error, the_blob_error, the_catalog,
-    the_content_store, the_current_asset, the_decision, the_publication_error, the_repository_in,
-    write_the_content,
-};
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{bearer_token, correlation_id, record_audit};
 use crate::public_url::TheOrigin;
 use crate::raw::conditional;
+use crate::resolution::{
+    ResolutionError as RawApiError, apply_common_headers, hex_of, the_admission_error,
+    the_blob_error, the_catalog, the_content_store, the_current_asset, the_decision,
+    the_proxy_asset_at, the_publication_error, the_repository_in, verify_credential_context,
+    write_the_content,
+};
 
 /// Cuantas veces se reintenta una escritura del documento que pierde la
 /// carrera con otra.
@@ -308,19 +309,7 @@ async fn the_pypi_context(
     headers: &HeaderMap,
 ) -> Result<VerifiedContext, Failure> {
     let credential = the_credential(headers).ok_or(RawApiError::Unauthorized)?;
-    let principal = match verify_principal(
-        state.authenticator.as_ref(),
-        &Credentials::bearer(credential),
-    )
-    .await
-    {
-        Ok(principal) => principal,
-        Err(hodei_authz::AuthenticationError::ProviderUnavailable(_)) => {
-            return Err(RawApiError::Unavailable.into());
-        }
-        Err(_) => return Err(RawApiError::Unauthorized.into()),
-    };
-    Ok(VerifiedContext::from_principal(principal))
+    Ok(verify_credential_context(state, &credential).await?)
 }
 
 /// Lo que la peticion necesita saber de si misma.
@@ -767,7 +756,7 @@ async fn the_proxy_project(
     let upstream = the_upstream(repository)?;
     let asset_path = project.as_str();
     let url = upstream.target(asset_path).ok_or(RawApiError::NotFound)?;
-    let served = super::raw::the_proxy_asset_at(
+    let served = the_proxy_asset_at(
         state,
         context,
         repository,
@@ -977,7 +966,7 @@ async fn the_distribution(
         };
         let url = Url::parse(source)
             .map_err(|_| RawApiError::BadGateway("the upstream declares an unusable URL"))?;
-        let served = super::raw::the_proxy_asset_at(
+        let served = the_proxy_asset_at(
             state,
             context,
             owner,
