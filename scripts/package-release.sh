@@ -23,6 +23,13 @@
 # without that file does not start ("missing field `db_type`"), so the script
 # refuses to build a package that does not contain it.
 #
+# # The build profile
+#
+# The profile is `release` unless `HODEI_PACKAGE_PROFILE=debug` is set. The
+# debug profile exists so that the test suites can package the very layout
+# of the distribution (this script, the same files) without paying for an
+# optimized build. A debug package is never a release asset.
+#
 # Usage: scripts/package-release.sh [output-directory]
 
 set -euo pipefail
@@ -40,6 +47,16 @@ MIGRATION_BIN_NAME="ensure-iam-index"
 # declared by the running service, and the measure of the scale model
 # showed what the graph costs without them.
 GRAPH_INDEX_BIN_NAME="ensure-graph-index"
+
+PROFILE="${HODEI_PACKAGE_PROFILE:-release}"
+case "$PROFILE" in
+  release) PROFILE_FLAGS=(--release) ;;
+  debug) PROFILE_FLAGS=() ;;
+  *)
+    echo "error: HODEI_PACKAGE_PROFILE must be 'release' or 'debug', not '$PROFILE'" >&2
+    exit 1
+    ;;
+esac
 
 cd "$ROOT"
 
@@ -101,22 +118,22 @@ done
 
 # --- Build ------------------------------------------------------------------
 
-echo "==> building the release binary"
-cargo build --release --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
+echo "==> building the $PROFILE binaries"
+cargo build ${PROFILE_FLAGS[@]+"${PROFILE_FLAGS[@]}"} --bin "$BIN_NAME" --bin "$MIGRATION_BIN_NAME" --bin "$GRAPH_INDEX_BIN_NAME"
 
-BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
+BIN_PATH="$(find "${TARGET_DIR}/${PROFILE}" -maxdepth 1 -type f -name "$BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$BIN_PATH" ]; then
   echo "error: the release binary was not produced" >&2
   exit 1
 fi
 
-MIGRATION_BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$MIGRATION_BIN_NAME" -perm -u+x | head -n 1)"
+MIGRATION_BIN_PATH="$(find "${TARGET_DIR}/${PROFILE}" -maxdepth 1 -type f -name "$MIGRATION_BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$MIGRATION_BIN_PATH" ]; then
   echo "error: the operator command was not produced" >&2
   exit 1
 fi
 
-GRAPH_INDEX_BIN_PATH="$(find "${TARGET_DIR}/release" -maxdepth 1 -type f -name "$GRAPH_INDEX_BIN_NAME" -perm -u+x | head -n 1)"
+GRAPH_INDEX_BIN_PATH="$(find "${TARGET_DIR}/${PROFILE}" -maxdepth 1 -type f -name "$GRAPH_INDEX_BIN_NAME" -perm -u+x | head -n 1)"
 if [ -z "$GRAPH_INDEX_BIN_PATH" ]; then
   echo "error: the operator command of the graph indexes was not produced" >&2
   exit 1

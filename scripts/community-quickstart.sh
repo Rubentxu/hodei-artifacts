@@ -557,6 +557,27 @@ run_scenario() {
     || die "the checksum of the jar did not come back"
   note "the checksum of the jar came back: $jar_sha1"
 
+  step "Another account is not this account"
+  # A real token, signed with the secret of the lab and valid in every
+  # claim, but whose principal belongs to another account. The credential
+  # verifies (so it is not a 401) and the policy does not grant it anything
+  # (so it is a 403): the two answers must not be confused.
+  local foreign_token
+  foreign_token="$(mint_token "$SECRET" "other" "intruder" "$ISSUER" "$AUDIENCE" 3600)"
+  request POST "/api/v1/catalog/repositories" "$foreign_token" "$LAB_DIR/work/raw-repository.json" \
+    "$LAB_DIR/work/foreign-answer.json" "Content-Type: application/json"
+  [ "$STATUS" = "403" ] \
+    || die "a valid token of another account got $STATUS instead of 403 on POST /api/v1/catalog/repositories"
+  note "a valid token of another account (other/intruder) cannot create a repository -> $STATUS"
+  request GET "/repository/$RAW_REPOSITORY/$raw_path" "$foreign_token" "" "$LAB_DIR/work/foreign-blob.downloaded"
+  case "$STATUS" in
+    403|404) ;;
+    *) die "a valid token of another account got $STATUS on the Raw blob of the lab" ;;
+  esac
+  note "the same token cannot read the Raw blob of the lab -> $STATUS"
+  cmp -s "$LAB_DIR/work/foreign-blob.downloaded" "$LAB_DIR/work/hello.txt" \
+    && die "the blob of the lab was served to another account"
+
   step "The restart"
   stop_service
   start_service "$PORT"

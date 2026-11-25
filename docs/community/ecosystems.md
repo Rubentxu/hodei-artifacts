@@ -34,6 +34,9 @@ expone en tiempo de ejecución en `GET /api/v1/capabilities`:
 | `nuget` | Sí | Sí | No | `/nuget/{repo}/...` | NuGet v3; `group` rechazado en dialecto NuGet |
 | `apt` | Sí | No | No | `/apt/{repo}/...` | Índice `Packages`/`Release` + `Release.gpg` + clave pública |
 | `rpm` | Sí | No | No | `/yum/{repo}/...` | Repodata `repomd.xml` + `repomd.xml.asc` + `/key.asc` |
+| `terraform` | Sí | Sí | No | `/terraform/{repo}/...` | Network mirror de providers (proxy) y registry privado de módulos (hosted); el mirror solo habla con upstreams que sirvan ese protocolo |
+| `conan` | Sí | No | No | `/conan/{repo}/...` | Conan 2: recipes y binarios por package id (solo hosted) |
+| `galaxy` | Sí | No | No | `/galaxy/{repo}/...` | Colecciones de Ansible Galaxy por API v3 (solo hosted) |
 | `helm` | No | No | No | — | Declarado pero no servido: los charts usan `oci` (`/v2/`) |
 
 ### Límites de tamaño y política de upstream

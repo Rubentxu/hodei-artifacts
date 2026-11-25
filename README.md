@@ -20,10 +20,19 @@
 Run an isolated local lab from the release archive — starts the server, mints an ephemeral JWT, creates `raw` + `maven2` repositories, publishes & pulls packages, and verifies digests:
 
 ```bash
-sha256sum -c hodei-artifacts-api-<version>-<target>.tar.gz.sha256
-tar -xzf hodei-artifacts-api-<version>-<target>.tar.gz && cd hodei-artifacts-api-<version>-<target>
+# VERSION and TARGET select the archive: see "Where the archive comes from" below.
+VERSION=0.2.0
+TARGET=x86_64-unknown-linux-gnu
+PKG="hodei-artifacts-api-$VERSION-$TARGET"
+
+# Verify the digest of the archive, then unpack and run it.
+sha256sum -c --ignore-missing "${SUMS:-$PKG.tar.gz.sha256}"
+tar -xzf "$PKG.tar.gz" && cd "$PKG"
 ./community-quickstart.sh run
 ```
+
+**Where the archive comes from.** `VERSION` and `TARGET` are the two placeholders the block resolves (`TARGET` is `rustc -vV | sed -n 's/^host: //p'` on the machine that built it). Releases are published at <https://github.com/Rubentxu/hodei-artifacts/releases> as `hodei-artifacts-api-<version>-<target>.tar.gz` plus a `SHA256SUMS` file; for a release set `SUMS=SHA256SUMS` before the block (same `sha256sum` format as the `.tar.gz.sha256` that [`scripts/package-release.sh`](scripts/package-release.sh) writes next to the archive). The latest published release (`v0.2.0`) predates the community quickstart and does **not** ship `community-quickstart.sh`: until a newer release is published, build the archive from a checkout with `scripts/package-release.sh` (it writes `dist/hodei-artifacts-api-<version>-<target>.tar.gz` and its `.sha256`) and run the block from `dist/`. [`tests/hsp241_community_quickstart.rs`](tests/hsp241_community_quickstart.rs) extracts this very block and runs it against the archive that script produces, without `cargo` in `PATH`.
+
 
 - **Full Quickstart Guide:** [`docs/community/quickstart.md`](docs/community/quickstart.md) (or from a source checkout: `scripts/community-quickstart.sh run --archive dist/hodei-artifacts-api-<version>-<target>.tar.gz`)
 - **Ecosystem User Guides:** [`docs/community/ecosystems.md`](docs/community/ecosystems.md) — [Maven 2](docs/community/ecosystems.md#maven-2-maven2) · [npm](docs/community/ecosystems.md#npm-npm) · [PyPI](docs/community/ecosystems.md#pypi-pypi) · [OCI](docs/community/ecosystems.md#oci-oci) · [Cargo](docs/community/ecosystems.md#cargo-cargo) · [NuGet](docs/community/ecosystems.md#nuget-nuget) · [Go](docs/community/ecosystems.md#go-go) · [APT](docs/community/ecosystems.md#apt-apt) · [RPM / Yum](docs/community/ecosystems.md#rpm--yum-rpm) · [Helm-OCI](docs/community/ecosystems.md#helm-oci-oci--helm)
@@ -57,6 +66,9 @@ Derived from [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), 
 | `nuget` | Yes | Yes | No | `/nuget/{repo}/...` |
 | `apt` | Yes | No | No | `/apt/{repo}/...` |
 | `rpm` | Yes | No | No | `/yum/{repo}/...` |
+| `terraform` | Yes | Yes | No | `/terraform/{repo}/...` |
+| `conan` | Yes | No | No | `/conan/{repo}/...` |
+| `galaxy` | Yes | No | No | `/galaxy/{repo}/...` |
 | `helm` | No | No | No | Declared only; Helm charts use `oci` (`/v2/{repo}/...`) |
 
 ---
