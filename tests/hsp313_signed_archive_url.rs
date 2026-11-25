@@ -126,13 +126,18 @@ fn start_upstream(pages: HashMap<String, Vec<u8>>) -> Upstream {
     Upstream { port, asked }
 }
 
-fn the_upstream() -> Upstream {
-    let version = json!({
+/// The version document exactly as the upstream serves it.
+fn the_upstream_document() -> Value {
+    json!({
         "archives": {
             "linux_amd64": { "url": LINUX, "hashes": [HASH] },
             "darwin_arm64": { "url": DARWIN, "hashes": [HASH] },
         }
-    });
+    })
+}
+
+fn the_upstream() -> Upstream {
+    let version = the_upstream_document();
     let mut pages = HashMap::new();
     pages.insert(
         format!("/{PROVIDER}/index.json"),
@@ -655,6 +660,111 @@ fn cedar_and_the_trust_gate_decide_at_issuance() {
     let trusted = authenticated(port, "GET", &document_path("tf-trusted"), &alice());
     assert_eq!(trusted.status, 404, "{}", text(&trusted));
     assert!(!text(&trusted).contains("hodei_sig"));
+    support::stop(&mut service);
+}
+
+/// Posts to a tenant promotion endpoint and returns the status and body.
+fn promotion(port: u16, path: &str, body: &Value) -> (u16, String) {
+    let sent = next("promotion-request");
+    let into = next("promotion-response");
+    std::fs::write(&sent, body.to_string()).expect("the body is written");
+    let answer = Curl::call(
+        port,
+        "POST",
+        path,
+        &alice(),
+        Some(sent.as_path()),
+        Some("application/json"),
+        Some(&into),
+    )
+    .run();
+    let text = String::from_utf8_lossy(&std::fs::read(&into).unwrap_or_default()).into_owned();
+    (answer.status, text)
+}
+
+fn digest_of(bytes: &[u8]) -> String {
+    format!(
+        "sha256:{}",
+        hodei_evidence::ContentDigest::of_bytes(bytes).value
+    )
+}
+
+/// The URL was issued while a grant stood. The grant is revoked afterwards:
+/// redemption must not serve what the trusted channel no longer admits, and
+/// must serve it again once a grant is back.
+#[test]
+fn redemption_applies_the_trust_gate_after_a_grant_is_revoked() {
+    let upstream = the_upstream();
+    let deployment = the_deployment(&upstream);
+    let policy = {
+        let policy = hodei_trust_policy::TrustPolicy::new("default", "1", Vec::new());
+        let path = deployment.directory.path().join("trust-policy.json");
+        std::fs::write(&path, serde_json::to_vec(&policy).expect("the policy")).expect("written");
+        path.to_string_lossy().into_owned()
+    };
+    let mut extra = support::the_signing_ring();
+    extra.push(("HODEI_TRUST__POLICY_FILE".to_string(), policy));
+    let mut service = start(&deployment, &upstream, &extra);
+    let port = service.port;
+    let repository = "tf-trusted";
+    let archive_path = the_path_of(repository, LINUX);
+
+    // Nothing is admitted yet. Reading both objects through the mirror
+    // fills the cache, which is what a promotion refers to.
+    assert_eq!(the_version_document(port, repository).status, 404);
+    assert_eq!(
+        authenticated(port, "GET", &archive_path, &alice()).status,
+        404
+    );
+
+    let document_digest = digest_of(the_upstream_document().to_string().as_bytes());
+    let archive_digest = digest_of(LINUX_ZIP);
+    let promote = |path: String, digest: &str| {
+        promotion(
+            port,
+            "/api/v1/promotions",
+            &json!({ "repository": repository, "path": path, "digest": digest }),
+        )
+    };
+    let (status, body) = promote(format!("{PROVIDER}/3.2.1.json"), &document_digest);
+    assert_eq!(status, 200, "{body}");
+    let (status, body) = promote(format!("{PROVIDER}/{LINUX}"), &archive_digest);
+    assert_eq!(status, 200, "{body}");
+
+    // With the grants standing, the URL is issued and redeemed.
+    let document = the_version_document(port, repository);
+    assert_eq!(document.status, 200, "{}", text(&document));
+    let relative = the_archive_url(&document, "linux_amd64");
+    let url = the_path_of(repository, &relative);
+    let served = anonymous(port, "GET", &url);
+    assert_eq!(served.status, 200, "{}", text(&served));
+    assert_eq!(served.body, LINUX_ZIP);
+
+    // The grant of the archive is revoked after the URL was issued.
+    let (status, body) = promotion(
+        port,
+        "/api/v1/promotions/revoke",
+        &json!({
+            "repository": repository,
+            "digest": archive_digest,
+            "reason": "withdrawn after the URL was issued",
+        }),
+    );
+    assert_eq!(status, 200, "{body}");
+    let refused = anonymous(port, "GET", &url);
+    assert!(
+        matches!(refused.status, 403 | 404),
+        "a revoked digest was served through a live URL: {} {}",
+        refused.status,
+        text(&refused)
+    );
+    assert_ne!(refused.body, LINUX_ZIP);
+
+    // A new grant reopens it for the very same URL.
+    let (status, body) = promote(format!("{PROVIDER}/{LINUX}"), &archive_digest);
+    assert_eq!(status, 200, "{body}");
+    let reopened = anonymous(port, "GET", &url);
+    assert_eq!(reopened.status, 200, "{}", text(&reopened));
     support::stop(&mut service);
 }
 
