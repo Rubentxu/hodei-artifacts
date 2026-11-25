@@ -337,8 +337,8 @@ fn guides_have_required_metadata_and_no_insecure_production_advice() {
     for rel_path in ["README.md", "README.es.md", "docs/community/ecosystems.md"] {
         let text = fs::read_to_string(root.join(rel_path)).expect(rel_path);
         assert!(
-            text.contains("UAT-OPERATIONS.md") && text.contains("hodei-recovery"),
-            "{rel_path} must link backup/restore operations (UAT-OPERATIONS.md / hodei-recovery)"
+            text.contains("UAT-OPERATIONS.md"),
+            "{rel_path} must link backup/restore operations (UAT-OPERATIONS.md)"
         );
         assert!(
             text.contains("package-release.sh"),

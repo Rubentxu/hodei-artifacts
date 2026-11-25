@@ -1,5 +1,10 @@
 # Scope de cuenta en el CRUD IAM
 
+> **Herramientas retiradas (HSP-314 F4).** `ensure-iam-index`, `backfill-iam-scope`
+> y la suite `iam_backfill` operaban sobre el motor embebido y ya no existen. Las
+> secciones que las describen quedan como registro histórico del adaptador
+> SurrealDB; el aislamiento por cuenta del handler no cambia.
+
 El gate administrativo inserta el `VerifiedContext` en la petición. Los handlers IAM usan `context.account()` como scope obligatorio; ningún campo del body puede elegir la cuenta.
 
 ## Contrato

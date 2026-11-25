@@ -11,8 +11,8 @@ verdad es [`src/config.rs`](../../src/config.rs); si algo de aquí discrepa del
 código, manda el código.
 
 > **Cómo se verificó.** Los comportamientos marcados como *(verificado)* se
-> ejecutaron con el binario `hodei-artifacts-api` y con `hodei-recovery`
-> compilados de este repositorio, sobre directorios temporales. El resto está
+> ejecutaron con el binario `hodei-artifacts-api`
+> compilado de este repositorio, sobre directorios temporales. El resto está
 > citado de `src/config.rs`.
 
 ## 1. Cómo se carga la configuración

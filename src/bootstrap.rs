@@ -139,13 +139,11 @@ pub async fn bootstrap(
 }
 
 /// HSP-213: la respuesta del binario productivo al perfil embebido antiguo.
-/// Nombra la retirada, el destino (la autoridad externa) y la herramienta
-/// que aún lee el almacén local durante la ventana de migración.
+/// Nombra la retirada y el destino (la autoridad externa).
 pub const LEGACY_PROFILE_REFUSAL: &str = "the embedded engine (SurrealDB over RocksDB) is \
 retired from the production binary (HSP-213): declare a [graph] section so the external \
-authority is the single source of truth, or use the legacy tool surface (`hodei-recovery`, \
-built with --features legacy) to read and migrate an existing local store while the \
-migration window stays open (window opened 2026-11-22)";
+authority is the single source of truth; the embedded-store operator tools were retired \
+in HSP-314 F4, so migrate the local store with a release that still shipped them";
 
 /// Bootstrap the deployment whose authority is the embedded engine.
 ///
@@ -201,13 +199,12 @@ async fn bootstrap_embedded_profile(
         Ok(true) => {}
         Ok(false) => warn!(
             "⚠️  The policy account index is missing. The IAM listing still isolates by account, \
-             but it scans the table. Stop the service and run `ensure-iam-index` from the legacy \
-             tool package (HSP-213: it no longer ships with the service) to declare it; from a \
-             source checkout: `cargo run --features legacy --bin ensure-iam-index -- --db <path>`."
+             but it scans the table. The index command (`ensure-iam-index`) was \
+             retired in HSP-314 F4."
         ),
         Err(error) => warn!(
-            "⚠️  The policy account index could not be checked: {}. Stop the service and run \
-             `ensure-iam-index` to declare it.",
+            "⚠️  The policy account index could not be checked: {}. The index command was \
+             retired in HSP-314 F4.",
             error
         ),
     }

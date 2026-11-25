@@ -154,9 +154,9 @@ infer = "0.19.0"
 # feature `legacy`. HSP-314 F2: `legacy` ya NO es el defecto. El build por
 # defecto es el perfil productivo: no enlaza ni surrealdb ni librocksdb, y
 # un perfil sin `[graph]` se rechaza con el mensaje de migracion. Las
-# suites historicas y las herramientas de legado (el motor embebido, hasta
-# F4) se construyen con `--features legacy`; la etapa `legacy` de
-# pipeline.kts las ejecuta.
+# suites historicas (el motor embebido, hasta F4) se construyen con
+# `--features legacy`; la etapa `legacy` de pipeline.kts las ejecuta. Las
+# herramientas de operacion legado se retiraron en F4.
 [features]
 default = []
 legacy = [
@@ -170,33 +170,6 @@ legacy = [
 ]
 # Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
 vendored-openssl = ["dep:openssl"]
-
-# Los comandos de legado hablan con el motor embebido: no existen en una
-# construccion productiva.
-[[bin]]
-name = "ensure-iam-index"
-path = "src/bin/ensure-iam-index.rs"
-required-features = ["legacy"]
-
-[[bin]]
-name = "ensure-graph-index"
-path = "src/bin/ensure-graph-index.rs"
-required-features = ["legacy"]
-
-[[bin]]
-name = "backfill-iam-scope"
-path = "src/bin/backfill-iam-scope.rs"
-required-features = ["legacy"]
-
-[[bin]]
-name = "hodei-recovery"
-path = "src/bin/hodei-recovery.rs"
-required-features = ["legacy"]
-
-[[bin]]
-name = "perf_lab"
-path = "src/bin/perf_lab.rs"
-required-features = ["legacy"]
 
 [package]
 name = "hodei-artifacts-api"
@@ -212,9 +185,7 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 # top-level directory carries the binaries under `bin/`. Signature and SHA256
 # verification is the job of scripts/install.sh; binstall fetches the same asset.
 # HSP-314: the tarball carries `bin/hodei-artifacts-api` only. The legacy
-# operator tools (ensure-iam-index, ensure-graph-index, backfill-iam-scope,
-# hodei-recovery, perf_lab) are `required-features = ["legacy"]` and ship in
-# scripts/package-legacy-tools.sh's own archive, never in this one.
+# operator tools were retired in HSP-314 F4.
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
 bin-dir = "{ name }-{ version }-{ target }/bin/{ bin }{ binary-ext }"

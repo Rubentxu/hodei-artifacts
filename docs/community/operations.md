@@ -19,7 +19,7 @@ inventados.
 | Verificar un release | Disponible | [`scripts/verify-release.sh`](../../scripts/verify-release.sh) |
 | Firma de release con clave propia | Disponible | [`scripts/package-oci.sh`](../../scripts/package-oci.sh) (`RELEASE_GPG_HOME`, `RELEASE_GPG_KEY_ID`) |
 | Clave OpenPGP de APT y RPM | Parcial | `HODEI_METADATA_SIGNER_ARMOR`; no hay orden que la genere ni la rote |
-| Copia, verificación, restauración y reparación | Disponible | `hodei-recovery` |
+| Copia, verificación, restauración y reparación | Retirado (HSP-314 F4) | Dgraph y bucket S3 (sección 4) |
 | Actualización | Parcial | Secuencia manual de órdenes existentes |
 | Rollback, copia en caliente, rotación con solape | No disponible todavía | Ver secciones 3.3, 4.3 y 5.2 |
 
@@ -254,14 +254,8 @@ repositorio APT o RPM real con estas claves):
 GNUPGHOME=/ruta/al/llavero gpg --armor --export-secret-keys <huella> > hub-signer.asc
 ```
 
-**B. Con `hodei-recovery`.** La orden `bundle export --signing-key RUTA` crea
-`RUTA` con una clave secreta blindada **la primera vez** que se usa y la reutiliza
-después (`load_or_create_signer` en
-[`src/bin/hodei-recovery.rs`](../../src/bin/hodei-recovery.rs)). Su propósito es
-firmar la cápsula OCI de un paquete exportado, no el hub; usarla como fuente
-de la clave del hub es un efecto lateral, y la orden además exige una cuenta y un
-repositorio reales (con uno inexistente crea el fichero y termina con código 2).
-Prefiere la vía A.
+La orden `hodei-recovery bundle export --signing-key` que generaba una clave
+como efecto lateral se retiró en HSP-314 F4: usa la vía A.
 
 Después, pasa el contenido del fichero al servicio:
 
@@ -270,8 +264,8 @@ HODEI_METADATA_SIGNER_ARMOR="$(cat hub-signer.asc)" hodei-artifacts-api
 ```
 
 Guarda `hub-signer.asc` como un secreto (permisos `600`, fuera del repositorio y
-fuera de la copia de seguridad de datos: `hodei-recovery backup` copia el
-catálogo y los bytes, no la clave del hub ni la configuración).
+fuera de la copia de seguridad de datos: esa copia cubre el catálogo y los
+bytes, no la clave del hub ni la configuración).
 
 ### 3.3 Rotar la clave
 
@@ -295,62 +289,14 @@ procedimiento de revocación.
 
 ## 4. Copia de seguridad, restauración y reparación
 
-Los realiza el binario `hodei-recovery` (los valores por defecto de `--db`,
-`--cas`, `--namespace` y `--database` salen de la configuración del servicio,
-ver [`configuration.md`](configuration.md)). El contrato completo, las pruebas y
-los límites están en la sección RECOVERY de
-[`UAT-OPERATIONS.md`](../../uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación).
-
-```bash
-hodei-recovery --help
-hodei-recovery [--db RUTA] [--cas RUTA] [--json] backup --to DIR
-hodei-recovery verify DIR
-hodei-recovery [--db RUTA] [--cas RUTA] restore --from DIR
-hodei-recovery [--db RUTA] [--cas RUTA] scrub
-hodei-recovery [--db RUTA] [--cas RUTA] repair --from DIR
-```
-
-Códigos de salida: `0` sano, `1` daño encontrado o blobs excluidos, `2` error.
-
-### 4.1 Copia
-
-> **Solo motor embebido (`legacy`).** `hodei-recovery` y su base RocksDB
-> pertenecen al motor embebido, que ya no está en el binario productivo. Se
-> distribuye en el archivo de herramientas de legado
-> (`scripts/package-legacy-tools.sh`) hasta HSP-314 F4. En el perfil de grafo la
-> copia es la de Dgraph (`deploy/dgraph/README.md`) y la del bucket S3.
-
-1. **Detén el servicio.** RocksDB bloquea la base: no hay copia en caliente.
-2. El directorio del almacén de contenido tiene que existir.
-3. `hodei-recovery --db <rocksdb> --cas <cas> backup --to <dir-nuevo>`. La copia
-   se escribe en un directorio temporal y se publica con un renombrado
-   atómico.
-4. `hodei-recovery verify <dir>` comprueba el manifiesto, los metadatos y cada
-   blob, sin escribir.
-
-### 4.2 Restauración
-
-Solo sobre una instalación **limpia** (base y almacén vacíos):
-
-```bash
-hodei-recovery --db <rocksdb-nueva> --cas <cas-nuevo> restore --from <dir>
-```
-
-Hace al final un `scrub` e informa. Sobre una base con datos se niega
-(`the destination is not clean: the database already has tables`) y no
-toca nada.
-
-`scrub` informa de blobs corruptos, referencias rotas y huérfanos, y no
-repara; `repair --from DIR` restaura desde una copia verificada los blobs
-corruptos o ausentes y deja el corrupto en `quarantine/`.
-
-**Qué se ejecutó (verificado, con un registro vacío):** `--help`, `backup`
-(`backup written to ...: 0 blobs, 0 excluded`), `verify` (`the backup is
-sound`), `restore` en directorios nuevos (`restored 0 blobs ...`), una segunda
-restauración sobre la misma base (rechazada, código 2), `repair` y
-`scrub --json`. Con el almacén de contenido inexistente `backup` falla con
-`the content store ... does not exist`. La restauración con datos reales y los
-tiempos de RPO y RTO están medidos en el UAT enlazado, no repetidos aquí.
+> **Herramienta retirada (HSP-314 F4).** `hodei-recovery` operaba sobre el motor
+> embebido (RocksDB), que ya no está en el producto, y se eliminó con su
+> archivo de herramientas. En el perfil de grafo la copia es la de Dgraph
+> ([`deploy/dgraph/README.md`](../../deploy/dgraph/README.md)) y la del bucket S3;
+> el scrub corre por HTTP (`GET /api/v1/scrub`). El contrato histórico de la
+> orden está en la sección RECOVERY de
+> [`UAT-OPERATIONS.md`](../../uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación),
+> solo como registro.
 
 ### 4.3 Estado: no disponible todavía
 
@@ -371,8 +317,7 @@ La secuencia ya figura en la sección 3 de [`ecosystems.md`](ecosystems.md);
 cada paso es una orden documentada arriba:
 
 1. Detén el servicio `hodei-artifacts-api`.
-2. `hodei-recovery backup --to <dir>` y `hodei-recovery verify <dir>`
-   (sección 4).
+2. Haz la copia de Dgraph y del bucket S3 (sección 4).
 3. Obtén el paquete nuevo y compruébalo: `sha256sum -c <paquete>.sha256` y, si
    hay release completo, `scripts/verify-release.sh <dist>` (sección 1). Un
    paquete se produce con [`scripts/package-release.sh`](../../scripts/package-release.sh).

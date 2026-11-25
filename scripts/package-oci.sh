@@ -96,7 +96,7 @@ run_syft() {
 # Build portable Linux binary targeting Debian Bookworm glibc (2.36) with
 # vendored OpenSSL so the runtime image needs no host-specific libssl.so.4.
 # Only the production API binary is built and staged for the OCI image
-# (no legacy migration binaries such as ensure-iam-index or ensure-graph-index).
+# (the legacy operator binaries were retired in HSP-314 F4).
 if [ "$ARCH" != "$HOST_ARCH" ] && ! command -v cargo-zigbuild >/dev/null 2>&1; then
   echo "error: building $ARCH on a $HOST_ARCH host needs cargo-zigbuild" >&2
   exit 1

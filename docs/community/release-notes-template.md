@@ -60,8 +60,7 @@ escribe "Sin cambios incompatibles"._
 _Desde la versión <anterior>. Sigue la secuencia de
 [`operations.md`](operations.md), sección "Actualización y rollback"._
 
-1. Detén el servicio y haz una copia verificada (`hodei-recovery backup` y
-   `hodei-recovery verify`).
+1. Detén el servicio y haz una copia verificada (Dgraph y bucket S3).
 2. Verifica el release (sección siguiente).
 3. Aplica los cambios de configuración de "Cambios incompatibles".
 4. Despliega el paquete nuevo y arranca el servicio.

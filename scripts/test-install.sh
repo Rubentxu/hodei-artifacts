@@ -38,8 +38,7 @@ build_bundle() {
   local export_fprs=(${EXPORT_FPRS:-$FPR})
   rm -rf "$dir" "$WORK/pkg"
   mkdir -p "$dir" "$WORK/pkg/$PKG/bin" "$WORK/pkg/$PKG/config"
-  # HSP-314: the release ships the service alone (the legacy operator tools
-  # live in scripts/package-legacy-tools.sh); hodei-aux stands in for any
+  # HSP-314: the release ships the service alone; hodei-aux stands in for any
   # extra file under bin/ so the multi-file install path stays covered.
   for b in hodei-artifacts-api hodei-aux; do
     printf '#!/bin/sh\necho %s\n' "$b" > "$WORK/pkg/$PKG/bin/$b"

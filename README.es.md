@@ -48,7 +48,7 @@ tar -xzf "$PKG.tar.gz" && cd "$PKG"
 ## Por qué hodei-artifacts
 
 - **Seguridad *fail-closed* por defecto:** la superficie administrativa (`/api/v1` IAM, políticas, esquemas, playground) está cerrada por defecto (`admin_api_enabled = false`); las rutas de negocio exigen JWT Bearer verificado y políticas Cedar ABAC por repositorio.
-- **Direccionado por contenido y auditable:** hub de blobs deduplicado por SHA-256 (`hodei-hub` con CAS local o backend compatible con S3), registro de auditoría de seguridad y CLI `hodei-recovery` para copia, restauración y verificación (`scrub`).
+- **Direccionado por contenido y auditable:** hub de blobs deduplicado por SHA-256 (`hodei-hub` con CAS local o backend compatible con S3), registro de auditoría de seguridad y `scrub` por HTTP.
 - **10 ecosistemas de paquetes en un solo binario:** superficies de protocolo nativas para `raw`, `oci`, `maven2`, `npm`, `pypi`, `cargo`, `go`, `nuget`, `apt` y `rpm` (además de charts Helm sobre OCI), sin JVM ni pausas de GC.
 - **Gobierno estricto de dirección pública:** `public_base_url` y `trusted_proxies` se controlan exclusivamente por configuración, nunca por cabeceras `Host` o `X-Forwarded-*` no confiables.
 
@@ -84,7 +84,7 @@ Derivada de [`RepositoryFormat::served()`](crates/hodei-catalog/src/model.rs), [
 - **Referencia de configuración:** [`docs/community/configuration.md`](docs/community/configuration.md) · **Operación:** [`docs/community/operations.md`](docs/community/operations.md) · **Plantilla de notas de release:** [`docs/community/release-notes-template.md`](docs/community/release-notes-template.md)
 - **Superficie administrativa:** [`docs/security/admin-surface.md`](docs/security/admin-surface.md) y [`docs/security/production-auth.md`](docs/security/production-auth.md)
 - **Acceso a repositorios y eventos de auditoría:** [`docs/security/repository-read.md`](docs/security/repository-read.md) y [`docs/security/audit-events.md`](docs/security/audit-events.md)
-- **Copia de seguridad, restauración, scrub y reparación (`hodei-recovery`):** [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación)
+- **Copia de seguridad y restauración:** copias de Dgraph y del bucket S3; la herramienta `hodei-recovery` se retiró en HSP-314 F4 (historia en [`uat/UAT-OPERATIONS.md`](uat/UAT-OPERATIONS.md#recovery--copia-restauración-scrub-y-reparación))
 - **Actualización y empaquetado de release:** [`scripts/package-release.sh`](scripts/package-release.sh) y [`docs/community/ecosystems.md`](docs/community/ecosystems.md#3-operaciones-copia-de-seguridad-restauración-y-actualización)
 - **Visión general de arquitectura y seguridad:** [`docs/architecture.md`](docs/architecture.md), [`docs/security.md`](docs/security.md)
 
