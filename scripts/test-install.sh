@@ -135,6 +135,41 @@ expect_reject "$WORK/t5" "missing signature" "bundle asset missing"
 build_bundle "$WORK/t6" "../escape"
 expect_reject "$WORK/t6" "path traversal in tarball" "unsafe path"
 
+# 9b. macOS portability: no sha256sum in PATH, only `shasum`. A synthetic PATH
+#     links every tool of /usr/bin except sha256sum, and offers `shasum` (the
+#     real one when present, otherwise a wrapper over the real sha256sum that
+#     speaks `shasum -a 256`). The digest check must still pass for a good
+#     bundle and still fail for a tampered one.
+NOSHA="$WORK/nosha-bin"
+mkdir -p "$NOSHA"
+for f in /usr/bin/*; do
+  [ "$(basename "$f")" = "sha256sum" ] || ln -s "$f" "$NOSHA/$(basename "$f")" 2>/dev/null || true
+done
+if [ ! -e "$NOSHA/shasum" ]; then
+  REAL_SHA256SUM="$(command -v sha256sum)"
+  # shellcheck disable=SC2016 # literal wrapper script, expanded when it runs
+  printf '#!/bin/sh\n[ "$1" = "-a" ] && [ "$2" = "256" ] || exit 2\nshift 2\nexec %s "$@"\n' "$REAL_SHA256SUM" > "$NOSHA/shasum"
+  chmod 0755 "$NOSHA/shasum"
+fi
+[ -x "$NOSHA/shasum" ] || fail "synthetic PATH lacks shasum"
+if PATH="$NOSHA" command -v sha256sum >/dev/null 2>&1; then fail "synthetic PATH still has sha256sum"; fi
+build_bundle "$WORK/good"
+rm -rf "$WORK/nosha"
+PATH="$NOSHA" /usr/bin/env bash "$INSTALL" --bundle-dir "$WORK/good" --target "$TARGET" \
+  --bin-dir "$WORK/nosha/bin" --config-dir "$WORK/nosha/cfg" >/dev/null \
+  || fail "installer failed without sha256sum (shasum fallback)"
+[ -x "$WORK/nosha/bin/hodei-artifacts-api" ] || fail "no binary installed via the shasum fallback"
+ok "installer verifies SHA-256 with the shasum fallback when sha256sum is absent"
+build_bundle "$WORK/t7"; echo x >> "$WORK/t7/$PKG.tar.gz"
+rm -rf "$WORK/nosha-rej"
+if out="$(PATH="$NOSHA" /usr/bin/env bash "$INSTALL" --bundle-dir "$WORK/t7" --target "$TARGET" \
+  --bin-dir "$WORK/nosha-rej/bin" --config-dir "$WORK/nosha-rej/cfg" 2>&1)"; then
+  fail "shasum fallback accepted a tampered tarball"
+fi
+echo "$out" | grep -q "checksum mismatch" || fail "shasum fallback: expected checksum mismatch in: $out"
+[ ! -e "$WORK/nosha-rej/bin" ] || fail "shasum fallback installed files despite the mismatch"
+ok "tampered tarball still rejected with the shasum fallback"
+
 # 10. Homebrew formula from the manifest: real URL, version and sha256.
 build_bundle "$WORK/good"
 SHA="$(sha256sum "$WORK/good/$PKG.tar.gz" | cut -d' ' -f1)"

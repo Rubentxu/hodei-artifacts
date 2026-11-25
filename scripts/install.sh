@@ -69,9 +69,19 @@ if [ -n "$BUNDLE_DIR" ] && [ ! -d "$BUNDLE_DIR" ]; then
   die "bundle directory not found: $BUNDLE_DIR"
 fi
 
-for tool in tar sha256sum gpg gpgv python3; do
+for tool in tar gpg gpgv python3; do
   command -v "$tool" >/dev/null 2>&1 || die "required tool not found: $tool"
 done
+
+# SHA-256 digest of a file. GNU coreutils ships sha256sum; macOS ships only
+# shasum, so fall back to `shasum -a 256` when sha256sum is absent.
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256_of() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  die "required tool not found: sha256sum (or shasum)"
+fi
 
 # --- Platform detection -----------------------------------------------------
 
@@ -186,10 +196,10 @@ verify_sig "$STAGE/${MANIFEST}.asc" "$STAGE/$MANIFEST" "manifest"
 echo "==> verifying SHA-256"
 expected="$(grep -E "^[0-9a-f]{64}  ${TARBALL}$" "$STAGE/SHA256SUMS" | head -n 1 | cut -d' ' -f1 || true)"
 [ -n "$expected" ] || die "SHA256SUMS does not list $TARBALL"
-actual="$(sha256sum "$STAGE/$TARBALL" | cut -d' ' -f1)"
+actual="$(sha256_of "$STAGE/$TARBALL")"
 [ "$actual" = "$expected" ] || die "checksum mismatch for $TARBALL"
 manifest_sha="$(grep -E "^[0-9a-f]{64}  ${MANIFEST}$" "$STAGE/SHA256SUMS" | cut -d' ' -f1 || true)"
-[ "$(sha256sum "$STAGE/$MANIFEST" | cut -d' ' -f1)" = "$manifest_sha" ] || die "checksum mismatch for $MANIFEST"
+[ "$(sha256_of "$STAGE/$MANIFEST")" = "$manifest_sha" ] || die "checksum mismatch for $MANIFEST"
 
 python3 -I - "$STAGE/$MANIFEST" "$TARBALL" "$expected" <<'PY' || die "manifest does not match the tarball"
 import json, sys
