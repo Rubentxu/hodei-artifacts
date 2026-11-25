@@ -284,6 +284,18 @@ async fn read_route(
             let records =
                 assets_under(state, context, repository, &reference.asset_prefix()).await?;
             let mut entries = the_version_entries(&reference, &records);
+            // A collection nobody published has no versions page: an
+            // empty 200 would tell the client the collection exists.
+            if entries.is_empty() {
+                return Err(Failure::the_failure(
+                    StatusCode::NOT_FOUND,
+                    "not_found",
+                    &format!(
+                        "the collection {}.{} is not in this repository",
+                        reference.namespace, reference.name
+                    ),
+                ));
+            }
             galaxy::the_sorted_versions(&mut entries);
             let page = galaxy::the_page_of(read.query);
             let start = page.offset.min(entries.len());
