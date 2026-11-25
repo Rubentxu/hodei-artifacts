@@ -99,6 +99,7 @@ pipeline {
                 sh(
                     "cargo test --workspace --lib --bins " + listOf(
                         "--test authorization_isolation",
+                        "--test hsp314_cedar_artifact_schema",
                         "--test outbox_flow",
                         "--test planned_isolation",
                         "--test architecture_fitness",
