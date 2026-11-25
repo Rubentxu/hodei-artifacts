@@ -228,7 +228,7 @@ fn the_bound_port(log: &Path) -> Option<u16> {
 ///
 /// El formato del log puede traer códigos de color, y un puerto con un
 /// `\u{1b}[0m` pegado no se puede leer como número.
-fn without_the_colors(text: &str) -> String {
+pub fn without_the_colors(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());
     let mut characters = text.chars();
     while let Some(character) = characters.next() {

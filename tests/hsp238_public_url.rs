@@ -482,3 +482,192 @@ fn a_query_with_a_credential_does_not_travel_in_the_urls() {
         "the host of the client travelled in the tarball: {tarball}"
     );
 }
+
+/// The query of a request that carries a credential, and a hostile origin.
+const THE_SECRET_QUERY: &str = "?token=secret&access_token=secret";
+
+/// A credential in the query does not travel in the metadata of PyPI, NuGet
+/// and Cargo.
+///
+/// The same negative that npm has, for the other formats that announce URLs:
+/// the document is read whole, so a secret reflected anywhere in it (and not
+/// only in the field that holds the URL) turns the test red.
+#[test]
+fn a_query_with_a_credential_does_not_travel_in_pypi_nuget_and_cargo() {
+    let (deployment, _service, port) = the_deployment(&[]);
+    let dir = deployment.directory.path();
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let hostile = [
+        ("x-forwarded-host", "evil.example"),
+        ("x-forwarded-proto", "https"),
+        (
+            "accept",
+            "application/vnd.pypi.simple.v1+json, application/vnd.pypi.simple.v1+html;q=0.1",
+        ),
+    ];
+    let expected = format!("http://127.0.0.1:{port}");
+
+    for (format, path, credential) in [
+        (
+            "pypi",
+            format!("/pypi/pypi-hosted/simple/labpkg/{THE_SECRET_QUERY}"),
+            token.clone(),
+        ),
+        (
+            "nuget",
+            format!("/nuget/nuget-hosted/index.json{THE_SECRET_QUERY}"),
+            String::new(),
+        ),
+        (
+            "cargo",
+            format!("/cargo/cargo-hosted/config.json{THE_SECRET_QUERY}"),
+            token.clone(),
+        ),
+    ] {
+        let answer = call(dir, port, "GET", &path, &credential, &hostile, None);
+        assert_eq!(answer.status, 200, "{format}: {}", the_text(&answer));
+        let text = the_text(&answer);
+        assert!(
+            text.contains(&expected),
+            "{format}: the metadata does not announce {expected}: {text}"
+        );
+        for leaked in ["secret", "token=", "evil.example"] {
+            assert!(
+                !text.contains(leaked),
+                "{format}: the metadata reflects `{leaked}`: {text}"
+            );
+        }
+    }
+}
+
+/// The trace of a request holds neither its query nor its `Host`.
+///
+/// The service logs every request, and a log is a place where a credential
+/// stays: the span names the path and nothing else.
+#[test]
+fn the_trace_holds_neither_the_query_nor_the_hostile_host() {
+    let (deployment, _service, port) = the_deployment(&[]);
+    let dir = deployment.directory.path();
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let hostile = [
+        ("host", "evil.example"),
+        ("x-forwarded-host", "evil.example"),
+    ];
+
+    // The request must reach the trace layer even if it is refused.
+    for path in [
+        "/npm/npm-hosted/widget?token=secret",
+        "/pypi/pypi-hosted/simple/labpkg/?token=secret",
+        "/cargo/cargo-hosted/config.json?token=secret",
+        "/v2/?token=secret",
+    ] {
+        call(dir, port, "GET", path, &token, &hostile, None);
+    }
+    // And a request with a Host that is an authority, so that it is served.
+    let served = call(
+        dir,
+        port,
+        "GET",
+        "/npm/npm-hosted/widget?token=secret",
+        &token,
+        &[("x-forwarded-host", "evil.example")],
+        None,
+    );
+    assert_eq!(served.status, 200, "{}", the_text(&served));
+
+    // The trace is written as the response goes out: wait for the last line.
+    let mut log = String::new();
+    for _ in 0..50 {
+        log = support::without_the_colors(&deployment.the_log());
+        if log.matches("uri: /npm/npm-hosted/widget").count() >= 2 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        log.contains("uri: /npm/npm-hosted/widget"),
+        "the trace does not name the request, so the test proves nothing:\n{log}"
+    );
+    for leaked in ["secret", "token=", "evil.example"] {
+        assert!(!log.contains(leaked), "the trace holds `{leaked}`:\n{log}");
+    }
+}
+
+/// A raw request, as a socket sees it: the answer in full.
+fn raw_request(port: u16, request: &[u8]) -> String {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("the connection");
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .expect("the timeout");
+    stream.write_all(request).expect("the request");
+    let mut answer = Vec::new();
+    // The service closes the connection after a malformed request, and the
+    // others carry `Connection: close`; a timeout ends what is left.
+    let _ = stream.read_to_end(&mut answer);
+    String::from_utf8_lossy(&answer).into_owned()
+}
+
+/// The status line of a raw answer.
+fn the_status_of(answer: &str) -> u16 {
+    answer
+        .split_whitespace()
+        .nth(1)
+        .and_then(|status| status.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in: {answer:?}"))
+}
+
+/// A `Host` with a control character is a 400 and is not reflected.
+///
+/// `curl` does not send a header with a line break, so the request is written
+/// to the socket by hand. The challenge of the OCI token, for a `Host` that is
+/// not an authority, says the address that the deployment knows: `localhost`.
+#[test]
+fn a_host_with_a_line_break_is_refused_without_reflection() {
+    let (deployment, _service, port) = the_deployment(&[]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+
+    // A bare CR, a CRLF folded into the value (obs-fold) and an encoded CRLF
+    // inside the value of the header. A bare LF or an unfolded CRLF ends the
+    // header, so what follows is another header and the `Host` is whole.
+    for host in [
+        "evil.example\rX-Injected: 1",
+        "evil.example\r\n X-Injected: 1",
+        "evil.example%0d%0aX-Injected: 1",
+    ] {
+        for path in ["/npm/npm-hosted/widget", "/cargo/cargo-hosted/config.json"] {
+            let request = format!(
+                "GET {path} HTTP/1.1\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\n\
+                 Connection: close\r\n\r\n"
+            );
+            let answer = raw_request(port, request.as_bytes());
+            assert_eq!(
+                the_status_of(&answer),
+                400,
+                "the host {host:?} was not refused in {path}: {answer}"
+            );
+            assert!(
+                !answer.contains("evil.example") && !answer.contains("X-Injected"),
+                "the host {host:?} was reflected in {path}: {answer}"
+            );
+        }
+    }
+
+    // A `Host` that the parser lets through but that is not an authority: the
+    // challenge says the exact address of the fallback.
+    for host in ["evil.example/path", "evil.example%0d%0aX-Injected: 1"] {
+        let request = format!("GET /v2/ HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+        let answer = raw_request(port, request.as_bytes());
+        assert_eq!(the_status_of(&answer), 401, "{host}: {answer}");
+        assert!(!answer.contains("evil.example"), "{host}: {answer}");
+        let challenge = answer
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("www-authenticate:"))
+            .unwrap_or_else(|| panic!("no challenge in: {answer}"));
+        assert!(
+            challenge.contains("realm=\"http://localhost/token\""),
+            "{host}: the realm of the challenge is not the fallback: {challenge}"
+        );
+    }
+    drop(deployment);
+}
