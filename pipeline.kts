@@ -615,5 +615,25 @@ pipeline {
                 }
             }
         }
+
+        stage("report (test cost history)") {
+            timestamps {
+                sh("mkdir -p target/reports/runs")
+                sh(
+                    "python3 scripts/test-cost-history.py record " +
+                        "--source-type pipeline " +
+                        "--stage pipeline " +
+                        "--phase execution " +
+                        "--status PASSED " +
+                        "--suite 'pipeline:full' " +
+                        "--out-dir target/reports " +
+                        "--render"
+                )
+                archiveArtifacts(
+                    artifacts = "target/reports/index.html",
+                    allowEmptyArchive = false,
+                )
+            }
+        }
     }
 }

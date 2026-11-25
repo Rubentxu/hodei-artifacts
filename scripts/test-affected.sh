@@ -303,9 +303,21 @@ while IFS=$'\t' read -r gate kind package command reason; do
     run_gate "${gate}" "${kind}" "${command}" "${reason}"
 done < "${PLAN_DIR}/plan.tsv"
 
+report_rc=0
 python3 "${PLANNER}" report \
     --plan "${PLAN_DIR}/plan.json" \
     --results "${RESULTS}" \
     --out "${REPORT_PATH}" \
     --mode run \
-    --limits "${LIMITS}"
+    --limits "${LIMITS}" || report_rc=$?
+
+if [ -f "${SCRIPT_DIR}/test-cost-history.py" ]; then
+    python3 "${SCRIPT_DIR}/test-cost-history.py" record \
+        --source-type test-affected \
+        --input "${REPORT_PATH}" \
+        --logs-dir "${PLAN_DIR}/logs" \
+        --out-dir "${GIT_ROOT}/target/reports" \
+        --render || true
+fi
+
+exit "${report_rc}"
