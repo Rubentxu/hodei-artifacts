@@ -181,6 +181,8 @@ legacy = [
     "hodei-trust-policy-storage/legacy",
     "hodei-catalog-storage/legacy",
 ]
+# Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
+vendored-openssl = ["dep:openssl"]
 
 # Los comandos de legado hablan con el motor embebido: no existen en una
 # construccion productiva.
@@ -228,11 +230,6 @@ bin-dir = "{ name }-{ version }-{ target }/bin/{ bin }{ binary-ext }"
 pkg-fmt = "tgz"
 
 
-
-[features]
-default = []
-# Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
-vendored-openssl = ["dep:openssl"]
 
 [dependencies]
 kernel = { path = "crates/kernel" }
