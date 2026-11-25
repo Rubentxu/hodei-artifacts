@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 # Manifest contract tests for charts/hodei-artifacts (HSP-264).
-# Needs helm and yq; runs kubeconform when it is installed. Never touches a cluster.
+# Needs helm, yq, python3 and curl; runs kubeconform when it is installed.
+# Never touches a cluster. Exit codes: 0 pass, 1 failure, 77 NOT_RUN (a tool is missing).
 set -euo pipefail
+[ -z "${HELM_TEST_TRACE:-}" ] || set -x
+
+for tool in helm yq python3 curl; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "NOT_RUN: $tool is not installed, the chart contract tests did not run"
+    exit 77
+  fi
+done
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 chart="$root/charts/hodei-artifacts"
@@ -62,5 +71,74 @@ if command -v kubeconform >/dev/null 2>&1; then
 else
   echo "NOT_RUN - kubeconform is not installed"
 fi
+
+# --- external profile with the in-cluster Garage enabled (HSP-269) ---
+extg=$(helm template t "$chart" -f "$chart/values-external.yaml" --set garage.enabled=true --set garage.existingSecret=hodei-s3)
+gsts='select(.kind=="StatefulSet" and .metadata.name=="t-hodei-artifacts-garage")'
+check "external+garage: Garage StatefulSet and bootstrap Job rendered" "$([ "$(q "$extg" 'select(.kind=="Job") | .metadata.name')" = t-hodei-artifacts-garage-bootstrap ] && [ "$(q "$extg" "$gsts | .metadata.name")" = t-hodei-artifacts-garage ] && echo ok || echo no)"
+check "external+garage: Garage has two volumeClaimTemplates (meta, data)" "$([ "$(q "$extg" "$gsts | [.spec.volumeClaimTemplates[].metadata.name] | join(\",\")")" = meta,data ] && echo ok || echo no)"
+check "external+garage: both Garage PVCs RWO" "$([ "$(q "$extg" "$gsts | [.spec.volumeClaimTemplates[].spec.accessModes[0]] | unique | join(\",\")")" = ReadWriteOnce ] && echo ok || echo no)"
+check "external+garage: API has no PVC and no PVC volume" "$([ -z "$(q "$extg" 'select(.kind=="PersistentVolumeClaim") | .kind')" ] && [ -z "$(q "$extg" "$dep | .spec.template.spec.volumes[]? | select(.persistentVolumeClaim) | .name")" ] && echo ok || echo no)"
+check "external+garage: no Secret rendered" "$([ -z "$(q "$extg" 'select(.kind=="Secret") | .kind')" ] && echo ok || echo no)"
+
+# --- helm package is reproducible only with SOURCE_DATE_EPOCH (HSP-269) ---
+# Without it the archive embeds the mtime of every file, so two checkouts differ.
+work=$(mktemp -d)
+double_pid=""
+cleanup() {
+  [ -z "$double_pid" ] || kill "$double_pid" 2>/dev/null || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
+sha_of_copy() { # mtime-date -> sha256 of the package built from a fresh copy with that mtime
+  local d="$work/pkg-$1"
+  mkdir -p "$d/out"
+  cp -r "$chart" "$d/hodei-artifacts"
+  find "$d/hodei-artifacts" -exec touch -d "$1" {} +
+  SOURCE_DATE_EPOCH=1700000000 helm package "$d/hodei-artifacts" -d "$d/out" >/dev/null
+  sha256sum "$d"/out/*.tgz | cut -d' ' -f1
+}
+sha_a=$(sha_of_copy 2001-01-01)
+sha_b=$(sha_of_copy 2020-05-05)
+check "helm package: identical sha256 across copies with different mtimes (SOURCE_DATE_EPOCH)" "$([ -n "$sha_a" ] && [ "$sha_a" = "$sha_b" ] && echo ok || echo no)"
+
+# --- bootstrap.sh against a local double of the Garage admin API v2 (HSP-269) ---
+script="$work/bootstrap.sh"
+q "$rg" "$job" > "$script"
+double="$root/scripts/garage-admin-double.py"
+run_bootstrap() { # label, double args... -> sets rc and leaves the request log in $work/log
+  local label=$1; shift
+  rm -f "$work/port" "$work/log"
+  python3 "$double" "$work/port" "$work/log" tok "$@" &
+  double_pid=$!
+  for _ in $(seq 100); do [ -s "$work/port" ] && break; sleep 0.1; done
+  [ -s "$work/port" ] || { echo "FAIL - $label: double did not start" >&2; fail=1; return; }
+  sed -e "s#^\( *API_BASE=\).*#\1\"http://127.0.0.1:$(cat "$work/port")\"#" \
+      -e "s#/tmp/#$work/#g" -e 's#sleep 2#sleep 0#' "$script" > "$work/run.sh"
+}
+stop_double() { kill "$double_pid" 2>/dev/null || true; wait "$double_pid" 2>/dev/null || true; double_pid=""; }
+boot() { # runs the extracted script once with the Secret values in the environment
+  GARAGE_ADMIN_TOKEN=tok BUCKET=hodei KEY_NAME=hodei LAYOUT_ZONE=dc1 LAYOUT_CAPACITY_BYTES=1000 \
+    ACCESS_KEY_ID=GK0123456789abcdef01234567 SECRET_ACCESS_KEY=s3cret sh "$work/run.sh" >"$work/out" 2>&1 && echo 0 || echo $?
+}
+count() { grep -c "$1" "$work/log" || true; }
+
+run_bootstrap "bootstrap"
+rc1=$(boot)
+mut1=$(grep -cE 'UpdateClusterLayout|ApplyClusterLayout|CreateBucket|ImportKey' "$work/log" || true)
+cp "$work/log" "$work/log1"; : > "$work/log"
+rc2=$(boot)
+check "bootstrap: first pass exits 0 and creates layout, bucket and key" "$([ "$rc1" = 0 ] && [ "$mut1" = 4 ] && echo ok || echo no)"
+check "bootstrap: 404 on bucket creates it, 404 on key imports it" "$([ "$(grep -c -E 'GET /v2/GetBucketInfo' "$work/log1")" = 1 ] && grep -q 'POST /v2/CreateBucket' "$work/log1" && grep -q 'GET /v2/GetKeyInfo' "$work/log1" && grep -q 'POST /v2/ImportKey' "$work/log1" && echo ok || echo no)"
+check "bootstrap: second pass exits 0 without UpdateClusterLayout, CreateBucket or ImportKey" "$([ "$rc2" = 0 ] && [ "$(count -E 'UpdateClusterLayout|ApplyClusterLayout|CreateBucket|ImportKey')" = 0 ] && grep -q 'layout already applied' "$work/out" && echo ok || echo no)"
+stop_double
+
+# The fresh double answers 404 to GetBucketInfo and GetKeyInfo: the first pass must react to both.
+for ep in GetBucketInfo GetKeyInfo UpdateClusterLayout CreateBucket ImportKey; do
+  run_bootstrap "5xx on $ep" --fail "$ep=503"
+  rc=$(boot)
+  check "bootstrap: 5xx on $ep exits non-zero" "$([ "$rc" != 0 ] && grep -q 'failed' "$work/out" && echo ok || echo no)"
+  stop_double
+done
 
 exit "$fail"

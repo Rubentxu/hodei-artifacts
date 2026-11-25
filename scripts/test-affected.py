@@ -68,6 +68,7 @@ OPENAPI_GATE = "openapi"
 FRONTEND_GATE = "frontend"
 CI_SUITES_GATE = "ci_suites"
 COMPOSE_GATE = "compose-smoke"
+HELM_GATE = "helm-chart"
 
 
 def is_deploy_file(path):
@@ -87,6 +88,15 @@ def is_deploy_file(path):
     if path.startswith("deploy/garage/"):
         return True
     return directory == "scripts" and name.startswith("compose-smoke")
+
+
+def is_chart_file(path):
+    """Si el fichero cambia lo que `scripts/test-helm-chart.sh` verifica (HSP-269)."""
+    name = os.path.basename(path)
+    return path.startswith("charts/") or (
+        os.path.dirname(path) == "scripts"
+        and (name == "test-helm-chart.sh" or name == "garage-admin-double.py")
+    )
 
 
 def fail(message):
@@ -284,6 +294,11 @@ def detect_causes(files, packages, root):
         [path for path in files if is_deploy_file(path)],
         "el despliegue cambio (compose, Containerfile o Garage): el smoke con un runtime real "
         "es lo unico que lo verifica",
+    )
+    add(
+        "chart",
+        [path for path in files if is_chart_file(path)],
+        "el chart de Helm cambio: sus contratos de manifiestos se comprueban renderizando",
     )
     add(
         "pipeline",
@@ -520,6 +535,15 @@ def build_plan(args, files):
             "bash scripts/compose-smoke.sh",
             "el despliegue cambio: el smoke arranca los perfiles compose con podman y comprueba "
             "que el perfil externo falla cerrado (exit 77 = NOT_RUN, nunca verde)",
+        )
+    if "chart" in cause_names:
+        add_gate(
+            HELM_GATE,
+            "helm",
+            None,
+            "bash scripts/test-helm-chart.sh",
+            "el chart cambio: render de los perfiles, empaquetado reproducible y el bootstrap de "
+            "Garage contra un doble local (exit 77 = NOT_RUN, nunca verde)",
         )
     if "pipeline" in cause_names:
         if root_package is not None and any(
