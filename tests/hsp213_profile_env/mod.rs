@@ -1,11 +1,8 @@
 //! Los fixtures del perfil embebido para el contrato de HSP-213.
 //!
-//! Compartido por los dos targets del retiro —`hsp213_profile_rejection`
-//! (el binario productivo rechaza) y `hsp213_embedded_serves` (el arbol
-//! con `legacy` sigue sirviendo)— porque ambos arrancan **el mismo**
-//! despliegue: el perfil antiguo sin `[graph]`. Cada target lo declara
-//! bajo su cfg, asi que el modulo solo se compila donde hay un test que
-//! lo usa.
+//! Lo usa `hsp213_profile_rejection` (el binario productivo rechaza el
+//! perfil antiguo sin `[graph]`). El target lo declara bajo su cfg, asi que
+//! el modulo solo se compila donde hay un test que lo usa.
 //!
 //! El binario es `CARGO_BIN_EXE_hodei-artifacts-api`: el que Cargo acaba
 //! de construir **con las features de este target**. Eso es exactamente

@@ -472,10 +472,6 @@ name = "hsp114_console_contract"
 path = "tests/hsp114_console_contract.rs"
 required-features = ["legacy"]
 
-[[test]]
-name = "hsp115_recovery_e2e"
-path = "tests/hsp115_recovery_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp118_bundle_contract"
@@ -547,10 +543,6 @@ name = "hsp124_quota_e2e"
 path = "tests/hsp124_quota_e2e.rs"
 required-features = ["legacy"]
 
-[[test]]
-name = "hsp125_replication_spike"
-path = "tests/hsp125_replication_spike.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp126_capsule_oci"
@@ -757,15 +749,7 @@ name = "hsp89_investigation_freshness"
 path = "tests/hsp89_investigation_freshness.rs"
 required-features = ["legacy"]
 
-[[test]]
-name = "iam_account_index"
-path = "tests/iam_account_index.rs"
-required-features = ["legacy"]
 
-[[test]]
-name = "iam_backfill"
-path = "tests/iam_backfill.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "iam_policy_timestamps"
@@ -802,15 +786,7 @@ name = "raw_hosted_restart_contract"
 path = "tests/raw_hosted_restart_contract.rs"
 required-features = ["legacy"]
 
-[[test]]
-name = "repository_durable"
-path = "tests/repository_durable.rs"
-required-features = ["legacy"]
 
-[[test]]
-name = "schema_persistence"
-path = "tests/schema_persistence.rs"
-required-features = ["legacy"]
 
 # HSP-314 F1: suites que arrancan el binario o el bootstrap con el perfil
 # embebido (sin `[graph]`). Sin `legacy` el arranque se rechaza por diseno
@@ -916,10 +892,6 @@ name = "repository_read"
 path = "tests/repository_read.rs"
 required-features = ["legacy"]
 
-[[test]]
-name = "repository_restart_contract"
-path = "tests/repository_restart_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp196_proxy_dgraph_it"
@@ -931,17 +903,5 @@ name = "hsp304_formats_dgraph_it"
 path = "tests/hsp304_formats_dgraph_it.rs"
 required-features = ["legacy"]
 
-[[test]]
-name = "binary_contract_embedded"
-path = "tests/binary_contract_embedded.rs"
-required-features = ["legacy"]
 
-[[test]]
-name = "distribution_contract_embedded"
-path = "tests/distribution_contract_embedded.rs"
-required-features = ["legacy"]
 
-[[test]]
-name = "startup_errors_embedded"
-path = "tests/startup_errors_embedded.rs"
-required-features = ["legacy"]

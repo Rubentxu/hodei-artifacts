@@ -8,8 +8,7 @@
 //! externa, la herramienta legacy y la ventana (abierta 2026-11-22). Y no
 //! crea el path local: la negativa es previa a tocar el almacen.
 //!
-//! La otra mitad —que el mismo perfil sigue sirviendo en el arbol con
-//! `legacy`— vive en `hsp213_embedded_serves.rs`. El arreglo de features
+//! El arreglo de features
 //! esta en el crate: sin `legacy` este target declara el test, y con ella
 //! queda vacio (el binario de ese arbol no puede rechazar nada y mentir
 //! pasando seria peor que no decir nada).

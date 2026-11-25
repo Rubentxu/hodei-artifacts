@@ -9,8 +9,7 @@
 //!
 //! The boot-and-serve guarantees (P1, P2) need a metadata authority. On the
 //! graph profile they are exercised against a real Dgraph and S3 by
-//! `hsp237_profile_external_e2e`; on the embedded profile they stay in
-//! `binary_contract_embedded` (legacy). Each test owns a throwaway directory.
+//! `hsp237_profile_external_e2e`. Each test owns a throwaway directory.
 
 use std::process::Command;
 
