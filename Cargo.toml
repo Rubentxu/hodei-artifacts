@@ -293,6 +293,8 @@ dotenvy = { workspace = true }
 
 # The query of the distribution protocol, decoded.
 url = { workspace = true }
+# HMAC-SHA256 of the signed URLs, verified in constant time.
+ring = { workspace = true }
 # posix_fadvise and fsync of the performance lab: the cold scene drops the
 # pages of the content from the page cache without root (HSP-140).
 libc = "0.2"

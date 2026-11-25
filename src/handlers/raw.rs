@@ -305,11 +305,19 @@ pub(super) async fn the_repository_in(
     repository: &str,
     served: &[RepositoryFormat],
 ) -> Result<RepositoryDescriptor, RawApiError> {
+    the_repository_of(state, context.account().as_str(), repository, served).await
+}
+
+/// [`the_repository_in`] for an account that is known by its name: the
+/// capability URLs carry a signed account, not a verified principal.
+pub(super) async fn the_repository_of(
+    state: &AppState,
+    account: &str,
+    repository: &str,
+    served: &[RepositoryFormat],
+) -> Result<RepositoryDescriptor, RawApiError> {
     let (reader, _) = the_catalog(state)?;
-    let descriptor = match reader
-        .repository(context.account().as_str(), repository)
-        .await
-    {
+    let descriptor = match reader.repository(account, repository).await {
         Ok(descriptor) => descriptor,
         // Un repositorio que no está en esta cuenta no existe para esta
         // cuenta: se responde con el mismo 404 que uno que no existe
@@ -410,11 +418,19 @@ pub(super) async fn the_current_asset(
     repository: &str,
     asset_path: &str,
 ) -> Result<Option<AssetRecord>, RawApiError> {
+    the_current_asset_in(state, context.account().as_str(), repository, asset_path).await
+}
+
+/// [`the_current_asset`] for an account that is known by its name: the
+/// capability URLs carry a signed account, not a verified principal.
+pub(super) async fn the_current_asset_in(
+    state: &AppState,
+    account: &str,
+    repository: &str,
+    asset_path: &str,
+) -> Result<Option<AssetRecord>, RawApiError> {
     let (reader, _) = the_catalog(state)?;
-    match reader
-        .asset(context.account().as_str(), repository, asset_path)
-        .await
-    {
+    match reader.asset(account, repository, asset_path).await {
         Ok(asset) => Ok(Some(asset)),
         // Un asset que no esta no es un error: es lo que pasa antes de
         // la primera publicación.
@@ -763,6 +779,35 @@ pub(super) async fn the_proxy_asset_at(
     accept: Option<&str>,
     correlation: &str,
 ) -> Result<ProxyServed, RawApiError> {
+    the_proxy_asset_as(
+        state,
+        context.account().as_str(),
+        context.principal().subject().as_str(),
+        repository,
+        asset_path,
+        url,
+        accept,
+        correlation,
+    )
+    .await
+}
+
+/// [`the_proxy_asset_at`] for a caller known by account and actor names.
+///
+/// The proxy needs nothing else of the principal: the account scopes the
+/// catalog and the cache, and the actor is the name on the receipt. A
+/// capability URL carries exactly those two, signed.
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn the_proxy_asset_as(
+    state: &AppState,
+    account: &str,
+    actor: &str,
+    repository: &RepositoryDescriptor,
+    asset_path: &str,
+    url: Option<Url>,
+    accept: Option<&str>,
+    correlation: &str,
+) -> Result<ProxyServed, RawApiError> {
     use hodei_catalog::proxy_cache::{CacheDecision, CacheEntry, Context, decide, stale_allowed};
 
     use crate::proxy::cache::PathKey;
@@ -803,8 +848,7 @@ pub(super) async fn the_proxy_asset_at(
         return Err(RawApiError::NotFound);
     }
     let store = the_content_store(state)?;
-    let account = context.account().as_str();
-    let current = the_current_asset(state, context, &repository.repo_key, asset_path).await?;
+    let current = the_current_asset_in(state, account, &repository.repo_key, asset_path).await?;
 
     // La configuración se valida al crear el repositorio. Si aun así no se
     // entiende, el proxy no sale: lo que ya tiene se sirve como antes y lo
@@ -924,7 +968,6 @@ pub(super) async fn the_proxy_asset_at(
     }
 
     let (_, writer) = the_catalog(state)?;
-    let actor = context.principal().subject().as_str();
     let overwrite = current.is_some();
     let flight = plane
         .flights
@@ -1012,7 +1055,7 @@ pub(super) async fn the_proxy_asset_at(
         }
     };
 
-    let asset = the_current_asset(state, context, &repository.repo_key, asset_path)
+    let asset = the_current_asset_in(state, account, &repository.repo_key, asset_path)
         .await?
         .ok_or(RawApiError::Unavailable)?;
     Ok(ProxyServed::new(asset, status))

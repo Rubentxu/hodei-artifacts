@@ -17,6 +17,17 @@
 //!
 //! No es un registry de origen ni un module registry: aqui no se publica,
 //! y un mirror no sabe ni quiere saber de `terraform publish`.
+//!
+//! **El zip y la URL firmada.** Terraform descarga el archivo de un network
+//! mirror sin enviar credencial alguna, de modo que un hub que autentica
+//! toda lectura no podria servirlo. El documento de version que el mirror
+//! entrega a un lector autenticado declara por eso, para cada plataforma,
+//! una URL del zip firmada y de corta vida (`signed_url`): acotada a ese
+//! zip, ese repositorio y esa cuenta. Canjearla no necesita `Authorization`
+//! y no sirve para nada mas. La autorizacion (Cedar) se evalua al emitir;
+//! la puerta de confianza se aplica ademas al canjear, por digest. Sin
+//! claves de firma el documento de version falla cerrado y el mirror no
+//! emite URLs.
 
 use axum::{
     body::Body,
@@ -31,11 +42,13 @@ use hodei_catalog::{
 
 use super::raw::{
     RawApiError, apply_cache_headers, apply_common_headers, the_admission_error, the_blob_error,
-    the_content_store, the_context, the_decision, the_proxy_asset_at, the_repository_in,
+    the_content_store, the_context, the_decision, the_proxy_asset_as, the_proxy_asset_at,
+    the_repository_in, the_repository_of,
 };
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
+use crate::signed_url::{Claims, Scope};
 
 /// Lo que pasa con una peticion que no se puede servir.
 #[derive(Debug)]
@@ -44,6 +57,8 @@ pub enum Failure {
     Raw(RawApiError),
     /// Un error del protocolo del mirror.
     Terraform(TerraformError),
+    /// El mirror no puede emitir URLs de archivo: no hay clave de firma.
+    SigningUnavailable,
 }
 
 impl From<RawApiError> for Failure {
@@ -68,6 +83,12 @@ impl IntoResponse for Failure {
             Self::Terraform(_) => (
                 StatusCode::NOT_FOUND,
                 "there is nothing at that path".to_string(),
+            ),
+            // Se dice claro: es una decision del operador, no un fallo del
+            // cliente, y quien lee el log de `terraform init` debe saberlo.
+            Self::SigningUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "this mirror cannot issue archive URLs because no signing key is configured; the operator must add a key to [signing]".to_string(),
             ),
         };
         let mut response =
@@ -123,6 +144,24 @@ pub async fn handle(
             rest,
         )
         .await);
+    }
+    // A signed archive URL carries its own authority: it is the one request
+    // that arrives without a credential, and it is judged before anything
+    // else is looked at.
+    if let Some(query) = uri.query()
+        && Claims::is_present(query)
+    {
+        let correlation = correlation_id(&headers, &state.identity);
+        return redeem(
+            &state,
+            &method,
+            uri.path(),
+            query,
+            &repository_key,
+            &rest,
+            &correlation,
+        )
+        .await;
     }
     let context = the_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
@@ -180,6 +219,26 @@ fn record_outcome(
     outcome: &Result<Response, Failure>,
     correlation: &str,
 ) {
+    record_outcome_of(
+        state,
+        context.principal().subject().as_str(),
+        context.account().as_str(),
+        repository,
+        provider,
+        outcome,
+        correlation,
+    );
+}
+
+fn record_outcome_of(
+    state: &AppState,
+    actor: &str,
+    account: &str,
+    repository: &str,
+    provider: &str,
+    outcome: &Result<Response, Failure>,
+    correlation: &str,
+) {
     let result = match outcome {
         Ok(_) => AuditResult::Allowed,
         Err(Failure::Raw(RawApiError::Forbidden)) => AuditResult::Denied,
@@ -187,8 +246,8 @@ fn record_outcome(
     };
     record_audit(
         state,
-        context.principal().subject().as_str(),
-        context.account().as_str(),
+        actor,
+        account,
         "download",
         &format!("{repository}/{provider}"),
         result,
@@ -240,6 +299,232 @@ async fn read(
     )
     .await
     .map_err(the_admission_error)?;
+    // The version document is rewritten per request, so it has to be read
+    // even for a HEAD: its length and its etag are those of what is sent.
+    let issues_urls = matches!(route, Route::VersionDoc { .. });
+    let stored = if head && !issues_urls {
+        Vec::new()
+    } else {
+        the_content_store(state)?
+            .get(&served.asset.digest)
+            .await
+            .map_err(|error| the_blob_error(&error))?
+            .to_vec()
+    };
+    let (bytes, etag, no_store) = if issues_urls {
+        let document = sign_archives(state, context, repository, route, &stored)?;
+        let etag = format!("\"sha256-{}\"", hex_of_digest(&document));
+        (document, etag, true)
+    } else {
+        (
+            stored,
+            crate::raw::conditional::the_etag(&served.asset.digest),
+            false,
+        )
+    };
+    let length = if head && !issues_urls {
+        served.asset.size_bytes as usize
+    } else {
+        bytes.len()
+    };
+    let bytes = if head { Vec::new() } else { bytes };
+    let mut response = body_response(StatusCode::OK, bytes, content_type, &etag, correlation);
+    apply_cache_headers(&mut response, &Some((served.status, served.provenance)));
+    if no_store {
+        mark_no_store(&mut response);
+    }
+    if head && let Ok(value) = HeaderValue::from_str(&length.to_string()) {
+        response.headers_mut().insert(header::CONTENT_LENGTH, value);
+    }
+    Ok(response)
+}
+
+/// A response that carries a capability must not be kept by any cache.
+fn mark_no_store(response: &mut Response) {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+}
+
+fn hex_of_digest(bytes: &[u8]) -> String {
+    use sha2::Digest as _;
+    super::raw::hex_of(&sha2::Sha256::digest(bytes))
+}
+
+/// The version document, with every archive URL replaced by a signed one.
+///
+/// The upstream names each archive by a bare file name next to the document,
+/// which the protocol resolves against the URL of the document. Each of them
+/// becomes the same name with a query that grants that one read: this
+/// account, this repository, this path, for a few minutes. Anything that is
+/// not a bare archive name (an absolute URL, a path, a traversal) is not an
+/// archive of this mirror and the document is refused: serving it would
+/// send the client around the mirror, and its trust gate.
+///
+/// Without a signing key nothing is issued and the answer says why.
+fn sign_archives(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    route: &Route,
+    document: &[u8],
+) -> Result<Vec<u8>, Failure> {
+    if !state.signed_urls.is_configured() {
+        return Err(Failure::SigningUnavailable);
+    }
+    let Some((hostname, namespace, provider)) = route.provider_coordinates() else {
+        return Err(RawApiError::NotFound.into());
+    };
+    let mut value: serde_json::Value = serde_json::from_slice(document)
+        .map_err(|_| RawApiError::BadGateway("the upstream version document is not valid JSON"))?;
+    let now = chrono::Utc::now().timestamp();
+    if let Some(archives) = value
+        .get_mut("archives")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        for archive in archives.values_mut() {
+            let Some(url) = archive.get("url").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let relative = format!("{hostname}/{namespace}/{provider}/{url}");
+            let Ok(Route::ProviderFile { filename, .. }) = Route::parse(&relative) else {
+                return Err(RawApiError::BadGateway(
+                    "the upstream version document names an archive that is not a file of this mirror",
+                )
+                .into());
+            };
+            let path = format!("/terraform/{}/{relative}", repository.repo_key);
+            let claims = state
+                .signed_urls
+                .issue(
+                    &Scope {
+                        method: "GET",
+                        path: &path,
+                        repository: &repository.repo_key,
+                        account: context.account().as_str(),
+                        subject: context.principal().subject().as_str(),
+                    },
+                    now,
+                )
+                .map_err(|_| Failure::SigningUnavailable)?;
+            archive["url"] = serde_json::Value::String(format!("{filename}?{}", claims.to_query()));
+        }
+    }
+    serde_json::to_vec(&value)
+        .map_err(|_| RawApiError::BadGateway("the version document cannot be written").into())
+}
+
+/// A read with a signed archive URL, and no credential.
+///
+/// What is checked, in this order, before anything is read from the catalog
+/// or the store: the method, the signature over method, path, repository,
+/// account, principal, expiry and key, and the expiry. Every refusal is the
+/// same 403: a probe does not learn which part was wrong.
+///
+/// The authority of the request is only what the signature says: this
+/// account may read this archive of this repository now. Cedar was asked
+/// when the URL was issued; the trust gate is asked again here, by digest,
+/// so a channel that stops admitting an archive stops serving it at once.
+async fn redeem(
+    state: &AppState,
+    method: &Method,
+    path: &str,
+    query: &str,
+    repository_key: &str,
+    rest: &str,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    if method != Method::GET && method != Method::HEAD {
+        return Err(RawApiError::MethodNotAllowed(
+            "a signed archive URL only reads: the provider network mirror protocol is read-only",
+        )
+        .into());
+    }
+    let refuse = |reason: &dyn std::fmt::Display| {
+        // Never the query: it holds the signature.
+        tracing::info!(
+            target: "hodei_artifacts::signed_url",
+            repository = repository_key,
+            %reason,
+            "a signed archive URL was refused"
+        );
+        Failure::Raw(RawApiError::Forbidden)
+    };
+    let claims = Claims::parse(query).map_err(|error| refuse(&error))?;
+    state
+        .signed_urls
+        .verify(
+            method.as_str(),
+            path,
+            repository_key,
+            &claims,
+            chrono::Utc::now().timestamp(),
+        )
+        .map_err(|error| refuse(&error))?;
+    // From here on the account and the principal are the signed ones.
+    let route = Route::parse(rest)?;
+    let Route::ProviderFile { .. } = &route else {
+        // A signature is only ever issued for an archive.
+        return Err(refuse(&"the path is not an archive"));
+    };
+    let outcome = serve_archive(
+        state,
+        &claims,
+        repository_key,
+        &route,
+        method == Method::HEAD,
+        correlation,
+    )
+    .await;
+    let provider_label = route
+        .provider_coordinates()
+        .map(|(host, namespace, provider)| format!("{host}/{namespace}/{provider}"))
+        .unwrap_or_default();
+    record_outcome_of(
+        state,
+        &claims.subject,
+        &claims.account,
+        repository_key,
+        &provider_label,
+        &outcome,
+        correlation,
+    );
+    outcome
+}
+
+async fn serve_archive(
+    state: &AppState,
+    claims: &Claims,
+    repository_key: &str,
+    route: &Route,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let repository = the_repository_of(
+        state,
+        &claims.account,
+        repository_key,
+        &[RepositoryFormat::Terraform],
+    )
+    .await?;
+    if repository.mode != hodei_catalog::RepositoryMode::Proxy {
+        return Err(RawApiError::NotFound.into());
+    }
+    let served = the_proxy_asset_as(
+        state,
+        &claims.account,
+        &claims.subject,
+        &repository,
+        &route.asset_path(),
+        None,
+        Some("application/zip"),
+        correlation,
+    )
+    .await?;
+    crate::trust::admit(state, &claims.account, &repository, &served.asset.digest)
+        .await
+        .map_err(the_admission_error)?;
     let bytes = if head {
         Vec::new()
     } else {
@@ -255,8 +540,10 @@ async fn read(
     } else {
         bytes.len()
     };
-    let mut response = body_response(StatusCode::OK, bytes, content_type, &etag, correlation);
-    apply_cache_headers(&mut response, &Some((served.status, served.provenance)));
+    let mut response = body_response(StatusCode::OK, bytes, "application/zip", &etag, correlation);
+    // The provenance of the bytes is not for a holder of a capability.
+    apply_cache_headers(&mut response, &Some((served.status, None)));
+    mark_no_store(&mut response);
     if head && let Ok(value) = HeaderValue::from_str(&length.to_string()) {
         response.headers_mut().insert(header::CONTENT_LENGTH, value);
     }

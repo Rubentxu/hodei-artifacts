@@ -471,6 +471,227 @@ impl PublicUrlConfig {
     }
 }
 
+/// The signing of short-lived URLs.
+///
+/// Some clients download an archive without any credential (the Terraform
+/// CLI does so for the archive of a provider mirror). The hub answers an
+/// authenticated read with a URL for that archive alone, signed and valid
+/// for a few minutes. The signature needs a secret that **only the
+/// operator provides**: there is no default key, and nothing is derived from
+/// the JWT or JWKS material. Without a key the mirror does not issue
+/// archive URLs and says so.
+///
+/// The keys form a ring: the FIRST key signs, ALL of them verify, so a key
+/// can be rotated without cutting the URLs in flight. Every replica must be
+/// given the same ring.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SigningConfig {
+    /// The keys of the ring. The secret of a key is read from a file or from
+    /// an environment variable, never written in the configuration.
+    ///
+    /// In the environment the ring is written with indexes:
+    /// `HODEI_SIGNING__KEYS__0__ID`, `HODEI_SIGNING__KEYS__0__SECRET_ENV`.
+    ///
+    /// Default: empty, which disables the archive URLs of the mirror.
+    #[serde(default, deserialize_with = "the_signing_keys")]
+    pub keys: Vec<SigningKeyConfig>,
+    /// The lifetime of an issued URL, in seconds.
+    ///
+    /// Default: 300. Minimum: 1. Maximum: 3600.
+    #[serde(default = "the_default_signing_ttl_secs")]
+    pub ttl_secs: u64,
+}
+
+impl Default for SigningConfig {
+    fn default() -> Self {
+        Self {
+            keys: Vec::new(),
+            ttl_secs: the_default_signing_ttl_secs(),
+        }
+    }
+}
+
+fn the_default_signing_ttl_secs() -> u64 {
+    crate::signed_url::DEFAULT_TTL_SECS
+}
+
+/// The most keys a ring may hold: a ring is a rotation window, not a
+/// registry.
+const THE_MAXIMUM_SIGNING_KEYS: usize = 8;
+
+/// One key of the ring: where to read its secret, not the secret.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SigningKeyConfig {
+    /// The id of the key: 1 to 32 letters, digits, `-` or `_`. It travels
+    /// in the URLs, so it names the key and reveals nothing about it.
+    pub id: String,
+    /// A file with the secret (at least 32 bytes; surrounding whitespace is
+    /// ignored). Exactly one of `secret_file` and `secret_env`.
+    #[serde(default, skip_serializing)]
+    pub secret_file: Option<String>,
+    /// The environment variable that holds the secret. Exactly one of
+    /// `secret_file` and `secret_env`.
+    #[serde(default, skip_serializing)]
+    pub secret_env: Option<String>,
+}
+
+impl std::fmt::Debug for SigningKeyConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SigningKeyConfig")
+            .field("id", &self.id)
+            .field(
+                "secret_file",
+                &self.secret_file.as_ref().map(|_| "<redacted>"),
+            )
+            .field(
+                "secret_env",
+                &self.secret_env.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+/// The keys as a list, or as a table with numeric indexes (the shape that
+/// environment variables can express).
+fn the_signing_keys<'de, D>(deserializer: D) -> Result<Vec<SigningKeyConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Shape {
+        List(Vec<SigningKeyConfig>),
+        Indexed(std::collections::BTreeMap<String, SigningKeyConfig>),
+    }
+    match Shape::deserialize(deserializer)? {
+        Shape::List(keys) => Ok(keys),
+        Shape::Indexed(table) => {
+            let mut indexed = Vec::with_capacity(table.len());
+            for (index, key) in table {
+                let index: usize = index.parse().map_err(|_| {
+                    serde::de::Error::custom(format!(
+                        "signing key index `{index}` is not a number: write HODEI_SIGNING__KEYS__0__ID"
+                    ))
+                })?;
+                indexed.push((index, key));
+            }
+            indexed.sort_by_key(|(index, _)| *index);
+            Ok(indexed.into_iter().map(|(_, key)| key).collect())
+        }
+    }
+}
+
+impl SigningConfig {
+    /// Check the shape of the ring, without reading any secret.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        let invalid = |reason: String| {
+            ConfigError::Message(format!("Invalid signing configuration: {reason}"))
+        };
+        if !(1..=crate::signed_url::MAXIMUM_TTL_SECS).contains(&self.ttl_secs) {
+            return Err(invalid(format!(
+                "ttl_secs must be between 1 and {}, and {} was given",
+                crate::signed_url::MAXIMUM_TTL_SECS,
+                self.ttl_secs
+            )));
+        }
+        if self.keys.len() > THE_MAXIMUM_SIGNING_KEYS {
+            return Err(invalid(format!(
+                "a ring holds at most {THE_MAXIMUM_SIGNING_KEYS} keys, and {} were given",
+                self.keys.len()
+            )));
+        }
+        for (index, key) in self.keys.iter().enumerate() {
+            if !crate::signed_url::is_valid_key_id(&key.id) {
+                return Err(invalid(format!(
+                    "the key id `{}` is not valid: use 1 to 32 characters among letters, digits, `-` and `_`",
+                    key.id
+                )));
+            }
+            if self.keys[..index].iter().any(|other| other.id == key.id) {
+                return Err(invalid(format!("the key id `{}` is repeated", key.id)));
+            }
+            match (&key.secret_file, &key.secret_env) {
+                (Some(_), Some(_)) | (None, None) => {
+                    return Err(invalid(format!(
+                        "the key `{}` needs exactly one of secret_file and secret_env",
+                        key.id
+                    )));
+                }
+                (Some(file), None) if file.trim().is_empty() => {
+                    return Err(invalid(format!(
+                        "the key `{}` has an empty secret_file",
+                        key.id
+                    )));
+                }
+                (None, Some(name)) if name.trim().is_empty() => {
+                    return Err(invalid(format!(
+                        "the key `{}` has an empty secret_env",
+                        key.id
+                    )));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Read the secrets and build the ring.
+    ///
+    /// This touches the filesystem and the environment, so it runs when the
+    /// service starts and not when a configuration is validated. A key that
+    /// is named and cannot be read, or whose secret is too short, stops the
+    /// boot: a half-working ring would sign with some keys and not verify
+    /// with others. An empty ring is valid and means "no archive URLs".
+    ///
+    /// # Errors
+    ///
+    /// A message naming the key and what is wrong with it; it never
+    /// contains a secret.
+    pub fn the_ring(&self) -> Result<crate::signed_url::SignedUrls, String> {
+        self.the_ring_from(|name| env::var(name).ok())
+    }
+
+    /// [`Self::the_ring`] with the environment given as a lookup, so that a
+    /// test never has to change the environment of the process.
+    fn the_ring_from(
+        &self,
+        environment: impl Fn(&str) -> Option<String>,
+    ) -> Result<crate::signed_url::SignedUrls, String> {
+        let mut keys = Vec::with_capacity(self.keys.len());
+        for key in &self.keys {
+            let secret = match (&key.secret_file, &key.secret_env) {
+                (Some(path), None) => std::fs::read_to_string(path).map_err(|error| {
+                    format!(
+                        "the secret of the signing key `{}` cannot be read from `{path}`: {}",
+                        key.id,
+                        error.kind()
+                    )
+                })?,
+                (None, Some(name)) => environment(name).ok_or_else(|| {
+                    format!(
+                        "the secret of the signing key `{}` is not in the environment variable `{name}`",
+                        key.id
+                    )
+                })?,
+                _ => {
+                    return Err(format!(
+                        "the key `{}` needs exactly one of secret_file and secret_env",
+                        key.id
+                    ));
+                }
+            };
+            keys.push(crate::signed_url::SigningKey::new(
+                &key.id,
+                secret.trim().as_bytes(),
+            )?);
+        }
+        crate::signed_url::SignedUrls::new(keys, self.ttl_secs)
+    }
+}
+
 /// The per-account quotas.
 ///
 /// Not saying is not saying zero: every limit here is an `Option`, and
@@ -689,6 +910,10 @@ pub struct AppConfig {
     /// The egress of the remote proxy.
     #[serde(default)]
     pub proxy: ProxyConfig,
+
+    /// The keys that sign the short-lived URLs of the provider mirror.
+    #[serde(default)]
+    pub signing: SigningConfig,
 
     /// The per-account quotas: what one account may store and how much
     /// it may do at once.
@@ -1156,6 +1381,7 @@ impl AppConfig {
         self.investigation.validate()?;
         self.quota.validate()?;
         self.public_url.validate()?;
+        self.signing.validate()?;
         Ok(())
     }
 
@@ -2367,5 +2593,216 @@ bucket = "hodei-content"
             "hodei-content",
             "HODEI_CONTENT__S3__BUCKET must reach the table"
         );
+    }
+
+    fn the_signing_from(toml: &str) -> SigningConfig {
+        ::config::Config::builder()
+            .add_source(::config::File::from_str(toml, ::config::FileFormat::Toml))
+            .build()
+            .expect("the table is valid TOML")
+            .get::<SigningConfig>("signing")
+            .expect("the table deserializes into the signing configuration")
+    }
+
+    const THE_SECRET: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0";
+
+    #[test]
+    fn a_deployment_that_says_nothing_has_no_signing_key() {
+        let signing = SigningConfig::default();
+        signing.validate().expect("an empty ring is valid");
+        let ring = signing.the_ring().expect("an empty ring builds");
+        assert!(!ring.is_configured(), "no key means no archive URLs");
+        assert_eq!(ring.ttl_secs(), crate::signed_url::DEFAULT_TTL_SECS);
+    }
+
+    #[test]
+    fn the_ring_is_read_from_a_list_of_tables() {
+        let signing = the_signing_from(
+            r#"
+[signing]
+ttl_secs = 120
+keys = [
+  { id = "k2", secret_file = "/run/secrets/k2" },
+  { id = "k1", secret_env = "SIGNING_K1" },
+]
+"#,
+        );
+        signing.validate().expect("a well formed ring");
+        assert_eq!(signing.ttl_secs, 120);
+        let ids: Vec<&str> = signing.keys.iter().map(|key| key.id.as_str()).collect();
+        assert_eq!(ids, ["k2", "k1"], "the order is the order of signing");
+    }
+
+    #[test]
+    fn the_ring_is_read_from_the_environment_in_index_order() {
+        let mut given = std::collections::HashMap::new();
+        for (name, value) in [
+            ("HODEI_SIGNING__KEYS__1__ID", "old"),
+            ("HODEI_SIGNING__KEYS__1__SECRET_ENV", "SIGNING_OLD"),
+            ("HODEI_SIGNING__KEYS__0__ID", "new"),
+            ("HODEI_SIGNING__KEYS__0__SECRET_FILE", "/run/secrets/new"),
+            ("HODEI_SIGNING__TTL_SECS", "60"),
+        ] {
+            given.insert(name.to_string(), value.to_string());
+        }
+        let config = build_config(environment_source().source(Some(given)))
+            .expect("a ring written in the environment boots");
+        let ids: Vec<&str> = config
+            .signing
+            .keys
+            .iter()
+            .map(|key| key.id.as_str())
+            .collect();
+        assert_eq!(ids, ["new", "old"], "index 0 signs");
+        assert_eq!(config.signing.ttl_secs, 60);
+        assert_eq!(
+            config.signing.keys[0].secret_file.as_deref(),
+            Some("/run/secrets/new")
+        );
+    }
+
+    #[test]
+    fn a_secret_written_in_the_toml_is_refused_and_never_echoed() {
+        let error = ::config::Config::builder()
+            .add_source(::config::File::from_str(
+                &format!("[signing]\nkeys = [{{ id = \"k1\", secret = \"{THE_SECRET}\" }}]\n"),
+                ::config::FileFormat::Toml,
+            ))
+            .build()
+            .expect("valid TOML")
+            .get::<SigningConfig>("signing")
+            .expect_err("a literal secret is not a field of a key");
+        let text =
+            explain_config_error(&error, std::path::Path::new("/nonexistent"), "development");
+        assert!(!text.contains(THE_SECRET), "the secret leaked: {text}");
+    }
+
+    #[test]
+    fn the_shape_of_the_ring_is_validated() {
+        let key = |id: &str, file: Option<&str>, env: Option<&str>| SigningKeyConfig {
+            id: id.to_string(),
+            secret_file: file.map(str::to_string),
+            secret_env: env.map(str::to_string),
+        };
+        let ring = |keys: Vec<SigningKeyConfig>, ttl_secs: u64| SigningConfig { keys, ttl_secs };
+        let refused = |signing: SigningConfig, needle: &str| {
+            let error = signing.validate().expect_err("must be refused").to_string();
+            assert!(error.contains(needle), "{needle} not in {error}");
+        };
+        refused(
+            ring(vec![key("a", Some("/f"), Some("E"))], 300),
+            "exactly one",
+        );
+        refused(ring(vec![key("a", None, None)], 300), "exactly one");
+        refused(ring(vec![key("a b", Some("/f"), None)], 300), "not valid");
+        refused(ring(vec![key("", Some("/f"), None)], 300), "not valid");
+        refused(
+            ring(
+                vec![key("a", Some("/f"), None), key("a", None, Some("E"))],
+                300,
+            ),
+            "repeated",
+        );
+        refused(ring(vec![key("a", Some(" "), None)], 300), "empty");
+        refused(ring(vec![key("a", Some("/f"), None)], 0), "ttl_secs");
+        refused(
+            ring(
+                vec![key("a", Some("/f"), None)],
+                crate::signed_url::MAXIMUM_TTL_SECS + 1,
+            ),
+            "ttl_secs",
+        );
+        let many = (0..9)
+            .map(|index| key(&format!("k{index}"), Some("/f"), None))
+            .collect();
+        refused(ring(many, 300), "at most");
+        ring(
+            vec![key("a", Some("/f"), None)],
+            crate::signed_url::MAXIMUM_TTL_SECS,
+        )
+        .validate()
+        .expect("the maximum lifetime is allowed");
+    }
+
+    #[test]
+    fn the_secrets_are_read_from_a_file_or_the_environment() {
+        let directory = tempfile::tempdir().expect("a directory");
+        let file = directory.path().join("signing-key");
+        std::fs::write(&file, format!("{THE_SECRET}\n")).expect("the key file");
+        let signing = SigningConfig {
+            keys: vec![
+                SigningKeyConfig {
+                    id: "from-env".into(),
+                    secret_file: None,
+                    secret_env: Some("A_SECRET_VARIABLE".into()),
+                },
+                SigningKeyConfig {
+                    id: "from-file".into(),
+                    secret_file: Some(file.display().to_string()),
+                    secret_env: None,
+                },
+            ],
+            ttl_secs: 300,
+        };
+        let ring = signing
+            .the_ring_from(|name| {
+                (name == "A_SECRET_VARIABLE").then(|| format!("  {THE_SECRET}\n"))
+            })
+            .expect("both secrets are readable");
+        assert!(ring.is_configured());
+        let text = format!("{ring:?} {signing:?}");
+        assert!(!text.contains(THE_SECRET), "{text}");
+        assert!(!text.contains("A_SECRET_VARIABLE"), "{text}");
+        assert!(!text.contains(&file.display().to_string()), "{text}");
+    }
+
+    #[test]
+    fn a_key_that_cannot_be_used_stops_the_boot_without_echoing_its_secret() {
+        let directory = tempfile::tempdir().expect("a directory");
+        let short = directory.path().join("short");
+        std::fs::write(&short, "too-short-to-be-a-key").expect("the key file");
+        let named = |file: Option<String>, env: Option<&str>| SigningConfig {
+            keys: vec![SigningKeyConfig {
+                id: "k1".into(),
+                secret_file: file,
+                secret_env: env.map(str::to_string),
+            }],
+            ttl_secs: 300,
+        };
+        let error = named(Some(short.display().to_string()), None)
+            .the_ring_from(|_| None)
+            .expect_err("a short secret");
+        assert!(error.contains("at least 32"), "{error}");
+        assert!(!error.contains("too-short-to-be-a-key"), "{error}");
+
+        let error = named(Some("/nonexistent/signing-key".into()), None)
+            .the_ring_from(|_| None)
+            .expect_err("a missing file");
+        assert!(
+            error.contains("k1") && error.contains("cannot be read"),
+            "{error}"
+        );
+
+        let error = named(None, Some("UNSET_VARIABLE"))
+            .the_ring_from(|_| None)
+            .expect_err("an unset variable");
+        assert!(error.contains("UNSET_VARIABLE"), "{error}");
+
+        let error = named(None, Some("SHORT_VARIABLE"))
+            .the_ring_from(|_| Some("another-short-secret".into()))
+            .expect_err("a short secret in the environment");
+        assert!(!error.contains("another-short-secret"), "{error}");
+    }
+
+    #[test]
+    fn the_redaction_of_an_error_covers_the_signing_references() {
+        let raw = format!(
+            "bad ring: secret_env=SIGNING_K1 secret_file=/run/secrets/k1 secret={THE_SECRET} id=k1"
+        );
+        let redacted = redact_secrets(&raw);
+        for leaked in ["SIGNING_K1", "/run/secrets/k1", THE_SECRET] {
+            assert!(!redacted.contains(leaked), "{leaked} leaked: {redacted}");
+        }
+        assert!(redacted.contains("id=k1"), "{redacted}");
     }
 }
