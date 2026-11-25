@@ -39,6 +39,10 @@ use sha2::Digest as _;
 /// contador que mide uno de los dos.
 pub mod lab;
 
+/// El laboratorio podman del perfil de grafo (Dgraph real y S3): lo usan el
+/// recorrido del binario (HSP-237) y el de la imagen OCI (HSP-308).
+pub mod graph_lab;
+
 /// El binario del servicio, tal y como lo compila la CI.
 pub const BIN: &str = env!("CARGO_BIN_EXE_hodei-artifacts-api");
 
