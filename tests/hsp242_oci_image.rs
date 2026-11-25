@@ -348,6 +348,7 @@ fn run_authenticated_container(name: &str, data_mount: &str, policy_mount: &str)
 }
 
 #[test]
+#[ignore = "the OCI image is the production binary without the embedded engine (HSP-213): the standalone profile cannot boot in it. The graph profile counterpart is graph_profile_image_persists_artifact_across_restart_with_same_digest (HSP-308); this case goes with the embedded engine in HSP-314 F4"]
 fn artifact_written_before_restart_is_read_back_with_same_digest() {
     let _ = packaged_dist();
 
@@ -830,6 +831,7 @@ fn oci_image_runs_as_non_root_without_build_tools_or_secrets() {
 }
 
 #[test]
+#[ignore = "the OCI image is the production binary without the embedded engine (HSP-213): the standalone profile cannot boot in it. The graph profile counterpart is graph_profile_image_persists_artifact_across_restart_with_same_digest (HSP-308); this case goes with the embedded engine in HSP-314 F4"]
 fn podman_standalone_readonly_persists_across_restart_and_handles_sigterm() {
     let _ = packaged_dist();
 
