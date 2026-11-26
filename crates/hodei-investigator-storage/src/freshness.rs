@@ -1,25 +1,25 @@
-//! El comprobador de frescura, sobre el almacenamiento que ya existe.
+//! The freshness checker, over the storage that already exists.
 //!
-//! El verificador --la funcion pura-- vive en el dominio
-//! (`hodei_investigator::freshness`). Aqui solo se **trae el mundo**: la
-//! version de ahora, los digests de ahora y los cambios de ahora. El
-//! almacenamiento no decide, y esta separation es la que hace que el
-//! veredicto sea el mismo con cualquier material.
+//! The verifier --the pure function-- lives in the domain
+//! (`hodei_investigator::freshness`). Here the only thing done is to **fetch the world**: the
+//! current version, the current digests and the current changes. The storage
+//! does not decide, and this separation is what makes the
+//! verdict the same with any material.
 //!
-//! # Sin motor de suscripciones
+//! # No subscription engine
 //!
-//! La comprobacion es **bajo demanda**: quien tiene el informe pregunta,
-//! y la respuesta se calcula con lo que hay. No hay un motor que empuje
-//! invalidaciones, ni una cola, ni una tabla nueva: el registro de
-//! deltas que ya existe es la historia, y se lee donde se quedo.
+//! The check is **on demand**: whoever holds the report asks,
+//! and the answer is computed with what is there. There is no engine pushing
+//! invalidations, nor a queue, nor a new table: the delta log that
+//! already exists is the history, and it is read from where it was left.
 //!
-//! # El aislamiento del tenant
+//! # Tenant isolation
 //!
-//! El registro se pregunta **por el tenant**, y el tenant es el de la
-//! cuenta que se esta comprobando: una consulta de otra cuenta no llega
-//! al registro. Y el sujeto tiene que ser **del tenant**: un sujeto de
-//! otra cuenta no se consulta, y se dice que no se sabe en vez de
-//! consultar lo que sea.
+//! The log is queried **by tenant**, and the tenant is that of the
+//! account being checked: a query from another account does not reach
+//! the log. And the subject has to **belong to the tenant**: a subject of
+//! another account is not queried, and it is reported as unknown instead of
+//! querying whatever.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -35,21 +35,21 @@ use hodei_investigator::freshness::{
 use hodei_investigator::read_set::{ReadKind, ReadSet};
 use kernel::Hrn;
 
-/// Cuantos deltas se leen de una vez.
+/// How many deltas are read at a time.
 const PAGE: usize = 512;
 
-/// Cuantas paginas se leen antes de rendirse.
+/// How many pages are read before giving up.
 ///
-/// El limite es una puerta de **trabajo**, no de tiempo: leer los deltas
-/// de una cuenta que cambio mucho es un trabajo acotado, y si no cabe
-/// en el limite la respuesta no es "vigente" sino "no se sabe".
+/// The limit is a **work** gate, not a time one: reading the deltas
+/// of an account that changed a lot is bounded work, and if it does not fit
+/// within the limit the answer is not "current" but "unknown".
 const MAX_PAGES: usize = 64;
 
-/// El comprobador de frescura sobre el grafo y la evidencia.
+/// The freshness checker over the graph and the evidence.
 ///
-/// El tenant es el de la cuenta que se comprueba, y las consultas que
-/// hace --el registro de deltas y la evidencia del sujeto-- son de ese
-/// tenant y de ninguno mas.
+/// The tenant is that of the account being checked, and the queries it
+/// makes --the delta log and the subject's evidence-- belong to that
+/// tenant and to no other.
 pub struct LedgerFreshness {
     evidence: Arc<dyn EvidenceStore>,
     deltas: Arc<dyn RelationDeltaLedger>,
@@ -57,8 +57,8 @@ pub struct LedgerFreshness {
 }
 
 impl LedgerFreshness {
-    /// El comprobador sobre el almacen de evidencia y el registro de
-    /// deltas, para un tenant.
+    /// The checker over the evidence store and the delta
+    /// log, for a tenant.
     pub fn new(
         evidence: Arc<dyn EvidenceStore>,
         deltas: Arc<dyn RelationDeltaLedger>,
@@ -71,12 +71,12 @@ impl LedgerFreshness {
         }
     }
 
-    /// La frescura del informe de una lectura.
+    /// The freshness of the report of a read.
     ///
-    /// El manifiesto es el del informe entregado, y el sujeto es el
-    /// mismo sujeto que el informe dice. Un sujeto de otra cuenta no se
-    /// consulta: el veredicto es que no se sabe, no una respuesta sobre
-    /// lo que no es suyo.
+    /// The manifest is that of the delivered report, and the subject is the
+    /// same subject the report states. A subject of another account is not
+    /// queried: the verdict is unknown, not an answer about
+    /// what is not theirs.
     pub async fn freshness_of(&self, report: &ReadSet, subject: &Hrn) -> Freshness {
         if subject.account_id() != self.tenant.account_id() {
             return Freshness::Unknown {
@@ -87,11 +87,11 @@ impl LedgerFreshness {
         judge(report, &world)
     }
 
-    /// El mundo de ahora, para lo que el manifiesto dice haber leido.
+    /// The current world, for what the manifest says it read.
     async fn the_world(&self, report: &ReadSet, subject: &Hrn) -> CurrentWorld {
         let mut world = CurrentWorld::default();
 
-        // La version del grafo: la posicion del tenant en su historia.
+        // The graph version: the tenant's position in its history.
         match self.deltas.version_of(&self.tenant).await {
             Ok(version) => world.generations.push((GRAPH_SOURCE.to_string(), version)),
             Err(error) => {
@@ -100,8 +100,8 @@ impl LedgerFreshness {
             }
         }
 
-        // Los cambios que hubo desde la version que el manifiesto dice
-        // haber leido. Si la version no se movio, no hay nada que mirar.
+        // The changes since the version the manifest says it
+        // read. If the version did not move, there is nothing to look at.
         if let Some(after) = the_read_version(report, GRAPH_SOURCE)
             && let Some((_, current)) = world
                 .generations
@@ -118,8 +118,8 @@ impl LedgerFreshness {
             }
         }
 
-        // Los digests de la evidencia que hay ahora: lo que se leyo se
-        // contrasta con lo que hay.
+        // The digests of the evidence that exists now: what was read is
+        // checked against what is there.
         match self
             .evidence
             .evidence_of_subject(self.tenant.account_id(), subject)
@@ -141,12 +141,12 @@ impl LedgerFreshness {
         world
     }
 
-    /// Los cambios del grafo desde la version que el manifiesto dice
-    /// haber leido.
+    /// The graph changes since the version the manifest says it
+    /// read.
     ///
-    /// Se leen por paginas hasta llegar a la version de ahora, y si no
-    /// caben en el limite de trabajo la respuesta es que no se sabe: un
-    /// "vigente" sin haber leido todo seria una garantia inventada.
+    /// They are read by pages until reaching the current version, and if they do not
+    /// fit within the work limit the answer is unknown: a
+    /// "current" without having read everything would be an invented guarantee.
     async fn the_changes(
         &self,
         report: &ReadSet,
@@ -177,7 +177,7 @@ impl LedgerFreshness {
                 }
             }
             if deltas.len() < PAGE || stopped <= cursor {
-                // No hay mas deltas que leer: se llego al final.
+                // There are no more deltas to read: the end was reached.
                 return Ok(changes);
             }
             cursor = stopped;
@@ -186,7 +186,7 @@ impl LedgerFreshness {
     }
 }
 
-/// La version que el manifiesto dice haber leido de una fuente.
+/// The version the manifest says it read from a source.
 fn the_read_version(report: &ReadSet, source: &str) -> Option<u64> {
     report
         .generations
@@ -195,13 +195,13 @@ fn the_read_version(report: &ReadSet, source: &str) -> Option<u64> {
         .map(|(_, version)| *version)
 }
 
-/// Los tipos de relacion que el manifiesto dice haber leido.
+/// The relation types the manifest says it read.
 ///
-/// Se leen del propio manifiesto: la identidad del sello de una relacion
-/// es "{tipo}|{desde}|{hasta}", y lo que el informe se apoya son sus
-/// tipos. Preguntar por mas seria preguntar por lo que no es del
-/// informe, y preguntar por menos seria no ver los cambios que lo
-/// invalidan.
+/// They are read from the manifest itself: the identity of a relation's seal
+/// is "{type}|{from}|{to}", and what the report relies on is its
+/// types. Asking about more would be asking about what is not the
+/// report's, and asking about fewer would be missing the changes that
+/// invalidate it.
 fn the_relation_types(report: &ReadSet) -> Option<BTreeSet<RelationType>> {
     let mut types = BTreeSet::new();
     for stamp in report

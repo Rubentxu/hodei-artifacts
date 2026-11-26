@@ -1,11 +1,11 @@
-//! El almacen de la simulacion: los adaptadores que leen el estado real.
+//! The simulation store: the adapters that read the real state.
 //!
-//! El grafo real se lee y **no se escribe**: el puerto
-//! [`SimulationGraph`] no tiene un metodo de escritura, y por eso no
-//! existe por donde escribir. El adaptador de aqui es la pieza que
-//! cumple esa promesa en el mundo real, y por eso ademas dice la
-//! VERSION del grafo que lee: una simulacion que no dice sobre que
-//! generacion del mundo se calculo no se puede auditar.
+//! The real graph is read and **never written**: the port
+//! [`SimulationGraph`] has no write method, and so there is
+//! nowhere to write through. The adapter here is the piece that
+//! keeps that promise in the real world, and for that reason it also says the
+//! VERSION of the graph it reads: a simulation that does not say which
+//! generation of the world it was computed on cannot be audited.
 
 pub mod dgraph;
 pub mod evaluator;

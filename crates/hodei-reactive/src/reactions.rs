@@ -1,6 +1,6 @@
 //! The reactions of the security domain.
 //!
-//! The runtime is the mechanism --suscribir, guardar, registrar, acotar--
+//! The runtime is the mechanism --subscribe, store, register, bound--
 //! and these are the reactions that use it: the one that answers to a new
 //! vulnerability and the one that answers to an exception that expired.
 //!
@@ -63,9 +63,9 @@ pub struct Reevaluation {
     pub reason: ReasonCode,
     /// The vulnerabilities that are known to reach it.
     ///
-    /// They travel con la peticion porque son el hecho que cambia la
-    /// decision: sin ellos, la reevaluacion no tendria con que ser
-    /// distinta de la decision anterior.
+    /// They travel with the request because they are the fact that changes the
+    /// decision: without them, the reevaluation would have nothing to make it
+    /// different from the previous decision.
     pub advisories: Vec<String>,
     /// The moment of the reevaluation.
     pub at: DateTime<Utc>,
@@ -94,9 +94,9 @@ impl Reevaluation {
 pub trait DecisionRequester: Send + Sync {
     /// A decision is asked for, and the old one is superseded.
     ///
-    /// The chain de decisiones es lo que permite explicar por que una
-    /// promocion que era ALLOW paso a ser DENY: la nueva dice cual
-    /// sustituyo a la anterior.
+    /// The chain of decisions is what makes it possible to explain why a
+    /// promotion that was ALLOW became DENY: the new one says which one
+    /// it superseded.
     async fn request_reevaluation(&self, request: Reevaluation) -> Result<String, String>;
 }
 
@@ -115,10 +115,10 @@ pub enum ReasonCode {
 
 /// The reaction to a vulnerability that was accepted.
 ///
-/// The chain is the one del hito: `CVE accepted -> impacted artifacts ->
-/// reevaluation -> SecurityCase updated`. And the orden matters: primero
-/// el radio de impacto, porque una vulnerabilidad que no toca nada no
-/// reevalua nada.
+/// The chain is the one of the milestone: `CVE accepted -> impacted artifacts ->
+/// reevaluation -> SecurityCase updated`. And the order matters: first
+/// the blast radius, because a vulnerability that touches nothing
+/// reevaluates nothing.
 pub struct VulnerabilityReaction {
     radius: Arc<dyn BlastRadiusSource>,
     cases: Arc<dyn SecurityCaseSink>,
@@ -252,7 +252,7 @@ impl Behavior for VulnerabilityReaction {
 /// The reaction to an exception that expired.
 ///
 /// An exception that expired **cannot** be applied: the reevaluation
-/// happens with la excepcion ya sin vigor, y no con ella.
+/// happens with the exception already out of force, and not with it.
 pub struct ExceptionExpiryReaction {
     decisions: Arc<dyn DecisionRequester>,
 }
@@ -328,12 +328,12 @@ impl Behavior for ExceptionExpiryReaction {
 /// the seam: the planner READS the blast radius and SAYS intents, and it
 /// does not touch a single sink. The case and the decisions belong to
 /// the executor, which touches them after the intents are said and
-/// claimed. What the planner cannot say is the decision itself: una
-/// decision que todavia no se tomo no se dice, y un evento que inventa
-/// su valor no es un evento.
+/// claimed. What the planner cannot say is the decision itself: a
+/// decision that has not been made yet is not said, and an event that invents
+/// its value is not an event.
 ///
-/// A vulnerability that touches nothing says nothing: el ruido es lo que
-/// hace que la gente deje de leer los informes.
+/// A vulnerability that touches nothing says nothing: noise is what
+/// makes people stop reading the reports.
 pub struct PlannedVulnerabilityReaction {
     radius: Arc<dyn BlastRadiusSource>,
 }
@@ -439,7 +439,7 @@ impl PlanningBehavior for PlannedVulnerabilityReaction {
 /// The planned reaction to an exception that expired.
 ///
 /// An exception that expired **cannot** be applied: the reevaluation
-/// happens with la excepcion ya sin vigor, y no con ella. The planner
+/// happens with the exception already out of force, and not with it. The planner
 /// needs no read: the subject is said by the event, and the decision
 /// belongs to the executor.
 pub struct PlannedExceptionExpiryReaction;
@@ -536,8 +536,8 @@ struct DecisionEffect {
 /// It is the second half of the seam the planners open: the case and the
 /// reevaluation happen HERE, after the intents are said and claimed.
 /// Before any write it validates what it can know by itself -- the
-/// tenant of the intent is the tenant of the composition, una
-/// reclamacion no es una identidad -- and the facts of the decision are
+/// tenant of the intent is the tenant of the composition, a
+/// claim is not an identity -- and the facts of the decision are
 /// computed at apply time from the CURRENT truth, never from the
 /// payload's memory of what they were.
 pub struct DomainIntentExecutor {

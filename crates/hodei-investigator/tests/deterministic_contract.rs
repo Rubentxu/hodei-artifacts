@@ -1,21 +1,21 @@
-//! El contrato de la investigacion **sin modelo**.
+//! The contract of the **model-less** investigation.
 //!
-//! El modelo es opcional, y cuando no esta, la investigacion no se
-//! degrada en una respuesta vacia: es la respuesta de las herramientas.
-//! Estas seis cosas se prometen y se comprueban:
+//! The model is optional, and when it is absent, the investigation does not
+//! degrade into an empty answer: it is the answer of the tools.
+//! These six things are promised and checked:
 //!
-//! - Sin modelo, la operacion que pregunta al modelo **falla**: no se
-//!   devuelve una respuesta a medias.
-//! - Los hechos que las herramientas calcularon son **hechos verificados**,
-//!   con su cita y su sello.
-//! - El texto de la evidencia **no se publica**: lo escribio un tercero y
-//!   aqui no hay quien lo interprete.
-//! - La pregunta se declara **sin responder**, y lo que no se pudo leer se
-//!   declara con su motivo.
-//! - La cobertura se declara: una recuperacion parcial no se presenta
-//!   como respuesta exhaustiva.
-//! - El alcance se comprueba: una cuenta que no es la del sujeto no llega
-//!   a recuperar nada.
+//! - Without a model, the operation that asks the model **fails**: no
+//!   half answer is returned.
+//! - The facts that the tools computed are **verified facts**,
+//!   with their citation and their seal.
+//! - The text of the evidence is **not published**: a third party wrote it and
+//!   there is nobody here to interpret it.
+//! - The question is declared **unanswered**, and what could not be read is
+//!   declared with its reason.
+//! - Coverage is declared: a partial retrieval is not presented
+//!   as an exhaustive answer.
+//! - Scope is checked: an account that is not the subject's does not get
+//!   to retrieve anything.
 
 use std::sync::Arc;
 
@@ -32,27 +32,27 @@ use hodei_investigator::scope::{
 use hodei_investigator::{ReadSet, ReadStamp};
 use kernel::Hrn;
 
-/// El sujeto de la investigacion.
+/// The subject of the investigation.
 fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
 }
 
-/// El otro extremo de la relacion.
+/// The other end of the relation.
 fn library() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-2.0.0").expect("un HRN")
 }
 
-/// Quien pregunta, verificado: una identidad de la cuenta acme.
+/// Who asks, verified: an identity of the acme account.
 fn actor() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:User/alice").expect("un HRN")
 }
 
-/// El alcance de la investigacion.
+/// The scope of the investigation.
 fn the_scope() -> RetrievalScope {
     RetrievalScope::new(actor(), subject())
 }
 
-/// La relacion que el grafo tiene: el sujeto depende de la biblioteca.
+/// The relation that the graph has: the subject depends on the library.
 fn the_relation() -> ScopedFact {
     ScopedFact {
         evidence_id: "ev-relation-1".to_string(),
@@ -64,7 +64,7 @@ fn the_relation() -> ScopedFact {
     }
 }
 
-/// La evidencia del sujeto: el texto lo escribio un tercero.
+/// The evidence of the subject: the text was written by a third party.
 fn the_evidence() -> ScopedFact {
     ScopedFact {
         evidence_id: "ev-evidence-1".to_string(),
@@ -76,8 +76,8 @@ fn the_evidence() -> ScopedFact {
     }
 }
 
-/// El mundo que la investigacion lee: la relacion, su evidencia, y el
-/// texto de la evidencia.
+/// The world that the investigation reads: the relation, its evidence, and the
+/// text of the evidence.
 fn the_world() -> ReadSet {
     let mut read_set = ReadSet::empty();
     read_set.read(ReadStamp::relation(
@@ -89,7 +89,7 @@ fn the_world() -> ReadSet {
     read_set
 }
 
-/// Un recuperador que devuelve lo que se le dice.
+/// A retriever that returns what it is told.
 struct TheRetriever {
     facts: Vec<ScopedFact>,
     coverage: Coverage,
@@ -116,8 +116,8 @@ impl TheRetriever {
         })
     }
 
-    /// Un mundo con el manifiesto que se le dice: lo que el mundo tiene es
-    /// lo que se prueba.
+    /// A world with the manifest it is told: what the world has is
+    /// what is tested.
     fn with_read_set(facts: Vec<ScopedFact>, read_set: ReadSet) -> Arc<Self> {
         Arc::new(Self {
             facts,
@@ -140,13 +140,13 @@ impl EvidenceRetriever for TheRetriever {
     }
 }
 
-/// El investigador sin modelo.
+/// The model-less investigator.
 fn the_investigator(retriever: Arc<dyn EvidenceRetriever>) -> Investigator {
     Investigator::without_a_model(retriever, CapabilityGuard::empty())
 }
 
-/// Sin modelo, la operacion que pregunta al modelo falla: no hay quien
-/// pregunte, y una respuesta a medias es peor que ninguna.
+/// Without a model, the operation that asks the model fails: there is nobody
+/// to ask, and a half answer is worse than none.
 #[tokio::test]
 async fn without_a_model_the_operation_that_asks_the_model_fails() {
     let investigator = the_investigator(TheRetriever::new(vec![the_relation()]));
@@ -161,8 +161,8 @@ async fn without_a_model_the_operation_that_asks_the_model_fails() {
     }
 }
 
-/// La relacion que el grafo tiene es un HECHO VERIFICADO: el verificador
-/// determinista la contrasta con el sello del read-set.
+/// The relation that the graph has is a VERIFIED FACT: the deterministic
+/// verifier checks it against the seal of the read-set.
 #[tokio::test]
 async fn a_computed_relation_is_a_verified_fact() {
     let investigator = the_investigator(TheRetriever::new(vec![the_relation()]));
@@ -192,11 +192,11 @@ async fn a_computed_relation_is_a_verified_fact() {
     );
 }
 
-/// La relacion que el GRAFO escribe con su nombre canonico --"deployed_as"--
-/// es un hecho verificado tambien: el verificador reconoce las dos
-/// escrituras de cada relacion, la del grafo y la que escribe un modelo.
-/// Sin las dos, una relacion que el mundo tiene de verdad salia como no
-/// comprobada, que es mentir por omision.
+/// The relation that the GRAPH writes with its canonical name --"deployed_as"--
+/// is a verified fact too: the verifier recognizes both
+/// spellings of each relation, the graph's and the one a model writes.
+/// Without both, a relation that the world truly has came out as
+/// unchecked, which is lying by omission.
 #[tokio::test]
 async fn a_canonical_relation_spelling_is_a_verified_fact() {
     let mut read_set = ReadSet::empty();
@@ -241,9 +241,9 @@ async fn a_canonical_relation_spelling_is_a_verified_fact() {
     );
 }
 
-/// Un enunciado con acentos no rompe el verificador: el corte es por
-/// caracter, no por byte. Un enunciado lo escribe un modelo, y un modelo
-/// escribe con acentos.
+/// A statement with accents does not break the verifier: the cut is by
+/// character, not by byte. A statement is written by a model, and a model
+/// writes with accents.
 #[test]
 fn a_statement_with_accents_does_not_break_the_verifier() {
     let mut read_set = ReadSet::empty();
@@ -258,8 +258,8 @@ fn a_statement_with_accents_does_not_break_the_verifier() {
     assert_eq!(status, VerificationStatus::Verified);
 }
 
-/// El texto de la evidencia NO se publica: lo escribio un tercero y aqui
-/// no hay quien lo interprete.
+/// The text of the evidence is NOT published: a third party wrote it and
+/// there is nobody here to interpret it.
 #[tokio::test]
 async fn the_text_of_the_evidence_is_not_published() {
     let investigator = the_investigator(TheRetriever::new(vec![the_evidence()]));
@@ -280,8 +280,8 @@ async fn the_text_of_the_evidence_is_not_published() {
     );
 }
 
-/// La pregunta se declara SIN RESPONDER: sin modelo nadie la contesta, y
-/// una respuesta que finge haberla contestado es una fabricacion.
+/// The question is declared UNANSWERED: without a model nobody answers it, and
+/// an answer that pretends to have answered it is a fabrication.
 #[tokio::test]
 async fn the_question_is_declared_unanswered() {
     let investigator = the_investigator(TheRetriever::new(vec![the_relation()]));
@@ -312,8 +312,8 @@ async fn the_question_is_declared_unanswered() {
     );
 }
 
-/// Lo que no se pudo leer se declara con su motivo: una evidencia ausente
-/// no es lo mismo que un almacen que no contesta.
+/// What could not be read is declared with its reason: an absent evidence
+/// is not the same as a store that does not answer.
 #[tokio::test]
 async fn what_could_not_be_read_is_declared_with_its_reason() {
     let mut missing = the_evidence();
@@ -336,8 +336,8 @@ async fn what_could_not_be_read_is_declared_with_its_reason() {
     );
 }
 
-/// La cobertura se declara: una recuperacion parcial no se presenta como
-/// respuesta exhaustiva.
+/// Coverage is declared: a partial retrieval is not presented as an
+/// exhaustive answer.
 #[tokio::test]
 async fn a_partial_recovery_is_declared_as_partial() {
     let retriever =
@@ -358,8 +358,8 @@ async fn a_partial_recovery_is_declared_as_partial() {
     );
 }
 
-/// La cuenta que no es la del sujeto no llega a recuperar nada: el cierre
-/// es ANTES de la lectura.
+/// The account that is not the subject's does not get to retrieve anything: the
+/// closing is BEFORE the read.
 #[tokio::test]
 async fn a_scope_that_crosses_accounts_does_not_read_anything() {
     let retriever = TheRetriever::new(vec![the_relation()]);
@@ -383,8 +383,8 @@ async fn a_scope_that_crosses_accounts_does_not_read_anything() {
     );
 }
 
-/// El read-set del informe es el manifiesto de lo que se leyo: lo que se
-/// puede comprobar y lo que se puede volver a comprobar.
+/// The read-set of the report is the manifest of what was read: what can be
+/// checked and what can be checked again.
 #[tokio::test]
 async fn the_report_carries_the_manifest_of_what_was_read() {
     let investigator = the_investigator(TheRetriever::new(vec![the_relation()]));
@@ -398,8 +398,8 @@ async fn the_report_carries_the_manifest_of_what_was_read() {
     assert_eq!(investigation.report.subject, subject().to_string());
 }
 
-/// La traza dice que no hubo modelo: una traza que finge un prompt que no
-/// existio miente.
+/// The trace says there was no model: a trace that pretends a prompt that did not
+/// exist lies.
 #[tokio::test]
 async fn the_trace_says_that_there_was_no_model() {
     let investigator = the_investigator(TheRetriever::new(vec![the_relation()]));
@@ -418,8 +418,8 @@ async fn the_trace_says_that_there_was_no_model() {
     );
 }
 
-/// El investigador CON modelo sigue funcionando: el modelo es opcional,
-/// no obligatorio.
+/// The investigator WITH a model still works: the model is optional,
+/// not mandatory.
 #[tokio::test]
 async fn an_investigator_with_a_model_still_asks_it() {
     let investigator = Investigator::new(

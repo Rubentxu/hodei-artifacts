@@ -1,71 +1,71 @@
-//! La investigacion determinista: la que no pregunta a un modelo.
+//! The deterministic investigation: the one that does not ask a model.
 //!
-//! El modelo es **opcional** en el investigador, y cuando no esta, la
-//! investigacion no se degrada en una respuesta vacia: es la respuesta de
-//! las **herramientas**. Lo que las herramientas calcularon son los hechos,
-//! con su cita y con su sello; y lo que no se sabe se **declara** como
-//! incertidumbre, porque una seguridad inventada es una invitacion a no
-//! comprobar nada.
+//! The model is **optional** in the investigator, and when it is absent, the
+//! investigation does not degrade into an empty answer: it is the answer of the
+//! **tools**. What the tools computed are the facts,
+//! with their citation and their seal; and what is not known is **declared** as
+//! uncertainty, because invented certainty is an invitation not to
+//! check anything.
 //!
-//! # Lo que esta investigacion NO hace
+//! # What this investigation does NOT do
 //!
-//! - **No interpreta** la evidencia. El texto de un tercero es dato, y
-//!   aqui no hay nadie que lo interprete: lo que se entrega es lo que las
-//!   herramientas calcularon, y el texto de la evidencia se queda en el
-//!   contexto que se leyo, no en las afirmaciones.
-//! - **No responde** la pregunta. Sin modelo, la pregunta se declara sin
-//!   responder, y lo que se entrega son los hechos y las incertidumbres.
-//! - **No decide** nada. El informe describe; las decisiones las sigue
-//!   tomando el motor de politicas determinista.
+//! - It does **not interpret** the evidence. The text of a third party is data, and
+//!   here there is nobody to interpret it: what is delivered is what the
+//!   tools computed, and the text of the evidence stays in the
+//!   context that was read, not in the claims.
+//! - It does **not answer** the question. Without a model, the question is declared
+//!   unanswered, and what is delivered are the facts and the uncertainties.
+//! - It does **not decide** anything. The report describes; decisions are still
+//!   made by the deterministic policy engine.
 
 use hodei_evidence::domain::graph::NodeKind;
 
 use crate::claim::{AIClaim, ClaimKind};
 use crate::scope::{FactStatus, ScopedFact};
 
-/// La version de la plantilla de una investigacion sin modelo.
+/// The version of the template of a model-less investigation.
 ///
-/// No hay prompt, y la traza lo dice: una investigacion sin modelo no se
-/// puede comparar con una que lo tenga, y una traza que finge un prompt
-/// que no existio miente.
+/// There is no prompt, and the trace says so: a model-less investigation cannot
+/// be compared with one that has a model, and a trace that pretends a prompt
+/// that never existed lies.
 pub const NO_PROMPT_VERSION: &str = "none";
 
-/// Quien produce las afirmaciones de una investigacion determinista.
+/// Who produces the claims of a deterministic investigation.
 ///
-/// No es un modelo: son las herramientas, y el informe lo dice.
+/// It is not a model: it is the tools, and the report says so.
 pub const DETERMINISTIC_PROVIDER: &str = "deterministic";
 
-/// El nombre del "modelo" de una investigacion determinista.
+/// The name of the "model" of a deterministic investigation.
 ///
-/// No hay modelo, y el campo lo dice en vez de inventar uno.
+/// There is no model, and the field says so instead of inventing one.
 pub const NO_MODEL: &str = "none";
 
-/// Las afirmaciones que las herramientas calculan.
+/// The claims that the tools compute.
 ///
-/// Un hecho es una **relacion que el mundo tiene**: el enunciado la nombra
-/// con los dos HRN y la palabra de relacion, y el verificador determinista
-/// la contrasta con los sellos del read-set. Un hecho que el verificador
-/// no puede comprobar NO es un hecho: es una afirmacion con cita, y se
-/// declara como tal.
+/// A fact is a **relation that the world has**: the statement names it
+/// with the two HRNs and the relation word, and the deterministic verifier
+/// checks it against the seals of the read-set. A fact that the verifier
+/// cannot check is NOT a fact: it is a claim with a citation, and it is
+/// declared as such.
 ///
-/// El texto de la evidencia NO se publica como afirmacion: lo escribio un
-/// tercero, y aqui no hay nadie que lo interprete. Es contexto, y el
-/// manifiesto de lo que se leyo lo dice.
+/// The text of the evidence is NOT published as a claim: it was written by a
+/// third party, and here there is nobody to interpret it. It is context, and the
+/// manifest of what was read says so.
 ///
-/// Y lo que no se pudo leer se declara, con el motivo: una evidencia
-/// ausente, un almacen que no contesto, un texto que no se pudo decodificar
-/// y un presupuesto que dejo algo fuera son cuatro cosas distintas, y
-/// ninguna se disfraza de la otra.
+/// And what could not be read is declared, with the reason: an absent
+/// evidence, a store that did not answer, a text that could not be decoded
+/// and a budget that left something out are four different things, and
+/// none is disguised as another.
 pub fn the_computed_claims(facts: &[ScopedFact]) -> Vec<AIClaim> {
     let mut claims = Vec::new();
     for fact in facts {
         match fact.status {
-            // El CONTEXTO leido. El texto es de un tercero: es lo que se
-            // leyo, no lo que se afirma, y no se publica como afirmacion.
+            // The CONTEXT read. The text is from a third party: it is what was
+            // read, not what is claimed, and it is not published as a claim.
             //
-            // La EXCEPCION es la relacion del grafo: un hecho de tipo
-            // Artifact es una relacion que el mundo tiene, y su enunciado
-            // lo dice con sus dos HRN y su palabra de relacion.
+            // The EXCEPTION is the graph relation: a fact of type
+            // Artifact is a relation that the world has, and its statement
+            // says it with its two HRNs and its relation word.
             FactStatus::Loaded => {
                 if fact.kind == NodeKind::Artifact {
                     claims.push(AIClaim::new(
@@ -75,7 +75,7 @@ pub fn the_computed_claims(facts: &[ScopedFact]) -> Vec<AIClaim> {
                     ));
                 }
             }
-            // Lo que no se pudo leer, con el motivo.
+            // What could not be read, with the reason.
             FactStatus::Missing => {
                 claims.push(the_uncertainty(format!(
                     "the content of the evidence {} is not there",
@@ -105,11 +105,11 @@ pub fn the_computed_claims(facts: &[ScopedFact]) -> Vec<AIClaim> {
     claims
 }
 
-/// La incertidumbre que declara los limites de una respuesta sin modelo.
+/// The uncertainty that declares the limits of a model-less answer.
 ///
-/// Sin modelo no hay quien interprete la evidencia ni quien responda la
-/// pregunta, y eso se dice: lo que se entrega son los hechos que las
-/// herramientas calcularon, y no una explicacion de mas.
+/// Without a model there is nobody to interpret the evidence nor to answer the
+/// question, and that is said: what is delivered are the facts that the
+/// tools computed, and not an extra explanation.
 pub fn the_uncertainty_of_a_model_less_answer(question: &str) -> AIClaim {
     let question = question.trim();
     if question.is_empty() {
@@ -126,10 +126,10 @@ pub fn the_uncertainty_of_a_model_less_answer(question: &str) -> AIClaim {
     ))
 }
 
-/// Una incertidumbre: lo que no se sabe, dicho como no se sabe.
+/// An uncertainty: what is not known, stated as not known.
 ///
-/// Una incertidumbre no cita nada: no afirma nada, y por eso no necesita
-/// evidencia que la sostenga.
+/// An uncertainty cites nothing: it asserts nothing, and so it needs no
+/// evidence to support it.
 fn the_uncertainty(statement: String) -> AIClaim {
     AIClaim::new(statement, ClaimKind::Unknown, Vec::new())
 }

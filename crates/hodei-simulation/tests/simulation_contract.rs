@@ -1,15 +1,15 @@
-//! El contrato de la simulacion.
+//! The simulation contract.
 //!
-//! Cinco cosas se prometen y cinco cosas se comprueban:
+//! Five things are promised and five things are checked:
 //!
-//! - El fork es aislado: el grafo real no cambia por simular.
-//! - Se puede superponer evidencia y politica hipoteticas sobre el estado
-//!   real.
-//! - El diff estructural muestra las relaciones que aparecen y las que
-//!   desaparecen.
-//! - El diff de decisiones muestra que decisiones cambian, con su version
-//!   de politica.
-//! - El SPIKE-008 deja escrita su conclusion.
+//! - The fork is isolated: the real graph does not change by simulating.
+//! - Hypothetical evidence and policy can be superimposed on the real
+//!   state.
+//! - The structural diff shows the relations that appear and those that
+//!   disappear.
+//! - The decision diff shows which decisions change, with their policy
+//!   version.
+//! - SPIKE-008 leaves its conclusion written.
 
 use std::sync::{Arc, Mutex};
 
@@ -26,29 +26,29 @@ use hodei_trust_policy::decision::Outcome;
 use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
 
-/// El sujeto de la simulacion.
+/// The subject of the simulation.
 fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
 }
 
-/// El componente del que depende.
+/// The component it depends on.
 fn component_v1() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
 }
 
-/// El componente al que se sube.
+/// The component upgraded to.
 fn component_v2() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
 }
 
-/// El grafo real de la simulacion.
+/// The real graph of the simulation.
 ///
-/// Guarda las relaciones y su generacion, y no mas: el cambio del mundo
-/// mientras se simula se prueba en el contrato de la base, que es donde
-/// ese caso vive.
+/// It keeps the relations and their generation, and no more: the change of the world
+/// while simulating is tested in the base contract, which is where
+/// that case lives.
 struct TheGraph {
     relations: Mutex<Vec<RelationFact>>,
-    /// La generacion del grafo.
+    /// The generation of the graph.
     generation: Mutex<u64>,
 }
 
@@ -60,7 +60,7 @@ impl TheGraph {
         })
     }
 
-    /// Las relaciones que tiene ahora mismo.
+    /// The relations it has right now.
     fn the_relations(&self) -> Vec<RelationFact> {
         self.relations
             .lock()
@@ -68,7 +68,7 @@ impl TheGraph {
             .clone()
     }
 
-    /// La generacion que tiene ahora mismo.
+    /// The generation it has right now.
     fn the_generation(&self) -> u64 {
         *self
             .generation
@@ -107,10 +107,10 @@ impl SimulationGraph for TheGraph {
     }
 }
 
-/// El evaluador de decisiones.
+/// The decision evaluator.
 ///
-/// Decide por la politica: una politica que exige que no haya
-/// vulnerabilidad critica alcanzable deniega cuando el sujeto la tiene.
+/// It decides by policy: a policy that requires no reachable
+/// critical vulnerability denies when the subject has one.
 struct TheEvaluator {
     exposed: Mutex<Vec<String>>,
 }
@@ -132,7 +132,7 @@ impl DecisionEvaluator for TheEvaluator {
         facts: &[Hypothetical],
         _now: chrono::DateTime<chrono::Utc>,
     ) -> Result<TheDecision, String> {
-        // El hecho hipotetico que dice que el sujeto esta expuesto.
+        // The hypothetical fact that says the subject is exposed.
         let exposed = facts.iter().any(|fact| {
             matches!(
                 &fact.claim,
@@ -170,7 +170,7 @@ impl DecisionEvaluator for TheEvaluator {
     }
 }
 
-/// La politica de ahora: no exige que el riesgo este establecido.
+/// Today's policy: it does not require the risk to be established.
 fn the_policy(version: &str) -> TrustPolicy {
     TrustPolicy::new(
         format!("policy-{version}"),
@@ -179,7 +179,7 @@ fn the_policy(version: &str) -> TrustPolicy {
     )
 }
 
-/// La politica hipotetica: exige que el riesgo este establecido.
+/// The hypothetical policy: it requires the risk to be established.
 fn the_strict_policy(version: &str) -> TrustPolicy {
     TrustPolicy::new(
         format!("policy-{version}"),
@@ -191,7 +191,7 @@ fn the_strict_policy(version: &str) -> TrustPolicy {
     )
 }
 
-/// El fork de la simulacion.
+/// The simulation fork.
 fn the_fork(policy: hodei_trust_policy::TrustPolicy) -> SimulationFork {
     SimulationFork::new(
         "sim-1",
@@ -201,14 +201,14 @@ fn the_fork(policy: hodei_trust_policy::TrustPolicy) -> SimulationFork {
     )
 }
 
-/// La etiqueta de la simulacion.
+/// The simulation label.
 fn the_tag() -> SimulationTag {
     SimulationTag::new("sim-1", Utc::now())
 }
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// El fork es aislado: el grafo real no cambia por simular.
+/// The fork is isolated: the real graph does not change by simulating.
 #[tokio::test]
 async fn the_fork_is_isolated() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -234,11 +234,11 @@ async fn the_fork_is_isolated() {
 
     let diff = service.simulate(&fork, Utc::now()).await.expect("simula");
 
-    // El diff dice lo que tiene que decir.
+    // The diff says what it has to say.
     assert_eq!(diff.structural.appeared.len(), 1);
     assert_eq!(diff.structural.disappeared.len(), 1);
 
-    // Y el grafo real esta IGUAL: mismas relaciones, misma generacion.
+    // And the real graph is the SAME: same relations, same generation.
     let relations = graph.the_relations();
     assert_eq!(relations.len(), 1, "el grafo real no cambio");
     assert_eq!(
@@ -253,8 +253,8 @@ async fn the_fork_is_isolated() {
     );
 }
 
-/// Y los hechos hipoteticos llevan su etiqueta, que es lo que los
-/// distingue de la verdad.
+/// And the hypothetical facts carry their label, which is what
+/// distinguishes them from the truth.
 #[tokio::test]
 async fn the_hypotheticals_are_tagged() {
     let fork = the_fork(the_policy("1.0.0")).with(Hypothetical {
@@ -277,8 +277,8 @@ async fn the_hypotheticals_are_tagged() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// Se puede superponer evidencia y politica hipoteticas sobre el estado
-/// real.
+/// Hypothetical evidence and policy can be superimposed on the real
+/// state.
 #[tokio::test]
 async fn the_evidence_and_the_policy_can_be_overlaid() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -300,13 +300,13 @@ async fn the_evidence_and_the_policy_can_be_overlaid() {
         })
         .with_policy(the_strict_policy("2.0.0"));
 
-    // La politica efectiva es la hipotetica.
+    // The effective policy is the hypothetical one.
     assert_eq!(fork.effective_policy().version, "2.0.0");
     assert_eq!(fork.base_policy.version, "1.0.0");
 
     let diff = service.simulate(&fork, Utc::now()).await.expect("simula");
 
-    // Y la decision cambia, con las dos versiones de la politica.
+    // And the decision changes, with the two policy versions.
     assert_eq!(diff.decisions.len(), 1);
     let change = &diff.decisions[0];
     assert_eq!(change.before, Outcome::Allow);
@@ -317,8 +317,8 @@ async fn the_evidence_and_the_policy_can_be_overlaid() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// El diff estructural muestra las relaciones que aparecen y las que
-/// desaparecen.
+/// The structural diff shows the relations that appear and those that
+/// disappear.
 #[test]
 fn the_structural_diff_shows_what_appears_and_what_disappears() {
     let before = vec![
@@ -343,7 +343,7 @@ fn the_structural_diff_shows_what_appears_and_what_disappears() {
     assert!(!diff.is_empty());
 }
 
-/// Y el diff de dos estados iguales esta vacio.
+/// And the diff of two equal states is empty.
 #[test]
 fn a_diff_of_the_same_is_empty() {
     let relations = vec![RelationFact::new(
@@ -359,8 +359,8 @@ fn a_diff_of_the_same_is_empty() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// El diff de decisiones muestra que decisiones cambian, con su version
-/// de politica.
+/// The decision diff shows which decisions change, with their policy
+/// version.
 #[tokio::test]
 async fn the_decision_diff_shows_the_changes_with_the_policy_version() {
     let graph = TheGraph::new(vec![]);
@@ -389,13 +389,13 @@ async fn the_decision_diff_shows_the_changes_with_the_policy_version() {
     assert!(change.is_a_change());
 }
 
-/// Y una decision que sigue igual no es un cambio.
+/// And a decision that stays the same is not a change.
 #[tokio::test]
 async fn a_decision_that_does_not_change_is_not_a_change() {
     let graph = TheGraph::new(vec![]);
     let service = SimulationService::new(graph.clone(), TheEvaluator::new());
 
-    // Un hecho hipotetico que no expone a nadie.
+    // A hypothetical fact that exposes nobody.
     let fork = the_fork(the_policy("1.0.0")).with(Hypothetical {
         tag: the_tag(),
         claim: HypotheticalClaim::Risk {
@@ -416,7 +416,7 @@ async fn a_decision_that_does_not_change_is_not_a_change() {
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// El SPIKE-008 deja escrita su conclusion.
+/// SPIKE-008 leaves its conclusion written.
 #[test]
 fn the_conclusion_of_spike_008_is_written_down() {
     let source = include_str!("../src/lib.rs");
@@ -430,7 +430,7 @@ fn the_conclusion_of_spike_008_is_written_down() {
     );
 }
 
-/// Y los limites se comprueban ANTES de simular.
+/// And the limits are checked BEFORE simulating.
 #[tokio::test]
 async fn the_limits_are_checked_before_simulating() {
     let graph = TheGraph::new(vec![]);
@@ -457,7 +457,7 @@ async fn the_limits_are_checked_before_simulating() {
         "y dice que la simulacion es demasiado grande: {error}"
     );
 
-    // Y una simulacion caducada tampoco se ejecuta.
+    // And an expired simulation is not run either.
     let mut old = the_fork(the_policy("1.0.0"));
     old.created_at = Utc::now() - Duration::days(2);
     let error = service
@@ -470,11 +470,11 @@ async fn the_limits_are_checked_before_simulating() {
     );
 }
 
-// ───────────────────────── HG-H4-01: solo politica, sin engaños ─────────────────────────
+// ───────────────────────── HG-H4-01: policy only, no deception ─────────────────────────
 
-/// Un evaluador que decide por la POLITICA: con la misma evidencia, una
-/// politica mas estricta cambia el resultado. Es el caso de una
-/// simulacion que solo cambia la politica y no anade ningun hecho.
+/// An evaluator that decides by POLICY: with the same evidence, a
+/// stricter policy changes the result. It is the case of a
+/// simulation that only changes the policy and adds no fact.
 struct PolicyDrivenEvaluator;
 
 #[async_trait]
@@ -503,10 +503,10 @@ impl DecisionEvaluator for PolicyDrivenEvaluator {
     }
 }
 
-/// AC1: un fork con SOLO cambio de politica y sujetos DECLARADOS
-/// produce DecisionChange cuando la politica modifica el resultado. La
-/// conclusion de hoy --"sin hechos no hay afectados"-- era un engaño:
-/// los sujetos se declaran, no se infieren de los hechos.
+/// AC1: a fork with ONLY a policy change and DECLARED subjects
+/// produces a DecisionChange when the policy modifies the result. Today's
+/// conclusion --"without facts there are no affected"-- was a deception:
+/// subjects are declared, not inferred from the facts.
 #[tokio::test]
 async fn a_policy_only_fork_with_declared_subjects_changes_the_decisions() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -540,9 +540,9 @@ async fn a_policy_only_fork_with_declared_subjects_changes_the_decisions() {
     );
 }
 
-/// AC3: un fork SIN sujetos no es una simulacion completa sin afectados:
-/// es una simulacion que no se puede hacer, y se rechaza. Un diff vacio
-/// que parezca "todo revisado, nada cambia" es una conclusion engañosa.
+/// AC3: a fork WITHOUT subjects is not a complete simulation without affected:
+/// it is a simulation that cannot be done, and it is rejected. An empty diff
+/// that looks like "everything reviewed, nothing changes" is a misleading conclusion.
 #[tokio::test]
 async fn a_fork_with_no_subjects_is_rejected_not_a_silent_empty_diff() {
     let graph = TheGraph::new(Vec::new());
@@ -561,9 +561,9 @@ async fn a_fork_with_no_subjects_is_rejected_not_a_silent_empty_diff() {
     );
 }
 
-/// AC3: un sujeto de OTRA cuenta no se admite en la simulacion, aunque
-/// alguien lo declare. La cuenta del sujeto se compara con la del
-/// checkpoint por su componente canonico.
+/// AC3: a subject from ANOTHER account is not admitted in the simulation, even if
+/// someone declares it. The subject's account is compared with the
+/// checkpoint's by its canonical component.
 #[tokio::test]
 async fn a_subject_of_another_account_is_not_admitted() {
     let graph = TheGraph::new(Vec::new());

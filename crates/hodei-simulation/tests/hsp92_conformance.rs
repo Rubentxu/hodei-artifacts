@@ -1,25 +1,25 @@
-//! La conformidad de la simulacion, en memoria.
+//! The conformance of the simulation, in memory.
 //!
-//! La suite de conformidad vive en el dominio, y esto la corre contra el
-//! fixture en memoria: el grafo que no es un grafo de verdad, con las
-//! mismas relaciones y las mismas reglas.
+//! The conformance suite lives in the domain, and this runs it against the
+//! in-memory fixture: the graph that is not a real graph, with the
+//! same relations and the same rules.
 //!
-//! La misma suite corre contra SurrealDB en el crate de almacen: un
-//! escenario que pasa aqui y falla alla es un fallo del adaptador.
+//! The same suite runs against SurrealDB in the store crate: a
+//! scenario that passes here and fails there is an adapter failure.
 
 use hodei_simulation::memory::InMemoryConformance;
 use hodei_simulation::run_suite;
 use kernel::Hrn;
 
-/// El tenant de la cuenta de la conformidad.
+/// The tenant of the conformance account.
 fn the_tenant() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/acme").expect("un HRN")
 }
 
-/// La suite entera pasa en memoria.
+/// The whole suite passes in memory.
 ///
-/// Y si un escenario falla, el informe dice WHICH: un informe que solo
-/// dice "fallo" no dice nada.
+/// And if a scenario fails, the report says WHICH: a report that only
+/// says "failure" says nothing.
 #[tokio::test]
 async fn the_conformance_suite_passes_in_memory() {
     let world = InMemoryConformance::new("acme", the_tenant());

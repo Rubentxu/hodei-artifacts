@@ -1,39 +1,39 @@
-//! La redaccion de datos sensibles ANTES del modelo.
+//! The redaction of sensitive data BEFORE the model.
 //!
-//! El texto de la evidencia es de un tercero, y un tercero puede meter
-//! un secreto en un README o en la descripcion de un SBOM. Lo que sale
-//! hacia el modelo **se redacta**, y lo redactado NO entra en la traza:
-//! la traza lleva identificadores, no contenido.
+//! The evidence text is a third party's, and a third party can put
+//! a secret in a README or in the description of an SBOM. What goes out
+//! to the model **is redacted**, and what is redacted does NOT enter the trace:
+//! the trace carries identifiers, not content.
 
-/// Las formas de secreto que se redactan, con su prueba.
+/// The forms of secret that are redacted, with their test.
 ///
-/// La lista es deliberadamente corta y de senal alta: cada patron que
-/// se anade es un patron que puede redactar de mas, y redactar de mas
-/// tambien es esconder.
+/// The list is deliberately short and high-signal: every pattern that
+/// is added is a pattern that can over-redact, and over-redacting
+/// is also hiding.
 const PATTERNS: &[(&str, &str)] = &[
-    // Claves de acceso de AWS: AKIA seguido de 16 mayusculas/digitos.
+    // AWS access keys: AKIA followed by 16 uppercase letters/digits.
     ("AKIA[0-9A-Z]{16}", "aws-access-key"),
-    // Tokens de GitHub: ghp_/gho_/ghs_ seguidos de 36 caracteres.
+    // GitHub tokens: ghp_/gho_/ghs_ followed by 36 characters.
     ("gh[pos]_[A-Za-z0-9]{36}", "github-token"),
-    // Un token Bearer en cabecera.
+    // A Bearer token in a header.
     (
         "(?i)bearer[ \\t]+[A-Za-z0-9\\-\\._~\\+/]+=*",
         "bearer-token",
     ),
-    // Un JWT: tres segmentos base64url separados por punto.
+    // A JWT: three base64url segments separated by a dot.
     (
         "eyJ[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}\\.[A-Za-z0-9_\\-]{10,}",
         "jwt",
     ),
-    // Una cadena hexadecimal larga (>= 32): firma, resumen o secreto.
+    // A long hexadecimal string (>= 32): signature, digest or secret.
     ("\\b[0-9a-fA-F]{32,}\\b", "hex-secret"),
 ];
 
-/// Redacta lo que parezca un secreto en el texto de una evidencia.
+/// Redacts whatever looks like a secret in the text of a piece of evidence.
 ///
-/// Lo que sale de aqui es lo que ve el modelo, y lo mismo tendria que
-/// ver la traza si la traja llevara contenido -- y no lo lleva: la traza
-/// lleva identificadores de evidencia, no texto.
+/// What comes out of here is what the model sees, and the same is what the trace
+/// would have to see if the trace carried content -- and it does not: the trace
+/// carries evidence identifiers, not text.
 pub fn redact(text: &str) -> String {
     let mut redacted = text.to_string();
     for (pattern, label) in PATTERNS {

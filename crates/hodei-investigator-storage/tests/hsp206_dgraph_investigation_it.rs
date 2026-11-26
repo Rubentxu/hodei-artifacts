@@ -1,24 +1,24 @@
-//! HSP-206: la investigacion y su frescura sobre la autoridad del grafo.
+//! HSP-206: the investigation and its freshness over the graph authority.
 //!
-//! IT condicionado a `HODEI_GRAPH_IT_ENDPOINT` como todos los de la pila.
-//! Corre contra el alpha REAL compartido (asserts por MEMBRESIA sobre el
-//! tenant del test, nunca sobre conteos globales, HSP-198/219/220) y
-//! Lo que prueba:
+//! IT conditioned on `HODEI_GRAPH_IT_ENDPOINT` like all those of the stack.
+//! It runs against the REAL shared alpha (asserts by MEMBERSHIP over the
+//! test's tenant, never over global counts, HSP-198/219/220) and
+//! What it proves:
 //!
-//! - REPRODUCIBILIDAD: dos lecturas a la misma watermark sellan el MISMO
-//!   read-set byte a byte (manifiesto y huella identicos), con las
-//!   versiones de los apoyos que el informe cita (HSP-89);
-//! - RETIRO DE APOYO: un informe que se apoya en un apoyo retirado es
-//!   Stale con la cita de lo que se movio; el informe que no se apoyaba
-//!   en el movimiento sigue Current; y un apoyo ANADIDO a una relacion
-//!   que el informe leyo NO caduca lo que el informe dijo;
-//! - FAIL-CLOSED (AC#2): el corte por presupuesto se DECLARA (Coverage
-//!   Partial + OmittedByBudget) y el read-set de una lectura cortada
-//!   sigue sellando lo leido; una autoridad muda cierra la lectura con
-//!   Unavailable, nunca un snapshot inventado; y un manifiesto que cita
-//!   un tipo de relacion incomprensible produce UNKNOWN, nunca un
-//!   Current fabricado;
-//! - SCOPE: un sujeto de otra cuenta no se consulta: UNKNOWN declarado.
+//! - REPRODUCIBILITY: two reads at the same watermark seal the SAME
+//!   read-set byte for byte (identical manifest and fingerprint), with the
+//!   versions of the supports that the report cites (HSP-89);
+//! - SUPPORT WITHDRAWAL: a report that rests on a withdrawn support is
+//!   Stale with the citation of what moved; the report that did not rest
+//!   on the movement stays Current; and a support ADDED to a relation
+//!   that the report read does NOT expire what the report said;
+//! - FAIL-CLOSED (AC#2): the budget cut is DECLARED (Coverage
+//!   Partial + OmittedByBudget) and the read-set of a truncated read
+//!   still seals what was read; a mute authority closes the read with
+//!   Unavailable, never an invented snapshot; and a manifest that cites
+//!   an incomprehensible relation type produces UNKNOWN, never a
+//!   fabricated Current;
+//! - SCOPE: a subject of another account is not queried: declared UNKNOWN.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -53,9 +53,9 @@ use hodei_investigator_storage::freshness::LedgerFreshness;
 use hodei_investigator_storage::{DgraphEvidenceRetriever, GraphSource, InvestigationRetriever};
 use kernel::Hrn;
 
-/// La puerta de autorizacion es la del nucleo, ya probada por la
-/// referencia (m8, HSP-89): aqui se prueba la lectura, el sello y el
-/// veredicto de tres sobre el grafo nativo.
+/// The authorization gate is the core's, already tested by the
+/// reference (m8, HSP-89): here the read, the seal and the
+/// three-way verdict over the native graph are tested.
 struct EveryoneReads;
 
 #[async_trait]
@@ -65,9 +65,9 @@ impl EvidenceReadAuthorizer for EveryoneReads {
     }
 }
 
-/// Una fuente del grafo cuya autoridad no contesta: la watermark no se
-/// inventa con cero, y las relaciones que fallan no se entregan como
-/// ausencia.
+/// A graph source whose authority does not answer: the watermark is not
+/// invented as zero, and the relations that fail are not delivered as
+/// absence.
 struct SilentSource;
 
 #[async_trait]
@@ -89,9 +89,9 @@ impl GraphSource for SilentSource {
     }
 }
 
-/// El lector de una historia de deltas que no contesta: el veredicto
-/// sobre un informe tiene que ser UNKNOWN, nunca un Current calculado
-/// sobre el silencio.
+/// The reader of a delta history that does not answer: the verdict
+/// on a report has to be UNKNOWN, never a Current computed
+/// over silence.
 struct SilentLedger;
 
 #[async_trait]
@@ -160,9 +160,9 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Un tenant por test y por ejecucion: en el alpha compartido cada
-/// slice deja su huella, y las aserciones son de membresia sobre el
-/// propio, no de totales globales.
+/// One tenant per test and per run: on the shared alpha each
+/// slice leaves its mark, and the assertions are of membership over the
+/// own one, not of global totals.
 fn fresh_tenant(tag: &str) -> Hrn {
     let account = format!("it{tag}{}", &nonce()[7..]);
     Hrn::from_string(&format!(
@@ -235,9 +235,9 @@ fn withdrawal(
     )
 }
 
-/// El registro de evidencia del mundo: contenido por digest, sujeto por
-/// HRN. El digest es funcion del texto, y por eso el sello de evidencia
-/// es el MISMO string en los dos motores.
+/// The evidence registry of the world: content by digest, subject by
+/// HRN. The digest is a function of the text, and so the evidence seal
+/// is the SAME string in both engines.
 fn evidence_record(tenant: &Hrn, id: &str, subject: &Hrn, text: &str) -> EvidenceRecord {
     let digest = ContentDigest::of_bytes(text.as_bytes());
     EvidenceRecord::builder(EvidenceId::new(id), tenant.clone())
@@ -261,9 +261,9 @@ fn the_subject(tenant: &Hrn) -> Hrn {
     hrn_of(tenant, "Artifact", "app")
 }
 
-/// El mundo sobre la autoridad del grafo: grafo, frontera (la unica
-/// puerta de los deltas, HSP-199), evidencia, contenido y los dos
-/// lectores sobre la MISMA historia.
+/// The world over the graph authority: graph, frontier (the only
+/// door of the deltas, HSP-199), evidence, content and the two
+/// readers over the SAME history.
 struct World {
     graph: Arc<DgraphGraphStore>,
     frontier: Arc<DgraphProjectionFrontier>,
@@ -298,7 +298,7 @@ impl World {
         }
     }
 
-    /// Admite una evidencia y su contenido en el CAS.
+    /// Admits an evidence and its content into the CAS.
     async fn admit(&self, id: &str, subject: &Hrn, text: &str) {
         self.content
             .put(text.as_bytes().to_vec())
@@ -311,8 +311,8 @@ impl World {
             .expect("the evidence is admitted");
     }
 
-    /// Proyecta un changeset por la frontera: mutacion, deltas y
-    /// checkpoint como UN solo hecho.
+    /// Projects a changeset through the frontier: mutation, deltas and
+    /// checkpoint as ONE single fact.
     async fn project(&self, changes: GraphChangeSet, position: u64) {
         let delivery = ProjectionDelivery {
             consumer: "hsp206-it".to_string(),
@@ -328,7 +328,7 @@ impl World {
         assert!(!commit.replayed, "a fresh delivery is never a replay");
     }
 
-    /// El recuperador de la investigacion sobre la autoridad del grafo.
+    /// The investigation retriever over the graph authority.
     fn retriever(&self) -> DgraphEvidenceRetriever {
         DgraphEvidenceRetriever::new(
             self.evidence.clone(),
@@ -351,8 +351,8 @@ impl World {
         RetrievalScope::new(the_actor(&self.tenant), the_subject(&self.tenant))
     }
 
-    /// El comprobador de frescura sobre la MISMA historia contra la que
-    /// el recuperador sello: el oraculo de HSP-89 en la autoridad.
+    /// The freshness checker over the SAME history against which
+    /// the retriever sealed: the HSP-89 oracle on the authority.
     fn checker(&self) -> LedgerFreshness {
         LedgerFreshness::new(
             self.evidence.clone(),
@@ -362,7 +362,7 @@ impl World {
     }
 }
 
-/// Los sellos de relacion de un manifiesto, ordenados.
+/// The relation seals of a manifest, sorted.
 fn relation_stamps(report: &ReadSet) -> Vec<ReadStamp> {
     let mut stamps: Vec<ReadStamp> = report
         .stamps
@@ -374,8 +374,8 @@ fn relation_stamps(report: &ReadSet) -> Vec<ReadStamp> {
     stamps
 }
 
-/// AC #1: el read-set se reproduce, el retiro de apoyo se dice Stale y
-/// el veredicto es el mismo sobre los dos motores.
+/// AC #1: the read-set is reproduced, the support withdrawal is said Stale and
+/// the verdict is the same over both engines.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
     let Some(client) = connect().await else {
@@ -386,18 +386,18 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
     let subject = the_subject(&tenant);
     let component = hrn_of(&tenant, "Component", "lib");
     let identity = format!("contains|{subject}|{component}");
-    // La clave de la evidencia en la autoridad es GLOBAL (el id, sin
-    // cuenta): en un alpha compartido entre ejecuciones, cada corrida
-    // admite sus propias evidencias con sufijo de corrida. La referencia
-    // usa los mismos ids porque es fresca en memoria.
+    // The key of the evidence in the authority is GLOBAL (the id, without
+    // account): on an alpha shared across runs, each run
+    // admits its own evidences with a run suffix. The reference
+    // uses the same ids because it is fresh in memory.
     let run = &nonce()[7..];
     let sbom = format!("ev-{run}-sbom");
     let advisory = format!("ev-{run}-advisory");
 
-    // El material: dos evidencias con su contenido, y una relacion
-    // sostenida por la primera. Los nodos de evidencia van en el mismo
-    // changeset: la relacion reclama su evidencia y el grafo no la
-    // acepta sin ella.
+    // The material: two evidences with their content, and a relation
+    // supported by the first. The evidence nodes go in the same
+    // changeset: the relation claims its evidence and the graph does not
+    // accept it without it.
     world.admit(&sbom, &subject, "the sbom declares lib").await;
     world
         .admit(&advisory, &subject, "the advisory warns about lib")
@@ -421,8 +421,8 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         )
         .await;
 
-    // LECTURA SELLADA: la watermark es la version de la historia, y el
-    // manifiesto dice la relacion con el apoyo que la sostiene.
+    // SEALED READ: the watermark is the version of the history, and the
+    // manifest says the relation with the support that sustains it.
     let report = world.read(world.scope()).await;
     assert_eq!(
         relation_stamps(&report.read_set),
@@ -442,9 +442,9 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         "the Added delta of the delivery is the watermark"
     );
 
-    // REPRODUCIBILIDAD: otra lectura a la misma watermark reproduce el
-    // read-set byte a byte — el manifiesto es funcion del estado y de
-    // las claves estables, nunca del orden en que el almacen respondio.
+    // REPRODUCIBILITY: another read at the same watermark reproduces the
+    // read-set byte for byte — the manifest is a function of the state and of
+    // the stable keys, never of the order in which the store answered.
     let replay = world.read(world.scope()).await;
     assert_eq!(
         report.read_set.manifest(),
@@ -457,7 +457,7 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         "the seal is the byte-level identity of the read-set"
     );
 
-    // CURRENT: el mundo no se movio bajo el informe.
+    // CURRENT: the world did not move under the report.
     let verdict = world
         .checker()
         .freshness_of(&report.read_set, &subject)
@@ -467,11 +467,11 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         "an untouched world keeps the report current: {verdict:?}"
     );
 
-    // UN APOYO NUEVO NO CADUCA LO DICHO: la relacion gano el advisory
-    // (delta SupportChanged); el informe que se apoyaba en el SBOM sigue
-    // en pie, porque lo que el informe NO leyo no puede caducar lo que
-    // leyo. La lectura de ahora sella el ultimo apoyo dicho — como la
-    // fila de la referencia.
+    // A NEW SUPPORT DOES NOT EXPIRE WHAT WAS SAID: the relation gained the advisory
+    // (SupportChanged delta); the report that rested on the SBOM stays
+    // standing, because what the report did NOT read cannot expire what it
+    // read. The read of now seals the last support said — like the
+    // reference row.
     world
         .project(
             GraphChangeSet::empty()
@@ -501,10 +501,10 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         "the record says which support asserted it last, like the reference row"
     );
 
-    // RETIRO DE APOYO: el advisory se retira y la relacion SIGUE
-    // afirmada (le queda el SBOM). El informe sellado contra el advisory
-    // es Stale con la cita de lo que se movio; el sellado contra el SBOM
-    // sigue Current — el mismo veredicto de tres con el mismo material.
+    // SUPPORT WITHDRAWAL: the advisory is withdrawn and the relation REMAINS
+    // asserted (the SBOM is left). The report sealed against the advisory
+    // is Stale with the citation of what moved; the one sealed against the SBOM
+    // stays Current — the same three-way verdict with the same material.
     world
         .project(
             GraphChangeSet::empty()
@@ -543,10 +543,10 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         "the support the report read was not the one retired: {verdict:?}"
     );
 
-    // LA RELACION SE VA CON SU ULTIMO APOYO: sin apoyos no es una
-    // afirmacion (status unknown), y sale del read-set; el informe que
-    // se apoyo en ella es Stale, nunca un Current fabricado de la
-    // ausencia.
+    // THE RELATION GOES WITH ITS LAST SUPPORT: without supports it is not an
+    // assertion (status unknown), and it leaves the read-set; the report that
+    // rested on it is Stale, never a Current fabricated from
+    // absence.
     world
         .project(
             GraphChangeSet::empty()
@@ -575,8 +575,8 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         "the report's own support was retired under it: {verdict:?}"
     );
 
-    // SCOPE: la cuenta ajena no se consulta; el veredicto es UNKNOWN
-    // con la razon, no una respuesta sobre lo que no es suyo.
+    // SCOPE: the foreign account is not queried; the verdict is UNKNOWN
+    // with the reason, not an answer about what is not theirs.
     let foreign_subject = hrn_of(&fresh_tenant("206f"), "Artifact", "other");
     let verdict = world
         .checker()
@@ -593,8 +593,8 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
     }
 }
 
-/// AC #2: lo incompleto se DECLARA y lo ilegible es UNKNOWN — nunca un
-/// hecho comprobado que no es.
+/// AC #2: what is incomplete is DECLARED and what is unreadable is UNKNOWN — never a
+/// verified fact that is not.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_incomplete_read_is_declared_and_an_unreadable_world_is_unknown() {
     let Some(client) = connect().await else {
@@ -604,10 +604,10 @@ async fn an_incomplete_read_is_declared_and_an_unreadable_world_is_unknown() {
     let world = World::open(client, tenant.clone()).await;
     let subject = the_subject(&tenant);
 
-    // Tres componentes bajo tres apoyos: el presupuesto de relaciones
-    // deja fuera dos. El registro de evidencia NO se admide: el read-set
-    // que se corta es el de las relaciones, y la prueba no necesita mas
-    // material que el grafo.
+    // Three components under three supports: the relation budget
+    // leaves two out. The evidence registry is NOT admitted: the read-set
+    // that gets cut is the relations', and the test needs no more
+    // material than the graph.
     let mut changes = GraphChangeSet::empty()
         .with_cause(format!("fanout-{}", nonce()))
         .with_node(node(&tenant, NodeKind::Artifact, "app"))
@@ -660,9 +660,9 @@ async fn an_incomplete_read_is_declared_and_an_unreadable_world_is_unknown() {
         "exactly the admitted one is a fact"
     );
 
-    // UNA AUTORIDAD MUDA CIERRA LA LECTURA: la watermark que falta no se
-    // inventa con cero. El recuperador no entrega NADA — ni hechos ni
-    // manifiesto — que pueda presentarse como un hecho comprobado.
+    // A MUTE AUTHORITY CLOSES THE READ: the missing watermark is not
+    // invented as zero. The retriever delivers NOTHING — neither facts nor
+    // manifest — that could be presented as a verified fact.
     let retriever = InvestigationRetriever::new(
         world.evidence.clone(),
         world.content.clone(),
@@ -679,12 +679,12 @@ async fn an_incomplete_read_is_declared_and_an_unreadable_world_is_unknown() {
         "the silence is an unavailable world, not an empty one: {failure:?}"
     );
 
-    // UN MUNDO ILEGIBLE NO ES UN HECHO: un manifiesto que cita un tipo
-    // de relacion que no se puede interpretar hace que la lectura de los
-    // cambios falle, y el veredicto es UNKNOWN con la fuente nombrada —
-    // jamas un Current inventado. La watermark se pone DETRAS de la
-    // historia: es la unica puerta por la que el comprobador tiene que
-    // interpretar los tipos del manifiesto, y la interpretacion falla.
+    // AN UNREADABLE WORLD IS NOT A FACT: a manifest that cites a relation
+    // type that cannot be interpreted makes the read of the
+    // changes fail, and the verdict is UNKNOWN with the source named —
+    // never an invented Current. The watermark is put BEHIND the
+    // history: it is the only door through which the checker has to
+    // interpret the manifest types, and the interpretation fails.
     let mut forged = ReadSet::empty();
     forged.generation(GRAPH_SOURCE, 0);
     forged.read(ReadStamp::relation(
@@ -702,8 +702,8 @@ async fn an_incomplete_read_is_declared_and_an_unreadable_world_is_unknown() {
         other => panic!("an unreadable world is UNKNOWN, not {other:?}"),
     }
 
-    // LA HISTORIA QUE NO CONTESTA TAMPOCO ES UN HECHO: un lector de
-    // deltas mudo no puede decir si el informe sigue vigente, y lo dice.
+    // THE HISTORY THAT DOES NOT ANSWER IS NOT A FACT EITHER: a mute delta
+    // reader cannot say whether the report is still current, and it says so.
     let deaf = LedgerFreshness::new(
         world.evidence.clone(),
         Arc::new(SilentLedger),

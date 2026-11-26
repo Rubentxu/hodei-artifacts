@@ -5,10 +5,10 @@ use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
 use serde::{Deserialize, Serialize};
 
-/// Query para obtener una política IAM por su HRN
+/// Query to fetch an IAM policy by its HRN
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetPolicyQuery {
-    /// HRN de la política a obtener
+    /// HRN of the policy to fetch
     pub policy_hrn: Hrn,
 }
 
@@ -30,36 +30,36 @@ impl ActionTrait for GetPolicyQuery {
     }
 }
 
-/// Vista de una política IAM
+/// View of an IAM policy
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PolicyView {
-    /// HRN único de la política
+    /// Unique HRN of the policy
     pub hrn: Hrn,
 
-    /// Nombre de la política
+    /// Name of the policy
     pub name: String,
 
-    /// Contenido de la política en formato Cedar
+    /// Content of the policy in Cedar format
     pub content: String,
 
-    /// Descripción opcional de la política
+    /// Optional description of the policy
     pub description: Option<String>,
 
-    /// Los principales a los que está adjunta la política
+    /// The principals the policy is attached to
     ///
-    /// El adjunto es lo que hace que la política sea *efectiva* para un
-    /// principal, así que se reporta para que el consumidor pueda confirmar
-    /// lo que quedó persistido.
+    /// The attachment is what makes the policy *effective* for a
+    /// principal, so it is reported so that the consumer can confirm
+    /// what was persisted.
     pub attached_principals: Vec<String>,
 
-    /// Cuándo se creó la política, tal y como quedó persistido
+    /// When the policy was created, as it was persisted
     ///
-    /// Es `None` para una fila escrita antes de que existieran las marcas de
-    /// tiempo: no hay nada que devolver, y devolver el reloj del proceso sería
-    /// inventar un dato.
+    /// It is `None` for a row written before timestamps existed:
+    /// there is nothing to return, and returning the process clock would be
+    /// inventing data.
     pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 
-    /// Cuándo se actualizó la política por última vez, tal y como quedó
-    /// persistido
+    /// When the policy was last updated, as it was
+    /// persisted
     pub updated_at: Option<chrono::DateTime<chrono::Utc>>,
 }

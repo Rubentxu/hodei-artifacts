@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-/// Errores específicos del caso de uso GetEffectivePoliciesForPrincipal
+/// Errors specific to the GetEffectivePoliciesForPrincipal use case
 #[derive(Debug, Error)]
 pub enum GetEffectivePoliciesError {
     #[error("Principal not found: {0}")]
@@ -28,5 +28,5 @@ pub enum GetEffectivePoliciesError {
     InternalError(String),
 }
 
-/// Tipo Result específico para este caso de uso
+/// Result type specific to this use case
 pub type GetEffectivePoliciesResult<T> = Result<T, GetEffectivePoliciesError>;

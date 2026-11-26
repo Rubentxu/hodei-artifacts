@@ -1,36 +1,36 @@
-//! La gramatica pura del protocolo **GOPROXY** de Go Modules.
+//! The pure grammar of the Go Modules **GOPROXY** protocol.
 //!
-//! Un repositorio `go` sirve cuatro cosas por modulo, todas bajo la ruta
-//! `{modulo}/@v/`: la lista de versiones (`list`), el documento de version
-//! (`.info`), su `go.mod` (`.mod`) y el zip canónico (`.zip`). Ademas
-//! existe `{modulo}/@latest`, que senala la ultima version publicada.
+//! A `go` repository serves four things per module, all under the path
+//! `{module}/@v/`: the version list (`list`), the version document
+//! (`.info`), its `go.mod` (`.mod`) and the canonical zip (`.zip`). In addition
+//! there is `{module}/@latest`, which points to the latest published version.
 //!
-//! El protocolo no conoce la escritura: `go` solo lee. Publicar en un
-//! hosted es dejar los tres artefactos por la misma ruta con `PUT`, y la
-//! lista se ensambla con lo que hay en el catalogo, como en el indice
-//! sparse de cargo: nada se reescribe, cada version es para siempre.
+//! The protocol does not know writing: `go` only reads. Publishing to a
+//! hosted repository is leaving the three artifacts at the same path with `PUT`, and the
+//! list is assembled from what is in the catalog, as in cargo's sparse
+//! index: nothing is rewritten, every version is forever.
 //!
-//! Las rutas de modulo son sensibles a mayusculas y el protocolo las
-//! escapa: `H` se escribe `!h`. Este modulo valida el nombre **ya
-//! escapado**, que es la forma canonica con la que se almacena.
+//! Module paths are case-sensitive and the protocol
+//! escapes them: `H` is written `!h`. This module validates the name **already
+//! escaped**, which is the canonical form it is stored in.
 
 use serde_json::{Value, json};
 
-/// Lo que el protocolo no puede aceptar.
+/// What the protocol cannot accept.
 #[derive(Debug, PartialEq, Eq)]
 pub enum GoError {
-    /// La ruta no pertenece a GOPROXY.
+    /// The path does not belong to GOPROXY.
     InvalidPath(String),
-    /// El nombre de modulo no es un camino de modulo escapado valido.
+    /// The module name is not a valid escaped module path.
     InvalidModule(String),
-    /// La version no es un semver con `v`.
+    /// The version is not a semver with `v`.
     InvalidVersion(String),
-    /// El documento publicado no cumple lo que su ruta anuncia.
+    /// The published document does not match what its path announces.
     InvalidDocument(String),
 }
 
 impl GoError {
-    /// Lo que se le dice al cliente.
+    /// What the client is told.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidPath(what) => {
@@ -42,51 +42,51 @@ impl GoError {
         }
     }
 
-    /// Una ruta mala es un 404: el cliente no puede distinguir "aqui no
-    /// hay nada" de "aqui no se habla GOPROXY", y ningun mapa de rutas
-    /// publica la estructura del servicio.
+    /// A bad path is a 404: the client cannot distinguish "there is
+    /// nothing here" from "GOPROXY is not spoken here", and no route map
+    /// publishes the structure of the service.
     pub fn is_path_error(&self) -> bool {
         matches!(self, Self::InvalidPath(_))
     }
 }
 
-/// Lo que el cliente puede pedir en `/go/{repositorio}/...`.
+/// What the client can ask for at `/go/{repository}/...`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Route {
-    /// Las versiones del modulo: `GET {modulo}/@v/list`.
+    /// The versions of the module: `GET {module}/@v/list`.
     List {
-        /// El camino del modulo, en su forma escapada.
+        /// The module path, in its escaped form.
         module: String,
     },
-    /// El documento de una version: `GET {modulo}/@v/{version}.info`.
+    /// The document of a version: `GET {module}/@v/{version}.info`.
     Info {
-        /// El camino del modulo, en su forma escapada.
+        /// The module path, in its escaped form.
         module: String,
-        /// La version pedida.
+        /// The requested version.
         version: String,
     },
-    /// El `go.mod` de una version: `GET {modulo}/@v/{version}.mod`.
+    /// The `go.mod` of a version: `GET {module}/@v/{version}.mod`.
     Mod {
-        /// El camino del modulo, en su forma escapada.
+        /// The module path, in its escaped form.
         module: String,
-        /// La version pedida.
+        /// The requested version.
         version: String,
     },
-    /// El zip del modulo: `GET {modulo}/@v/{version}.zip`.
+    /// The module zip: `GET {module}/@v/{version}.zip`.
     Zip {
-        /// El camino del modulo, en su forma escapada.
+        /// The module path, in its escaped form.
         module: String,
-        /// La version pedida.
+        /// The requested version.
         version: String,
     },
-    /// La ultima version: `GET {modulo}/@latest`.
+    /// The latest version: `GET {module}/@latest`.
     Latest {
-        /// El camino del modulo, en su forma escapada.
+        /// The module path, in its escaped form.
         module: String,
     },
 }
 
-/// El tipo de contenido con el que se sirve cada artefacto.
+/// The content type each artifact is served with.
 pub fn content_type(extension: &str) -> &'static str {
     match extension {
         "info" => "application/json",
@@ -97,7 +97,7 @@ pub fn content_type(extension: &str) -> &'static str {
 }
 
 impl Route {
-    /// La ruta del protocolo tras `{repositorio}/`, sin decodificar.
+    /// The protocol path after `{repository}/`, undecoded.
     pub fn parse(rest: &str) -> Result<Route, GoError> {
         let segments = split(rest)?;
         if segments.is_empty() {
@@ -136,8 +136,8 @@ impl Route {
         )))
     }
 
-    /// La ruta donde vive el artefacto publicado de esta version, o `None`
-    /// si la ruta no habla de una version concreta.
+    /// The path where this version's published artifact lives, or `None`
+    /// if the path does not speak of a specific version.
     pub fn asset_path(&self) -> Option<String> {
         match self {
             Self::Info { module, version }
@@ -154,7 +154,7 @@ impl Route {
         }
     }
 
-    /// El modulo que la ruta busca, si es que busca uno.
+    /// The module the path is looking for, if it is looking for one.
     pub fn module(&self) -> &str {
         match self {
             Self::List { module }
@@ -166,11 +166,11 @@ impl Route {
     }
 }
 
-/// Un camino de modulo escapado: segmentos de minusculas ASCII con sus
-/// puntos, guiones y guiones bajos, y las mayusculas de la forma `!x`.
+/// An escaped module path: segments of lowercase ASCII with their
+/// dots, hyphens and underscores, and the uppercase letters in the form `!x`.
 ///
-/// Se permite el dos en el primer segmento porque los hosts con puerto
-/// (`localhost:8080/folder`) son caminos de modulo validos.
+/// A colon is allowed in the first segment because hosts with a port
+/// (`localhost:8080/folder`) are valid module paths.
 pub fn valid_module(module: &str) -> Result<String, GoError> {
     if module.is_empty() || module.len() > 512 {
         return Err(GoError::InvalidModule(module.to_string()));
@@ -189,14 +189,14 @@ pub fn valid_module(module: &str) -> Result<String, GoError> {
             } else if byte == b'!' {
                 escaped = true;
             } else if byte.is_ascii_uppercase() {
-                // El `go` nunca pide una capital sin escapar: la escapa
-                // como `!x`. Una ruta con la mayuscula cruda no es un
-                // error de sintaxis que el cliente pueda corregir
-                // reintentando: es un camino que no nombra nada, y se
-                // responde como lo que es para el protocolo: un 404.
-                // Aceptarla como nombre ademas crearia un alias del
-                // modulo escapado, y un alias es otra forma de que la
-                // misma version exista dos sitios distintos.
+                // `go` never asks for an unescaped capital: it escapes it
+                // as `!x`. A path with the raw uppercase letter is not a
+                // syntax error the client can fix by
+                // retrying: it is a path that names nothing, and it is
+                // answered as what it is for the protocol: a 404.
+                // Accepting it as a name would also create an alias of the
+                // escaped module, and an alias is another way for the
+                // same version to exist in two different places.
                 return Err(GoError::InvalidPath(format!(
                     "the module path {module:?} carries a capital that is not escaped"
                 )));
@@ -214,7 +214,7 @@ pub fn valid_module(module: &str) -> Result<String, GoError> {
     Ok(module.to_string())
 }
 
-/// Una version de modulo: la `v` y un semver estricto.
+/// A module version: the `v` and a strict semver.
 pub fn valid_version(version: &str) -> Result<String, GoError> {
     if parse_version(version).is_none() {
         return Err(GoError::InvalidVersion(version.to_string()));
@@ -222,8 +222,8 @@ pub fn valid_version(version: &str) -> Result<String, GoError> {
     Ok(version.to_string())
 }
 
-/// El documento `.info` canónico: la version y el momento en que se subio
-/// por primera vez al registro, en RFC 3339.
+/// The canonical `.info` document: the version and the moment it was first uploaded
+/// to the registry, in RFC 3339.
 pub fn info_document(version: &str, time: &str) -> Result<Value, GoError> {
     let version = valid_version(version)?;
     chrono::DateTime::parse_from_rfc3339(time)
@@ -231,7 +231,7 @@ pub fn info_document(version: &str, time: &str) -> Result<Value, GoError> {
     Ok(json!({ "Version": version, "Time": time }))
 }
 
-/// Comprueba un `.info` publicado contra la version que anuncia su ruta.
+/// Checks a published `.info` against the version its path announces.
 pub fn check_info(body: &[u8], version: &str) -> Result<(), GoError> {
     let value: Value = serde_json::from_slice(body)
         .map_err(|_| GoError::InvalidDocument("the info document is not JSON".into()))?;
@@ -246,8 +246,8 @@ pub fn check_info(body: &[u8], version: &str) -> Result<(), GoError> {
     Ok(())
 }
 
-/// La forma sin escapar de un camino de modulo: `!x` vuelve a `X`. Es la
-/// forma con la que el `go.mod` y el interior del zip nombran al modulo.
+/// The unescaped form of a module path: `!x` goes back to `X`. It is the
+/// form in which the `go.mod` and the inside of the zip name the module.
 pub fn unescape(module: &str) -> String {
     let bytes = module.as_bytes();
     let mut out = String::with_capacity(module.len());
@@ -264,10 +264,10 @@ pub fn unescape(module: &str) -> String {
     out
 }
 
-/// Comprueba un `.mod` publicado contra el modulo que anuncia su ruta: la
-/// primera directiva `module` del fichero tiene que decir exactamente lo
-/// mismo. Un `.mod` mudo o mentiroso no entra: el `go` lo usaria para
-/// resolver dependencias con otra identidad.
+/// Checks a published `.mod` against the module its path announces: the
+/// first `module` directive of the file has to say exactly the same
+/// thing. A mute or lying `.mod` does not get in: `go` would use it to
+/// resolve dependencies under another identity.
 pub fn check_mod(body: &[u8], module: &str) -> Result<(), GoError> {
     let text = std::str::from_utf8(body)
         .map_err(|_| GoError::InvalidDocument("the go.mod is not utf-8".into()))?;
@@ -281,9 +281,9 @@ pub fn check_mod(body: &[u8], module: &str) -> Result<(), GoError> {
     Ok(())
 }
 
-/// El modulo que declara un `go.mod`, sin escapados: la directiva puede
-/// escribirse con mayusculas porque el `go.mod` vive dentro del zip y el
-/// camino de la ruta vive fuera.
+/// The module a `go.mod` declares, unescaped: the directive can
+/// be written with uppercase letters because the `go.mod` lives inside the zip and the
+/// path's route lives outside.
 pub fn declared_module(go_mod: &str) -> Option<String> {
     for line in go_mod.lines() {
         let line = line.trim();
@@ -295,9 +295,9 @@ pub fn declared_module(go_mod: &str) -> Option<String> {
     None
 }
 
-/// El numero de version sin la `v` para ordenar: el listado de un proxy
-/// devuelve versiones ya validas; lo que no lo es se ignora en silencio,
-/// como hace el propio `go`.
+/// The version number without the `v` for ordering: a proxy's listing
+/// returns already-valid versions; what is not valid is silently ignored,
+/// as `go` itself does.
 pub fn parse_version(version: &str) -> Option<semver::Version> {
     semver::Version::parse(version.strip_prefix('v')?).ok()
 }
@@ -447,7 +447,7 @@ mod tests {
             "example.com/hello",
         )
         .expect("mod");
-        // El go.mod escribe el nombre real; la ruta, la forma escapada.
+        // The go.mod writes the real name; the path, the escaped form.
         check_mod(
             b"module github.com/BurntSushi/toml\n",
             "github.com/!burnt!sushi/toml",

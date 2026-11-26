@@ -1,9 +1,9 @@
-//! El backend S3 pasa la misma suite que el de ficheros, contra un
-//! LocalStack real por red localhost.
+//! The S3 backend passes the same suite as the file one, against a
+//! real LocalStack over the localhost network.
 //!
-//! Ademas de la suite comun, aqui viven lo que es propio del backend: el
-//! restart sobre el mismo almacén, el reclaimer que alimenta al GC y la
-//! promesa de que las credenciales no se filtran.
+//! Besides the common suite, what is specific to the backend lives here: the
+//! restart over the same store, the reclaimer that feeds the GC and the
+//! promise that credentials do not leak.
 
 mod common;
 
@@ -22,7 +22,7 @@ async fn the_s3_store_passes_the_suite() {
     let bucket = common::localstack::a_unique_bucket("suite");
     let store = common::localstack::a_store(&bucket).await;
     common::the_suite(&store).await;
-    // La diferencia declarada: S3 no tiene caminos de staging.
+    // The declared difference: S3 has no staging paths.
     let session = store.begin().await.expect("la sesion abre");
     assert!(session.the_staging_path().is_none());
 }
@@ -34,8 +34,8 @@ async fn the_s3_store_survives_a_restart() {
     let bytes = common::the_bytes();
     let digest = store.put(&bytes).await.expect("el contenido se guarda");
     drop(store);
-    // El mismo cubo, otro almacen encima, como el de antes de morir el
-    // proceso: el objeto no se fue con quien lo publico.
+    // The same bucket, another store on top, as before the process died:
+    // the object did not go away with whoever published it.
     let reopened = common::localstack::a_store(&bucket).await;
     assert_eq!(
         reopened.get(&digest).await.expect("lo escrito revive"),
@@ -47,9 +47,9 @@ async fn the_s3_store_survives_a_restart() {
         .expect("y sigue siendo integro");
 }
 
-/// El reclaimer: lo que ve el GC. Lista los blobs por su digest con su
-/// edad y su longitud, respeta la gracia y distingue lo borrado de lo que
-/// nunca estuvo.
+/// The reclaimer: what the GC sees. It lists the blobs by their digest with their
+/// age and their length, respects the grace and tells what was deleted apart from what
+/// never existed.
 #[tokio::test]
 async fn the_reclaimer_shows_the_gc_a_consistent_view() {
     let bucket = common::localstack::a_unique_bucket("gc");
@@ -80,15 +80,15 @@ async fn the_reclaimer_shows_the_gc_a_consistent_view() {
         let _ = blob.age;
     }
 
-    // Con una gracia mayor que cualquier edad, nada se toca: es la
-    // ventana en la que una publicacion reciente no es huerfana.
+    // With a grace greater than any age, nothing is touched: it is the
+    // window in which a recent publication is not an orphan.
     let fresh = reclaim
         .delete_if_older_than(&first, Duration::from_secs(60 * 60))
         .await
         .expect("la pregunta sale");
     assert_eq!(fresh, Reclaimed::Fresh, "la gracia manda antes de borrar");
 
-    // Sin gracia, se borra y se dice cuanto liberaba.
+    // Without grace, it is deleted and it says how much it freed.
     let deleted = reclaim
         .delete_if_older_than(&first, Duration::ZERO)
         .await
@@ -99,7 +99,7 @@ async fn the_reclaimer_shows_the_gc_a_consistent_view() {
     );
     assert_eq!(store.get(&first).await.unwrap_err(), BlobError::NotFound);
 
-    // Borrar algo que ya no esta no es un error: es Gone, dos veces.
+    // Deleting something that is no longer there is not an error: it is Gone, twice.
     let again = reclaim
         .delete_if_older_than(&first, Duration::ZERO)
         .await
@@ -111,26 +111,26 @@ async fn the_reclaimer_shows_the_gc_a_consistent_view() {
         .expect("lo ausente sale");
     assert_eq!(absent, Reclaimed::Gone);
 
-    // Y el contenido que sobrevivio sigue intacto.
+    // And the content that survived remains intact.
     assert!(store.exists(&second).await.expect("el segundo sigue"));
 }
 
-/// Credenciales de proveedor seguro, con un valor centinela para
-/// comprobar que no se filtra.
+/// Safe provider credentials, with a sentinel value to
+/// check that it does not leak.
 const SENTINEL_SECRET: &str = "SENTINEL-do-not-log-this-key";
 
 #[tokio::test]
 async fn credentials_never_appear_in_debug_or_errors() {
-    // El despliegue construye el cliente con su cadena de proveedores;
-    // aqui es estatica con un centinela, para poder buscarlo despues.
+    // The deployment builds the client with its provider chain;
+    // here it is static with a sentinel, so it can be searched for afterwards.
     let credentials = Credentials::from_keys("AKIASENTINELID", SENTINEL_SECRET, None);
     let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(Region::new("us-east-1"))
         .credentials_provider(credentials)
         .load()
         .await;
-    // Un endpoint muerto: todas las operaciones acaban en Unavailable,
-    // que es exactamente el error que no debe llevar secretos.
+    // A dead endpoint: all operations end in Unavailable,
+    // which is exactly the error that must not carry secrets.
     let s3_config = aws_sdk_s3::config::Builder::from(&sdk)
         .endpoint_url("http://127.0.0.1:1")
         .force_path_style(true)

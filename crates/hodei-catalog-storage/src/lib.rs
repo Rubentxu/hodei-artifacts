@@ -1,25 +1,25 @@
-//! El adaptador del catálogo sobre Dgraph.
+//! The catalog adapter over Dgraph.
 //!
-//! El dominio vive en `hodei-catalog`, que no sabe que existe una base de
-//! datos. Aquí es donde se sabe: las tablas del catálogo, los índices que
-//! decidan los conflictos, y las transacciones que hacen que publicar sea
-//! una sola cosa y no cuatro.
+//! The domain lives in `hodei-catalog`, which does not know a database
+//! exists. Here is where that is known: the catalog tables, the indexes that
+//! decide conflicts, and the transactions that make publishing
+//! a single thing and not four.
 //!
-//! La división no es tidiness. Es una garantía que el compilador
-//! comprueba: el crate del dominio **no puede** nombrar un motor de base de
-//! datos, así que sus contratos no pueden depender de uno por accidente.
+//! The split is not tidiness. It is a guarantee that the compiler
+//! checks: the domain crate **cannot** name a database
+//! engine, so its contracts cannot depend on one by accident.
 //!
-//! Aquí vive también el **outbox de auditoría**: la tabla donde espera el
-//! evento de una publicación, y el adaptador que lo entrega. Vive en esta
-//! base y no en otra a propósito, porque la fila del evento se escribe
-//! dentro de la misma transacción que publica, y una transacción que toca
-//! dos bases no es una transacción.
+//! The **audit outbox** also lives here: the table where the event of a
+//! publication waits, and the adapter that delivers it. It lives in this
+//! database and not in another on purpose, because the event row is written
+//! inside the same transaction that publishes, and a transaction that touches
+//! two databases is not a transaction.
 
 #![forbid(unsafe_code)]
 
-// El puerto Dgraph del catálogo (HSP-187, slice Raw): el mismo contrato
-// de HAR-02/HAR-03 sobre el grafo nativo, con el outbox de auditoría en
-// la MISMA transacción que el commit.
+// The catalog's Dgraph port (HSP-187, Raw slice): the same contract
+// of HAR-02/HAR-03 over the native graph, with the audit outbox in
+// the SAME transaction as the commit.
 pub mod dgraph;
 
 pub use dgraph::{CATALOG_DGRAPH_SCHEMA_VERSION, DgraphAuditOutbox, DgraphCatalogStore};

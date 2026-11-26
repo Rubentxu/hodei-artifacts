@@ -1,22 +1,22 @@
-//! La reserva de namespaces: que nombres son de la casa y nunca salen de un
-//! upstream publico.
+//! Namespace reservation: which names belong to the house and never come from a
+//! public upstream.
 //!
-//! El ataque de *dependency confusion* es simple: alguien publica en el
-//! registro publico un nombre que la organizacion usa en privado, con una
-//! version mayor, y un resolvedor que prefiere lo nuevo trae el paquete del
-//! atacante. La defensa es la **reserva**: un namespace declarado reservado
-//! se sirve desde los repositorios internos o no se sirve, y el upstream
-//! publico no participa aunque tenga mas versiones.
+//! The *dependency confusion* attack is simple: someone publishes on the
+//! public registry a name the organization uses privately, with a
+//! higher version, and a resolver that prefers the newest pulls the
+//! attacker's package. The defense is **reservation**: a namespace declared reserved
+//! is served from the internal repositories or not served at all, and the public
+//! upstream does not take part even if it has more versions.
 //!
-//! Este modulo es puro: lee la politica de la configuracion del repositorio
-//! y juzga una ruta. Quien resuelve (el proxy y los grupos) pregunta aqui
-//! **siempre**, antes de mirar cache, recibos o red: la consulta es
-//! obligatoria en la resolucion, y una ruta reservada no puede esquivarla
-//! ni con un TTL positivo, ni con uno negativo, ni sin red.
+//! This module is pure: it reads the policy from the repository configuration
+//! and judges a path. Whoever resolves (the proxy and the groups) asks here
+//! **always**, before looking at cache, receipts or network: the query is
+//! mandatory in resolution, and a reserved path cannot dodge it
+//! with a positive TTL, nor a negative one, nor without network.
 //!
-//! # La politica
+//! # The policy
 //!
-//! Vive en `config_settings.namespaces`:
+//! It lives in `config_settings.namespaces`:
 //!
 //! ```json
 //! { "namespaces": {
@@ -25,25 +25,25 @@
 //! } }
 //! ```
 //!
-//! - `reserved` son los namespaces reservados, en la escritura natural de
-//!   cada formato: groupId con puntos en Maven 2 (`com.acme`, que reserva
-//!   tambien sus subgrupos), `@scope` o nombre en npm, nombre de proyecto
-//!   en PyPI (que se compara normalizado, como dice PEP 503).
-//! - `on_conflict` dice que hacer cuando las fuentes discrepan sobre un
-//!   nombre reservado. El unico valor es `deny`: la negativa se **explica**
-//!   (nombra la reserva y las fuentes en conflicto) y no hay fallback: un
-//!   upstream caido nunca convierte la negativa en una respuesta publica.
-//! - Una clave que no se conoce, un namespace vacio o una politica que no
-//!   se entiende son un error: un ajuste de seguridad ilegible no degrada
-//!   a "sin reserva".
+//! - `reserved` are the reserved namespaces, in the natural writing of
+//!   each format: a groupId with dots in Maven 2 (`com.acme`, which also reserves
+//!   its subgroups), `@scope` or name in npm, project name
+//!   in PyPI (compared normalized, as PEP 503 says).
+//! - `on_conflict` says what to do when the sources disagree about a
+//!   reserved name. The only value is `deny`: the refusal is **explained**
+//!   (it names the reservation and the conflicting sources) and there is no fallback: a
+//!   down upstream never turns the refusal into a public answer.
+//! - An unknown key, an empty namespace or a policy that is not
+//!   understood is an error: an unreadable security setting does not degrade
+//!   to "no reservation".
 //!
-//! # Como se juzga una ruta
+//! # How a path is judged
 //!
-//! [`NamespacePolicy::judge`] recibe la ruta del asset y el formato, y
-//! dice si cae en una reserva. El juicio es determinista: las mismas
-//! entradas dan el mismo veredicto, y el veredicto nombra la regla que
-//! aplico (que namespace reservado coincidio y, en PyPI, con que alias se
-//! escribio).
+//! [`NamespacePolicy::judge`] receives the asset path and the format, and
+//! says whether it falls under a reservation. The judgement is deterministic: the same
+//! inputs give the same verdict, and the verdict names the rule that
+//! applied (which reserved namespace matched and, in PyPI, with which alias it was
+//! written).
 
 use std::collections::HashSet;
 
@@ -53,13 +53,13 @@ use serde_json::Value;
 use crate::model::{RepositoryConfig, RepositoryFormat};
 use crate::pypi;
 
-/// El tope de namespaces que reserva una politica.
+/// The cap on the namespaces a policy reserves.
 pub const MAX_RESERVED: usize = 256;
 
-/// El tope de longitud de un namespace reservado.
+/// The cap on the length of a reserved namespace.
 const MAX_NAME_LEN: usize = 214;
 
-/// Por que una politica de namespaces no es valida.
+/// Why a namespace policy is not valid.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("the namespace policy is not valid: {0}")]
 pub struct NamespacePolicyError(pub String);
@@ -76,16 +76,16 @@ struct RawPolicy {
     on_conflict: Option<String>,
 }
 
-/// Que hacer cuando las fuentes discrepan sobre un nombre reservado.
+/// What to do when the sources disagree about a reserved name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OnConflict {
-    /// La negativa se explica y no hay fallback: la reserva gana siempre.
+    /// The refusal is explained and there is no fallback: the reservation always wins.
     #[default]
     Deny,
 }
 
 impl OnConflict {
-    /// El nombre estable con que se escribe y se lee.
+    /// The stable name it is written and read with.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Deny => "deny",
@@ -93,36 +93,36 @@ impl OnConflict {
     }
 }
 
-/// El veredicto sobre una ruta.
+/// The verdict on a path.
 ///
-/// Nombra la regla que aplico: que reserva coincidio y, si la ruta llego
-/// escrita con un alias que normaliza igual (PyPI), como se escribio.
+/// It names the rule that applied: which reservation matched and, if the path arrived
+/// written with an alias that normalizes the same (PyPI), how it was written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Judgement {
-    /// La ruta no cae en ninguna reserva.
+    /// The path falls under no reservation.
     Unreserved,
-    /// La ruta cae en la reserva del namespace `matched`.
+    /// The path falls under the reservation of namespace `matched`.
     Reserved {
-        /// El namespace reservado que coincidio, tal y como se declaro.
+        /// The reserved namespace that matched, as it was declared.
         matched: String,
-        /// La escritura de la ruta que normaliza igual, si no fue literal.
+        /// The writing of the path that normalizes the same, if it was not literal.
         ///
-        /// En PyPI, `Flask_Login` y `flask.login` son el mismo proyecto que
-        /// `flask-login`: si la politica reserva `flask-login` y la peticion
-        /// llega como `Flask_Login`, el alias es el que se nombra en la
-        /// explicacion.
+        /// In PyPI, `Flask_Login` and `flask.login` are the same project as
+        /// `flask-login`: if the policy reserves `flask-login` and the request
+        /// arrives as `Flask_Login`, the alias is what is named in the
+        /// explanation.
         alias_of: Option<String>,
     },
 }
 
 impl Judgement {
-    /// Si la ruta cae en una reserva.
+    /// Whether the path falls under a reservation.
     pub fn is_reserved(&self) -> bool {
         matches!(self, Self::Reserved { .. })
     }
 }
 
-/// La politica de namespaces de un repositorio, ya validada.
+/// The namespace policy of a repository, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamespacePolicy {
     reserved: Vec<String>,
@@ -130,11 +130,11 @@ pub struct NamespacePolicy {
 }
 
 impl NamespacePolicy {
-    /// La politica que declara la configuracion de un repositorio.
+    /// The policy that a repository's configuration declares.
     ///
-    /// `Ok(None)` es "no declara ninguna": sin la clave `namespaces` no hay
-    /// reserva y la resolucion es la de siempre. Una declaracion que existe
-    /// y no se entiende es un error, nunca una politica vacia.
+    /// `Ok(None)` means "declares none": without the `namespaces` key there is no
+    /// reservation and resolution is as usual. A declaration that exists
+    /// and is not understood is an error, never an empty policy.
     pub fn of(config: &RepositoryConfig) -> Result<Option<Self>, NamespacePolicyError> {
         let Some(policy) = config.config_settings.get("namespaces") else {
             return Ok(None);
@@ -142,7 +142,7 @@ impl NamespacePolicy {
         Self::parse(policy).map(Some)
     }
 
-    /// Valida una politica escrita como JSON.
+    /// Validates a policy written as JSON.
     pub fn parse(value: &Value) -> Result<Self, NamespacePolicyError> {
         let raw: RawPolicy = serde_json::from_value(value.clone())
             .map_err(|error| invalid(format!("it cannot be read: {error}")))?;
@@ -184,54 +184,54 @@ impl NamespacePolicy {
         })
     }
 
-    /// Los namespaces reservados, tal y como se declararon.
+    /// The reserved namespaces, as they were declared.
     pub fn reserved(&self) -> &[String] {
         &self.reserved
     }
 
-    /// Que hacer ante un conflicto de fuentes.
+    /// What to do on a source conflict.
     pub fn on_conflict(&self) -> OnConflict {
         self.on_conflict
     }
 
-    /// El veredicto sobre una ruta del repositorio, segun su formato.
+    /// The verdict on a repository path, according to its format.
     ///
-    /// La ruta es la del asset (relativa al repositorio). El juicio no mira
-    /// cache ni procedencia: es la pregunta que la resolucion se hace
-    /// siempre, antes de decidir de donde sale el contenido.
+    /// The path is the asset's (relative to the repository). The judgement does not look at
+    /// cache or provenance: it is the question resolution always asks itself,
+    /// before deciding where the content comes from.
     pub fn judge(&self, format: RepositoryFormat, path: &str) -> Judgement {
         match format {
             RepositoryFormat::Maven2 => self.judge_maven(path),
             RepositoryFormat::Npm => self.judge_npm(path),
             RepositoryFormat::PyPi => self.judge_pypi(path),
-            // OCI no tiene una nocion de namespace con alias: el namespace es
-            // el primer segmento del **nombre del repositorio**, no la ruta de
-            // un asset dentro de el. Un repositorio se llama "team/demo" y su
-            // namespace es "team"; el juicio se hace sobre el nombre, y por eso
-            // el mismo nombre "manifests/sha256:abc" --que es una ruta de asset
-            // y no un nombre-- no casa con ninguna reserva.
+            // OCI has no notion of a namespace with aliases: the namespace is
+            // the first segment of the **repository name**, not the path of
+            // an asset within it. A repository is called "team/demo" and its
+            // namespace is "team"; the judgement is made on the name, and that is why
+            // the same name "manifests/sha256:abc" --which is an asset path
+            // and not a name-- matches no reservation.
             //
-            // Y la reserva no puede llevar barras: un namespace es el primer
-            // segmento, y "team/demo" no es un namespace declarable. Por eso la
-            // regla es la plana, que ya compara el primer segmento por
-            // prefijo de segmento: "team" cubre "team/demo" y "team/demo/x",
-            // y no cubre "teamx" ni "teammate".
+            // And the reservation cannot carry slashes: a namespace is the first
+            // segment, and "team/demo" is not a declarable namespace. That is why the
+            // rule is the flat one, which already compares the first segment by
+            // segment prefix: "team" covers "team/demo" and "team/demo/x",
+            // and does not cover "teamx" nor "teammate".
             RepositoryFormat::Oci => self.judge_flat(path),
             RepositoryFormat::NuGet => self.judge_nuget(path),
-            // Los demas formatos no tienen una nocion de namespace con
-            // alias: el primer segmento de la ruta es el nombre, y se
-            // compara tal cual.
+            // The other formats have no notion of a namespace with
+            // aliases: the first segment of the path is the name, and it is
+            // compared as is.
             _ => self.judge_flat(path),
         }
     }
 
-    /// Maven 2: un groupId con puntos cubre su prefijo de directorios y sus
-    /// subgrupos.
+    /// Maven 2: a groupId with dots covers its directory prefix and its
+    /// subgroups.
     ///
-    /// La ruta Maven es el groupId con `/` en vez de `.`; `com.acme` reserva
-    /// `com/acme/...`, y tambien `com/acme/plugin/...` (el subgrupo
-    /// `com.acme.plugin`). La comparacion es por segmentos: `com/acme-x/...`
-    /// no cae en la reserva de `com.acme`.
+    /// The Maven path is the groupId with `/` instead of `.`; `com.acme` reserves
+    /// `com/acme/...`, and also `com/acme/plugin/...` (the subgroup
+    /// `com.acme.plugin`). The comparison is by segments: `com/acme-x/...`
+    /// does not fall under the reservation of `com.acme`.
     fn judge_maven(&self, path: &str) -> Judgement {
         for reserved in &self.reserved {
             let prefix = reserved.replace('.', "/");
@@ -248,12 +248,12 @@ impl NamespacePolicy {
         Judgement::Unreserved
     }
 
-    /// npm: un `@scope` reserva todo su alcance; un nombre reserva el
-    /// paquete.
+    /// npm: a `@scope` reserves its whole scope; a name reserves the
+    /// package.
     ///
-    /// La ruta de un paquete con alcance empieza por dos segmentos
-    /// (`@scope/pkg/...`); la de uno sin alcance, por uno. El nombre se
-    /// compara en minusculas, como npm escribe los suyos.
+    /// The path of a scoped package starts with two segments
+    /// (`@scope/pkg/...`); that of an unscoped one, with one. The name is
+    /// compared in lowercase, as npm writes its own.
     fn judge_npm(&self, path: &str) -> Judgement {
         let name = package_of_npm_path(path);
         if name.is_empty() {
@@ -277,12 +277,12 @@ impl NamespacePolicy {
         Judgement::Unreserved
     }
 
-    /// PyPI: el nombre del proyecto es el primer segmento, y se compara
-    /// normalizado como dice PEP 503.
+    /// PyPI: the project name is the first segment, and it is compared
+    /// normalized as PEP 503 says.
     ///
-    /// `Flask_Login`, `flask.login` y `flask-login` son el mismo proyecto:
-    /// una reserva de `flask-login` los gobierna a los tres, y el alias con
-    /// que llego la peticion queda nombrado en el veredicto.
+    /// `Flask_Login`, `flask.login` and `flask-login` are the same project:
+    /// a reservation of `flask-login` governs all three, and the alias the
+    /// request arrived with is named in the verdict.
     fn judge_pypi(&self, path: &str) -> Judgement {
         let project = path.split('/').next().unwrap_or_default();
         if project.is_empty() {
@@ -348,10 +348,10 @@ impl NamespacePolicy {
     }
 }
 
-/// El nombre de paquete npm que encabeza una ruta.
+/// The npm package name that heads a path.
 ///
-/// `@scope/pkg/-/pkg-1.0.0.tgz` es `@scope/pkg`; `pkg/...` es `pkg`; lo que
-/// no llega a un nombre (`@solo`, la ruta vacia) no es de ningun paquete.
+/// `@scope/pkg/-/pkg-1.0.0.tgz` is `@scope/pkg`; `pkg/...` is `pkg`; what
+/// does not reach a name (`@solo`, the empty path) belongs to no package.
 fn package_of_npm_path(path: &str) -> &str {
     if let Some(rest) = path.strip_prefix('@') {
         let (scope, after) = match rest.split_once('/') {
@@ -362,8 +362,8 @@ fn package_of_npm_path(path: &str) -> &str {
         if base.is_empty() {
             return "";
         }
-        // El nombre mide lo que hay desde el principio hasta el final del
-        // segundo segmento.
+        // The name measures what there is from the start to the end of the
+        // second segment.
         let length = 1 + scope.len() + 1 + base.len();
         return &path[..length];
     }
@@ -463,8 +463,8 @@ mod tests {
                 "{free}"
             );
         }
-        // La raiz del grupo reservado tambien lo esta: todo lo que cae bajo
-        // `acme/` es del namespace `acme`.
+        // The root of the reserved group is also reserved: everything that falls under
+        // `acme/` belongs to the `acme` namespace.
         assert_eq!(
             reserved(&["acme"]).judge(RepositoryFormat::Maven2, "acme/"),
             Judgement::Reserved {
@@ -496,7 +496,7 @@ mod tests {
                 "{free}"
             );
         }
-        // Un prefijo de alcance incompleto no es un nombre de paquete.
+        // An incomplete scope prefix is not a package name.
         assert_eq!(
             policy.judge(RepositoryFormat::Npm, "@acme"),
             Judgement::Unreserved
@@ -546,9 +546,9 @@ mod tests {
 
     #[test]
     fn an_oci_reservation_is_matched_over_the_name_of_the_repository() {
-        // Un namespace reservado no puede llevar barras: es el primer
-        // segmento, y "team/demo" no es un namespace declarable. La reserva
-        // que protege al grupo se escribe "team", y cubre "team/demo".
+        // A reserved namespace cannot carry slashes: it is the first
+        // segment, and "team/demo" is not a declarable namespace. The reservation
+        // that protects the group is written "team", and it covers "team/demo".
         let policy = reserved(&["team"]);
         for name in ["team", "team/demo", "team/demo/extra"] {
             assert!(

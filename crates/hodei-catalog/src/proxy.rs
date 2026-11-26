@@ -1,18 +1,18 @@
-//! El upstream de un repositorio proxy y el recibo de lo que se bajo de el.
+//! The upstream of a proxy repository and the receipt of what was pulled from it.
 //!
-//! Un repositorio `Proxy` no guarda lo que alguien publica: resuelve contra
-//! un **upstream declarado** y conserva lo que baja. Quien pide no elige a
-//! donde va el servidor: pide una ruta **relativa**, y el destino sale de la
-//! configuracion del repositorio, que esta versionada.
+//! A `Proxy` repository does not store what someone publishes: it resolves against
+//! a **declared upstream** and keeps what it pulls down. Whoever asks does not choose
+//! where the server goes: they ask for a **relative** path, and the destination comes from the
+//! repository configuration, which is versioned.
 //!
-//! Este modulo es puro: describe y valida la configuracion, y define el
-//! recibo y su libro. Lo que toca la red (resolver nombres, conectar,
-//! seguir redirecciones) vive en el servicio, que es quien conoce la
-//! politica de salida de la maquina.
+//! This module is pure: it describes and validates the configuration, and defines the
+//! receipt and its ledger. What touches the network (resolving names, connecting,
+//! following redirects) lives in the service, which is the one that knows the
+//! egress policy of the machine.
 //!
-//! # La configuracion
+//! # The configuration
 //!
-//! Vive en `config_settings.proxy.upstream`:
+//! It lives in `config_settings.proxy.upstream`:
 //!
 //! ```json
 //! { "proxy": { "upstream": {
@@ -26,17 +26,17 @@
 //! } } }
 //! ```
 //!
-//! - `scopes` son prefijos de ruta permitidos: lo que no cae en un scope no
-//!   se pide al upstream. `"/"` es todo el upstream. No hay scopes por
-//!   defecto: sin scopes la configuracion no es valida.
-//! - `credential_ref` es una **referencia** (`env:NOMBRE`), nunca el
-//!   secreto. El secreto se lee en el momento de la peticion y solo viaja
-//!   al origen del upstream.
-//! - `redirects` dice cuantas redirecciones se siguen y si se admiten
-//!   hacia otro origen. Por defecto, tres y solo al mismo origen.
+//! - `scopes` are allowed path prefixes: whatever does not fall in a scope is
+//!   not requested from the upstream. `"/"` is the whole upstream. There are no default
+//!   scopes: without scopes the configuration is not valid.
+//! - `credential_ref` is a **reference** (`env:NAME`), never the
+//!   secret. The secret is read at request time and only travels
+//!   to the origin of the upstream.
+//! - `redirects` says how many redirects are followed and whether they are allowed
+//!   to another origin. By default, three and only to the same origin.
 //!
-//! Junto a `proxy.upstream`, `proxy.cache` declara la politica de cache
-//! (TTL, cache negativa, stale y offline): ver [`crate::proxy_cache`].
+//! Alongside `proxy.upstream`, `proxy.cache` declares the cache policy
+//! (TTL, negative cache, stale and offline): see [`crate::proxy_cache`].
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -48,13 +48,13 @@ use url::Url;
 use crate::proxy_cache::CachePolicy;
 use crate::{CatalogError, RepositoryConfig};
 
-/// El tope de redirecciones que una configuracion puede pedir.
+/// The cap on redirects that a configuration may ask for.
 pub const MAX_REDIRECTS_CEILING: u8 = 10;
 
-/// Las redirecciones que se siguen si la configuracion no dice otra cosa.
+/// The redirects that are followed if the configuration says nothing else.
 pub const DEFAULT_REDIRECTS: u8 = 3;
 
-/// Por que una configuracion de upstream no es valida.
+/// Why an upstream configuration is not valid.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("the upstream configuration is not valid: {0}")]
 pub struct UpstreamConfigError(pub String);
@@ -63,18 +63,18 @@ fn invalid(reason: impl Into<String>) -> UpstreamConfigError {
     UpstreamConfigError(reason.into())
 }
 
-/// La referencia a una credencial.
+/// The reference to a credential.
 ///
-/// Es el **nombre** de donde sale el secreto, no el secreto. Una
-/// configuracion versionada y auditada no puede llevar un token.
+/// It is the **name** of where the secret comes from, not the secret. A
+/// versioned and audited configuration cannot carry a token.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CredentialRef(String);
 impl CredentialRef {
-    /// Lee una referencia `env:NOMBRE`.
+    /// Reads an `env:NAME` reference.
     ///
-    /// Solo se admite lo que es inequivocamente una referencia: cualquier
-    /// otra cosa podria ser un secreto escrito donde no debe, y se rechaza
-    /// sin repetirla en el error.
+    /// Only what is unmistakably a reference is accepted: anything
+    /// else could be a secret written where it should not be, and it is rejected
+    /// without repeating it in the error.
     pub fn parse(raw: &str) -> Result<Self, UpstreamConfigError> {
         let Some(name) = raw.strip_prefix("env:") else {
             return Err(invalid(
@@ -95,77 +95,77 @@ impl CredentialRef {
         Ok(Self(raw.to_string()))
     }
 
-    /// La referencia, tal y como se escribio.
+    /// The reference, as it was written.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// El nombre de la variable de entorno que guarda el secreto.
+    /// The name of the environment variable that holds the secret.
     pub fn env_name(&self) -> &str {
         self.0.strip_prefix("env:").unwrap_or_default()
     }
 }
 
-/// El realm del token, cuando el upstream lo declara.
+/// The token realm, when the upstream declares it.
 ///
-/// Un upstream que exige autenticacion no la pide con una cabecera de
-/// credenciales: contesta con un **reto** que dice donde hay que pedir un
-/// token. Ese reto lo dice el upstream, y un upstream puede decir cualquier
-/// cosa: por eso el realm **declarado** es el que cuenta, y el reto que no
-/// nombra ese realm no recibe ninguna credencial.
+/// An upstream that requires authentication does not ask for it with a credentials
+/// header: it answers with a **challenge** that says where to ask for a
+/// token. That challenge is stated by the upstream, and an upstream can say anything:
+/// that is why the **declared** realm is the one that counts, and a challenge that does not
+/// name that realm receives no credential.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenAuth {
-    /// Donde se pide el token.
+    /// Where the token is requested.
     pub realm: Url,
-    /// El nombre del servicio que se pide, si el upstream lo distingue.
+    /// The name of the requested service, if the upstream distinguishes it.
     pub service: Option<String>,
-    /// El usuario con el que se pide el token.
+    /// The user the token is requested with.
     ///
-    /// Es informativo: lo que autentica es la credencial. Sin usuario
-    /// declarado se usa el identificador del upstream.
+    /// It is informative: what authenticates is the credential. Without a declared
+    /// user the upstream identifier is used.
     pub username: Option<String>,
 }
 
 impl TokenAuth {
-    /// El usuario con el que se pide el token.
+    /// The user the token is requested with.
     pub fn the_username<'a>(&'a self, upstream_id: &'a str) -> &'a str {
         self.username.as_deref().unwrap_or(upstream_id)
     }
 }
 
-/// El upstream de un repositorio proxy, ya validado.
+/// The upstream of a proxy repository, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UpstreamConfig {
-    /// El identificador estable del upstream. Va en los recibos.
+    /// The stable identifier of the upstream. It goes in the receipts.
     pub id: String,
-    /// La URL base. Termina en `/`, sin credenciales, consulta ni fragmento.
+    /// The base URL. It ends in `/`, with no credentials, query or fragment.
     pub base: Url,
-    /// Los prefijos de ruta que se pueden pedir. Nunca vacio.
+    /// The path prefixes that may be requested. Never empty.
     pub scopes: Vec<String>,
-    /// De donde sale la credencial, si el upstream pide una.
+    /// Where the credential comes from, if the upstream asks for one.
     pub credential: Option<CredentialRef>,
-    /// Cuantas redirecciones se siguen como maximo.
+    /// How many redirects are followed at most.
     pub max_redirects: u8,
-    /// Si se admite una redireccion hacia otro origen.
+    /// Whether a redirect to another origin is allowed.
     pub cross_origin_redirects: bool,
-    /// El tope de bytes de una respuesta, si la configuracion lo estrecha.
+    /// The byte cap of a response, if the configuration narrows it.
     pub max_bytes: Option<u64>,
-    /// Si el upstream tiene que declarar el checksum del contenido.
+    /// Whether the upstream has to declare the checksum of the content.
     ///
-    /// Con `true`, una respuesta que no lo declara se rechaza: el contenido
-    /// no se puede presentar como verificado contra el upstream.
+    /// With `true`, a response that does not declare it is rejected: the content
+    /// cannot be presented as verified against the upstream.
     pub require_checksum: bool,
-    /// El realm del token, si el upstream exige autenticacion.
+    /// The token realm, if the upstream requires authentication.
     pub auth: Option<TokenAuth>,
-    /// La politica de cache (`proxy.cache`); los valores por defecto si la
-    /// configuracion no la declara.
+    /// The cache policy (`proxy.cache`); the default values if the
+    /// configuration does not declare it.
     pub cache: CachePolicy,
-    /// La clave publica con la que el upstream firma su repodata, en armor.
+    /// The public key with which the upstream signs its repodata, armored.
     ///
-    /// Es una clave **publica**: no es un secreto y puede ir en la
-    /// configuracion versionada del repositorio. El cliente (dnf) la pide
-    /// por HTTP y la usa para verificar la firma del upstream que Hodei
-    /// sirve sin reescribir.
+    /// It is a **public** key: it is not a secret and may go in the
+    /// versioned configuration of the repository. The client (dnf) requests it
+    /// over HTTP and uses it to verify the signature of the upstream that Hodei
+    /// serves without rewriting.
     pub gpg_key_armor: Option<String>,
 }
 
@@ -185,8 +185,8 @@ struct RawUpstream {
     require_checksum: bool,
     #[serde(default)]
     auth: Option<RawAuth>,
-    /// La clave publica del upstream, en armor: la que el cliente usa
-    /// para verificar la firma del repodata que el proxy sirve tal cual.
+    /// The public key of the upstream, armored: the one the client uses
+    /// to verify the signature of the repodata that the proxy serves as is.
     #[serde(default)]
     gpg_key_armor: Option<String>,
 }
@@ -211,17 +211,17 @@ struct RawRedirects {
 }
 
 impl UpstreamConfig {
-    /// El upstream que declara la configuracion de un repositorio.
+    /// The upstream that the configuration of a repository declares.
     ///
-    /// `Ok(None)` es "no declara ninguno"; una declaracion que existe y no
-    /// se entiende es un error, nunca un valor por defecto: un ajuste de
-    /// salida a la red ilegible no puede degradar a "permitido".
+    /// `Ok(None)` is "declares none"; a declaration that exists and is not
+    /// understood is an error, never a default value: an unreadable
+    /// network egress setting cannot degrade to "allowed".
     pub fn of(config: &RepositoryConfig) -> Result<Option<Self>, UpstreamConfigError> {
         let Some(proxy) = config.config_settings.get("proxy") else {
             return Ok(None);
         };
-        // Una clave que no se conoce (`upstraem`, `caches`) no se ignora: un
-        // ajuste que parece estar puesto y no se aplica es peor que un error.
+        // An unknown key (`upstraem`, `caches`) is not ignored: a
+        // setting that looks set and is not applied is worse than an error.
         if let Some(object) = proxy.as_object()
             && let Some(unknown) = object
                 .keys()
@@ -241,7 +241,7 @@ impl UpstreamConfig {
         Ok(Some(config))
     }
 
-    /// Valida un upstream escrito como JSON.
+    /// Validates an upstream written as JSON.
     pub fn parse(value: &Value) -> Result<Self, UpstreamConfigError> {
         let raw: RawUpstream = serde_json::from_value(value.clone())
             .map_err(|error| invalid(format!("it cannot be read: {error}")))?;
@@ -262,7 +262,7 @@ impl UpstreamConfig {
         if base.host().is_none() {
             return Err(invalid("url has no host"));
         }
-        // Una URL con credenciales las pondria en cada traza que la nombre.
+        // A URL with credentials would put them in every trace that names it.
         if !base.username().is_empty() || base.password().is_some() {
             return Err(invalid("url must not carry credentials"));
         }
@@ -306,10 +306,10 @@ impl UpstreamConfig {
 
         let auth = raw.auth.map(Self::auth).transpose()?;
 
-        // La clave del upstream es publica: es la que el cliente pide por
-        // HTTP para verificar la firma del repodata. Una en blanco no es
-        // una clave: es una configuracion que nadie ha escrito. El texto
-        // se guarda tal cual: lo que se sirve es lo que se configuro.
+        // The upstream key is public: it is the one the client requests over
+        // HTTP to verify the repodata signature. A blank one is not
+        // a key: it is a configuration nobody has written. The text
+        // is stored as is: what is served is what was configured.
         let gpg_key_armor = raw.gpg_key_armor.filter(|armor| !armor.trim().is_empty());
 
         Ok(Self {
@@ -327,12 +327,12 @@ impl UpstreamConfig {
         })
     }
 
-    /// El realm del token, si la declaracion se entiende.
+    /// The token realm, if the declaration is understood.
     ///
-    /// El realm es una URL como cualquier otra: absoluta, con esquema de
-    /// red y sin credenciales. Un realm con credenciales las pondria en
-    /// cada traza que lo nombre, y un realm sin host no lleva a ningun
-    /// sitio.
+    /// The realm is a URL like any other: absolute, with a network
+    /// scheme and no credentials. A realm with credentials would put them in
+    /// every trace that names it, and a realm without a host leads
+    /// nowhere.
     fn auth(raw: RawAuth) -> Result<TokenAuth, UpstreamConfigError> {
         let realm =
             Url::parse(&raw.realm).map_err(|_| invalid("auth.realm is not an absolute URL"))?;
@@ -363,8 +363,8 @@ impl UpstreamConfig {
             return Ok(String::new());
         }
         let bad = raw.is_empty()
-            // El prefijo es de segmento: sin la barra final, `acme` dejaria
-            // pasar `acme-evil/`.
+            // The prefix is per segment: without the trailing slash, `acme` would let
+            // `acme-evil/` through.
             || !raw.ends_with('/')
             || raw.starts_with('/')
             || raw.contains('\\')
@@ -380,18 +380,18 @@ impl UpstreamConfig {
         Ok(raw.to_string())
     }
 
-    /// Si una ruta relativa cae dentro de algun scope.
+    /// Whether a relative path falls within any scope.
     pub fn in_scope(&self, asset_path: &str) -> bool {
         self.scopes
             .iter()
             .any(|scope| scope.is_empty() || asset_path.starts_with(scope.as_str()))
     }
 
-    /// La URL del upstream para una ruta relativa.
+    /// The upstream URL for a relative path.
     ///
-    /// La ruta se **añade** a la base segmento a segmento y codificada: no
-    /// puede cambiar el host, el esquema ni salir de la base. `None` si la
-    /// ruta no esta en un scope o no es una ruta relativa limpia.
+    /// The path is **appended** to the base segment by segment and encoded: it
+    /// cannot change the host, the scheme or escape the base. `None` if the
+    /// path is not in a scope or is not a clean relative path.
     pub fn target(&self, asset_path: &str) -> Option<Url> {
         if asset_path.is_empty() || !self.in_scope(asset_path) {
             return None;
@@ -399,8 +399,8 @@ impl UpstreamConfig {
         let mut url = self.base.clone();
         {
             let mut segments = url.path_segments_mut().ok()?;
-            // La base termina en `/`: el ultimo segmento vacio se quita
-            // para que la ruta no genere un `//`.
+            // The base ends in `/`: the last empty segment is removed
+            // so that the path does not generate a `//`.
             segments.pop_if_empty();
             for segment in asset_path.split('/') {
                 if segment.is_empty() || segment == "." || segment == ".." {
@@ -412,13 +412,13 @@ impl UpstreamConfig {
         Some(url)
     }
 
-    /// El origen del upstream: esquema, host y puerto, sin ruta.
+    /// The origin of the upstream: scheme, host and port, without a path.
     pub fn origin(&self) -> String {
         origin_of(&self.base)
     }
 }
 
-/// El origen de una URL (`esquema://host:puerto`), sin ruta ni credenciales.
+/// The origin of a URL (`scheme://host:port`), without path or credentials.
 pub fn origin_of(url: &Url) -> String {
     format!(
         "{}://{}:{}",
@@ -428,45 +428,45 @@ pub fn origin_of(url: &Url) -> String {
     )
 }
 
-/// Con que se comprobo el contenido que bajo del upstream.
+/// What the content pulled from the upstream was checked with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ChecksumEvidence {
-    /// El upstream declaro el checksum y coincide con lo recibido.
+    /// The upstream declared the checksum and it matches what was received.
     Declared {
-        /// La cabecera que lo declaro.
+        /// The header that declared it.
         header: String,
     },
-    /// El upstream no declaro nada: el digest es el que se calculo aqui.
+    /// The upstream declared nothing: the digest is the one computed here.
     ///
-    /// Es identidad del contenido, no verificacion contra el upstream, y el
-    /// recibo lo dice.
+    /// It is content identity, not verification against the upstream, and the
+    /// receipt says so.
     ComputedOnly,
 }
 
-/// Que paso en la resolucion que el recibo cuenta.
+/// What happened in the resolution that the receipt reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReceiptOutcome {
-    /// Se trajeron los bytes del upstream y se publicaron.
+    /// The bytes were fetched from the upstream and published.
     #[default]
     Fetched,
-    /// El upstream confirmo que el contenido que se tiene sigue valiendo
-    /// (`304`, o los mismos bytes): no se movio nada.
+    /// The upstream confirmed that the content held is still valid
+    /// (`304`, or the same bytes): nothing moved.
     Revalidated,
-    /// Los bytes no llegaron de una salida a la red, sino de un paquete de
-    /// resolucion importado: el recibo conserva la procedencia original y
-    /// la autoridad es la configuracion del repositorio de destino.
+    /// The bytes did not come from a network egress, but from an imported
+    /// resolution bundle: the receipt keeps the original provenance and
+    /// the authority is the configuration of the destination repository.
     Imported,
-    /// El upstream entrego **otros** bytes para un contenido inmutable. Los
-    /// bytes no se publican: el recibo guarda lo que se ofrecio, y el
-    /// contenido que se tenia queda retenido hasta que cambie la
-    /// configuracion.
+    /// The upstream delivered **different** bytes for immutable content. The
+    /// bytes are not published: the receipt keeps what was offered, and the
+    /// content that was held stays retained until the
+    /// configuration changes.
     Quarantined,
 }
 
 impl ReceiptOutcome {
-    /// El nombre estable con que se guarda y se enseña.
+    /// The stable name it is stored and shown with.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Fetched => "fetched",
@@ -476,7 +476,7 @@ impl ReceiptOutcome {
         }
     }
 
-    /// Lee un nombre guardado. `None` si no se conoce.
+    /// Reads a stored name. `None` if it is not known.
     pub fn parse(raw: &str) -> Option<Self> {
         match raw {
             "fetched" => Some(Self::Fetched),
@@ -488,64 +488,64 @@ impl ReceiptOutcome {
     }
 }
 
-/// El recibo de una resolucion: de donde vino el contenido y con que se
-/// comprobo.
+/// The receipt of a resolution: where the content came from and what it was
+/// checked with.
 ///
-/// Se escribe cuando el contenido se ha recibido **entero** y ha pasado la
-/// comprobacion, y antes de publicarlo en el catalogo. Un fetch que falla
-/// no deja recibo: no hay nada que afirmar.
+/// It is written when the content has been received **in full** and has passed the
+/// check, and before publishing it to the catalog. A fetch that fails
+/// leaves no receipt: there is nothing to assert.
 ///
-/// No lleva credenciales ni la consulta de la URL: es lo que se enseña.
+/// It carries no credentials or URL query: it is what gets shown.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProvenanceReceipt {
-    /// El identificador del recibo.
+    /// The receipt identifier.
     pub id: String,
-    /// La cuenta propietaria del repositorio.
+    /// The account that owns the repository.
     pub account: String,
-    /// El repositorio proxy.
+    /// The proxy repository.
     pub repository: String,
-    /// La ruta que se resolvio.
+    /// The path that was resolved.
     pub asset_path: String,
-    /// El upstream que respondio.
+    /// The upstream that responded.
     pub upstream_id: String,
-    /// La URL de donde vino el contenido, tras las redirecciones, sin
-    /// credenciales ni consulta.
+    /// The URL the content came from, after redirects, without
+    /// credentials or query.
     pub source_url: String,
-    /// La version de la configuracion con la que se resolvio.
+    /// The version of the configuration it was resolved with.
     pub config_version: u64,
-    /// El digest del contenido recibido.
+    /// The digest of the received content.
     pub digest: ContentDigest,
-    /// Los bytes recibidos.
+    /// The bytes received.
     pub size_bytes: u64,
-    /// Con que se comprobo.
+    /// What it was checked with.
     pub checksum: ChecksumEvidence,
-    /// El estado HTTP de la respuesta que se acepto.
+    /// The HTTP status of the response that was accepted.
     pub status: u16,
-    /// Las redirecciones que se siguieron.
+    /// The redirects that were followed.
     pub redirects: u8,
-    /// La etiqueta de entidad que declaro el upstream, si declaro alguna.
+    /// The entity tag the upstream declared, if it declared one.
     pub etag: Option<String>,
-    /// El `Last-Modified` que declaro el upstream, si declaro alguno.
+    /// The `Last-Modified` the upstream declared, if it declared one.
     #[serde(default)]
     pub last_modified: Option<String>,
-    /// Que paso: se trajo, se revalido o se puso en cuarentena.
+    /// What happened: it was fetched, revalidated or quarantined.
     #[serde(default)]
     pub outcome: ReceiptOutcome,
-    /// Quien pidio el contenido.
+    /// Who requested the content.
     pub actor: String,
-    /// La correlacion de la peticion.
+    /// The correlation of the request.
     pub correlation_id: String,
-    /// Cuando se recibio.
+    /// When it was received.
     pub fetched_at: DateTime<Utc>,
 }
 
-/// El libro de los recibos de procedencia.
+/// The ledger of provenance receipts.
 #[async_trait]
 pub trait ProvenanceLedger: Send + Sync {
-    /// Guarda un recibo. Repetir el mismo `id` lo deja como estaba.
+    /// Stores a receipt. Repeating the same `id` leaves it as it was.
     async fn record(&self, receipt: &ProvenanceReceipt) -> Result<(), CatalogError>;
 
-    /// Los recibos de una ruta, el mas reciente primero.
+    /// The receipts of a path, most recent first.
     async fn receipts_of(
         &self,
         account: &str,
@@ -553,11 +553,11 @@ pub trait ProvenanceLedger: Send + Sync {
         asset_path: &str,
     ) -> Result<Vec<ProvenanceReceipt>, CatalogError>;
 
-    /// Los `limit` recibos mas recientes de una ruta, el mas reciente primero.
+    /// The `limit` most recent receipts of a path, most recent first.
     ///
-    /// Es la lectura de la ruta caliente: cada revalidacion deja un recibo y
-    /// con TTL 0 cada lectura escribe uno, asi que el libro de una ruta no
-    /// tiene cota y leerlo entero en cada peticion no escala.
+    /// It is the read of the hot path: every revalidation leaves a receipt and
+    /// with TTL 0 every read writes one, so the ledger of a path has no
+    /// bound and reading all of it on every request does not scale.
     async fn latest_receipts(
         &self,
         account: &str,
@@ -595,7 +595,7 @@ mod tests {
     fn a_complete_configuration_is_read_with_its_defaults() {
         let config = UpstreamConfig::parse(&upstream(json!({}))).expect("valid");
         assert_eq!(config.id, "central");
-        // La base siempre termina en `/`.
+        // The base always ends in `/`.
         assert_eq!(config.base.as_str(), "https://repo.example.com/releases/");
         assert_eq!(config.max_redirects, DEFAULT_REDIRECTS);
         assert!(!config.cross_origin_redirects);
@@ -622,7 +622,7 @@ mod tests {
             json!({"credential_ref": "env:"}),
             json!({"redirects": {"max": 200}}),
             json!({"max_bytes": 0}),
-            // Un campo que no se conoce es un campo que se escribio mal.
+            // A field that is not known is a field that was misspelled.
             json!({"allow_private": true}),
         ];
         for case in cases {
@@ -647,11 +647,11 @@ mod tests {
             config.target("acme/lib 1.jar").expect("target").as_str(),
             "https://repo.example.com/releases/acme/lib%201.jar"
         );
-        // Ningun intento de cambiar el destino produce una URL.
+        // No attempt to change the destination produces a URL.
         for hostile in ["../etc/passwd", "a/../../b", "a//b", "", "a/./b"] {
             assert!(config.target(hostile).is_none(), "{hostile:?}");
         }
-        // Una ruta con apariencia de URL es solo un segmento codificado.
+        // A path that looks like a URL is just an encoded segment.
         let url = config.target("http:%2F%2Fevil.test/x").expect("segment");
         assert_eq!(url.host_str(), Some("repo.example.com"));
     }
@@ -661,7 +661,7 @@ mod tests {
         let config = UpstreamConfig::parse(&upstream(json!({}))).expect("valid");
         assert!(config.target("acme/lib.jar").is_some());
         assert!(config.target("other/lib.jar").is_none());
-        // El prefijo es de segmento: `acme-evil/` no cae en `acme/`.
+        // The prefix is per segment: `acme-evil/` does not fall in `acme/`.
         assert!(config.target("acme-evil/lib.jar").is_none());
     }
 
@@ -703,8 +703,8 @@ mod tests {
         assert_eq!(cached.cache.negative_secs, 30);
         assert!(cached.cache.offline);
 
-        // Una politica de cache que no se entiende rompe la configuracion
-        // entera: no se degrada a "sin cache".
+        // A cache policy that is not understood breaks the whole
+        // configuration: it does not degrade to "no cache".
         config.config_settings = json!({"proxy": {
             "upstream": upstream(json!({})),
             "cache": {"ttl": {"metadata_secs": "soon"}},

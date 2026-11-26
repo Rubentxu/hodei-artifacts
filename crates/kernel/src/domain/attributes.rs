@@ -1,35 +1,35 @@
-//! Tipos agnósticos para representar atributos de entidades
+//! Agnostic types to represent entity attributes
 //!
-//! Este módulo define estructuras de datos para representar valores de atributos
-//! de forma completamente independiente de cualquier motor de políticas externo
-//! (como Cedar). Los tipos aquí definidos pueden ser traducidos a formatos
-//! específicos por capas de adaptación cuando sea necesario.
+//! This module defines data structures to represent attribute values
+//! completely independently of any external policy engine
+//! (such as Cedar). The types defined here can be translated to specific
+//! formats by adaptation layers when necessary.
 //!
-//! # Principios de Diseño
+//! # Design Principles
 //!
-//! - **Agnóstico**: Sin dependencias de infraestructura externa
-//! - **Auto-contenido**: Representa todos los tipos de datos necesarios
-//! - **Recursivo**: Soporta estructuras anidadas (Sets, Records)
-//! - **Serializable**: Compatible con JSON y otros formatos
+//! - **Agnostic**: No dependencies on external infrastructure
+//! - **Self-contained**: Represents all the necessary data types
+//! - **Recursive**: Supports nested structures (Sets, Records)
+//! - **Serializable**: Compatible with JSON and other formats
 //!
-//! # Ejemplos
+//! # Examples
 //!
 //! ```
 //! use kernel::domain::attributes::AttributeValue;
 //! use std::collections::HashMap;
 //!
-//! // Primitivos
+//! // Primitives
 //! let email = AttributeValue::String("user@example.com".to_string());
 //! let age = AttributeValue::Long(30);
 //! let active = AttributeValue::Bool(true);
 //!
-//! // Colecciones
+//! // Collections
 //! let tags = AttributeValue::Set(vec![
 //!     AttributeValue::String("admin".to_string()),
 //!     AttributeValue::String("developer".to_string()),
 //! ]);
 //!
-//! // Records (objetos anidados)
+//! // Records (nested objects)
 //! let mut address = HashMap::new();
 //! address.insert("city".to_string(), AttributeValue::String("Madrid".to_string()));
 //! address.insert("postal_code".to_string(), AttributeValue::String("28001".to_string()));
@@ -41,139 +41,139 @@ use std::collections::HashMap;
 use std::fmt;
 
 // ============================================================================
-// AttributeValue - Representación agnóstica de valores
+// AttributeValue - Agnostic representation of values
 // ============================================================================
 
-/// Representa el valor de un atributo de entidad de forma agnóstica
+/// Represents the value of an entity attribute in an agnostic way
 ///
-/// Este enum puede representar cualquier tipo de dato que una entidad
-/// pueda necesitar para describir sus atributos, sin acoplarse a ningún
-/// motor de políticas específico.
+/// This enum can represent any kind of data that an entity
+/// may need to describe its attributes, without coupling to any
+/// specific policy engine.
 ///
-/// # Variantes
+/// # Variants
 ///
-/// - `Bool`: Valor booleano (true/false)
-/// - `Long`: Entero de 64 bits con signo
-/// - `String`: Cadena de texto UTF-8
-/// - `Set`: Conjunto (lista ordenada) de valores del mismo tipo
-/// - `Record`: Mapa clave-valor (objeto anidado)
-/// - `EntityRef`: Referencia a otra entidad por su identificador
+/// - `Bool`: Boolean value (true/false)
+/// - `Long`: Signed 64-bit integer
+/// - `String`: UTF-8 text string
+/// - `Set`: Set (ordered list) of values of the same type
+/// - `Record`: Key-value map (nested object)
+/// - `EntityRef`: Reference to another entity by its identifier
 ///
-/// # Notas sobre Serialización
+/// # Notes on Serialization
 ///
-/// Los valores se serializan de forma directa a JSON:
+/// Values are serialized directly to JSON:
 /// - `Bool` → `true` / `false`
-/// - `Long` → número entero
-/// - `String` → string JSON
-/// - `Set` → array JSON
-/// - `Record` → objeto JSON
-/// - `EntityRef` → string con formato especial
+/// - `Long` → integer number
+/// - `String` → JSON string
+/// - `Set` → JSON array
+/// - `Record` → JSON object
+/// - `EntityRef` → string with a special format
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value")]
 pub enum AttributeValue {
-    /// Valor booleano
+    /// Boolean value
     #[serde(rename = "bool")]
     Bool(bool),
 
-    /// Entero de 64 bits con signo
+    /// Signed 64-bit integer
     #[serde(rename = "long")]
     Long(i64),
 
-    /// Cadena de texto UTF-8
+    /// UTF-8 text string
     #[serde(rename = "string")]
     String(String),
 
-    /// Conjunto de valores (homogéneos o heterogéneos)
+    /// Set of values (homogeneous or heterogeneous)
     ///
-    /// En la práctica, los motores de políticas suelen requerir
-    /// homogeneidad, pero este tipo lo permite para flexibilidad.
+    /// In practice, policy engines usually require
+    /// homogeneity, but this type allows it for flexibility.
     #[serde(rename = "set")]
     Set(Vec<AttributeValue>),
 
-    /// Registro (objeto anidado) con pares clave-valor
+    /// Record (nested object) with key-value pairs
     #[serde(rename = "record")]
     Record(HashMap<String, AttributeValue>),
 
-    /// Referencia a otra entidad
+    /// Reference to another entity
     ///
-    /// El string debe contener el identificador completo de la entidad
-    /// (por ejemplo, un HRN serializado)
+    /// The string must contain the full identifier of the entity
+    /// (for example, a serialized HRN)
     #[serde(rename = "entity_ref")]
     EntityRef(String),
 }
 
 impl AttributeValue {
-    /// Crea un AttributeValue::Bool
+    /// Creates an AttributeValue::Bool
     pub fn bool(value: bool) -> Self {
         Self::Bool(value)
     }
 
-    /// Crea un AttributeValue::Long
+    /// Creates an AttributeValue::Long
     pub fn long(value: i64) -> Self {
         Self::Long(value)
     }
 
-    /// Crea un AttributeValue::String
+    /// Creates an AttributeValue::String
     pub fn string(value: impl Into<String>) -> Self {
         Self::String(value.into())
     }
 
-    /// Crea un AttributeValue::Set vacío
+    /// Creates an empty AttributeValue::Set
     pub fn empty_set() -> Self {
         Self::Set(Vec::new())
     }
 
-    /// Crea un AttributeValue::Set con valores
+    /// Creates an AttributeValue::Set with values
     pub fn set(values: Vec<AttributeValue>) -> Self {
         Self::Set(values)
     }
 
-    /// Crea un AttributeValue::Record vacío
+    /// Creates an empty AttributeValue::Record
     pub fn empty_record() -> Self {
         Self::Record(HashMap::new())
     }
 
-    /// Crea un AttributeValue::Record con pares clave-valor
+    /// Creates an AttributeValue::Record with key-value pairs
     pub fn record(values: HashMap<String, AttributeValue>) -> Self {
         Self::Record(values)
     }
 
-    /// Crea un AttributeValue::EntityRef
+    /// Creates an AttributeValue::EntityRef
     pub fn entity_ref(id: impl Into<String>) -> Self {
         Self::EntityRef(id.into())
     }
 
-    /// Verifica si es un Bool
+    /// Checks whether it is a Bool
     pub fn is_bool(&self) -> bool {
         matches!(self, Self::Bool(_))
     }
 
-    /// Verifica si es un Long
+    /// Checks whether it is a Long
     pub fn is_long(&self) -> bool {
         matches!(self, Self::Long(_))
     }
 
-    /// Verifica si es un String
+    /// Checks whether it is a String
     pub fn is_string(&self) -> bool {
         matches!(self, Self::String(_))
     }
 
-    /// Verifica si es un Set
+    /// Checks whether it is a Set
     pub fn is_set(&self) -> bool {
         matches!(self, Self::Set(_))
     }
 
-    /// Verifica si es un Record
+    /// Checks whether it is a Record
     pub fn is_record(&self) -> bool {
         matches!(self, Self::Record(_))
     }
 
-    /// Verifica si es un EntityRef
+    /// Checks whether it is an EntityRef
     pub fn is_entity_ref(&self) -> bool {
         matches!(self, Self::EntityRef(_))
     }
 
-    /// Intenta obtener el valor como Bool
+    /// Tries to get the value as a Bool
     pub fn as_bool(&self) -> Option<bool> {
         if let Self::Bool(v) = self {
             Some(*v)
@@ -182,7 +182,7 @@ impl AttributeValue {
         }
     }
 
-    /// Intenta obtener el valor como Long
+    /// Tries to get the value as a Long
     pub fn as_long(&self) -> Option<i64> {
         if let Self::Long(v) = self {
             Some(*v)
@@ -191,7 +191,7 @@ impl AttributeValue {
         }
     }
 
-    /// Intenta obtener el valor como String
+    /// Tries to get the value as a String
     pub fn as_string(&self) -> Option<&str> {
         if let Self::String(v) = self {
             Some(v)
@@ -200,7 +200,7 @@ impl AttributeValue {
         }
     }
 
-    /// Intenta obtener el valor como Set
+    /// Tries to get the value as a Set
     pub fn as_set(&self) -> Option<&[AttributeValue]> {
         if let Self::Set(v) = self {
             Some(v)
@@ -209,7 +209,7 @@ impl AttributeValue {
         }
     }
 
-    /// Intenta obtener el valor como Record
+    /// Tries to get the value as a Record
     pub fn as_record(&self) -> Option<&HashMap<String, AttributeValue>> {
         if let Self::Record(v) = self {
             Some(v)
@@ -218,7 +218,7 @@ impl AttributeValue {
         }
     }
 
-    /// Intenta obtener el valor como EntityRef
+    /// Tries to get the value as an EntityRef
     pub fn as_entity_ref(&self) -> Option<&str> {
         if let Self::EntityRef(v) = self {
             Some(v)
@@ -227,7 +227,7 @@ impl AttributeValue {
         }
     }
 
-    /// Retorna el nombre del tipo como string (útil para debugging)
+    /// Returns the type name as a string (useful for debugging)
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::Bool(_) => "Bool",
@@ -272,7 +272,7 @@ impl fmt::Display for AttributeValue {
 }
 
 // ============================================================================
-// Conversiones convenientes desde tipos Rust nativos
+// Convenient conversions from native Rust types
 // ============================================================================
 
 impl From<bool> for AttributeValue {
@@ -410,7 +410,7 @@ mod tests {
 
         let value = AttributeValue::record(outer_record);
 
-        // Verificar estructura anidada
+        // Check the nested structure
         let record = value.as_record().unwrap();
         let address = record.get("address").unwrap();
         assert!(address.is_record());
@@ -511,7 +511,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Estructuras anidadas profundas
+    // Additional tests: Deeply nested structures
     // ========================================================================
 
     #[test]
@@ -527,7 +527,7 @@ mod tests {
 
         let root = AttributeValue::record(level1);
 
-        // Navegar por la estructura
+        // Navigate the structure
         let record1 = root.as_record().unwrap();
         let data = record1.get("data").unwrap();
         let record2 = data.as_record().unwrap();
@@ -561,7 +561,7 @@ mod tests {
 
     #[test]
     fn attribute_value_mixed_nested_structures() {
-        // Set que contiene Records que contienen Sets
+        // Set that contains Records that contain Sets
         let mut inner_record = HashMap::new();
         inner_record.insert(
             "tags".to_string(),
@@ -585,7 +585,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Sets con tipos mixtos
+    // Additional tests: Sets with mixed types
     // ========================================================================
 
     #[test]
@@ -613,7 +613,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Igualdad y clonación
+    // Additional tests: Equality and cloning
     // ========================================================================
 
     #[test]
@@ -652,7 +652,7 @@ mod tests {
         let cloned = original.clone();
         assert_eq!(original, cloned);
 
-        // Verificar que es una copia profunda
+        // Check that it is a deep copy
         assert_eq!(cloned.as_set().unwrap().len(), 2);
     }
 
@@ -671,7 +671,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Display para estructuras complejas
+    // Additional tests: Display for complex structures
     // ========================================================================
 
     #[test]
@@ -701,7 +701,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Serialización con casos edge
+    // Additional tests: Serialization with edge cases
     // ========================================================================
 
     #[test]
@@ -754,7 +754,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Conversiones From con edge cases
+    // Additional tests: From conversions with edge cases
     // ========================================================================
 
     #[test]
@@ -798,7 +798,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: type_name para diferentes casos
+    // Additional tests: type_name for different cases
     // ========================================================================
 
     #[test]
@@ -812,7 +812,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Records con claves especiales
+    // Additional tests: Records with special keys
     // ========================================================================
 
     #[test]
@@ -846,12 +846,12 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Verificación de construcción de helpers
+    // Additional tests: Verification of helper construction
     // ========================================================================
 
     #[test]
     fn attribute_value_constructor_consistency() {
-        // Verificar que los constructores helper funcionan igual que las variantes directas
+        // Check that the helper constructors work the same as the direct variants
         assert_eq!(AttributeValue::bool(true), AttributeValue::Bool(true));
         assert_eq!(AttributeValue::long(42), AttributeValue::Long(42));
         assert_eq!(

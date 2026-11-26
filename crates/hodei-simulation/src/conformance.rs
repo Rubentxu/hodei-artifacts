@@ -1,27 +1,27 @@
-//! La conformidad de la simulacion: los mismos escenarios para cualquier
-//! adaptador.
+//! The conformance of the simulation: the same scenarios for any
+//! adapter.
 //!
-//! La suite vive en el dominio y no en el almacen, y por eso puede
-//! correr contra un grafo en memoria y contra el grafo real de
-//! SurrealDB: lo que cambia es de donde salen las relaciones, y lo que
-//! se comprueba es siempre lo mismo.
+//! The suite lives in the domain and not in the store, and so it can
+//! run against an in-memory graph and against the real SurrealDB
+//! graph: what changes is where the relations come from, and what
+//! is checked is always the same.
 //!
-//! # El fixture
+//! # The fixture
 //!
-//! Los escenarios no se inventan el mundo: se llevan un **fixture** que
-//! el adaptador deja en su mundo. El fixture es el mismo para todos --un
-//! artefacto que depende de dos componentes-- y por eso los resultados
-//! de dos adaptadores son comparables: si el adaptador de SurrealDB
-//! dijera otra cosa que el de memoria, el fallo es del adaptador y no
-//! del escenario.
+//! The scenarios do not invent the world: they carry a **fixture** that
+//! the adapter leaves in its world. The fixture is the same for all --an
+//! artifact that depends on two components-- and so the results
+//! of two adapters are comparable: if the SurrealDB adapter
+//! said something different from the in-memory one, the fault is the adapter's and not
+//! the scenario's.
 //!
-//! # Los escenarios
+//! # The scenarios
 //!
-//! - El **orden** de las lecturas no cambia el resultado.
-//! - Un **ciclo** del overlay se declara, no se esconde.
-//! - Un **duplicado** se declara.
-//! - Una **adicion y una eliminacion** aparecen en el diff.
-//! - Una **base obsoleta** no es un diff: es un error.
+//! - The **order** of the reads does not change the result.
+//! - An overlay **cycle** is declared, not hidden.
+//! - A **duplicate** is declared.
+//! - An **addition and a removal** appear in the diff.
+//! - A **stale base** is not a diff: it is an error.
 
 use std::sync::Arc;
 
@@ -37,49 +37,49 @@ use crate::result::ConflictKind;
 use crate::service::{SimulationError, SimulationService};
 use crate::{Checkpoint, SimulationFork, SimulationTag};
 
-/// La evidencia que sostiene la primera relacion del fixture.
+/// The evidence that supports the first relation of the fixture.
 pub const THE_FIRST_EVIDENCE: &str = "ev-conformance-1";
-/// La evidencia que sostiene la segunda relacion del fixture.
+/// The evidence that supports the second relation of the fixture.
 pub const THE_SECOND_EVIDENCE: &str = "ev-conformance-2";
 
-/// El fixture: el mundo minimo y con forma.
+/// The fixture: the minimal world, with shape.
 ///
-/// La cadena es `artefacto -> lib-v1 -> lib-v2`: un sujeto y dos
-/// dependencias. Es el mundo mas pequeno que tiene una adicion, una
-/// eliminacion y un ciclo posible, y por eso sirve para las tres cosas.
+/// The chain is `artifact -> lib-v1 -> lib-v2`: one subject and two
+/// dependencies. It is the smallest world that has an addition, a
+/// removal and a possible cycle, and so it serves for all three.
 #[derive(Debug, Clone)]
 pub struct Fixture {
-    /// La cuenta del mundo.
+    /// The account of the world.
     pub account: String,
-    /// El tenant del grafo: el HRN de la cuenta.
+    /// The tenant of the graph: the HRN of the account.
     pub tenant: Hrn,
-    /// La generacion del mundo.
+    /// The generation of the world.
     pub generation: u64,
-    /// Los nodos del mundo.
+    /// The nodes of the world.
     pub nodes: Vec<FixtureNode>,
-    /// Las relaciones del mundo.
+    /// The relations of the world.
     pub relations: Vec<RelationFact>,
-    /// El sujeto: el artefacto que depende.
+    /// The subject: the artifact that depends.
     pub artefact: Hrn,
-    /// El primer componente.
+    /// The first component.
     pub lib_v1: Hrn,
-    /// El segundo componente.
+    /// The second component.
     pub lib_v2: Hrn,
-    /// El componente al que se sube.
+    /// The component that is climbed to.
     pub lib_v3: Hrn,
 }
 
-/// Un nodo del fixture.
+/// A node of the fixture.
 #[derive(Debug, Clone)]
 pub struct FixtureNode {
-    /// El nombre del nodo.
+    /// The name of the node.
     pub hrn: Hrn,
-    /// La clase del nodo.
+    /// The kind of the node.
     pub kind: NodeKind,
 }
 
 impl Fixture {
-    /// El fixture de una cuenta, sobre su tenant.
+    /// The fixture of an account, over its tenant.
     pub fn of(account: &str, tenant: Hrn) -> Self {
         let artefact = the_node(&tenant, "Artifact", "app-1.0.0");
         let lib_v1 = the_node(&tenant, "Component", "lib-v1");
@@ -121,7 +121,7 @@ impl Fixture {
     }
 }
 
-/// El nodo del fixture, con el nombre del tenant.
+/// The node of the fixture, with the name of the tenant.
 fn the_node(tenant: &Hrn, resource_type: &str, resource_id: &str) -> Hrn {
     Hrn::with_region(
         tenant.partition().to_string(),
@@ -133,52 +133,52 @@ fn the_node(tenant: &Hrn, resource_type: &str, resource_id: &str) -> Hrn {
     )
 }
 
-/// El mundo que la conformidad necesita.
+/// The world that the conformance needs.
 ///
-/// El mundo es lo que cambia de un adaptador a otro: un grafo en memoria
-/// o el grafo real de SurrealDB. Lo que se comprueba es siempre lo
-/// mismo, y por eso los escenarios viven aqui y no en el adaptador.
+/// The world is what changes from one adapter to another: an in-memory graph
+/// or the real SurrealDB graph. What is checked is always the
+/// same, and so the scenarios live here and not in the adapter.
 #[async_trait]
 pub trait ConformanceWorld: Send + Sync {
-    /// La cuenta del mundo.
+    /// The account of the world.
     fn account(&self) -> String;
-    /// El tenant del grafo: el HRN de la cuenta.
+    /// The tenant of the graph: the HRN of the account.
     fn tenant(&self) -> Hrn;
-    /// Prepara el fixture: lo deja en el mundo.
+    /// Prepares the fixture: leaves it in the world.
     async fn prepare(&self, fixture: &Fixture) -> Result<(), String>;
-    /// Las relaciones del mundo, en el orden que las da el adaptador.
+    /// The relations of the world, in the order the adapter gives them.
     async fn relations(&self) -> Result<Vec<RelationFact>, String>;
-    /// La generacion del mundo.
+    /// The generation of the world.
     async fn generation(&self) -> Result<u64, String>;
-    /// El evaluador de decisiones del mundo.
+    /// The decision evaluator of the world.
     fn decisions(&self) -> Arc<dyn DecisionEvaluator>;
 }
 
-/// El resultado de un escenario.
+/// The result of a scenario.
 #[derive(Debug, Clone)]
 pub struct ScenarioResult {
-    /// El nombre del escenario.
+    /// The name of the scenario.
     pub name: &'static str,
-    /// Si el escenario paso.
+    /// Whether the scenario passed.
     pub passed: bool,
-    /// Por que no paso, si no paso.
+    /// Why it did not pass, if it did not pass.
     pub reason: Option<String>,
 }
 
-/// El informe de la conformidad.
+/// The conformance report.
 #[derive(Debug, Clone)]
 pub struct ConformanceReport {
-    /// Los escenarios, en el orden en que se corrieron.
+    /// The scenarios, in the order they were run.
     pub scenarios: Vec<ScenarioResult>,
 }
 
 impl ConformanceReport {
-    /// Si todos los escenarios pasaron.
+    /// Whether all the scenarios passed.
     pub fn passed(&self) -> bool {
         self.scenarios.iter().all(|scenario| scenario.passed)
     }
 
-    /// Los escenarios que no pasaron.
+    /// The scenarios that did not pass.
     pub fn failures(&self) -> Vec<&ScenarioResult> {
         self.scenarios
             .iter()
@@ -187,8 +187,8 @@ impl ConformanceReport {
     }
 }
 
-/// La suite de conformidad: los escenarios que toda simulacion tiene que
-/// cumplir, sea cual sea el adaptador que lee el mundo.
+/// The conformance suite: the scenarios that every simulation has to
+/// meet, whichever adapter reads the world.
 pub async fn run_suite(world: &dyn ConformanceWorld) -> ConformanceReport {
     let mut scenarios: Vec<ScenarioResult> = Vec::new();
     scenarios.push(the_order_of_the_reads_does_not_change_the_result(world).await);
@@ -199,10 +199,10 @@ pub async fn run_suite(world: &dyn ConformanceWorld) -> ConformanceReport {
     ConformanceReport { scenarios }
 }
 
-/// El grafo de la suite: las relaciones que da el mundo, fijas.
+/// The graph of the suite: the relations the world gives, fixed.
 ///
-/// Es el mismo grafo para los dos adaptadores: lo que cambia es de donde
-/// salen las relaciones, y la suite las recibe del mundo.
+/// It is the same graph for both adapters: what changes is where
+/// the relations come from, and the suite receives them from the world.
 struct StaticGraph {
     relations: Vec<RelationFact>,
     generation: u64,
@@ -237,7 +237,7 @@ impl SimulationGraph for StaticGraph {
     }
 }
 
-/// El mundo preparado: el fixture, las relaciones y la generacion.
+/// The prepared world: the fixture, the relations and the generation.
 struct TheWorld {
     fixture: Fixture,
     relations: Vec<RelationFact>,
@@ -245,21 +245,21 @@ struct TheWorld {
     decisions: Arc<dyn DecisionEvaluator>,
 }
 
-/// El instante de la conformidad: uno solo para todos los escenarios.
+/// The instant of the conformance: a single one for all the scenarios.
 ///
-/// El reloj no se lee de la pared: dos simulaciones con la misma base y
-/// el mismo reloj dan el mismo resultado, y una conformidad que depende
-/// del reloj no se puede comparar.
+/// The clock is not read from the wall: two simulations with the same base and
+/// the same clock give the same result, and a conformance that depends on
+/// the clock cannot be compared.
 fn the_now() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
         .expect("un instante fijo")
         .with_timezone(&Utc)
 }
 
-/// La politica de la conformidad: la que prohibe el riesgo establecido.
+/// The conformance policy: the one that forbids the established risk.
 ///
-/// Es una politica de verdad, con sus requisitos, y por eso el resultado
-/// que se declara tiene que viajar sin ella: solo con su sello.
+/// It is a real policy, with its requirements, and so the result
+/// that is declared has to travel without it: only with its seal.
 fn the_policy(version: &str) -> TrustPolicy {
     TrustPolicy::new(
         format!("policy-{version}"),
@@ -268,11 +268,11 @@ fn the_policy(version: &str) -> TrustPolicy {
     )
 }
 
-/// El fork de la conformidad.
+/// The conformance fork.
 ///
-/// Declara los sujetos del fixture: una simulacion que no declara
-/// sujetos es una simulacion que no se puede hacer, y la conformidad no
-/// va a comprobar una simulacion que no existe.
+/// It declares the subjects of the fixture: a simulation that declares no
+/// subjects is a simulation that cannot be made, and the conformance is not
+/// going to check a simulation that does not exist.
 fn the_fork(fixture: &Fixture, generation: u64) -> SimulationFork {
     SimulationFork::new(
         "sim-conformance",
@@ -289,12 +289,12 @@ fn the_fork(fixture: &Fixture, generation: u64) -> SimulationFork {
     .with_subjects(vec![fixture.artefact.clone(), fixture.lib_v1.clone()])
 }
 
-/// La etiqueta de la conformidad.
+/// The conformance label.
 fn the_tag() -> SimulationTag {
     SimulationTag::new("sim-conformance", the_now())
 }
 
-/// El servicio de la suite, sobre las relaciones dadas.
+/// The service of the suite, over the given relations.
 fn the_service(world: &TheWorld, relations: Vec<RelationFact>) -> SimulationService {
     let graph: Arc<dyn SimulationGraph> = Arc::new(StaticGraph {
         relations,
@@ -304,7 +304,7 @@ fn the_service(world: &TheWorld, relations: Vec<RelationFact>) -> SimulationServ
     SimulationService::new(graph, world.decisions.clone())
 }
 
-/// El mundo preparado: el fixture se deja en el mundo y se lee.
+/// The prepared world: the fixture is left in the world and read.
 async fn the_world(world: &dyn ConformanceWorld) -> Result<TheWorld, String> {
     let fixture = Fixture::of(&world.account(), world.tenant());
     world.prepare(&fixture).await?;
@@ -318,7 +318,7 @@ async fn the_world(world: &dyn ConformanceWorld) -> Result<TheWorld, String> {
     })
 }
 
-/// El resultado de un escenario que ha pasado.
+/// The result of a scenario that passed.
 fn passed(name: &'static str) -> ScenarioResult {
     ScenarioResult {
         name,
@@ -327,7 +327,7 @@ fn passed(name: &'static str) -> ScenarioResult {
     }
 }
 
-/// El resultado de un escenario que no ha pasado.
+/// The result of a scenario that did not pass.
 fn failed(name: &'static str, reason: impl Into<String>) -> ScenarioResult {
     ScenarioResult {
         name,
@@ -336,9 +336,9 @@ fn failed(name: &'static str, reason: impl Into<String>) -> ScenarioResult {
     }
 }
 
-// ───────────────────────── el orden ─────────────────────────
+// ───────────────────────── the order ─────────────────────────
 
-/// El orden de las lecturas no cambia el resultado.
+/// The order of the reads does not change the result.
 async fn the_order_of_the_reads_does_not_change_the_result(
     world: &dyn ConformanceWorld,
 ) -> ScenarioResult {
@@ -349,12 +349,12 @@ async fn the_order_of_the_reads_does_not_change_the_result(
     }
 }
 
-/// El escenario del orden: el mismo mundo leido al reves da el MISMO
-/// resultado canonico.
+/// The order scenario: the same world read backwards gives the SAME
+/// canonical result.
 ///
-/// Y el resultado canonico es el que se compara: el diff estructural y
-/// las decisiones ya salen ordenados, y el manifiesto se compara por su
-/// forma canonica y no por el orden en que se leyo.
+/// And the canonical result is the one compared: the structural diff and
+/// the decisions already come out sorted, and the manifest is compared by its
+/// canonical form and not by the order in which it was read.
 async fn the_order_scenario(world: &dyn ConformanceWorld) -> Result<(), String> {
     let world = the_world(world).await?;
     if world.relations.len() < 2 {
@@ -390,9 +390,9 @@ async fn the_order_scenario(world: &dyn ConformanceWorld) -> Result<(), String> 
     Ok(())
 }
 
-// ───────────────────────── el ciclo ─────────────────────────
+// ───────────────────────── the cycle ─────────────────────────
 
-/// El ciclo del overlay se declara.
+/// The overlay cycle is declared.
 async fn the_cycle_of_the_overlay_is_declared(world: &dyn ConformanceWorld) -> ScenarioResult {
     const NAME: &str = "the cycle of the overlay is declared";
     match the_cycle_scenario(world).await {
@@ -401,11 +401,11 @@ async fn the_cycle_of_the_overlay_is_declared(world: &dyn ConformanceWorld) -> S
     }
 }
 
-/// El escenario del ciclo: una hipotetica que cierra la vuelta se
-/// declara como conflicto.
+/// The cycle scenario: a hypothetical that closes the loop is
+/// declared as a conflict.
 ///
-/// El overlay del fixture es `artefacto -> lib-v1 -> lib-v2`, y la
-/// hipotetica hace que `lib-v2` vuelva al artefacto.
+/// The overlay of the fixture is `artifact -> lib-v1 -> lib-v2`, and the
+/// hypothetical makes `lib-v2` go back to the artifact.
 async fn the_cycle_scenario(world: &dyn ConformanceWorld) -> Result<(), String> {
     let world = the_world(world).await?;
     let fork = the_fork(&world.fixture, world.generation).with(Hypothetical {
@@ -436,9 +436,9 @@ async fn the_cycle_scenario(world: &dyn ConformanceWorld) -> Result<(), String> 
     Ok(())
 }
 
-// ───────────────────────── el duplicado ─────────────────────────
+// ───────────────────────── the duplicate ─────────────────────────
 
-/// El duplicado se declara.
+/// The duplicate is declared.
 async fn the_duplicate_is_declared(world: &dyn ConformanceWorld) -> ScenarioResult {
     const NAME: &str = "the duplicate is declared";
     match the_duplicate_scenario(world).await {
@@ -447,11 +447,11 @@ async fn the_duplicate_is_declared(world: &dyn ConformanceWorld) -> ScenarioResu
     }
 }
 
-/// El escenario del duplicado: dos hipoteticas que dicen lo mismo, y una
-/// hipotetica que repite lo que ya esta en el mundo.
+/// The duplicate scenario: two hypotheticals that say the same thing, and a
+/// hypothetical that repeats what is already in the world.
 ///
-/// Las dos se declaran: un diff que las guarda sin decir nada parece un
-/// diff que no ha mirado.
+/// Both are declared: a diff that keeps them without saying anything looks like a
+/// diff that did not look.
 async fn the_duplicate_scenario(world: &dyn ConformanceWorld) -> Result<(), String> {
     let world = the_world(world).await?;
     let claim = HypotheticalClaim::Relation {
@@ -461,7 +461,7 @@ async fn the_duplicate_scenario(world: &dyn ConformanceWorld) -> Result<(), Stri
         replaces: None,
     };
 
-    // Dos hipoteticas iguales.
+    // Two equal hypotheticals.
     let fork = the_fork(&world.fixture, world.generation)
         .with(Hypothetical {
             tag: the_tag(),
@@ -486,7 +486,7 @@ async fn the_duplicate_scenario(world: &dyn ConformanceWorld) -> Result<(), Stri
         ));
     }
 
-    // Y una hipotetica que repite lo que ya esta en el mundo.
+    // And a hypothetical that repeats what is already in the world.
     let fork = the_fork(&world.fixture, world.generation).with(Hypothetical {
         tag: the_tag(),
         claim: HypotheticalClaim::Relation {
@@ -513,9 +513,9 @@ async fn the_duplicate_scenario(world: &dyn ConformanceWorld) -> Result<(), Stri
     Ok(())
 }
 
-// ───────────────────────── la adicion y la eliminacion ─────────────────────────
+// ───────────────────────── the addition and the removal ─────────────────────────
 
-/// La adicion y la eliminacion aparecen en el diff.
+/// The addition and the removal appear in the diff.
 async fn the_addition_and_the_elimination_are_in_the_diff(
     world: &dyn ConformanceWorld,
 ) -> ScenarioResult {
@@ -526,8 +526,8 @@ async fn the_addition_and_the_elimination_are_in_the_diff(
     }
 }
 
-/// El escenario de la adicion: una dependencia que se sustituye deja una
-/// relacion que aparece y otra que desaparece.
+/// The addition scenario: a dependency that is replaced leaves one
+/// relation that appears and another that disappears.
 async fn the_addition_scenario(world: &dyn ConformanceWorld) -> Result<(), String> {
     let world = the_world(world).await?;
     let fork = the_fork(&world.fixture, world.generation).with(Hypothetical {
@@ -568,9 +568,9 @@ async fn the_addition_scenario(world: &dyn ConformanceWorld) -> Result<(), Strin
     Ok(())
 }
 
-// ───────────────────────── la base obsoleta ─────────────────────────
+// ───────────────────────── the stale base ─────────────────────────
 
-/// La base obsoleta no es un diff: es un error.
+/// The stale base is not a diff: it is an error.
 async fn the_stale_base_is_not_a_diff(world: &dyn ConformanceWorld) -> ScenarioResult {
     const NAME: &str = "the stale base is not a diff";
     match the_stale_base_scenario(world).await {
@@ -579,11 +579,11 @@ async fn the_stale_base_is_not_a_diff(world: &dyn ConformanceWorld) -> ScenarioR
     }
 }
 
-/// El escenario de la base obsoleta: un fork preparado contra una
-/// generacion que ya no es la del mundo no devuelve un diff.
+/// The stale base scenario: a fork prepared against a
+/// generation that is no longer the world's does not return a diff.
 ///
-/// Un diff calculado sobre un mundo que nadie tiene no dice la verdad, y
-/// se dice antes de devolverlo.
+/// A diff computed over a world that nobody has does not tell the truth, and
+/// that is said before returning it.
 async fn the_stale_base_scenario(world: &dyn ConformanceWorld) -> Result<(), String> {
     let world = the_world(world).await?;
     let stale = if world.generation == 0 {

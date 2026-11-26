@@ -1,43 +1,43 @@
-//! El hub de artefactos de confianza: donde Hodei deja de ser un catalogo
-//! y pasa a ser el que guarda y distribuye.
+//! The trusted artifact hub: where Hodei stops being a catalog
+//! and becomes the one that stores and distributes.
 //!
-//! # La conclusion del SPIKE-010
+//! # The conclusion of SPIKE-010
 //!
-//! La pregunta del spike era donde la **propiedad nativa del artefacto**
-//! da un valor de control-plane que la integracion con un registro
-//! externo no da. Y la respuesta es: **la cuarentena y la promocion**.
+//! The spike's question was where the **native ownership of the artifact**
+//! gives a control-plane value that integration with an external
+//! registry does not. And the answer is: **quarantine and promotion**.
 //!
-//! - Un registro externo guarda bytes y los sirve: eso lo hace bien, y
-//!   Hodei no lo va a hacer mejor.
-//! - Un registro externo **no sabe** si un artefacto es de fiar: no tiene
-//!   la decision de confianza de Hodei, y no puede tenerla, porque la
-//!   decision viene del grafo de evidencia.
+//! - An external registry stores bytes and serves them: it does that well, and
+//!   Hodei is not going to do it better.
+//! - An external registry **does not know** whether an artifact is trustworthy: it does not have
+//!   Hodei's trust decision, and cannot have it, because the
+//!   decision comes from the evidence graph.
 //!
-//! O sea: Hodei no compite como almacen.
-//! Compite como punto de imposicion.
+//! That is: Hodei does not compete as a store.
+//! It competes as an enforcement point.
 //!
-//! El subconjunto de OCI es el minimo que hace falta para
-//! hablar con el mundo, y lo que Hodei anade es el canal de confianza.
+//! The OCI subset is the minimum needed to
+//! talk to the world, and what Hodei adds is the trust channel.
 //!
-//! Y los no-objetivos son explicitos: **Maven y npm no**, hasta que haya
-//! demanda, un spike de protocolo y una UAT nueva. Que el codigo viejo
-//! exista no es un argumento: el codigo viejo se mira como fuente de
-//! conocimiento de dominio y de pruebas, no como coste hundido.
+//! And the non-goals are explicit: **Maven and npm are not**, until there is
+//! demand, a protocol spike and a new UAT. That the old code
+//! exists is not an argument: the old code is looked at as a source of
+//! domain and test knowledge, not as a sunk cost.
 //!
-//! # Las tres reglas del hito
+//! # The three rules of the milestone
 //!
-//! 1. **Sin decision de confianza no hay promocion.** Un artefacto sin
-//!    decision esta en cuarentena, y la cuarentena es el estado POR
-//!    DEFECTO de un artefacto recién admitido.
-//! 2. **Promocionar no muta los bytes.** El digest es la identidad del
-//!    contenido, y la promocion cambia el canal, no lo que hay dentro.
-//! 3. **El mismo contenido no se guarda dos veces.** La identidad del
-//!    contenido es su digest, y al leer se vuelve a calcular y se
-//!    comprueba.
+//! 1. **Without a trust decision there is no promotion.** An artifact without a
+//!    decision is in quarantine, and quarantine is the DEFAULT
+//!    state of a newly admitted artifact.
+//! 2. **Promoting does not mutate the bytes.** The digest is the identity of the
+//!    content, and promotion changes the channel, not what is inside.
+//! 3. **The same content is not stored twice.** The identity of the
+//!    content is its digest, and on read it is recomputed and
+//!    checked.
 //!
-//! Y lo que Hodei **no** hace: hablar de protocolo entero. El subconjunto
-//! soportado de OCI esta declarado en el codigo (`oci::SUPPORTED_MANIFESTS`),
-//! y lo que no esta en la lista no se sirve.
+//! And what Hodei does **not** do: speak the whole protocol. The supported
+//! OCI subset is declared in the code (`oci::SUPPORTED_MANIFESTS`),
+//! and what is not on the list is not served.
 
 #![forbid(unsafe_code)]
 

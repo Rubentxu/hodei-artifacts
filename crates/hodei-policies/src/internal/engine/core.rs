@@ -436,7 +436,7 @@ mod tests {
         assert!(!decision.is_allowed());
     }
 
-    /// El `forbid` explícito prevalece sobre el `permit`.
+    /// The explicit `forbid` prevails over the `permit`.
     #[test]
     fn an_explicit_forbid_wins_over_a_permit() {
         let engine = AuthorizationEngine::new();
@@ -463,8 +463,8 @@ mod tests {
         assert_eq!(decision.determining_policies(), ["forbid_alice"]);
     }
 
-    /// Dos recursos homónimos en cuentas distintas son entidades distintas:
-    /// una política que nombra a una cuenta no alcanza a la otra.
+    /// Two homonymous resources in different accounts are distinct entities:
+    /// a policy that names one account does not reach the other.
     #[test]
     fn a_policy_scoped_to_one_account_does_not_reach_another_account() {
         let engine = AuthorizationEngine::new();
@@ -497,7 +497,7 @@ mod tests {
         );
     }
 
-    /// Dos evaluaciones concurrentes con políticas opuestas no se contaminan.
+    /// Two concurrent evaluations with opposing policies do not contaminate each other.
     #[test]
     fn concurrent_evaluations_do_not_contaminate_each_other() {
         use std::sync::Arc;

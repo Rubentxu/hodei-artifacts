@@ -1,23 +1,23 @@
-//! El informe de la investigacion: lo que el modelo dijo, dicho de forma
-//! que se pueda consumir sin confundir un texto plausible con una
-//! comprobacion objetiva.
+//! The investigation report: what the model said, put in a form
+//! that can be consumed without mistaking plausible text for
+//! an objective check.
 //!
-//! Las clases de finding son DISTINTAS y lo siguen siendo en el informe:
-//! lo que el **verificador determinista** comprobo contra la evidencia
-//! vigente es un `VerifiedFact`; lo que el modelo dijo con una cita que
-//! resuelve es, como mucho, un `EvidenceBackedClaim`; y una inferencia,
-//! una incertidumbre o una recomendacion son cada una su propia clase,
-//! con su origen y sus limites.
+//! The finding classes are DISTINCT and remain so in the report:
+//! what the **deterministic verifier** checked against the current
+//! evidence is a `VerifiedFact`; what the model said with a citation that
+//! resolves is, at most, an `EvidenceBackedClaim`; and an inference,
+//! an uncertainty or a recommendation are each their own class,
+//! with their origin and their limits.
 //!
-//! # Que es determinista aqui
+//! # What is deterministic here
 //!
-//! El verificador NO lee texto con criterio difuso: extrae del
-//! enunciado las relaciones canónicas que afirma -- dos HRNs y una
-//! palabra de relacion entre ellos -- y las compara contra los SELLOS
-//! del read-set, que son las relaciones que el mundo realmente tiene.
-//! Un enunciado que afirma una relacion que el mundo no tiene es una
-//! CONTRADICCION, y una contradiccion nunca produce un VerifiedFact,
-//! aunque su cita sea autentica.
+//! The verifier does NOT read text with fuzzy judgement: it extracts from the
+//! statement the canonical relations it asserts -- two HRNs and a
+//! relation word between them -- and compares them against the read-set's STAMPS,
+//! which are the relations the world really has.
+//! A statement that asserts a relation the world does not have is a
+//! CONTRADICTION, and a contradiction never produces a VerifiedFact,
+//! even if its citation is authentic.
 
 use serde::{Deserialize, Serialize};
 
@@ -26,93 +26,93 @@ use crate::read_set::{ReadKind, ReadSet};
 use crate::scope::Coverage;
 use kernel::Hrn;
 
-/// La version del contrato del informe.
+/// The version of the report contract.
 pub const REPORT_SCHEMA_VERSION: &str = "1";
 
-/// La clase de finding. Las clases no se mezclan: un texto del modelo
-/// con cita resoluble NO es un hecho verificado, y una inferencia NO es
-/// un hecho.
+/// The class of finding. The classes are not mixed: a model text
+/// with a resolvable citation is NOT a verified fact, and an inference is NOT
+/// a fact.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingKind {
-    /// El verificador determinista lo comprobo contra la evidencia
-    /// vigente. SOLO el verificador lo otorga.
+    /// The deterministic verifier checked it against the current
+    /// evidence. ONLY the verifier grants it.
     VerifiedFact,
-    /// El modelo lo dijo y su cita resuelve. Nadie ha comprobado el
-    /// enunciado.
+    /// The model said it and its citation resolves. Nobody has checked the
+    /// statement.
     EvidenceBackedClaim,
-    /// Una inferencia del modelo: se declara como tal, con sus limites.
+    /// An inference by the model: declared as such, with its limits.
     Inference,
-    /// Una incertidumbre declarada: lo que no se sabe se dice que no se
-    /// sabe.
+    /// A declared uncertainty: what is not known is said not to be
+    /// known.
     Uncertainty,
-    /// Una recomendacion: NADIE la ejecuto, y no cambia el estado de
-    /// confianza.
+    /// A recommendation: NOBODY executed it, and it does not change the trust
+    /// state.
     Recommendation,
 }
 
-/// El estado de verificacion de un finding.
+/// The verification state of a finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum VerificationStatus {
-    /// El verificador determinista lo comprobo.
+    /// The deterministic verifier checked it.
     Verified,
-    /// La cita resuelve, pero nadie ha comprobado el enunciado.
+    /// The citation resolves, but nobody has checked the statement.
     Unverified,
-    /// La evidencia del mundo CONTRADICE el enunciado.
+    /// The world's evidence CONTRADICTS the statement.
     Contradicted,
-    /// No se pudo comprobar: lo que haria falta no esta.
+    /// It could not be checked: what would be needed is not there.
     Unverifiable,
 }
 
-/// Un finding del informe.
+/// A finding of the report.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
-    /// La clase del finding.
+    /// The class of the finding.
     pub kind: FindingKind,
-    /// El enunciado, tal como lo dijo quien lo dijo.
+    /// The statement, as stated by whoever said it.
     pub statement: String,
-    /// Las evidencias que se citan.
+    /// The evidence that is cited.
     pub citations: Vec<String>,
-    /// El estado de verificacion.
+    /// The verification state.
     pub status: VerificationStatus,
-    /// En que se apoya el estado: el origen y los limites del finding.
+    /// What the state rests on: the origin and the limits of the finding.
     pub basis: String,
 }
 
-/// El informe de una investigacion.
+/// The report of an investigation.
 ///
-/// Es serializable y VERSIONADO: un consumidor sabe con que contrato
-/// esta leyendo. Incluye los tipos de finding, las evidencias citadas,
-/// el read-set con sus versiones y la cobertura -- y NO inventa
-/// decisiones autoritativas: el informe describe, no decide.
+/// It is serializable and VERSIONED: a consumer knows which contract
+/// it is reading. It includes the finding types, the cited evidence,
+/// the read-set with its versions and the coverage -- and it does NOT invent
+/// authoritative decisions: the report describes, it does not decide.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvestigationReport {
-    /// La version del contrato.
+    /// The version of the contract.
     pub schema_version: String,
-    /// El sujeto sobre el que se investigo.
+    /// The subject that was investigated.
     pub subject: String,
-    /// Los findings, en el orden de las afirmaciones que los produjeron.
+    /// The findings, in the order of the claims that produced them.
     pub findings: Vec<Finding>,
-    /// Cuanto de lo que hay se entrego al modelo.
+    /// How much of what exists was handed to the model.
     pub coverage: Coverage,
-    /// El manifiesto de las lecturas, con sus versiones.
+    /// The manifest of the reads, with their versions.
     pub read_set: ReadSet,
 }
 
-/// El verificador determinista de enunciados.
+/// The deterministic verifier of statements.
 ///
-/// Extrae del enunciado las relaciones canónicas que afirma -- dos HRNs
-/// y una palabra de relacion entre ellos -- y las compara contra los
-/// sellos del read-set. Es una funcion pura: los mismos sellos y el
-/// mismo enunciado dan el mismo veredicto, siempre.
+/// It extracts from the statement the canonical relations it asserts -- two HRNs
+/// and a relation word between them -- and compares them against the
+/// read-set's stamps. It is a pure function: the same stamps and the
+/// same statement give the same verdict, always.
 pub fn verify_statement(
     statement: &str,
     citations: &[String],
     read_set: &ReadSet,
 ) -> VerificationStatus {
-    // Las citas tienen que ser evidencias del manifiesto: una cita que
-    // no esta en el read-set no se puede comprobar.
+    // The citations have to be evidence from the manifest: a citation that
+    // is not in the read-set cannot be checked.
     let citations_resolve = citations.iter().all(|citation| {
         read_set
             .stamps
@@ -123,11 +123,11 @@ pub fn verify_statement(
         return VerificationStatus::Unverifiable;
     }
 
-    // Las relaciones canonicas que el enunciado afirma.
+    // The canonical relations the statement asserts.
     let asserted = the_asserted_relations(statement);
     if asserted.is_empty() {
-        // No se puede extraer un predicado conocido: la cita resuelve,
-        // pero nadie ha comprobado el enunciado.
+        // A known predicate cannot be extracted: the citation resolves,
+        // but nobody has checked the statement.
         return VerificationStatus::Unverified;
     }
 
@@ -141,9 +141,9 @@ pub fn verify_statement(
         if known {
             statuses.push(VerificationStatus::Verified);
         } else {
-            // El enunciado afirma una relacion que el mundo no tiene:
-            // es una contradiccion, y una contradiccion nunca es un
-            // hecho verificado, aunque su cita sea autentica.
+            // The statement asserts a relation the world does not have:
+            // it is a contradiction, and a contradiction is never a
+            // verified fact, even if its citation is authentic.
             statuses.push(VerificationStatus::Contradicted);
         }
     }
@@ -154,18 +154,18 @@ pub fn verify_statement(
     }
 }
 
-/// Las relaciones canonicas que un enunciado afirma: dos HRNs y una
-/// palabra de relacion entre ellos. La extraccion es por patrones
-/// fijos, no por criterio difuso.
+/// The canonical relations a statement asserts: two HRNs and a
+/// relation word between them. Extraction is by fixed
+/// patterns, not by fuzzy judgement.
 fn the_asserted_relations(statement: &str) -> Vec<(String, String, String)> {
     let hrns = the_hrn_substrings(statement);
     let lowered = statement.to_lowercase();
-    // Las dos escrituras de cada relacion: la que escribe el **grafo**
-    // (`depends_on`) y la que escribe un **modelo** (`depends on`). Las dos
-    // son la misma relacion, y el manifiesto guarda la identidad con la
-    // primera: sin las dos, una relacion que el mundo tiene de verdad
-    // --"deployed_as", "affected_by"-- salia como no comprobada, que es
-    // una manera de mentir por omision.
+    // The two writings of each relation: the one the **graph** writes
+    // (`depends_on`) and the one a **model** writes (`depends on`). Both
+    // are the same relation, and the manifest keeps the identity with the
+    // first: without both, a relation the world truly has
+    // --"deployed_as", "affected_by"-- came out as unchecked, which is
+    // a way of lying by omission.
     let words = [
         ("depends on", "depends_on"),
         ("depends", "depends_on"),
@@ -178,22 +178,22 @@ fn the_asserted_relations(statement: &str) -> Vec<(String, String, String)> {
     ];
 
     let mut asserted = Vec::new();
-    // Los limites de palabra, no los de byte: un enunciado puede traer
-    // acentos --lo escribe un modelo-- y un corte a mitad de un caracter
-    // es un panic, no una relacion.
+    // Word boundaries, not byte ones: a statement may carry
+    // accents --a model writes it-- and a cut in the middle of a character
+    // is a panic, not a relation.
     for (word_index, _) in lowered.char_indices() {
         for (phrase, relation) in words {
             if lowered[word_index..].starts_with(phrase) {
-                // Los dos HRNs que rodean la palabra, en el orden en que
-                // aparecen.
+                // The two HRNs surrounding the word, in the order in which
+                // they appear.
                 let before = &lowered[..word_index];
                 let after = &lowered[word_index + phrase.len()..];
                 let from = the_last_hrn_before(before, &hrns);
                 let to = the_first_hrn_after(after, &hrns);
                 if let (Some(from), Some(to)) = (from, to) {
                     let asserted_relation = (relation.to_string(), from, to);
-                    // La misma relacion contada dos veces --"depends" y
-                    // "depends_on" se parecen-- es UNA relacion.
+                    // The same relation counted twice --"depends" and
+                    // "depends_on" look alike-- is ONE relation.
                     if !asserted.contains(&asserted_relation) {
                         asserted.push(asserted_relation);
                     }
@@ -204,7 +204,7 @@ fn the_asserted_relations(statement: &str) -> Vec<(String, String, String)> {
     asserted
 }
 
-/// Los HRNs que aparecen en un texto, como cadenas canonicas.
+/// The HRNs that appear in a text, as canonical strings.
 fn the_hrn_substrings(text: &str) -> Vec<String> {
     let mut found = Vec::new();
     let bytes = text.as_bytes();
@@ -236,8 +236,8 @@ fn the_hrn_substrings(text: &str) -> Vec<String> {
 }
 
 fn the_last_hrn_before(before: &str, hrns: &[String]) -> Option<String> {
-    // El texto esta en minusculas: los HRNs se comparan en minusculas
-    // tambien, porque "Artifact" y "artifact" son el mismo HRN aqui.
+    // The text is lowercase: the HRNs are compared in lowercase
+    // too, because "Artifact" and "artifact" are the same HRN here.
     let lowered = before.to_lowercase();
     let mut best: Option<String> = None;
     for hrn in hrns {
@@ -255,16 +255,16 @@ fn the_first_hrn_after(after: &str, hrns: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// La clase de finding que corresponde a una afirmacion, dado su estado
-/// de verificacion.
+/// The class of finding that corresponds to a claim, given its verification
+/// state.
 fn the_finding_kind(kind: ClaimKind, status: VerificationStatus) -> FindingKind {
     match kind {
         ClaimKind::Fact => {
             if status == VerificationStatus::Verified {
                 FindingKind::VerifiedFact
             } else {
-                // El texto del modelo con cita resoluble NO es un hecho
-                // verificado, y una contradiccion mucho menos.
+                // Model text with a resolvable citation is NOT a verified
+                // fact, and a contradiction even less so.
                 FindingKind::EvidenceBackedClaim
             }
         }
@@ -274,7 +274,7 @@ fn the_finding_kind(kind: ClaimKind, status: VerificationStatus) -> FindingKind 
     }
 }
 
-/// En que se apoya el estado del finding: el origen y los limites.
+/// What the finding's state rests on: the origin and the limits.
 fn the_basis(kind: ClaimKind, status: VerificationStatus) -> String {
     match status {
         VerificationStatus::Verified => {
@@ -301,12 +301,12 @@ fn the_basis(kind: ClaimKind, status: VerificationStatus) -> String {
     }
 }
 
-/// Construye el informe de una investigacion.
+/// Builds the report of an investigation.
 ///
-/// Las afirmaciones YA VALIDADAS entran aqui: el informe describe lo que
-/// dijo el modelo y lo que el verificador pudo comprobar, y NO inventa
-/// decisiones autoritativas. Los mismos claims, el mismo read-set y la
-/// misma cobertura dan el MISMO informe.
+/// The ALREADY VALIDATED claims enter here: the report describes what the
+/// model said and what the verifier could check, and does NOT invent
+/// authoritative decisions. The same claims, the same read-set and the
+/// same coverage give the SAME report.
 pub fn build_report(
     subject: &Hrn,
     claims: &[AIClaim],
@@ -357,7 +357,7 @@ mod tests {
             "depends_on|hrn:hodei:artifacts:eu-west-1:acme:Artifact/app",
             "evd-1",
         ));
-        // La relacion que el mundo tiene: app depende de lib-v1.
+        // The relation the world has: app depends on lib-v1.
         read_set.read(crate::read_set::ReadStamp::relation(
             "depends_on|hrn:hodei:artifacts:eu-west-1:acme:Artifact/app|hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1",
             "evd-1",
@@ -365,8 +365,8 @@ mod tests {
         read_set
     }
 
-    /// AC1: el enunciado que el mundo CONFIRMA, con cita que resuelve,
-    /// es un VerifiedFact -- y SOLO el verificador lo otorga.
+    /// AC1: the statement the world CONFIRMS, with a citation that resolves,
+    /// is a VerifiedFact -- and ONLY the verifier grants it.
     #[test]
     fn a_statement_the_world_confirms_is_a_verified_fact() {
         let world = the_world();
@@ -382,13 +382,13 @@ mod tests {
         assert_eq!(report.findings[0].status, VerificationStatus::Verified);
     }
 
-    /// AC1: una cita AUTENTICA que contradice el texto del modelo NO
-    /// produce un VerifiedFact: es un EvidenceBackedClaim contradicho.
+    /// AC1: an AUTHENTIC citation that contradicts the model's text does NOT
+    /// produce a VerifiedFact: it is a contradicted EvidenceBackedClaim.
     #[test]
     fn a_genuine_citation_that_contradicts_the_text_is_not_a_verified_fact() {
         let world = the_world();
-        // El modelo dice lib-v2; el mundo tiene lib-v1. La cita es
-        // autentica y resuelve.
+        // The model says lib-v2; the world has lib-v1. The citation is
+        // authentic and resolves.
         let claim = claim(
             "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app depends on \
              hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2",
@@ -405,8 +405,8 @@ mod tests {
         );
     }
 
-    /// Un hecho sin soporte verificable (cita que no resuelve) falla
-    /// cerrado: Unverifiable, nunca Verified.
+    /// A fact without verifiable support (a citation that does not resolve) fails
+    /// closed: Unverifiable, never Verified.
     #[test]
     fn an_unresolvable_citation_is_unverifiable_not_verified() {
         let world = the_world();
@@ -416,9 +416,9 @@ mod tests {
         assert_eq!(report.findings[0].kind, FindingKind::EvidenceBackedClaim);
     }
 
-    /// Las clases NO se mezclan: una inferencia es inferencia, una
-    /// incertidumbre es incertidumbre, una recomendacion es
-    /// recomendacion -- con su origen y sus limites.
+    /// The classes are NOT mixed: an inference is an inference, an
+    /// uncertainty is an uncertainty, a recommendation is a
+    /// recommendation -- with their origin and their limits.
     #[test]
     fn the_classes_stay_distinct_with_their_limits() {
         let world = the_world();
@@ -443,8 +443,8 @@ mod tests {
         }
     }
 
-    /// AC2 + AC3: el informe es serializable, versionado y lleva el
-    /// read-set con sus versiones.
+    /// AC2 + AC3: the report is serializable, versioned and carries the
+    /// read-set with its versions.
     #[test]
     fn the_report_is_versioned_and_serializable() {
         let world = the_world();
@@ -467,8 +467,8 @@ mod tests {
         );
     }
 
-    /// El replay: los mismos claims y el mismo read-set dan el MISMO
-    /// informe, sin relojes ni orden accidental.
+    /// The replay: the same claims and the same read-set give the SAME
+    /// report, with no clocks or accidental ordering.
     #[test]
     fn the_same_claims_and_world_give_the_same_report() {
         let world = the_world();

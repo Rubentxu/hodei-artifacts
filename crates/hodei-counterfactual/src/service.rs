@@ -1,25 +1,25 @@
-//! El servicio que compone la respuesta contrafactual.
+//! The service that composes the counterfactual answer.
 //!
-//! El recorrido es corto y falla cerrado:
+//! The path is short and fails closed:
 //!
-//! 1. Primero se **simula**: si la hipotesis no es valida --de otra
-//!    cuenta, caducada, contra un mundo que ya no existe o sin version
-//!    comprobable--, se rechaza ANTES de recuperar nada. No se filtraria
-//!    dato alguno del mundo que la hipotesis decia tocar, y una
-//!    respuesta a medias sobre un mundo equivocado es peor que ningun
-//!    rechazo.
-//! 2. Despues se **investiga**: la causa, con sus citas y su sello de
-//!    lecturas.
-//! 3. Se comprueba el **sello compartido**: las fuentes que los dos
-//!    manifiestos nombran tienen que estar en la misma version. Si no,
-//!    la investigacion y la simulacion no hablan del mismo mundo y la
-//!    respuesta se rechaza como sello incoherente.
-//! 4. Se compone el informe: etiquetas epistemicas, referencias y los
-//!    dos contratos interiores intactos.
+//! 1. First it **simulates**: if the hypothesis is not valid -- from another
+//!    account, expired, against a world that no longer exists, or without a
+//!    verifiable version --, it is rejected BEFORE anything is retrieved. No
+//!    data would leak from the world the hypothesis claimed to touch, and a
+//!    half answer about the wrong world is worse than no
+//!    rejection.
+//! 2. Then it **investigates**: the cause, with its citations and its seal of
+//!    reads.
+//! 3. The **shared seal** is checked: the sources that both
+//!    manifests name have to be at the same version. If not,
+//!    the investigation and the simulation do not speak of the same world and the
+//!    answer is rejected as an incoherent seal.
+//! 4. The report is composed: epistemic labels, references and the
+//!    two inner contracts intact.
 //!
-//! Y en ningun momento se escribe: la simulacion no tiene por donde
-//! escribir, y la investigacion solo lee. Lo que se propone se queda
-//! esperando aprobacion humana en la guardia del investigador.
+//! And at no point is anything written: the simulation has nowhere to
+//! write, and the investigation only reads. What is proposed stays
+//! waiting for human approval in the investigator's guard.
 
 use std::sync::Arc;
 
@@ -31,28 +31,28 @@ use hodei_simulation::{SimulationError, SimulationFork};
 
 use crate::report::{CounterfactualReport, build_report, the_seal_coherence};
 
-/// Por que la hipotesis no merecio respuesta.
+/// Why the hypothesis did not deserve an answer.
 ///
-/// El motivo es una CLASE, no un detalle: los mensajes de rechazo no
-/// llevan cuentas, HRNs ni identificadores ajenos, porque rechazar una
-/// hipotesis de otro mundo no es una ocasion para describir ese otro
-/// mundo.
+/// The reason is a CLASS, not a detail: rejection messages do not
+/// carry accounts, HRNs or foreign identifiers, because rejecting a
+/// hypothesis from another world is not an occasion to describe that other
+/// world.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RejectionReason {
-    /// La hipotesis pertenece a otra cuenta.
+    /// The hypothesis belongs to another account.
     OtherAccount,
-    /// La hipotesis ha vivido mas de lo permitido.
+    /// The hypothesis has lived longer than allowed.
     Expired,
-    /// La hipotesis es mas grande de lo permitido.
+    /// The hypothesis is larger than allowed.
     TooLarge,
-    /// El mundo se movio mientras se evaluaba: la base ya no existe.
+    /// The world moved while it was being evaluated: the base no longer exists.
     StaleWorld,
-    /// La base no declara una version comprobable.
+    /// The base does not declare a verifiable version.
     UnverifiableBase,
-    /// El mundo no se pudo leer.
+    /// The world could not be read.
     Unavailable,
-    /// La investigacion y la simulacion no coinciden en la version de
-    /// una fuente compartida.
+    /// The investigation and the simulation do not agree on the version of
+    /// a shared source.
     IncoherentSeal,
 }
 
@@ -80,16 +80,16 @@ impl std::fmt::Display for RejectionReason {
     }
 }
 
-/// Por que no hay respuesta contrafactual.
+/// Why there is no counterfactual answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CounterfactualError {
-    /// La hipotesis se ha rechazado, con su clase y sin sus datos.
+    /// The hypothesis was rejected, with its class and without its data.
     Rejected {
-        /// La clase del rechazo.
+        /// The class of the rejection.
         reason: RejectionReason,
     },
-    /// La investigacion no ha podido responder: su propio error lo
-    /// dice, con el alcance de quien pregunta.
+    /// The investigation could not answer: its own error
+    /// says so, with the scope of whoever asks.
     Investigation(InvestigationError),
 }
 
@@ -106,14 +106,14 @@ impl std::fmt::Display for CounterfactualError {
 
 impl std::error::Error for CounterfactualError {}
 
-/// El servicio de la investigacion contrafactual.
+/// The counterfactual investigation service.
 pub struct CounterfactualService {
     investigator: Arc<Investigator>,
     simulation: Arc<SimulationService>,
 }
 
 impl CounterfactualService {
-    /// El servicio sobre un investigador y un simulador.
+    /// The service over an investigator and a simulator.
     pub fn new(investigator: Arc<Investigator>, simulation: Arc<SimulationService>) -> Self {
         Self {
             investigator,
@@ -121,11 +121,11 @@ impl CounterfactualService {
         }
     }
 
-    /// Responde a la pregunta bajo la hipotesis del fork.
+    /// Answers the question under the fork's hypothesis.
     ///
-    /// El `now` es el mismo reloj para las dos mitades: es el que hace
-    /// que el sello de una respuesta se pueda comparar con el de la
-    /// otra, y el que la deja reproducible.
+    /// The `now` is the same clock for both halves: it is what makes
+    /// the seal of one answer comparable with that of the
+    /// other, and what makes it reproducible.
     pub async fn answer(
         &self,
         counterfactual: &str,
@@ -134,21 +134,21 @@ impl CounterfactualService {
         fork: &SimulationFork,
         now: DateTime<Utc>,
     ) -> Result<CounterfactualReport, CounterfactualError> {
-        // 1. Primero la hipotesis: un rechazo no gasta lecturas.
+        // 1. The hypothesis first: a rejection spends no reads.
         let simulation = self
             .simulation
             .simulate_result(fork, now)
             .await
             .map_err(the_rejection)?;
 
-        // 2. Despues la causa.
+        // 2. Then the cause.
         let investigation = self
             .investigator
             .investigate(counterfactual, scope, question, now)
             .await
             .map_err(CounterfactualError::Investigation)?;
 
-        // 3. Y las dos tienen que hablar del mismo mundo.
+        // 3. And the two have to speak of the same world.
         let seal = the_seal_coherence(&investigation.report.read_set, &simulation.base.sources);
         if !seal.coherent {
             return Err(CounterfactualError::Rejected {
@@ -156,7 +156,7 @@ impl CounterfactualService {
             });
         }
 
-        // 4. Componer, sin decidir.
+        // 4. Compose, without deciding.
         Ok(build_report(
             counterfactual,
             question,
@@ -167,11 +167,11 @@ impl CounterfactualService {
     }
 }
 
-/// El rechazo de un fallo de simulacion: la clase, nunca el detalle.
+/// The rejection of a simulation failure: the class, never the detail.
 ///
-/// Los mensajes de `SimulationError` llevan cuentas e identidades para
-/// quien simula; aqui se cambia el detalle por la clase porque quien
-/// recibe el rechazo no tiene porque ver el mundo de otra cuenta.
+/// The `SimulationError` messages carry accounts and identities for
+/// whoever simulates; here the detail is swapped for the class because whoever
+/// receives the rejection has no reason to see another account's world.
 fn the_rejection(error: SimulationError) -> CounterfactualError {
     let reason = match error {
         SimulationError::NotAllowed(_) => RejectionReason::OtherAccount,

@@ -1,19 +1,19 @@
-//! El contrato de la base de la simulacion.
+//! The contract of the simulation base.
 //!
-//! La simulacion dice sobre que mundo se calculo, y ese mundo se fija
-//! antes y se comprueba despues. Lo que se comprueba:
+//! The simulation says over which world it was computed, and that world is pinned
+//! beforehand and checked afterwards. What is checked:
 //!
-//! - Un mundo que se mueve mientras se simula hace que la simulacion se
-//!   diga OBSOLETA, y no que devuelva un diff sobre un mundo que ya no
-//!   existe.
-//! - El cambio concurrente se detecta por el CONTENIDO, no por el
-//!   recuento: una relacion sustituida por otra deja el numero igual.
-//! - La evidencia que consume la decision tambien se comprueba: no toca
-//!   el grafo, asi que sin su propia comprobacion seria invisible.
-//! - El reloj es el que recibe quien simula, no el del sistema: la
-//!   misma base y los mismos hechos dan el mismo resultado.
-//! - Una base de otra cuenta, sin version o preparada contra otra
-//!   generacion se rechaza.
+//! - A world that moves while being simulated makes the simulation
+//!   declare itself STALE, rather than return a diff over a world that no longer
+//!   exists.
+//! - The concurrent change is detected by CONTENT, not by
+//!   count: one relation replaced by another leaves the number the same.
+//! - The evidence the decision consumes is also checked: it does not touch
+//!   the graph, so without its own check it would be invisible.
+//! - The clock is the one received by whoever simulates, not the system's: the
+//!   same base and the same facts give the same result.
+//! - A base from another account, without a version or prepared against another
+//!   generation is rejected.
 
 use std::sync::{Arc, Mutex};
 
@@ -30,30 +30,30 @@ use hodei_trust_policy::decision::Outcome;
 use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
 
-/// El sujeto de la simulacion.
+/// The subject of the simulation.
 fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
 }
 
-/// El otro sujeto de la simulacion.
+/// The other subject of the simulation.
 fn other_subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/api-2.0.0").expect("un HRN")
 }
 
-/// El componente del que depende.
+/// The component it depends on.
 fn component_v1() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
 }
 
-/// El componente al que se sube en el cambio concurrente.
+/// The component upgraded to in the concurrent change.
 fn component_v2() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
 }
 
-/// La generacion del grafo de mentira.
+/// The generation of the fake graph.
 const THE_GENERATION: u64 = 7;
 
-/// El grafo real, con la capacidad de moverse mientras se simula.
+/// The real graph, with the ability to move while being simulated.
 struct TheGraph {
     relations: Mutex<Vec<RelationFact>>,
     reads: Mutex<usize>,
@@ -61,7 +61,7 @@ struct TheGraph {
     generation: Mutex<u64>,
 }
 
-/// Un cambio del mundo, programado para ocurrir en una lectura.
+/// A change of the world, scheduled to happen on a read.
 struct Movement {
     at_read: usize,
     relations: Vec<RelationFact>,
@@ -78,7 +78,7 @@ impl TheGraph {
         })
     }
 
-    /// El grafo se mueve en la lectura numero `at_read`.
+    /// The graph moves on read number `at_read`.
     fn moving_at(&self, at_read: usize, relations: Vec<RelationFact>, moves_the_generation: bool) {
         *self
             .movement
@@ -154,18 +154,18 @@ impl SimulationGraph for TheGraph {
     }
 }
 
-/// El evaluador que APUNTA el instante que recibe.
+/// The evaluator that RECORDS the instant it receives.
 ///
-/// Es la forma de comprobar que el nucleo de decision no lee el reloj de
-/// pared: recibe el instante y decide con el.
+/// It is the way to check that the decision core does not read the wall
+/// clock: it receives the instant and decides with it.
 struct TheEvaluator {
     seen: Mutex<Vec<DateTime<Utc>>>,
-    /// Lo que el evaluador ha leido: lo que dice que consume.
+    /// What the evaluator has read: what it says it consumes.
     reads: Mutex<ReadSet>,
-    /// La evidencia que entra mientras se simula.
+    /// The evidence that enters while simulating.
     ///
-    /// No toca el grafo: no cambia el numero de relaciones ni mueve la
-    /// generacion. Solo la ven los que leen la evidencia.
+    /// It does not touch the graph: it changes neither the number of relations nor the
+    /// generation. Only those who read the evidence see it.
     arrived: Mutex<Option<String>>,
 }
 
@@ -180,7 +180,7 @@ impl TheEvaluator {
         })
     }
 
-    /// La evidencia entra DESPUES de que la decision la consumio.
+    /// The evidence enters AFTER the decision consumed it.
     fn the_evidence_arrives(&self, id: &str) {
         *self
             .arrived
@@ -195,8 +195,8 @@ impl TheEvaluator {
             .clone()
     }
 
-    /// Lo que el evaluador lee ahora: lo que ya estaba, mas lo que ha
-    /// entrado.
+    /// What the evaluator reads now: what was already there, plus what has
+    /// come in.
     fn the_reads_now(&self) -> ReadSet {
         let mut reads = self
             .reads
@@ -244,7 +244,7 @@ impl DecisionEvaluator for TheEvaluator {
     }
 }
 
-/// La politica de ahora.
+/// Today's policy.
 fn the_policy(version: &str) -> TrustPolicy {
     TrustPolicy::new(
         format!("policy-{version}"),
@@ -253,7 +253,7 @@ fn the_policy(version: &str) -> TrustPolicy {
     )
 }
 
-/// El fork de la simulacion.
+/// The simulation fork.
 fn the_fork() -> SimulationFork {
     SimulationFork::new(
         "sim-1",
@@ -264,19 +264,19 @@ fn the_fork() -> SimulationFork {
     .with_subjects(vec![subject()])
 }
 
-/// El instante de la simulacion: el reloj lo fija quien simula.
+/// The simulation instant: the clock is set by whoever simulates.
 fn the_moment() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("un instante")
 }
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// AC1: un cambio concurrente que SUSTITUYE una relacion por otra
-/// manteniendo el MISMO recuento se detecta como base obsoleta.
+/// AC1: a concurrent change that REPLACES one relation with another
+/// keeping the SAME count is detected as a stale base.
 ///
-/// El numero de relaciones no lo distingue: sigue siendo una. Y la
-/// generacion tampoco, si el cambio no la mueve. Lo que lo distingue es
-/// el contenido leido, que es lo que la simulacion sello.
+/// The number of relations does not tell them apart: it is still one. And the
+/// generation does not either, if the change does not move it. What does tell them apart is
+/// the content read, which is what the simulation stamped.
 #[tokio::test]
 async fn a_concurrent_swap_with_the_same_count_is_a_stale_base() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -284,8 +284,8 @@ async fn a_concurrent_swap_with_the_same_count_is_a_stale_base() {
         subject(),
         component_v1(),
     )]);
-    // El cambio ocurre en la segunda lectura, que es la de comprobacion:
-    // una relacion por otra, y el numero de relaciones sigue siendo uno.
+    // The change happens on the second read, which is the check one:
+    // one relation for another, and the number of relations is still one.
     graph.moving_at(
         2,
         vec![RelationFact::new(
@@ -313,13 +313,13 @@ async fn a_concurrent_swap_with_the_same_count_is_a_stale_base() {
     }
 }
 
-/// Y un cambio que mueve la GENERACION del grafo tambien hace obsoleta
-/// la simulacion, aunque el contenido leido siga igual.
+/// And a change that moves the graph's GENERATION also makes the
+/// simulation stale, even if the content read stays the same.
 ///
-/// El mundo se mueve en la PRIMERA lectura de relaciones, que es la
-/// que viene DESPUES de leer la generacion y el recuento: el cambio cae
-/// entre fijar la base y comprobar la base, que es justo la ventana que
-/// la comprobacion final existe para cerrar.
+/// The world moves on the FIRST relations read, which is the one
+/// that comes AFTER reading the generation and the count: the change falls
+/// between pinning the base and checking the base, which is exactly the window the
+/// final check exists to close.
 #[tokio::test]
 async fn a_concurrent_change_that_moves_the_generation_is_a_stale_base() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -351,8 +351,8 @@ async fn a_concurrent_change_that_moves_the_generation_is_a_stale_base() {
     }
 }
 
-/// Y una simulacion cuyo mundo NO se mueve se completa y dice sobre que
-/// mundo se calculo.
+/// And a simulation whose world does NOT move completes and says over which
+/// world it was computed.
 #[tokio::test]
 async fn a_simulation_over_a_still_world_says_which_world_it_was_over() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -386,24 +386,24 @@ async fn a_simulation_over_a_still_world_says_which_world_it_was_over() {
     assert!(!diff.base.seal.is_empty(), "y el sello del contenido leido");
 }
 
-/// AC1, en la variante que el ALMACEN REAL puede producir: la misma
-/// relacion con OTRA evidencia.
+/// AC1, in the variant the REAL STORE can produce: the same
+/// relation with OTHER evidence.
 ///
-/// Sustituir una relacion por otra de extremos distintos deja el
-/// numero de filas increased en el almacen real (la fila vieja no se
-/// borra), asi que ese caso lo detecta el recuento. Lo que el almacen
-/// real hace con el recuento IGUAL es cambiar el apoyo de una relacion:
-/// misma identidad, misma fila, otra evidencia. Y ese caso solo lo ve
-/// el sello de contenido, porque la generacion no se mueve cuando el
-/// cambio no pasa por el ledger de deltas.
+/// Replacing one relation with another with different endpoints leaves the
+/// number of rows increased in the real store (the old row is not
+/// deleted), so that case is detected by the count. What the real store
+/// does with the SAME count is change the support of a relation:
+/// same identity, same row, other evidence. And that case is only seen by
+/// the content stamp, because the generation does not move when the
+/// change does not go through the deltas ledger.
 #[tokio::test]
 async fn a_relation_that_changes_its_evidence_is_a_stale_base() {
     let graph = TheGraph::new(vec![
         RelationFact::new(RelationType::DependsOn, subject(), component_v1())
             .with_evidence("evd-1"),
     ]);
-    // El cambio ocurre en la segunda lectura: la misma relacion, con otra
-    // evidencia. El numero de relaciones sigue siendo uno.
+    // The change happens on the second read: the same relation, with other
+    // evidence. The number of relations is still one.
     graph.moving_at(
         2,
         vec![
@@ -430,9 +430,9 @@ async fn a_relation_that_changes_its_evidence_is_a_stale_base() {
     }
 }
 
-/// Y el manifiesto sella la politica que ESTA en vigor en el fork, que
-/// es la que produce la decision de "despues": un manifiesto a medias de
-/// lo que produjo la decision no verifica la decision.
+/// And the manifest stamps the policy that is IN FORCE in the fork, which
+/// is the one that produces the "after" decision: a manifest that covers only part of
+/// what produced the decision does not verify the decision.
 #[tokio::test]
 async fn the_base_seals_the_policy_that_produced_the_decision() {
     let graph = TheGraph::new(vec![]);
@@ -467,14 +467,14 @@ async fn the_base_seals_the_policy_that_produced_the_decision() {
     );
 }
 
-/// Y cuando la hipotetica es la MISMA politica con OTRA version, las dos
-/// versiones estan en el manifiesto.
+/// And when the hypothetical is the SAME policy with ANOTHER version, both
+/// versions are in the manifest.
 ///
-/// Son el mismo recurso verificado de dos maneras, y el manifiesto
-/// guardaba solo la primera: el diff decia "la politica 2.0.0 produjo el
-/// despues" mientras el manifiesto solo hablaba de la 1.0.0. Un
-/// manifiesto que no contiene lo que produjo la decision no verifica
-/// la decision.
+/// They are the same resource verified in two ways, and the manifest
+/// kept only the first: the diff said "policy 2.0.0 produced the
+/// after" while the manifest only spoke of 1.0.0. A
+/// manifest that does not contain what produced the decision does not verify
+/// the decision.
 #[tokio::test]
 async fn the_base_keeps_both_versions_of_the_same_policy() {
     let graph = TheGraph::new(vec![]);
@@ -505,13 +505,13 @@ async fn the_base_keeps_both_versions_of_the_same_policy() {
     );
 }
 
-// ───────────────────────────── la evidencia que decide ─────────────────────────────
+// ───────────────────────────── the evidence that decides ─────────────────────────────
 
-/// La base guarda la evidencia que CONSUMIO la decision.
+/// The base keeps the evidence that the decision CONSUMED.
 ///
-/// Sin esto la base diria sobre que mundo se calculo sin decir que
-/// evidencia lo decidio, y una evidencia que entra en mitad de la
-/// simulacion se atribuiria al hecho hipotetico.
+/// Without this the base would say over which world it was computed without saying which
+/// evidence decided it, and evidence that enters in the middle of the
+/// simulation would be attributed to the hypothetical fact.
 #[tokio::test]
 async fn the_base_keeps_the_evidence_that_the_decision_consumed() {
     let graph = TheGraph::new(vec![]);
@@ -537,17 +537,17 @@ async fn the_base_keeps_the_evidence_that_the_decision_consumed() {
     );
 }
 
-/// Y una evidencia que ENTRA mientras se simula hace obsoleta la base.
+/// And evidence that ENTERS while simulating makes the base stale.
 ///
-/// No toca el grafo: no cambia el numero de relaciones ni mueve la
-/// generacion. Los tres guards del grafo no la ven, y sin su propia
-/// comprobacion el cambio de decision se atribuiria al hecho
-/// hipotetico.
+/// It does not touch the graph: it changes neither the number of relations nor the
+/// generation. The graph's three guards do not see it, and without their own
+/// check the change of decision would be attributed to the
+/// hypothetical fact.
 #[tokio::test]
 async fn an_evidence_that_arrives_during_the_simulation_is_a_stale_base() {
     let graph = TheGraph::new(vec![]);
     let evaluator = TheEvaluator::new();
-    // La evidencia entra DESPUES de que la decision la consumio.
+    // The evidence enters AFTER the decision consumed it.
     evaluator.the_evidence_arrives("evd-nueva");
     let service = SimulationService::new(graph, evaluator);
 
@@ -569,8 +569,8 @@ async fn an_evidence_that_arrives_during_the_simulation_is_a_stale_base() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// AC2: con la misma base, el mismo reloj y los mismos hechos, dos
-/// evaluaciones dan el mismo resultado y el mismo diff.
+/// AC2: with the same base, the same clock and the same facts, two
+/// evaluations give the same result and the same diff.
 #[tokio::test]
 async fn the_same_base_clock_and_facts_give_the_same_diff() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -594,11 +594,11 @@ async fn the_same_base_clock_and_facts_give_the_same_diff() {
     assert_eq!(first.base.fingerprint(), second.base.fingerprint());
 }
 
-/// Y el diff no depende del ORDEN en que se declaran los sujetos.
+/// And the diff does not depend on the ORDER in which the subjects are declared.
 ///
-/// El orden de declaracion de un fork es el orden en que a alguien se le
-/// ocurrio declararlos, y un diff que cambia con ese orden no se puede
-/// comparar con otro diff.
+/// The declaration order of a fork is the order in which it occurred to someone to
+/// declare them, and a diff that changes with that order cannot be
+/// compared with another diff.
 #[tokio::test]
 async fn the_diff_does_not_depend_on_the_order_of_the_declared_subjects() {
     let graph = TheGraph::new(vec![]);
@@ -622,12 +622,12 @@ async fn the_diff_does_not_depend_on_the_order_of_the_declared_subjects() {
     assert_eq!(one.structural, other.structural);
 }
 
-/// Y el sello del contenido no depende del ORDEN en que el grafo da sus
-/// relaciones.
+/// And the content stamp does not depend on the ORDER in which the graph gives its
+/// relations.
 ///
-/// El grafo puede dar la misma relacion dos veces con distinto apoyo, y
-/// el sello no puede depender de cual de las dos se queda: un sello que
-/// depende del orden del almacen no es un sello del mundo.
+/// The graph may give the same relation twice with different support, and
+/// the stamp cannot depend on which of the two is kept: a stamp that
+/// depends on the store's order is not a stamp of the world.
 #[tokio::test]
 async fn the_seal_does_not_depend_on_the_order_of_the_store() {
     let one = RelationFact::new(RelationType::DependsOn, subject(), component_v1())
@@ -652,8 +652,8 @@ async fn the_seal_does_not_depend_on_the_order_of_the_store() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// AC3: el nucleo de decision recibe el instante de la simulacion, y no
-/// el del reloj de pared.
+/// AC3: the decision core receives the simulation instant, and not
+/// the wall clock's.
 #[tokio::test]
 async fn the_decision_core_uses_the_clock_of_the_simulation() {
     let graph = TheGraph::new(vec![]);
@@ -674,8 +674,8 @@ async fn the_decision_core_uses_the_clock_of_the_simulation() {
     );
 }
 
-/// Y dos simulaciones con relojes DISTINTOS no se confunden: el reloj
-/// es parte de la base, y por eso viaja en el diff.
+/// And two simulations with DIFFERENT clocks are not confused: the clock
+/// is part of the base, and that is why it travels in the diff.
 #[tokio::test]
 async fn the_clock_travels_with_the_diff() {
     let graph = TheGraph::new(vec![]);
@@ -697,8 +697,8 @@ async fn the_clock_travels_with_the_diff() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// AC4: un fork preparado contra OTRA generacion se rechaza: el mundo
-/// ya no es el que el fork mio.
+/// AC4: a fork prepared against ANOTHER generation is rejected: the world
+/// is no longer the one the fork was prepared against.
 #[tokio::test]
 async fn a_fork_prepared_against_another_generation_is_rejected() {
     let graph = TheGraph::new(vec![]);
@@ -732,7 +732,7 @@ async fn a_fork_prepared_against_another_generation_is_rejected() {
     }
 }
 
-/// Y el fork preparado contra la generacion de AHORA si se simula.
+/// And a fork prepared against the generation of NOW is simulated.
 #[tokio::test]
 async fn a_fork_prepared_against_the_current_generation_is_simulated() {
     let graph = TheGraph::new(vec![]);
@@ -744,11 +744,11 @@ async fn a_fork_prepared_against_the_current_generation_is_simulated() {
         .expect("la base vigente se simula");
 }
 
-/// Y un fork SIN version declarada se rechaza.
+/// And a fork WITHOUT a declared version is rejected.
 ///
-/// Una base que no dice contra que version del mundo se evaluo no se
-/// puede comprobar, y una base que no se puede comprobar no sostiene
-/// una respuesta.
+/// A base that does not say against which version of the world it was evaluated cannot
+/// be checked, and a base that cannot be checked does not support
+/// an answer.
 #[tokio::test]
 async fn a_fork_without_a_declared_version_is_rejected() {
     let graph = TheGraph::new(vec![]);
@@ -776,8 +776,8 @@ async fn a_fork_without_a_declared_version_is_rejected() {
     );
 }
 
-/// Y una base de OTRA cuenta se rechaza: una base de otra cuenta no es
-/// una base, es una respuesta sobre el mundo de otro.
+/// And a base from ANOTHER account is rejected: a base from another account is not
+/// a base, it is an answer about someone else's world.
 #[tokio::test]
 async fn a_base_of_another_account_is_rejected() {
     let graph = TheGraph::new(vec![]);
@@ -809,9 +809,9 @@ async fn a_base_of_another_account_is_rejected() {
     );
 }
 
-/// Y la generacion del grafo se comprueba DESPUES de evaluar: un mundo
-/// que se mueve entre la lectura y el final de la evaluacion tambien se
-/// dice obsoleto.
+/// And the graph's generation is checked AFTER evaluating: a world
+/// that moves between the read and the end of the evaluation is also
+/// declared stale.
 #[tokio::test]
 async fn a_world_that_moves_after_the_reads_is_also_stale() {
     let graph = TheGraph::new(vec![RelationFact::new(
@@ -819,9 +819,9 @@ async fn a_world_that_moves_after_the_reads_is_also_stale() {
         subject(),
         component_v1(),
     )]);
-    // El cambio ocurre en la primera lectura de relaciones, que es la
-    // que viene despues de leer la generacion y el recuento: una
-    // relacion mas, y el grafo ya no es el que se evaluo.
+    // The change happens on the first relations read, which is the one
+    // that comes after reading the generation and the count: one more
+    // relation, and the graph is no longer the one that was evaluated.
     graph.moving_at(
         1,
         vec![
@@ -848,8 +848,8 @@ async fn a_world_that_moves_after_the_reads_is_also_stale() {
     }
 }
 
-/// El hecho hipotetico lleva su etiqueta: lo que se superpone al mundo
-/// real no es del mundo real.
+/// The hypothetical fact carries its label: what is superimposed on the real
+/// world does not belong to the real world.
 #[test]
 fn the_hypothetical_carries_its_tag() {
     let tag = SimulationTag::new("sim-1", the_moment());
