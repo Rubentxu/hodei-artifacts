@@ -159,15 +159,7 @@ infer = "0.19.0"
 # herramientas de operacion legado se retiraron en F4.
 [features]
 default = []
-legacy = [
-    "dep:surrealdb",
-    "hodei-iam/legacy",
-    "hodei-evidence-storage/legacy",
-    "hodei-investigator-storage/legacy",
-    "hodei-risk-storage/legacy",
-    "hodei-trust-policy-storage/legacy",
-    "hodei-catalog-storage/legacy",
-]
+legacy = ["dep:surrealdb"]
 # Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
 vendored-openssl = ["dep:openssl"]
 
