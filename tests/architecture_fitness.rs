@@ -622,3 +622,177 @@ fn migrated_protocol_handlers_do_not_cross_import_raw_handler() {
         offences.join("\n")
     );
 }
+
+// ---------------------------------------------------------------------------
+// Retired-engine documentation (HSP-317)
+//
+// The embedded engine (SurrealDB/RocksDB) was retired in HSP-314. Two checks
+// keep the documents that stand for "current" from describing it again.
+// ---------------------------------------------------------------------------
+
+/// Documents that stand for the current state. `ARCHITECTURE_STATUS.md` is not
+/// in this list on purpose: it still names the retired engine in many
+/// historical passages outside HSP-317's scope, so it only gets the marker
+/// check below.
+const CURRENT_DOCS: [&str; 5] = [
+    "docs/security.md",
+    "README.md",
+    "README.es.md",
+    "docs/ci-strategy.md",
+    "docs/testing-organization.md",
+];
+
+/// A document is superseded when one of its first lines carries the marker.
+fn is_superseded(content: &str) -> bool {
+    content
+        .lines()
+        .take(12)
+        .any(|line| line.starts_with("> **SUPERADO"))
+}
+
+/// A line is marked as history when it says the engine was retired or
+/// superseded, so a document that already explains the retirement is not a
+/// false positive.
+fn line_is_marked_historical(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    [
+        "retir",
+        "hsp-314",
+        "superad",
+        "supersed",
+        "histórico",
+        "historical",
+    ]
+    .iter()
+    .any(|word| lower.contains(word))
+}
+
+/// Markdown link targets (`](target)`) of a line, without anchors.
+fn link_targets(line: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut rest = line;
+    while let Some(start) = rest.find("](") {
+        rest = &rest[start + 2..];
+        let Some(end) = rest.find(')') else { break };
+        let target = rest[..end].split('#').next().unwrap_or("");
+        if target.ends_with(".md") && !target.contains("://") {
+            targets.push(target.to_string());
+        }
+        rest = &rest[end..];
+    }
+    targets
+}
+
+/// Offences of the "current document links a superseded one as current" rule.
+fn superseded_link_offences(root: &Path, docs: &[&str]) -> Vec<String> {
+    let mut offences = Vec::new();
+    for rel in docs {
+        let Ok(content) = fs::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        let dir = Path::new(rel).parent().unwrap_or(Path::new(""));
+        for (number, line) in content.lines().enumerate() {
+            for target in link_targets(line) {
+                let Ok(linked) = fs::read_to_string(root.join(dir).join(&target)) else {
+                    continue;
+                };
+                if is_superseded(&linked) && !line_is_marked_historical(line) {
+                    offences.push(format!(
+                        "{rel}:{}: links the superseded {target} as current",
+                        number + 1
+                    ));
+                }
+            }
+        }
+    }
+    offences
+}
+
+/// Offences of the "current document names the retired engine" rule.
+fn retired_engine_offences(root: &Path, docs: &[&str]) -> Vec<String> {
+    let mut offences = Vec::new();
+    for rel in docs {
+        let Ok(content) = fs::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        if is_superseded(&content) {
+            continue;
+        }
+        // A region opens at a marker blockquote and closes at the next heading.
+        let mut in_marked_region = false;
+        for (number, line) in content.lines().enumerate() {
+            if line.starts_with('#') {
+                in_marked_region = false;
+            }
+            if line.starts_with("> **SUPERADO") || line.starts_with("> **HISTÓRICO") {
+                in_marked_region = true;
+            }
+            let lower = line.to_lowercase();
+            let names_engine = lower.contains("surrealdb") || lower.contains("rocksdb");
+            if names_engine && !in_marked_region && !line_is_marked_historical(line) {
+                offences.push(format!(
+                    "{rel}:{}: names the retired engine outside a historical section",
+                    number + 1
+                ));
+            }
+        }
+    }
+    offences
+}
+
+/// Current documents do not link a superseded document as current.
+#[test]
+fn current_docs_do_not_link_superseded_documents() {
+    let offences = superseded_link_offences(&repository_root(), &CURRENT_DOCS);
+    assert!(offences.is_empty(), "{}", offences.join("\n"));
+}
+
+/// Current documents do not describe the retired embedded engine.
+#[test]
+fn current_docs_do_not_describe_the_retired_engine() {
+    let offences = retired_engine_offences(&repository_root(), &CURRENT_DOCS);
+    assert!(offences.is_empty(), "{}", offences.join("\n"));
+}
+
+/// The measurements taken on the retired engine stay marked as history.
+#[test]
+fn engine_measurements_stay_marked_as_history() {
+    let content = fs::read_to_string(repository_root().join("ARCHITECTURE_STATUS.md"))
+        .expect("ARCHITECTURE_STATUS.md must exist");
+    for heading in [
+        "### Lo que la medida a escala cambio (SPIKE-012)",
+        "## 10-nonies. El SPIKE-003",
+    ] {
+        let mut lines = content.lines().skip_while(|l| !l.starts_with(heading));
+        assert!(lines.next().is_some(), "missing section {heading}");
+        let marked = lines.take(4).any(|l| l.starts_with("> **HISTÓRICO"));
+        assert!(marked, "{heading} must carry the HISTÓRICO marker");
+    }
+}
+
+/// The two rules find what they are meant to find, and only that.
+#[test]
+fn retired_engine_rules_flag_offences_and_spare_marked_docs() {
+    let dir = std::env::temp_dir().join(format!("hsp317-docs-{}", std::process::id()));
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("old.md"),
+        "# Old\n\n> **SUPERADO (HSP-314).** gone\n\nSurrealDB\n",
+    )
+    .unwrap();
+    fs::write(dir.join("bad.md"), "[old](old.md)\nuses SurrealDB\n").unwrap();
+    fs::write(
+        dir.join("good.md"),
+        "[old](old.md) (superado)\nThe RocksDB engine was retired.\n\n## H\n\n> **HISTÓRICO**\nRocksDB numbers\n",
+    )
+    .unwrap();
+
+    let bad = ["bad.md"];
+    assert_eq!(superseded_link_offences(&dir, &bad).len(), 1);
+    assert_eq!(retired_engine_offences(&dir, &bad).len(), 1);
+    let good = ["good.md", "old.md"];
+    assert!(superseded_link_offences(&dir, &good).is_empty());
+    assert!(retired_engine_offences(&dir, &good).is_empty());
+
+    fs::remove_dir_all(&dir).ok();
+}
