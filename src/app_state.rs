@@ -174,6 +174,15 @@ pub struct AppState {
     /// Optional: without it the promotion routes answer `501` and nothing
     /// is ever granted, so a trusted channel stays empty.
     pub(crate) trust_plane: Option<Arc<crate::trust::promotion::TrustPlane>>,
+    /// The per-account lifecycle the Policy Studio edits: revisions, head
+    /// and events of a policy set (HSP-151).
+    ///
+    /// Optional and fail-closed: without a durable store there is no
+    /// history to edit, and every studio route answers `501`.
+    pub(crate) policy_lifecycle: Option<Arc<dyn hodei_trust_policy::LifecycleStore>>,
+    /// The policy set the studio points at when a request names none: the
+    /// identifier the deployment declares for its trust policy.
+    pub(crate) studio_policy_id: String,
     /// The reactive CVE cycle: advisory admission, reevaluation and the
     /// sweep of validity periods (HSP-137).
     ///
@@ -348,6 +357,8 @@ impl AppState {
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
+            policy_lifecycle: None,
+            studio_policy_id: "default".to_string(),
             reactor: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             quota: Arc::new(crate::quota::QuotaLedger::new(
@@ -424,6 +435,8 @@ impl AppState {
             trust_ledger: None,
             proxy_plane: None,
             trust_plane: None,
+            policy_lifecycle: None,
+            studio_policy_id: "default".to_string(),
             reactor: None,
             uploads: Arc::new(crate::oci::uploads::UploadRegistry::default()),
             quota: Arc::new(crate::quota::QuotaLedger::new(
@@ -587,6 +600,24 @@ impl AppState {
     /// Inject the promotion service.
     pub fn with_trust_plane(mut self, plane: Arc<crate::trust::promotion::TrustPlane>) -> Self {
         self.trust_plane = Some(plane);
+        self
+    }
+
+    /// Inject the lifecycle the Policy Studio edits, with the policy set a
+    /// request defaults to when it names none.
+    pub fn with_policy_studio(
+        mut self,
+        lifecycle: Arc<dyn hodei_trust_policy::LifecycleStore>,
+        policy_id: impl Into<String>,
+    ) -> Self {
+        self.policy_lifecycle = Some(lifecycle);
+        self.studio_policy_id = policy_id.into();
+        self
+    }
+
+    /// Close the Policy Studio: every studio route answers `501` again.
+    pub fn without_policy_studio(mut self) -> Self {
+        self.policy_lifecycle = None;
         self
     }
 
