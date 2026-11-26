@@ -439,26 +439,30 @@ pub fn tag_key(account: &str, repository: &str, tag_name: &str) -> String {
 
 /// The subset of a composite key that a guard subject may carry.
 ///
-/// `GuardScope` accepts a narrower charset than [`key_part`]: it forbids
-/// `%`, `+`, `~` and `|`, yet Debian pool paths legitimately carry `+` and
-/// `~` (versions like `1.2+dfsg` or `1.0.0~rc1`), so the apt vertical was
-/// refused on Dgraph while Surreal accepted it. This escapes the forbidden
-/// bytes with `@` as the sentinel (`@` doubles, every forbidden byte
-/// becomes `@XX` with its uppercase hex), so the output always sits inside
-/// the guard charset. The map is injective: a verbatim `@` only ever
-/// appears as `@@`, so no plain string can be confused with an escape and
-/// two different paths never inherit the same guard. Stored composite keys
-/// are unchanged — the escape lives only on the guard subject.
+/// `GuardScope` accepts a narrow charset (ASCII alphanumerics and
+/// `- _ . / : @`). Real asset paths carry more: Debian pool paths have `+`
+/// and `~` (`1.2+dfsg`, `1.0.0~rc1`) and Go module paths carry the canonical
+/// case escape of the GOPROXY protocol (`github.com/!azure/...`, where `!`
+/// stands for an uppercase letter). Each of them was refused on Dgraph while
+/// Surreal accepted it (the publication answered 400 "not well formed").
+///
+/// This escapes every byte outside the guard charset with `@` as the
+/// sentinel (`@` doubles, any other byte becomes `@XX` with its uppercase
+/// hex), so the output always sits inside the guard charset. The map is
+/// injective: a verbatim `@` only ever appears as `@@`, so no plain string
+/// can be confused with an escape and two different paths never inherit the
+/// same guard. Stored composite keys are unchanged -- the escape lives only
+/// on the guard subject -- and the guards of the paths that were already
+/// accepted keep their subject (`+ ~ % |` map to the same escapes as before).
 fn guard_part(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
-    for c in value.chars() {
-        match c {
-            '@' => out.push_str("@@"),
-            '+' => out.push_str("@2B"),
-            '~' => out.push_str("@7E"),
-            '%' => out.push_str("@25"),
-            '|' => out.push_str("@7C"),
-            other => out.push(other),
+    for byte in value.bytes() {
+        match byte {
+            b'@' => out.push_str("@@"),
+            b if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/' | b':') => {
+                out.push(char::from(b));
+            }
+            other => out.push_str(&format!("@{other:02X}")),
         }
     }
     out
@@ -567,7 +571,11 @@ fn scope_of(kind: GuardKind, tenant: &str, subject: &str) -> Result<GuardScope, 
 /// hecho dicho dos veces lleva el mismo identificador, así que el
 /// reintento tras el commit relee el resultado comprometido en vez de
 /// escribir por segunda vez.
-fn publication_operation_id(account: &str, publication: &Publication) -> OperationId {
+fn publication_operation_id(
+    account: &str,
+    publication: &Publication,
+    kind: &WriteKind,
+) -> OperationId {
     let mut hasher = Sha256::new();
     // La cuenta entra en el hecho: la misma ruta en dos cuentas son dos
     // hechos distintos, y un marcador once-only es por grafo.
@@ -590,6 +598,16 @@ fn publication_operation_id(account: &str, publication: &Publication) -> Operati
     hasher.update(if publication.overwrite { b"1" } else { b"0" });
     hasher.update([0]);
     hasher.update(publication.correlation_id.as_bytes());
+    // A replace is a compare-and-set over the pointer it read: the same
+    // content moved over ANOTHER previous pointer is another fact (the
+    // marker of an attempt that skipped because the pointer had moved must
+    // not replay for the attempt that re-read it).
+    if let WriteKind::Replace { previous } = kind {
+        hasher.update([0]);
+        hasher.update(b"replace");
+        hasher.update([0]);
+        hasher.update(previous.as_bytes());
+    }
     let id = format!("pub-{:x}", hasher.finalize());
     OperationId::new(&id).expect("a sha256-derived operation id is always valid")
 }
@@ -1648,19 +1666,26 @@ fn the_effect_query_lines(
                 ));
             }
         }
-        WriteKind::Replace { .. } => {
-            // La fila que se mueve se liga POR CLAVE, sin filtrar por el
-            // digest que la planificación vio: el filtro `NOT eq(digest,
-            // previous)` excluye EXACTAMENTE la fila que el plan decidió
-            // mover — su digest ES el `previous` — y el bloque saltado
-            // dejaba un commit de guarda sin filas (HSP-193, el puntero
-            // de packument de npm fue el primer consumidor del replace).
-            // La carrera la arbitra la guarda (la revisión avanza en el
-            // mismo commit) y la unicidad la impone el @upsert de la
-            // clave; el plan ya decidió que lo que hay no es lo que llega.
+        WriteKind::Replace { previous } => {
+            // The row that moves is bound by key AND by the digest the plan
+            // read (`previous`): the pointer is a compare-and-set INSIDE the
+            // committing transaction. The guard only proves that the scope
+            // revision did not move between ITS pre-read and the commit; the
+            // plan read the pointer BEFORE that pre-read, so a writer that
+            // committed in between would otherwise be overwritten silently
+            // (a lost update: the second npm packument dropped the version
+            // the first one had just published). When the pointer is no
+            // longer at `previous` the bind is empty, every block skips, and
+            // the settle check after the commit says the write did not land:
+            // the next attempt re-reads and re-decides (the client
+            // precondition then fails, or the replace is planned again over
+            // the new pointer). The positive filter matters: the filter
+            // `NOT eq(digest, previous)` excluded exactly the row the plan
+            // decided to move (HSP-193).
             lines.push(format!(
-                "am as var(func: eq(hodei.catalog.asset.key, {}))",
+                "am as var(func: eq(hodei.catalog.asset.key, {})) @filter(eq(hodei.catalog.asset.digest, {}))",
                 dql_string(&asset),
+                dql_string(previous),
             ));
             lines.push(format!(
                 "rf as var(func: eq(hodei.catalog.reference.key, {}))",
@@ -2149,7 +2174,7 @@ impl DgraphCatalogStore {
         publication: &Publication,
         scope: DigestScope,
     ) -> Result<hodei_graph_client::GuardedOutcome, CatalogError> {
-        let operation = publication_operation_id(principal_account, publication);
+        let operation = publication_operation_id(principal_account, publication, kind);
         let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
         let effect = GuardedEffect {
             query_lines: the_effect_query_lines(
@@ -4178,6 +4203,27 @@ mod tests {
             scope.subject(),
             "asset/debian/pool/main/h/hello_1.0.0@7Erc1@2Bdeb12_amd64.deb"
         );
+    }
+
+    #[test]
+    fn a_go_module_path_with_the_case_escape_is_guardable() {
+        // HSP-314 P4: the canonical GOPROXY escape (`!azure` for `Azure`)
+        // used to be refused by the guard charset on Dgraph only (the
+        // publication answered 400 "not well formed"), while Surreal
+        // accepted it.
+        let scope = asset_guard_scope("alice", "go", "github.com/!azure/azure-sdk/@v/v1.0.0.zip")
+            .expect("an escaped go module path is guardable");
+        assert_eq!(
+            scope.subject(),
+            "asset/go/github.com/@21azure/azure-sdk/@@v/v1.0.0.zip"
+        );
+        // The map stays injective for the new escape: a lowercase path, a
+        // case-escaped path and a path that spells the escape differ.
+        assert_ne!(guard_part("a!b"), guard_part("ab"));
+        assert_ne!(guard_part("a!b"), guard_part("a@21b"));
+        // Any byte outside the charset is escaped, including non-ASCII.
+        assert_eq!(guard_part("a b"), "a@20b");
+        assert_eq!(guard_part("\u{e9}"), "@C3@A9");
     }
 
     #[test]
