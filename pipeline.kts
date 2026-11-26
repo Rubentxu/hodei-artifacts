@@ -593,6 +593,14 @@ pipeline {
                 sh(
                     "cargo test --workspace --test hsp209_profile_smoke_it -- --test-threads=1"
                 )
+                // El laboratorio de rendimiento del perfil de grafo (HSP-319 S1):
+                // publica, lee y busca a escala pequena contra el alpha real y
+                // falla si una peticion falla. Sin HODEI_GRAPH_IT_ENDPOINT se salta.
+                // La comparacion con el baseline (docs/perf/baseline-graph.json) es
+                // manual y de la misma maquina: ver docs/perf-lab.md.
+                sh(
+                    "cargo test --workspace --test hsp319_perf_lab_it -- --scales 200"
+                )
                 // El cierre productivo (HSP-213, HSP-314 F4): la promesa de que
                 // el arbol del binario no enlaza ni surrealdb ni rocksdb se
                 // comprueba contra el propio arbol de dependencias.
