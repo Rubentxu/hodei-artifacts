@@ -25,8 +25,9 @@ use chrono::{DateTime, Duration, Utc};
 use hodei_evidence::ContentDigest;
 use hodei_hub::{BlobStore, ReadPolicy};
 use hodei_trust_policy::{
-    DecisionStore, DecisionStoreError, PolicyRegistry, PromotionDecision, PromotionService,
-    PromotionTarget, PromotionTargets, TrustPolicy,
+    AccountScopedPolicies, DecisionStore, DecisionStoreError, LifecycleStore, PolicyLoader,
+    PolicyRegistry, PromotionDecision, PromotionService, PromotionTarget, PromotionTargets,
+    TrustPolicy,
 };
 
 /// The distribution promoted to: the trusted channel.
@@ -46,6 +47,7 @@ const MAX_COVERED: usize = 4096;
 pub struct TrustPlane {
     service: PromotionService,
     registry: PolicyRegistry,
+    policies: Arc<dyn PolicyLoader>,
     max_validity: Duration,
     policy_id: String,
 }
@@ -59,15 +61,43 @@ impl TrustPlane {
         policy_id: impl Into<String>,
         max_validity: Duration,
     ) -> Self {
-        let policy_id = policy_id.into();
-        let service = PromotionService::new(
-            store,
-            Arc::new(TrustedChannelTargets),
-            Arc::new(registry.clone()),
-        );
+        let policies: Arc<dyn PolicyLoader> = Arc::new(registry.clone());
+        Self::assemble(store, registry, policies, policy_id.into(), max_validity)
+    }
+
+    /// A plane whose policy is resolved **per account** from the durable
+    /// lifecycle head, on every decision (HSP-321).
+    ///
+    /// Activating or rolling back in the Policy Studio changes what decides
+    /// for that account only, immediately and with no restart. An account
+    /// with no head has no policy (`PolicyUnavailable`, fail closed); the
+    /// `seed` registry (the deployment's trust policy file) answers only for
+    /// such accounts, and only when the operator declared it.
+    pub fn per_account(
+        store: Arc<dyn DecisionStore>,
+        lifecycle: Arc<dyn LifecycleStore>,
+        seed: PolicyRegistry,
+        policy_id: impl Into<String>,
+        max_validity: Duration,
+    ) -> Self {
+        let policies: Arc<dyn PolicyLoader> =
+            Arc::new(AccountScopedPolicies::new(lifecycle).with_seed(seed.clone()));
+        Self::assemble(store, seed, policies, policy_id.into(), max_validity)
+    }
+
+    fn assemble(
+        store: Arc<dyn DecisionStore>,
+        registry: PolicyRegistry,
+        policies: Arc<dyn PolicyLoader>,
+        policy_id: String,
+        max_validity: Duration,
+    ) -> Self {
+        let service =
+            PromotionService::new(store, Arc::new(TrustedChannelTargets), policies.clone());
         Self {
             service,
             registry,
+            policies,
             max_validity,
             policy_id,
         }
@@ -93,6 +123,25 @@ impl TrustPlane {
     /// is seen from both halves.
     pub fn registry(&self) -> PolicyRegistry {
         self.registry.clone()
+    }
+
+    /// The loader the plane decides with. A second service (the reactive
+    /// cycle) built over it resolves the same policy, per account when the
+    /// plane is per-account.
+    pub fn policies(&self) -> Arc<dyn PolicyLoader> {
+        self.policies.clone()
+    }
+
+    /// The version of the policy that decides **now for `account`**.
+    ///
+    /// The second half of the promotion's compare-and-set, per account:
+    /// `None` when the account has no policy (nothing is published).
+    pub async fn active_policy_version_for(&self, account: &str) -> Option<String> {
+        self.policies
+            .active_policy_for(account, &self.policy_id)
+            .await
+            .ok()
+            .map(|policy| policy.version)
     }
 
     /// The version of the policy that decides **now**.

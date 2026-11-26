@@ -706,7 +706,7 @@ impl VulnerabilityReactor {
         let requester_service = Arc::new(PromotionService::new(
             decisions.clone(),
             Arc::new(TrustedChannelTargets),
-            Arc::new(plane.registry()),
+            plane.policies(),
         ));
         let radius = Arc::new(GraphBlastRadius::new(blast_radius, limits.clone()));
         let contexts: Arc<dyn TrustContextSource> = Arc::new(ContextFromEvidence::new(
@@ -1038,7 +1038,9 @@ impl VulnerabilityReactor {
             .await
             .map_err(|error| ReactorError::Unavailable(error.to_string()))?;
 
-        let active = self.plane.active_policy_version();
+        // The version that decides is per account: each account's grants
+        // drift against the policy of that account, never another's.
+        let mut active_by_account: BTreeMap<String, Option<String>> = BTreeMap::new();
         let mut counters = SweepCounters::default();
         // Concessions whose own horizon lapsed, grouped by subject.
         let mut lapsed: BTreeMap<String, Vec<&GrantSweepRow>> = BTreeMap::new();
@@ -1059,11 +1061,17 @@ impl VulnerabilityReactor {
             }
             if row.valid_until.is_some_and(|until| until <= now) {
                 lapsed.entry(subject.to_string()).or_default().push(row);
-            } else if active
-                .as_deref()
-                .is_some_and(|version| row.policy_version.as_deref() != Some(version))
-            {
-                drifted.entry(row.account.clone()).or_default().push(row);
+            } else {
+                if !active_by_account.contains_key(&row.account) {
+                    let version = self.plane.active_policy_version_for(&row.account).await;
+                    active_by_account.insert(row.account.clone(), version);
+                }
+                let active = active_by_account
+                    .get(&row.account)
+                    .and_then(Option::as_deref);
+                if active.is_some_and(|version| row.policy_version.as_deref() != Some(version)) {
+                    drifted.entry(row.account.clone()).or_default().push(row);
+                }
             }
         }
 
@@ -1093,8 +1101,11 @@ impl VulnerabilityReactor {
             self.renew_concessions(&rows, now, &mut counters).await?;
         }
 
-        if let Some(version) = active {
+        {
             for (account, rows) in drifted {
+                let Some(version) = active_by_account.get(&account).cloned().flatten() else {
+                    continue;
+                };
                 let subjects: BTreeSet<String> = rows
                     .iter()
                     .filter_map(|row| row.subject.clone())

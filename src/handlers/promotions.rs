@@ -399,7 +399,9 @@ pub async fn promote(
             audit(AuditResult::Failed);
             PromotionApiError::Unavailable
         })?;
-    if plane.active_policy_version().as_deref() != Some(decision.trust.policy_version.as_str()) {
+    if plane.active_policy_version_for(&account).await.as_deref()
+        != Some(decision.trust.policy_version.as_str())
+    {
         audit(AuditResult::Failed);
         return Err(PromotionApiError::Conflict);
     }

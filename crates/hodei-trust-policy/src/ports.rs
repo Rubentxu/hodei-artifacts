@@ -64,6 +64,20 @@ pub trait DecisionStore: Send + Sync {
 pub trait PolicyLoader: Send + Sync {
     /// The policy set that is active for an identifier.
     async fn active_policy(&self, policy_id: &str) -> Result<TrustPolicy, DecisionStoreError>;
+
+    /// The policy set that is active for an identifier **for one account**.
+    ///
+    /// The default ignores the account, which is the right answer for a
+    /// loader with a single, process-wide set. A tenant-aware loader
+    /// overrides it so that the policy that decides for one account is
+    /// never the one another account activated.
+    async fn active_policy_for(
+        &self,
+        _account: &str,
+        policy_id: &str,
+    ) -> Result<TrustPolicy, DecisionStoreError> {
+        self.active_policy(policy_id).await
+    }
 }
 
 /// The persistent lifecycle of policy sets: revisions, the head that
