@@ -16,12 +16,14 @@ use hodei_trust_policy::ports::{DecisionStoreError, PromotionTargets};
 use hodei_trust_policy::promotion::PromotionTarget;
 
 pub mod dgraph;
+pub mod lifecycle;
 pub mod reactions;
 
 pub use dgraph::{
     ClaimedIntent, DgraphDecisionStore, DgraphIntentError, DgraphIntentStore, DgraphTrustError,
     DgraphTrustStore, GrantActivation,
 };
+pub use lifecycle::DgraphLifecycleStore;
 
 /// The destinations of a promotion, over a fixed list.
 ///

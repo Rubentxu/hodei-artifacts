@@ -91,6 +91,8 @@ pub enum GuardKind {
     CatalogRepository,
     /// Catalog publication over one asset path of a repository.
     CatalogAsset,
+    /// Policy lifecycle writes (revisions and head) over one policy set.
+    PolicyHead,
 }
 
 impl GuardKind {
@@ -106,6 +108,7 @@ impl GuardKind {
             GuardKind::Grant => "grant",
             GuardKind::CatalogRepository => "catalog-repository",
             GuardKind::CatalogAsset => "catalog-asset",
+            GuardKind::PolicyHead => "policy-head",
         }
     }
 }
@@ -848,6 +851,10 @@ mod tests {
         assert_eq!(
             guard_key(&GuardScope::new(GuardKind::Quota, &tenant(), subject).expect("valid")),
             "quota|tenant-a|subject"
+        );
+        assert_eq!(
+            guard_key(&GuardScope::new(GuardKind::PolicyHead, &tenant(), subject).expect("valid")),
+            "policy-head|tenant-a|subject"
         );
     }
 

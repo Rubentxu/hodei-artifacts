@@ -85,7 +85,9 @@ pub use lifecycle::{
     SeparationPolicy, MAX_REVISIONS, ROLLBACK_PREFIX,
 };
 pub use policy::{OnFailure, Requirement, RequirementKind, TrustPolicy};
-pub use ports::{DecisionStore, DecisionStoreError, PolicyLoader, PromotionTargets};
+pub use ports::{
+    DecisionStore, DecisionStoreError, LifecycleStore, PolicyLoader, PromotionTargets,
+};
 pub use promotion::{
     DecisionId, PromotionDecision, PromotionFailure, PromotionOutcome, PromotionRequest,
     PromotionTarget,

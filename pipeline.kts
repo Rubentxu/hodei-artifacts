@@ -203,6 +203,8 @@ pipeline {
                         "--test hsp314_f3b0_dgraph_ports_it",
                         // HSP-318: the retired M3 and M7 UATs, rewritten on Dgraph.
                         "--test hsp318_m3_promotion_dgraph_it",
+                        // HSP-151 / HSP-321: the policy lifecycle (revisions, CAS head, events) on Dgraph.
+                        "--test hsp321d_policy_lifecycle_dgraph_it",
                         "--test hsp318_m7_simulation_dgraph_it",
                         "--test hsp314_p2_dgraph_schema_it",
                         "--test hsp314_graph_risk_facts_it",
