@@ -246,6 +246,10 @@ struct Vertical {
 }
 
 async fn mount(accounts: &[&str]) -> Option<Vertical> {
+    mount_with(accounts, "").await
+}
+
+async fn mount_with(accounts: &[&str], extra_policy: &str) -> Option<Vertical> {
     let client = open_client().await?;
     let store = Arc::new(
         DgraphCatalogStore::open(client, Arc::new(AllowAllAuthorizer))
@@ -287,7 +291,7 @@ async fn mount(accounts: &[&str]) -> Option<Vertical> {
         .with_catalog(reader, writer)
         .with_content_store(Arc::new(file))
         .with_authenticator(Arc::new(TokenAuthenticator))
-        .with_authorization(cedar(&policy(accounts)));
+        .with_authorization(cedar(&format!("{}{extra_policy}", policy(accounts))));
     Some(Vertical {
         app: build_router(state, &config),
         store,
@@ -805,4 +809,72 @@ async fn the_dgraph_registry_converges_and_isolates() {
     assert!(!registry.delete(&a, "r1", "ci").await.unwrap());
     assert!(registry.list(&a, "r1").await.unwrap().is_empty());
     assert_eq!(registry.list(&a, "r2").await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_number_of_publishers_per_repository_is_capped() {
+    let a = account();
+    let Some(v) = mount(&[&a]).await else { return };
+    seed(&v.store, &a, "releases").await;
+    let manager = format!("manager@{a}");
+    let put = |id: String| {
+        let (v, manager) = (&v, manager.clone());
+        async move {
+            send(
+                &v.app,
+                Method::PUT,
+                &format!("/api/v1/trusted-publishers/releases/{id}"),
+                Some(&manager),
+                spec(&v.issuer),
+            )
+            .await
+            .0
+        }
+    };
+    for n in 0..16 {
+        assert_eq!(put(format!("p{n}")).await, StatusCode::OK, "{n}");
+    }
+    assert_eq!(put("p16".into()).await, StatusCode::CONFLICT);
+    // Replacing one that exists is not growth.
+    assert_eq!(put("p3".into()).await, StatusCode::OK);
+    let (_, body) = send(
+        &v.app,
+        Method::GET,
+        "/api/v1/trusted-publishers/releases",
+        Some(&manager),
+        Vec::new(),
+    )
+    .await;
+    let listed: Vec<Value> = serde_json::from_str(&body).unwrap();
+    assert_eq!(listed.len(), 16);
+    let ids: Vec<&str> = listed.iter().map(|r| r["id"].as_str().unwrap()).collect();
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    assert_eq!(ids, sorted, "the listing order is deterministic");
+}
+
+/// DOCUMENTED EXCEPTION (HSP-321 tramo j): the publisher credential is its own
+/// grant (the registry record, written under `ManageTrustedPublishers`), and
+/// Cedar does not decide `UploadAsset` for a workload. This test pins that
+/// behavior: a blanket `forbid` on `UploadAsset` stops users and does NOT stop
+/// a live publisher credential. The kill switch for a workload is deleting its
+/// record (immediate revocation), not a Cedar forbid.
+#[tokio::test]
+async fn a_cedar_forbid_on_upload_does_not_apply_to_the_publisher_credential() {
+    let a = account();
+    let forbid = r#"forbid(principal, action == Artifacts::Action::"UploadAsset", resource);"#;
+    let Some(v) = mount_with(&[&a], forbid).await else {
+        return;
+    };
+    seed(&v.store, &a, "releases").await;
+    register(&v, &a, "releases", "ci-main").await;
+    let credential = credential(&v, &a, "releases").await;
+    assert_eq!(
+        publish(&v, "releases", &format!("alice@{a}")).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        publish(&v, "releases", &credential).await.0,
+        StatusCode::CREATED
+    );
 }

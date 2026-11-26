@@ -64,6 +64,11 @@ pub async fn exchange(
     let Some(token) = bearer_token(&headers) else {
         return denied();
     };
+    // What an anonymous caller writes never reaches the audit trail: the
+    // denied events carry a fixed tenant and resource. Only a verified
+    // exchange names its (verified) account and repository.
+    const DENIED_TENANT: &str = "publishers";
+    const DENIED_RESOURCE: &str = "publishers/exchange";
     let account = request.account.trim();
     let repository = request.repository.trim();
     let resource = format!("{account}/{repository}");
@@ -103,13 +108,24 @@ pub async fn exchange(
             record_audit(
                 &state,
                 "unknown-workload",
-                account,
+                DENIED_TENANT,
                 "publishers.exchange",
-                &resource,
+                DENIED_RESOURCE,
                 result,
                 &correlation,
             );
             match error {
+                ExchangeError::RateLimited => {
+                    let mut response = (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        error_body("rate_limited", "too many exchange requests"),
+                    )
+                        .into_response();
+                    response
+                        .headers_mut()
+                        .insert(header::RETRY_AFTER, header::HeaderValue::from_static("1"));
+                    response
+                }
                 ExchangeError::BadRequest => (
                     StatusCode::BAD_REQUEST,
                     error_body("bad_request", "invalid exchange request"),
@@ -215,6 +231,19 @@ pub async fn put_publisher(
     let service = service(&state)?;
     let (context, correlation) = manage_gate(&state, &headers, &repository).await?;
     spec.validate(&id).map_err(ResolutionError::BadRequest)?;
+    // The cap is enforced here; replacing an existing id never counts.
+    let existing = service
+        .registry()
+        .list(context.account().as_str(), &repository)
+        .await
+        .map_err(|_| ResolutionError::Unavailable)?;
+    if existing.len() >= crate::publishers::MAX_PUBLISHERS_PER_REPOSITORY
+        && !existing.iter().any(|record| record.id == id)
+    {
+        return Err(ResolutionError::Conflict(
+            "the repository has the maximum number of trusted publishers",
+        ));
+    }
     // The administrator's egress decides where keys may come from, at the
     // moment of registration and again at every fetch.
     let url =

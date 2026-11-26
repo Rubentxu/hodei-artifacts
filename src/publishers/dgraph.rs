@@ -32,6 +32,7 @@ type HodeiTrustedPublisher {
 
 /// The most records one repository can hold: the exchange only reads a few.
 const MAX_LIST: usize = 100;
+
 const MAX_ATTEMPTS: usize = 12;
 
 /// The registry over Dgraph.
@@ -160,7 +161,12 @@ impl PublisherRegistry for DgraphPublisherRegistry {
 
 impl DgraphPublisherRegistry {
     async fn read(&self, func: &str) -> Result<Vec<TrustedPublisher>, RegistryError> {
-        let query = format!("{{ q(func: {func}, first: {MAX_LIST}) {{ hodei.publisher.doc }} }}");
+        // One more than the maximum, ordered: a listing never silently hides
+        // records, it fails when there are more than it can return.
+        let query = format!(
+            "{{ q(func: {func}, orderasc: hodei.publisher.key, first: {}) {{ hodei.publisher.doc }} }}",
+            MAX_LIST + 1
+        );
         let response = self
             .client
             .execute_dql(&query)
@@ -180,6 +186,11 @@ impl DgraphPublisherRegistry {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        if nodes.len() > MAX_LIST {
+            return Err(RegistryError(
+                "more records than the listing can return".into(),
+            ));
+        }
         nodes
             .iter()
             .map(|node| {

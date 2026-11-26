@@ -48,6 +48,10 @@ pub struct PublisherClaims {
     /// The registry entry that authorized the exchange. The publish surface
     /// re-checks that it still exists, so removing it revokes at once.
     pub publisher: String,
+    /// The fingerprint of the registry record at the exchange: a record that
+    /// was deleted and recreated with other content does not resurrect the
+    /// credential.
+    pub fp: String,
     pub iat: i64,
     pub exp: i64,
     pub jti: String,

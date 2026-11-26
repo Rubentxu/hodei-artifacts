@@ -83,6 +83,12 @@ async fn redirect() -> axum::response::Response {
     (StatusCode::FOUND, [(header::LOCATION, "/landing")]).into_response()
 }
 
+async fn slow(State(issuer): State<Issuer>) -> axum::response::Response {
+    issuer.hits.fetch_add(1, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    (StatusCode::OK, fixture("issuer-jwks-1.json")).into_response()
+}
+
 async fn landing(State(issuer): State<Issuer>) -> axum::response::Response {
     issuer.redirected_hits.fetch_add(1, Ordering::SeqCst);
     (StatusCode::OK, fixture("issuer-jwks-1.json")).into_response()
@@ -99,6 +105,7 @@ async fn start_issuer() -> Issuer {
     };
     let app = axum::Router::new()
         .route("/jwks", axum::routing::get(jwks))
+        .route("/slow", axum::routing::get(slow))
         .route("/redirect", axum::routing::get(redirect))
         .route("/landing", axum::routing::get(landing))
         .with_state(issuer.clone());
@@ -397,7 +404,11 @@ async fn a_malformed_target_is_a_bad_request() {
 
 #[tokio::test]
 async fn an_unreachable_or_broken_jwks_fails_closed() {
-    let rig = rig().await;
+    let rig = rig_with(PublisherSettings {
+        jwks_refetch_cooldown: Duration::ZERO,
+        ..PublisherSettings::default()
+    })
+    .await;
     let token = || sign(&claims(&rig.issuer.url()));
     rig.issuer.serve(500, "boom".into());
     assert!(matches!(
@@ -734,4 +745,262 @@ async fn a_configured_leeway_is_capped() {
     let mut expired = claims(&rig.issuer.url());
     expired["exp"] = json!(now() - 3600);
     denied(exchange(&rig, &sign(&expired)).await, "token_not_trusted");
+}
+
+// ---- F1: a failing or slow issuer cannot be used to stall the service ------
+
+#[tokio::test]
+async fn repeated_jwks_failures_cost_one_fetch_per_cooldown() {
+    // ttl zero: the keys are always expired, so every request wants a fetch.
+    let rig = rig_with(PublisherSettings {
+        jwks_ttl: Duration::ZERO,
+        exchange_burst: 1000,
+        ..PublisherSettings::default()
+    })
+    .await;
+    rig.issuer.serve(500, "down".into());
+    for _ in 0..8 {
+        assert!(matches!(
+            exchange(&rig, &sign(&claims(&rig.issuer.url()))).await,
+            Err(ExchangeError::Unavailable(_))
+        ));
+    }
+    assert_eq!(
+        rig.issuer.hits(),
+        1,
+        "the failure is cached for the cooldown"
+    );
+}
+
+#[tokio::test]
+async fn concurrent_requests_share_one_fetch() {
+    let rig = Arc::new(
+        rig_with(PublisherSettings {
+            exchange_burst: 1000,
+            ..PublisherSettings::default()
+        })
+        .await,
+    );
+    rig.issuer.serve(500, "down".into());
+    let mut tasks = Vec::new();
+    for _ in 0..8 {
+        let rig = rig.clone();
+        let token = sign(&claims(&rig.issuer.url()));
+        tasks.push(tokio::spawn(async move { exchange(&rig, &token).await }));
+    }
+    for task in tasks {
+        assert!(task.await.unwrap().is_err());
+    }
+    assert_eq!(rig.issuer.hits(), 1);
+}
+
+#[tokio::test]
+async fn a_slow_issuer_does_not_delay_a_healthy_one() {
+    let slow_issuer = start_issuer().await;
+    let healthy = start_issuer().await;
+    let registry = Arc::new(InMemoryPublisherRegistry::default());
+    let mut slow_record = record(&slow_issuer);
+    slow_record.repository = "slow".into();
+    slow_record.jwks_url = format!("{}/slow", slow_issuer.url());
+    registry.put(&slow_record).await.unwrap();
+    registry.put(&record(&healthy)).await.unwrap();
+    let policy = EgressPolicy::new(
+        [slow_issuer.port, healthy.port]
+            .into_iter()
+            .map(|port| AllowedHost {
+                host: "127.0.0.1".into(),
+                port: Some(port),
+                allow_private: true,
+                allow_http: true,
+            })
+            .collect(),
+    )
+    .unwrap();
+    let fetcher = ProxyFetcher::new(
+        policy,
+        FetchLimits {
+            connect_timeout: Duration::from_secs(2),
+            total_timeout: Duration::from_secs(5),
+            max_bytes: 1 << 20,
+        },
+        4,
+    );
+    let service = Arc::new(
+        PublishersService::new(registry, fetcher, SECRET, PublisherSettings::default()).unwrap(),
+    );
+    let stalled = {
+        let service = service.clone();
+        let token = sign(&claims(&slow_issuer.url()));
+        tokio::spawn(async move { service.exchange(&token, "acme", "slow").await })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    service
+        .exchange(&sign(&claims(&healthy.url())), "acme", "releases")
+        .await
+        .expect("the healthy issuer exchanges");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "the healthy issuer waited {:?} behind the slow one",
+        started.elapsed()
+    );
+    assert!(stalled.await.unwrap().is_ok());
+}
+
+// ---- F2: cheap checks first, bounded rate ----------------------------------
+
+struct Counting {
+    inner: InMemoryPublisherRegistry,
+    lists: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl PublisherRegistry for Counting {
+    async fn put(
+        &self,
+        p: &TrustedPublisher,
+    ) -> Result<(), hodei_artifacts_api::publishers::RegistryError> {
+        self.inner.put(p).await
+    }
+    async fn delete(
+        &self,
+        a: &str,
+        r: &str,
+        i: &str,
+    ) -> Result<bool, hodei_artifacts_api::publishers::RegistryError> {
+        self.inner.delete(a, r, i).await
+    }
+    async fn list(
+        &self,
+        a: &str,
+        r: &str,
+    ) -> Result<Vec<TrustedPublisher>, hodei_artifacts_api::publishers::RegistryError> {
+        self.lists.fetch_add(1, Ordering::SeqCst);
+        self.inner.list(a, r).await
+    }
+}
+
+#[tokio::test]
+async fn an_unparsable_or_disallowed_token_costs_no_registry_read_and_no_budget() {
+    let issuer = start_issuer().await;
+    let registry = Arc::new(Counting {
+        inner: InMemoryPublisherRegistry::default(),
+        lists: AtomicUsize::new(0),
+    });
+    registry.put(&record(&issuer)).await.unwrap();
+    let service = PublishersService::new(
+        registry.clone(),
+        fetcher_for(issuer.port),
+        SECRET,
+        PublisherSettings {
+            exchange_rate_per_sec: 1,
+            exchange_burst: 2,
+            ..PublisherSettings::default()
+        },
+    )
+    .unwrap();
+    let mut hs = Header::new(Algorithm::HS256);
+    hs.kid = Some("k".into());
+    let hs_token = encode(&hs, &claims(&issuer.url()), &EncodingKey::from_secret(b"x")).unwrap();
+    for _ in 0..50 {
+        for token in ["garbage", "a.b.c", hs_token.as_str(), ""] {
+            assert!(matches!(
+                service.exchange(token, "acme", "releases").await,
+                Err(ExchangeError::Denied(_))
+            ));
+        }
+    }
+    assert_eq!(registry.lists.load(Ordering::SeqCst), 0);
+    // The budget is intact: the honest token still gets through.
+    service
+        .exchange(&sign(&claims(&issuer.url())), "acme", "releases")
+        .await
+        .expect("garbage did not drain the budget");
+}
+
+#[tokio::test]
+async fn the_exchange_rate_is_bounded() {
+    let rig = rig_with(PublisherSettings {
+        exchange_rate_per_sec: 1,
+        exchange_burst: 3,
+        ..PublisherSettings::default()
+    })
+    .await;
+    let mut limited = 0;
+    for _ in 0..10 {
+        if matches!(
+            rig.service
+                .exchange(&sign(&claims(&rig.issuer.url())), "acme", "releases")
+                .await,
+            Err(ExchangeError::RateLimited)
+        ) {
+            limited += 1;
+        }
+    }
+    assert!(limited >= 5, "only {limited} were limited");
+}
+
+// ---- F4 / F5 / F6 / F8 ------------------------------------------------------
+
+#[tokio::test]
+async fn a_huge_exp_cannot_overflow_the_replay_cache() {
+    let rig = rig().await;
+    for _ in 0..3 {
+        let mut body = claims(&rig.issuer.url());
+        body["exp"] = json!(u64::MAX);
+        exchange(&rig, &sign(&body)).await.expect("no overflow");
+    }
+}
+
+#[tokio::test]
+async fn a_recreated_record_with_other_content_does_not_resurrect_the_credential() {
+    let rig = rig().await;
+    let credential = credential(&rig).await;
+    let mut changed = record(&rig.issuer);
+    changed.subject = "repo:acme/other:ref:refs/heads/main".into();
+    rig.registry.put(&changed).await.unwrap();
+    assert_eq!(
+        rig.service
+            .verify_credential(&credential)
+            .await
+            .unwrap_err(),
+        GateError::Invalid
+    );
+    // Same id, other claims: also invalid. Same content again: valid again.
+    let mut claims_changed = record(&rig.issuer);
+    claims_changed
+        .claims
+        .insert("ref".into(), "refs/heads/dev".into());
+    rig.registry.put(&claims_changed).await.unwrap();
+    assert!(rig.service.verify_credential(&credential).await.is_err());
+    rig.registry.put(&record(&rig.issuer)).await.unwrap();
+    assert!(rig.service.verify_credential(&credential).await.is_ok());
+}
+
+#[tokio::test]
+async fn a_registry_that_may_hide_records_is_not_decided_on() {
+    let rig = rig().await;
+    for n in 0..40 {
+        let mut extra = record(&rig.issuer);
+        extra.id = format!("extra-{n}");
+        rig.registry.put(&extra).await.unwrap();
+    }
+    assert!(matches!(
+        exchange(&rig, &sign(&claims(&rig.issuer.url()))).await,
+        Err(ExchangeError::Unavailable("registry_oversized"))
+    ));
+}
+
+#[tokio::test]
+async fn a_token_with_a_crit_header_is_refused_before_anything_else() {
+    use base64::Engine as _;
+    let rig = rig().await;
+    let b64 = |v: &Value| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(v.to_string());
+    let token = format!(
+        "{}.{}.AAAA",
+        b64(&json!({"alg": "RS256", "kid": "issuer-key-1", "crit": ["exp"]})),
+        b64(&claims(&rig.issuer.url()))
+    );
+    denied(exchange(&rig, &token).await, "crit_header");
+    assert_eq!(rig.issuer.hits(), 0);
 }

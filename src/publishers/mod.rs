@@ -53,6 +53,11 @@ use crate::proxy::fetch::ProxyFetcher;
 /// The algorithms an OIDC ID token may be signed with. Everything else
 /// (`none`, HS*, PS*, EdDSA) is refused before a key is looked at.
 const ALLOWED_ALGORITHMS: [Algorithm; 2] = [Algorithm::RS256, Algorithm::ES256];
+/// The most trusted publishers one repository can have. The PUT enforces it
+/// (a race may overshoot by a few); the exchange reads them all and refuses
+/// to decide on a registry that returns far more, instead of silently
+/// ignoring records.
+pub const MAX_PUBLISHERS_PER_REPOSITORY: usize = 16;
 /// The largest ID token the exchange reads.
 const MAX_TOKEN_BYTES: usize = 8 * 1024;
 /// Claims a record cannot pin: the standard ones are validated by the
@@ -79,6 +84,12 @@ pub struct PublisherSettings {
     /// The largest number of `jti` remembered. When it is full of live
     /// entries the exchange refuses (fail closed), it never forgets one.
     pub replay_capacity: usize,
+    /// Sustained exchanges per second the service attempts globally (a
+    /// token bucket charged only when the exchange is about to cost a
+    /// registry read or a network fetch).
+    pub exchange_rate_per_sec: u32,
+    /// The burst of that bucket.
+    pub exchange_burst: u32,
 }
 
 impl Default for PublisherSettings {
@@ -92,6 +103,8 @@ impl Default for PublisherSettings {
             jwks_timeout: Duration::from_secs(5),
             jwks_max_bytes: 64 * 1024,
             replay_capacity: 8192,
+            exchange_rate_per_sec: 20,
+            exchange_burst: 40,
         }
     }
 }
@@ -127,6 +140,28 @@ pub struct TrustedPublisher {
     pub created_at: String,
 }
 
+impl TrustedPublisher {
+    /// A digest of everything that binds an identity to the repository (not
+    /// of who wrote it or when).
+    pub fn fingerprint(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let canonical = serde_json::json!([
+            self.id,
+            self.account,
+            self.repository,
+            self.issuer,
+            self.audience,
+            self.jwks_url,
+            self.subject,
+            self.claims,
+        ]);
+        Sha256::digest(canonical.to_string().as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+}
+
 /// What an administrator sends to register a publisher.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,7 +174,7 @@ pub struct PublisherSpec {
     pub claims: BTreeMap<String, String>,
 }
 
-fn is_identifier(value: &str, max: usize) -> bool {
+pub fn is_identifier(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
         && value
@@ -282,6 +317,8 @@ pub enum ExchangeError {
     Denied(&'static str),
     /// The registry or the issuer's keys could not be obtained: fail closed.
     Unavailable(&'static str),
+    /// The service-wide exchange rate budget is spent.
+    RateLimited,
 }
 
 impl ExchangeError {
@@ -289,6 +326,7 @@ impl ExchangeError {
     pub fn reason(&self) -> &'static str {
         match self {
             Self::BadRequest => "bad_request",
+            Self::RateLimited => "rate_limited",
             Self::Denied(reason) | Self::Unavailable(reason) => reason,
         }
     }
@@ -304,9 +342,28 @@ pub struct Exchange {
     pub expires_in: u64,
 }
 
-struct CachedJwks {
-    set: JwkSet,
-    fetched: Instant,
+/// The state of one JWKS location: the keys, when they were fetched and when
+/// the last fetch FAILED (the negative cache).
+#[derive(Default)]
+struct JwksCache {
+    set: Option<JwkSet>,
+    fetched: Option<Instant>,
+    failed: Option<Instant>,
+}
+
+/// One JWKS location. Reads of the cache never wait for the network; the
+/// `flight` lock makes the fetch of THIS url single-flight, and no other url
+/// ever waits on it.
+#[derive(Default)]
+struct JwksSlot {
+    cache: Mutex<JwksCache>,
+    flight: tokio::sync::Mutex<()>,
+}
+
+/// A token bucket.
+struct Bucket {
+    tokens: f64,
+    last: Instant,
 }
 
 /// The trusted publishers service.
@@ -315,7 +372,8 @@ pub struct PublishersService {
     fetcher: ProxyFetcher,
     signer: CredentialSigner,
     settings: PublisherSettings,
-    jwks: tokio::sync::Mutex<HashMap<String, CachedJwks>>,
+    jwks: Mutex<HashMap<String, Arc<JwksSlot>>>,
+    bucket: Mutex<Bucket>,
     /// `(issuer, jti)` already exchanged, until the token's own expiry.
     exchanged: Mutex<HashMap<String, u64>>,
 }
@@ -328,12 +386,17 @@ impl PublishersService {
         credential_secret: &str,
         settings: PublisherSettings,
     ) -> Result<Self, String> {
+        let burst = f64::from(settings.exchange_burst.max(1));
         Ok(Self {
             registry,
             fetcher,
             signer: CredentialSigner::derive(credential_secret.as_bytes())?,
             settings: settings.clamped(),
-            jwks: tokio::sync::Mutex::new(HashMap::new()),
+            jwks: Mutex::new(HashMap::new()),
+            bucket: Mutex::new(Bucket {
+                tokens: burst,
+                last: Instant::now(),
+            }),
             exchanged: Mutex::new(HashMap::new()),
         })
     }
@@ -366,21 +429,34 @@ impl PublishersService {
         if token.is_empty() || token.len() > MAX_TOKEN_BYTES {
             return Err(ExchangeError::Denied("token_size"));
         }
+        // The cheap checks come first: nothing below touches the registry or
+        // the network for a token that does not even parse.
+        if header_has_crit(token) {
+            return Err(ExchangeError::Denied("crit_header"));
+        }
         let header = decode_header(token).map_err(|_| ExchangeError::Denied("token_malformed"))?;
         if !ALLOWED_ALGORITHMS.contains(&header.alg) {
             return Err(ExchangeError::Denied("algorithm_not_allowed"));
         }
         let issuer = unverified_issuer(token).ok_or(ExchangeError::Denied("token_malformed"))?;
 
+        // From here on the exchange costs a registry read and maybe a fetch:
+        // the service-wide budget is charged.
+        self.take_token()?;
         let records = self
             .registry
             .list(account, repository)
             .await
             .map_err(|_| ExchangeError::Unavailable("registry_unavailable"))?;
+        if records.len() > 2 * MAX_PUBLISHERS_PER_REPOSITORY {
+            // Never decide on a registry that may hide records.
+            return Err(ExchangeError::Unavailable("registry_oversized"));
+        }
+        let mut records = records;
+        records.sort_by(|a, b| a.id.cmp(&b.id));
         let candidates: Vec<&TrustedPublisher> = records
             .iter()
             .filter(|record| record.issuer == issuer)
-            .take(8)
             .collect();
         if candidates.is_empty() {
             return Err(ExchangeError::Denied("no_trusted_publisher"));
@@ -430,6 +506,7 @@ impl PublishersService {
             repo: record.repository.clone(),
             acts: vec![UPLOAD_ACTION.to_string()],
             publisher: record.id.clone(),
+            fp: record.fingerprint(),
             iat: now,
             exp: now + ttl as i64,
             jti: new_jti(),
@@ -492,18 +569,77 @@ impl PublishersService {
 
     /// The key of the issuer for the token's `kid`, through the cache and
     /// the egress. Fails closed.
+    ///
+    /// Reads of a fresh cache never wait for the network. A fetch is
+    /// single-flight PER URL (another issuer never waits on it), and a failed
+    /// fetch is remembered: until the cooldown passes, every request fails
+    /// without touching the network, whether the keys had expired or not.
     async fn the_jwk(
         &self,
         record: &TrustedPublisher,
         header: &jsonwebtoken::Header,
     ) -> Result<Jwk, ExchangeError> {
         let kid = header.kid.as_deref();
-        let mut cache = self.jwks.lock().await;
-        if let Some(cached) = cache.get(&record.jwks_url) {
-            let age = cached.fetched.elapsed();
+        let slot = self.slot(&record.jwks_url)?;
+        if let Some(decided) = self.cached_decision(&slot, kid)? {
+            return Ok(decided);
+        }
+        let _flight = slot.flight.lock().await;
+        // Another request may have fetched (or failed) while this one waited.
+        if let Some(decided) = self.cached_decision(&slot, kid)? {
+            return Ok(decided);
+        }
+        let url = Url::parse(&record.jwks_url).map_err(|_| ExchangeError::Denied("jwks_url"))?;
+        let fetched = self
+            .fetcher
+            .get_bytes(
+                &url,
+                self.settings.jwks_timeout,
+                self.settings.jwks_max_bytes,
+            )
+            .await
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<JwkSet>(&bytes).ok());
+        let mut cache = slot
+            .cache
+            .lock()
+            .map_err(|_| ExchangeError::Unavailable("jwks_cache"))?;
+        match fetched {
+            None => {
+                cache.failed = Some(Instant::now());
+                Err(ExchangeError::Unavailable("jwks_unavailable"))
+            }
+            Some(set) => {
+                let selected = select_key(&set, kid);
+                cache.set = Some(set);
+                cache.fetched = Some(Instant::now());
+                cache.failed = None;
+                selected.ok_or(ExchangeError::Denied("kid_unknown"))
+            }
+        }
+    }
+
+    /// What the cache alone decides: a key, a refusal, or `None` when a
+    /// fetch is due.
+    fn cached_decision(
+        &self,
+        slot: &JwksSlot,
+        kid: Option<&str>,
+    ) -> Result<Option<Jwk>, ExchangeError> {
+        let cache = slot
+            .cache
+            .lock()
+            .map_err(|_| ExchangeError::Unavailable("jwks_cache"))?;
+        if let Some(failed) = cache.failed
+            && failed.elapsed() < self.settings.jwks_refetch_cooldown
+        {
+            return Err(ExchangeError::Unavailable("jwks_unavailable"));
+        }
+        if let (Some(set), Some(fetched)) = (&cache.set, cache.fetched) {
+            let age = fetched.elapsed();
             if age < self.settings.jwks_ttl {
-                if let Some(jwk) = select_key(&cached.set, kid) {
-                    return Ok(jwk);
+                if let Some(jwk) = select_key(set, kid) {
+                    return Ok(Some(jwk));
                 }
                 // An unknown kid on a fresh set: one refetch per cooldown
                 // (the issuer may have rotated), otherwise no.
@@ -512,32 +648,38 @@ impl PublishersService {
                 }
             }
         }
-        // Network under the lock on purpose: concurrent exchanges of the
-        // same issuer wait for one fetch instead of stampeding the issuer.
-        let url = Url::parse(&record.jwks_url).map_err(|_| ExchangeError::Denied("jwks_url"))?;
-        let bytes = self
-            .fetcher
-            .get_bytes(
-                &url,
-                self.settings.jwks_timeout,
-                self.settings.jwks_max_bytes,
-            )
-            .await
-            .map_err(|_| ExchangeError::Unavailable("jwks_unavailable"))?;
-        let set: JwkSet = serde_json::from_slice(&bytes)
-            .map_err(|_| ExchangeError::Unavailable("jwks_invalid"))?;
-        if cache.len() >= 64 && !cache.contains_key(&record.jwks_url) {
-            cache.clear();
+        Ok(None)
+    }
+
+    fn slot(&self, url: &str) -> Result<Arc<JwksSlot>, ExchangeError> {
+        let mut slots = self
+            .jwks
+            .lock()
+            .map_err(|_| ExchangeError::Unavailable("jwks_cache"))?;
+        if slots.len() >= 256 && !slots.contains_key(url) {
+            // Urls come from the registry, so this is a bound, not a policy.
+            return Err(ExchangeError::Unavailable("jwks_cache_full"));
         }
-        let selected = select_key(&set, kid);
-        cache.insert(
-            record.jwks_url.clone(),
-            CachedJwks {
-                set,
-                fetched: Instant::now(),
-            },
-        );
-        selected.ok_or(ExchangeError::Denied("kid_unknown"))
+        Ok(slots.entry(url.to_string()).or_default().clone())
+    }
+
+    /// Charge the service-wide token bucket.
+    fn take_token(&self) -> Result<(), ExchangeError> {
+        let mut bucket = self
+            .bucket
+            .lock()
+            .map_err(|_| ExchangeError::Unavailable("rate_limiter"))?;
+        let rate = f64::from(self.settings.exchange_rate_per_sec.max(1));
+        let burst = f64::from(self.settings.exchange_burst.max(1));
+        let now = Instant::now();
+        bucket.tokens =
+            (bucket.tokens + now.duration_since(bucket.last).as_secs_f64() * rate).min(burst);
+        bucket.last = now;
+        if bucket.tokens < 1.0 {
+            return Err(ExchangeError::RateLimited);
+        }
+        bucket.tokens -= 1.0;
+        Ok(())
     }
 
     fn mark_exchanged(&self, issuer: &str, jti: &str, exp: u64) -> Result<(), ExchangeError> {
@@ -552,11 +694,11 @@ impl PublishersService {
         }
         // Entries live until the token could no longer pass its own `exp`.
         let horizon = self.settings.leeway.as_secs();
-        seen.retain(|_, until| *until + horizon >= now);
+        seen.retain(|_, until| until.saturating_add(horizon) >= now);
         if seen.len() >= self.settings.replay_capacity {
             return Err(ExchangeError::Unavailable("replay_cache_full"));
         }
-        let until = exp.max(now + self.settings.max_token_age.as_secs());
+        let until = exp.max(now.saturating_add(self.settings.max_token_age.as_secs()));
         seen.insert(key, until);
         Ok(())
     }
@@ -571,7 +713,10 @@ impl PublishersService {
             .list(&claims.account, &claims.repo)
             .await
             .map_err(|_| GateError::Unavailable)?;
-        if !records.iter().any(|record| record.id == claims.publisher) {
+        if !records
+            .iter()
+            .any(|record| record.id == claims.publisher && record.fingerprint() == claims.fp)
+        {
             return Err(GateError::Invalid);
         }
         Ok(verified)
@@ -662,6 +807,19 @@ fn claims_match(
         .claims
         .iter()
         .all(|(name, value)| claims.get(name).and_then(|v| v.as_str()) == Some(value.as_str()))
+}
+
+/// Whether the protected header carries `crit`: extensions this service does
+/// not implement must make the token unacceptable (RFC 7515 4.1.11).
+fn header_has_crit(token: &str) -> bool {
+    let Some(segment) = token.split('.').next() else {
+        return false;
+    };
+    base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(segment)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|header| header.get("crit").is_some())
 }
 
 /// The `iss` of the payload, unverified: it only selects candidates; the
