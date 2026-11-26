@@ -33,6 +33,7 @@ use hodei_authz::{
     PrincipalId,
 };
 use hodei_evidence::ContentRef;
+use hodei_evidence::application::projection::{ProjectionDelivery, ProjectionFrontier};
 use hodei_evidence::domain::delta::RelationDeltaLedger;
 use hodei_evidence::domain::evidence::{
     EvidenceId, EvidenceRecord, EvidenceType, EvidenceVerification, Normalization, Producer,
@@ -42,7 +43,6 @@ use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal, NodeKind, RelationType,
 };
 use hodei_evidence::ports::EvidenceStore;
-use hodei_evidence::application::projection::{ProjectionDelivery, ProjectionFrontier};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 use hodei_investigator::claim::{AIClaim, ClaimKind, InvestigationTrace};
 use hodei_investigator::freshness::{Freshness, GRAPH_SOURCE};

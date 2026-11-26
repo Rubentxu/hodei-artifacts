@@ -31,9 +31,9 @@ mod support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
-use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::{
@@ -125,10 +125,7 @@ const THE_CASES: &[(&str, &str)] = &[
         AC1_GRAPH_LIVE,
         "el proceso vive aunque el alpha este cortado",
     ),
-    (
-        AC1_GRAPH_BACK,
-        "devolver el alpha devuelve la readiness",
-    ),
+    (AC1_GRAPH_BACK, "devolver el alpha devuelve la readiness"),
     (
         AC2_STANDALONE,
         "el perfil de grafo esta listo y exige el alpha y el contenido",
@@ -604,7 +601,8 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            let title = "al cortar el alpha en caliente, la readiness deja de ser 200 y no dice donde esta";
+            let title =
+                "al cortar el alpha en caliente, la readiness deja de ser 200 y no dice donde esta";
             let (ready, command) = call(port, "/health/ready");
             if ready.status != 503 {
                 return LabCase::new(AC1_GRAPH_503, title).failed(format!(
@@ -626,7 +624,9 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                         .failed(format!("the body carries {forbidden:?}: {body}"));
                 }
             }
-            LabCase::new(AC1_GRAPH_503, title).command(&command).passed()
+            LabCase::new(AC1_GRAPH_503, title)
+                .command(&command)
+                .passed()
         },
     );
 
@@ -645,7 +645,9 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                     text_of(&live)
                 ));
             }
-            LabCase::new(AC1_GRAPH_LIVE, title).command(&command).passed()
+            LabCase::new(AC1_GRAPH_LIVE, title)
+                .command(&command)
+                .passed()
         },
     );
 
@@ -667,7 +669,9 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                     text_of(&ready)
                 ));
             }
-            LabCase::new(AC1_GRAPH_BACK, title).command(&command).passed()
+            LabCase::new(AC1_GRAPH_BACK, title)
+                .command(&command)
+                .passed()
         },
     );
 

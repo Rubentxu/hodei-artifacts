@@ -679,8 +679,7 @@ fn ac3_upstream_key_rotation_invalidates_old_snapshot_fail_closed() {
         MetadataSigner::generate("Old upstream <old-upstream@example.local>").expect("old signer");
     let replacement_signer = MetadataSigner::generate("Replacement <replacement@example.local>")
         .expect("replacement signer");
-    let hub_signer = MetadataSigner::generate("Hodei Hub <hub@hodei.local>")
-        .expect("hub signer");
+    let hub_signer = MetadataSigner::generate("Hodei Hub <hub@hodei.local>").expect("hub signer");
     let hub_armor = hub_signer.to_armor().expect("hub armor");
     let primary_xml = yum::primary_document(&[]).into_bytes();
     let primary_gz = gzip(&primary_xml);
@@ -747,13 +746,20 @@ fn ac3_upstream_key_rotation_invalidates_old_snapshot_fail_closed() {
         None,
     );
     assert_eq!(first_signature.status, 200);
-    MetadataSigner::verify_detached(&first.body, &first_signature.body, &hub_signer.key_asc().unwrap())
-        .expect("the initial generation is signed by Hodei");
+    MetadataSigner::verify_detached(
+        &first.body,
+        &first_signature.body,
+        &hub_signer.key_asc().unwrap(),
+    )
+    .expect("the initial generation is signed by Hodei");
     support::stop(&mut service);
 
     deployment.reconfigure_proxy(
         "rpm-proxy-rotating-key",
-        proxy_config(&upstream, replacement_signer.key_asc().expect("replacement key")),
+        proxy_config(
+            &upstream,
+            replacement_signer.key_asc().expect("replacement key"),
+        ),
     );
     let mut service = deployment.start(&[
         ("HODEI_PROXY__ALLOWED_HOSTS", &allowed),
@@ -833,8 +839,8 @@ fn ac3_hodei_signing_key_revocation_fails_closed_after_rotation() {
     deployment.seed_yum(&[("rpm-hosted", Value::Null)]);
     deployment.seed_yum_group("rpm-group-hodei-key-rotation", &["rpm-hosted"]);
     let token = support::token(FIRST_ACCOUNT, "alice");
-    let healthy_signer = MetadataSigner::generate("Hodei Hub <hub@hodei.local>")
-        .expect("healthy Hodei signer");
+    let healthy_signer =
+        MetadataSigner::generate("Hodei Hub <hub@hodei.local>").expect("healthy Hodei signer");
     let healthy_armor = healthy_signer.to_armor().expect("healthy signer armor");
     let mut service = deployment.start(&[("HODEI_METADATA_SIGNER_ARMOR", &healthy_armor)]);
     let first = call(

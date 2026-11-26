@@ -13,11 +13,11 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use hodei_evidence::EvidenceId;
 use hodei_evidence::application::projection::{ProjectionDelivery, ProjectionFrontier as _};
 use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, NodeKind, RelationType,
 };
-use hodei_evidence::EvidenceId;
 use hodei_evidence_storage::{DgraphGraphStore, DgraphProjectionFrontier};
 use hodei_risk_storage::dgraph_view::DgraphImpactView;
 use kernel::Hrn;
@@ -152,8 +152,16 @@ impl RiskWorld {
 
     /// One unrelated relation: exactly one more delta in the ledger.
     async fn one_more_delta(&mut self, tenant: &Hrn, index: u64) {
-        let from = hrn_in(tenant, "Artifact", &format!("filler-{}-{index}-a", self.nonce));
-        let to = hrn_in(tenant, "Component", &format!("filler-{}-{index}-b", self.nonce));
+        let from = hrn_in(
+            tenant,
+            "Artifact",
+            &format!("filler-{}-{index}-a", self.nonce),
+        );
+        let to = hrn_in(
+            tenant,
+            "Component",
+            &format!("filler-{}-{index}-b", self.nonce),
+        );
         let evidence = EvidenceId::new(format!("ev-filler-{}-{index}", self.nonce));
         let changes = GraphChangeSet::empty()
             .with_cause(format!("filler-{}-{index}", self.nonce))

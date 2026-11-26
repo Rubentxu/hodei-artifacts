@@ -828,18 +828,15 @@ impl DgraphCatalogStore {
             format!("{}.account", Family::Reference.prefix()),
             format!("{}.account", Family::AptSnapshot.prefix()),
         ] {
-            let query = format!(
-                "{{ q(func: has({predicate})) @groupby({predicate}) {{ count(uid) }} }}"
-            );
+            let query =
+                format!("{{ q(func: has({predicate})) @groupby({predicate}) {{ count(uid) }} }}");
             let json = self.execute_dql_row(&query).await?;
             accounts.extend(
                 json.get("q")
                     .and_then(serde_json::Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|group| {
-                        group.get("@groupby").and_then(serde_json::Value::as_array)
-                    })
+                    .filter_map(|group| group.get("@groupby").and_then(serde_json::Value::as_array))
                     .flatten()
                     .filter_map(|row| {
                         row.get(&predicate)

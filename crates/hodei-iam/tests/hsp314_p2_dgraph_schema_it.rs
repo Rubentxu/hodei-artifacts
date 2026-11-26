@@ -150,11 +150,7 @@ async fn saving_a_version_again_replaces_it_and_the_newest_is_the_latest() {
         .await
         .expect("save v2");
     assert_eq!(
-        store
-            .get_latest_schema()
-            .await
-            .expect("answer")
-            .as_deref(),
+        store.get_latest_schema().await.expect("answer").as_deref(),
         Some("second"),
         "the most recently stored schema is the latest"
     );
@@ -198,16 +194,25 @@ async fn delete_accepts_both_spellings_and_reports_what_it_deleted() {
         .await
         .expect("save");
     assert!(
-        store.delete_schema(&id).await.expect("delete by returned id"),
+        store
+            .delete_schema(&id)
+            .await
+            .expect("delete by returned id"),
         "the returned id deletes the record"
     );
     assert!(
         !store.delete_schema(&id).await.expect("second delete"),
         "deleting what is gone reports false"
     );
-    assert_eq!(store.get_schema_by_version("va").await.expect("answer"), None);
+    assert_eq!(
+        store.get_schema_by_version("va").await.expect("answer"),
+        None
+    );
     assert!(
-        store.delete_schema("vb").await.expect("delete by bare version"),
+        store
+            .delete_schema("vb")
+            .await
+            .expect("delete by bare version"),
         "the bare version deletes the record too"
     );
     assert!(store.get_latest_schema().await.expect("answer").is_none());

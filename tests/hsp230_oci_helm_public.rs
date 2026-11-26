@@ -1258,7 +1258,10 @@ fn ac2_helm_pull_through_a_multi_segment_upstream_prefix() {
             );
             let doubled = format!("/v2/{PREFIXED_UPSTREAM_REPO}/v2/");
             assert!(
-                upstream.hits().iter().all(|hit| !hit.path.contains(&doubled)),
+                upstream
+                    .hits()
+                    .iter()
+                    .all(|hit| !hit.path.contains(&doubled)),
                 "the proxy must not repeat the /v2/ prefix the upstream base already carries"
             );
 
