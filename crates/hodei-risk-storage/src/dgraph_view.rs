@@ -348,7 +348,7 @@ pub async fn walk_impact_dgraph(
             &deployment_rows,
         );
         for row in &deployment_rows {
-            walk.deployments.insert(row.from.to_string());
+            walk.deployments.insert(row.to.to_string());
             walk.subject_routes
                 .entry(row.from.to_string())
                 .or_default()

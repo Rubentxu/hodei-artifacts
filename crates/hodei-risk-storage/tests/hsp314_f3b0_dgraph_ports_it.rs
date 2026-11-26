@@ -555,6 +555,64 @@ async fn the_blast_radius_is_the_known_reach_with_its_depths() {
     );
 }
 
+/// HSP-318 (M4-UAT-03): the same vulnerable artifact deployed to two
+/// environments is reported in BOTH, and the risk is not collapsed into a
+/// property of the artifact alone: one affected subject, two deployments.
+///
+/// Regression guard: `blast_radius_dgraph` once filled `affected_deployments`
+/// with `row.from` (the ARTIFACT) of each `DeployedAs` relation, so two
+/// environments of one artifact collapsed into a single entry that was not a
+/// deployment. It now uses `row.to`, like the reference walk in
+/// `hodei-risk::traversal`.
+#[tokio::test]
+async fn the_blast_radius_names_every_environment_the_artifact_runs_in() {
+    let tenant = tenant("envs");
+    let Some(graph) = seeded_graph(&tenant).await else {
+        return;
+    };
+    let vulnerability = hrn_of(&tenant, "Vulnerability", ADVISORY);
+    let direct = hrn_of(&tenant, "Artifact", "app-direct");
+    let ev = EvidenceId::new("ev-f3b0");
+
+    let before = blast_radius_dgraph(&graph, &tenant, &vulnerability, &GraphReadLimits::default())
+        .await
+        .expect("the walk answers whole");
+    let prod = hrn_of(&tenant, "Deployment", "prod").to_string();
+    assert_eq!(before.affected_deployments, vec![prod.clone()]);
+
+    // The same artifact is also deployed to staging.
+    graph
+        .apply(
+            GraphChangeSet::empty()
+                .with_cause("evt-f3b0-staging")
+                .with_node(node(&tenant, NodeKind::Deployment, "Deployment", "staging"))
+                .with_relation(GraphRelation::new(
+                    RelationType::DeployedAs,
+                    direct,
+                    hrn_of(&tenant, "Deployment", "staging"),
+                    tenant.clone(),
+                    ev,
+                    Utc::now(),
+                )),
+        )
+        .await
+        .expect("the second deployment is written");
+
+    let after = blast_radius_dgraph(&graph, &tenant, &vulnerability, &GraphReadLimits::default())
+        .await
+        .expect("the walk answers whole");
+    let staging = hrn_of(&tenant, "Deployment", "staging").to_string();
+    let mut expected = vec![prod, staging];
+    expected.sort();
+    let mut got = after.affected_deployments.clone();
+    got.sort();
+    assert_eq!(got, expected, "both environments are named");
+    assert_eq!(
+        after.affected_subjects, before.affected_subjects,
+        "the environments are not collapsed into more or fewer subjects"
+    );
+}
+
 #[tokio::test]
 async fn a_walk_that_hits_its_bounds_is_refused_not_returned_partial() {
     let tenant = tenant("bounds");
