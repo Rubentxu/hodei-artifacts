@@ -1,14 +1,14 @@
-//! Los hechos hipoteticos de una simulacion.
+//! The hypothetical facts of a simulation.
 //!
-//! Un hecho hipotetico es un hecho que **no ha pasado**: es lo que se
-//! superpone al estado real para preguntar "que pasaria si". Y la
-//! diferencia entre un hecho real y uno hipotetico no es una convencion:
-//! es una **etiqueta** que viaja con el hecho, y una etiqueta que se puede
-//! perder es una etiqueta que no existe.
+//! A hypothetical fact is a fact that **has not happened**: it is what is
+//! overlaid on the real state to ask "what would happen if". And the
+//! difference between a real fact and a hypothetical one is not a convention:
+//! it is a **label** that travels with the fact, and a label that can be
+//! lost is a label that does not exist.
 //!
-//! Por eso la etiqueta es parte del tipo, y por eso las consultas
-//! normales del grafo nunca ven un hecho hipotetico: no estan en el
-//! grafo.
+//! That is why the label is part of the type, and why normal graph
+//! queries never see a hypothetical fact: they are not in the
+//! graph.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::domain::graph::RelationType;
@@ -16,21 +16,21 @@ use hodei_trust_policy::TrustPolicy;
 use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 
-/// La etiqueta que dice que un hecho es de una simulacion.
+/// The label that says a fact belongs to a simulation.
 ///
-/// La etiqueta lleva el identificador de la simulacion, para que un hecho
-/// de una simulacion no se confunda con el de otra, y para que se pueda
-/// auditar despues que se simulo y que.
+/// The label carries the simulation's identifier, so that a fact
+/// of one simulation is not confused with another's, and so that it can be
+/// audited later what was simulated and what.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationTag {
-    /// El identificador de la simulacion.
+    /// The simulation's identifier.
     pub simulation: String,
-    /// El momento en que se creo el hecho.
+    /// The moment the fact was created.
     pub created_at: DateTime<Utc>,
 }
 
 impl SimulationTag {
-    /// La etiqueta de una simulacion.
+    /// A simulation's label.
     pub fn new(simulation: impl Into<String>, created_at: DateTime<Utc>) -> Self {
         Self {
             simulation: simulation.into(),
@@ -39,91 +39,91 @@ impl SimulationTag {
     }
 }
 
-/// Un hecho que se superpone al estado real.
+/// A fact that is overlaid on the real state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hypothetical {
-    /// La etiqueta: este hecho es de una simulacion.
+    /// The label: this fact belongs to a simulation.
     pub tag: SimulationTag,
-    /// Lo que dice.
+    /// What it says.
     pub claim: HypotheticalClaim,
 }
 
-/// Lo que dice un hecho hipotetico.
+/// What a hypothetical fact says.
 ///
-/// Las variantes tienen tamaños muy distintos, y la diferencia no importa
-/// aqui: una simulacion tiene **como mucho cien hechos hipoteticos** (el
-/// limite esta declarado y se comprueba), de modo que el desperdicio
-/// seria de unos cuantos kilobytes. Empaquetarlas todas en cajas
-/// haria el codigo peor para no arreglar nada.
+/// The variants have very different sizes, and the difference does not matter
+/// here: a simulation has **at most a hundred hypothetical facts** (the
+/// limit is declared and checked), so the waste
+/// would be a few kilobytes. Boxing them all
+/// would make the code worse without fixing anything.
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HypotheticalClaim {
-    /// Una relacion que existiria.
+    /// A relation that would exist.
     Relation {
-        /// De que relacion se trata.
+        /// Which relation it is.
         relation: RelationType,
-        /// El nodo del que parte.
+        /// The node it starts from.
         from: Hrn,
-        /// El nodo al que llega.
+        /// The node it arrives at.
         to: Hrn,
-        /// La relacion que SUSTITUYE, si sustituye a alguna.
+        /// The relation it REPLACES, if it replaces any.
         ///
-        /// Sustituir es lo que hace que una relacion desaparezca: sin
-        /// esto, un cambio de dependencia solo anadiria y el diff no
-        /// diria nada de lo que desaparece.
+        /// Replacing is what makes a relation disappear: without
+        /// this, a dependency change would only add and the diff would
+        /// say nothing about what disappears.
         replaces: Option<RelationFact>,
     },
-    /// Un riesgo que habria, con lo que se sabe de el.
+    /// A risk that there would be, with what is known about it.
     ///
-    /// El riesgo es un hecho del sujeto: una vulnerabilidad que le
-    /// llega. Y lo que decide la politica no es el identificador de la
-    /// vulnerabilidad, sino si es critica y si es alcanzable.
+    /// The risk is a fact about the subject: a vulnerability that
+    /// reaches it. And what the policy decides is not the vulnerability's
+    /// identifier, but whether it is critical and whether it is reachable.
     Risk {
-        /// El sujeto al que llega.
+        /// The subject it reaches.
         subject: Hrn,
-        /// La vulnerabilidad.
+        /// The vulnerability.
         advisory: String,
-        /// Si es critica.
+        /// Whether it is critical.
         critical: bool,
-        /// Si es alcanzable.
+        /// Whether it is reachable.
         reachable: bool,
     },
-    /// Una ventana en la que un constructor no se fia.
+    /// A window in which a builder is not trusted.
     ///
-    /// Todo lo que se observo dentro de la ventana deja de estar
-    /// verificado: es lo que pasa cuando un constructor esta comprometido
-    /// durante un rato, y las piezas de evidencia de ese rato son
-    /// precisamente las que no valen.
+    /// Everything observed inside the window ceases to be
+    /// verified: it is what happens when a builder is compromised
+    /// for a while, and the pieces of evidence from that time are
+    /// precisely the ones that are worthless.
     ///
-    /// La ventana **nombra a los sujetos** a los que alcanza, porque sin
-    /// ellos la simulacion no sabria a quien mirar: una ventana es un
-    /// rango de tiempo, y un rango de tiempo no dice de quien es la
-    /// culpa.
+    /// The window **names the subjects** it reaches, because without
+    /// them the simulation would not know whom to look at: a window is a
+    /// time range, and a time range does not say whose
+    /// fault it is.
     UntrustedWindow {
-        /// El principio de la ventana.
+        /// The start of the window.
         from: DateTime<Utc>,
-        /// El final de la ventana.
+        /// The end of the window.
         to: DateTime<Utc>,
-        /// Los sujetos a los que alcanza la ventana.
+        /// The subjects the window reaches.
         subjects: Vec<Hrn>,
     },
-    /// Una politica que estaria en vigor.
+    /// A policy that would be in force.
     ///
-    /// La politica va en una caja porque es mucho mas grande que las
-    /// demas variantes, y una diferencia de tamaño tan grande convierte
-    /// cada hecho hipotetico en una wasted memoria.
+    /// The policy is boxed because it is much larger than the
+    /// other variants, and such a large size difference turns
+    /// every hypothetical fact into wasted memory.
     Policy {
-        /// La politica.
+        /// The policy.
         policy: Box<TrustPolicy>,
     },
 }
 
 impl HypotheticalClaim {
-    /// Los sujetos que el hecho toca.
+    /// The subjects the fact touches.
     ///
-    /// Son los sujetos cuya decision puede cambiar, y por tanto los que
-    /// el diff de decisiones tiene que mirar.
+    /// They are the subjects whose decision may change, and therefore those
+    /// the decision diff has to look at.
     pub fn subjects(&self) -> Vec<Hrn> {
         match self {
             Self::Relation { from, to, .. } => {
@@ -140,29 +140,29 @@ impl HypotheticalClaim {
     }
 }
 
-/// Una relacion, con la forma que el diff necesita.
+/// A relation, with the shape the diff needs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationFact {
-    /// De que relacion se trata.
+    /// Which relation it is.
     pub relation: RelationType,
-    /// El nodo del que parte.
+    /// The node it starts from.
     pub from: Hrn,
-    /// El nodo al que llega.
+    /// The node it arrives at.
     pub to: Hrn,
-    /// La evidencia que la sostiene, si se conoce.
+    /// The evidence that supports it, if known.
     ///
-    /// No es parte de la IDENTIDAD de la relacion, que es el tipo y los
-    /// dos extremos: dos relaciones con la misma identidad son la misma
-    /// relacion, y el diff estructural habla de relaciones y no de
-    /// apoyos. Pero si es parte de su VALOR: una relacion a la que se
-    /// le cambia el apoyo no es la misma relacion que se leyo antes, y
-    /// comparar solo por identidad lo esconderia.
+    /// It is not part of the relation's IDENTITY, which is the type and the
+    /// two ends: two relations with the same identity are the same
+    /// relation, and the structural diff speaks of relations and not of
+    /// supports. But it is part of its VALUE: a relation whose
+    /// support is changed is not the same relation that was read before, and
+    /// comparing only by identity would hide it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence: Option<String>,
 }
 
 impl RelationFact {
-    /// La relacion.
+    /// The relation.
     pub fn new(relation: RelationType, from: Hrn, to: Hrn) -> Self {
         Self {
             relation,
@@ -172,25 +172,25 @@ impl RelationFact {
         }
     }
 
-    /// La relacion, con la evidencia que la sostiene.
+    /// The relation, with the evidence that supports it.
     pub fn with_evidence(mut self, evidence: impl Into<String>) -> Self {
         self.evidence = Some(evidence.into());
         self
     }
 
-    /// La identidad de la relacion: la que dice si es la misma o no.
+    /// The relation's identity: the one that says whether it is the same or not.
     ///
-    /// La identidad NO lleva la evidencia: el tipo y los dos extremos
-    /// dizem que relacion es, y quien la sostiene se compara aparte.
+    /// The identity does NOT carry the evidence: the type and the two ends
+    /// say which relation it is, and who supports it is compared separately.
     pub fn identity(&self) -> String {
         format!("{}|{}|{}", self.relation.as_str(), self.from, self.to)
     }
 
-    /// Si es la MISMA relacion que otra: la que tiene la misma
-    /// identidad.
+    /// Whether it is the SAME relation as another: the one with the same
+    /// identity.
     ///
-    /// Es la comparacion que usa el diff, porque el diff habla de
-    /// relaciones y no de apoyos.
+    /// It is the comparison the diff uses, because the diff speaks of
+    /// relations and not of supports.
     pub fn is_the_same_as(&self, other: &Self) -> bool {
         self.identity() == other.identity()
     }

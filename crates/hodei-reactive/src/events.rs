@@ -8,9 +8,9 @@
 //!
 //! The subscription says what an event has to look like for a behaviour
 //! to be interested in it. The predicate is a small, **closed** set of
-//! checks and not a language: a behaviour that decide sobre el payload
-//! con reglas libres seria un motor de workflows, y un motor de workflows
-//! es mas de lo que hace falta para reaccionar a un CVE.
+//! checks and not a language: a behaviour that decides on the payload
+//! with free-form rules would be a workflow engine, and a workflow engine
+//! is more than what is needed to react to a CVE.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

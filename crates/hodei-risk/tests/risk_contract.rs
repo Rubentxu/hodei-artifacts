@@ -40,8 +40,8 @@ fn affected_of(document: &str) -> OsvAffected {
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// La ingesta de vulnerabilidades es compatible con OSV y los fixtures
-/// estan versionados en el repositorio.
+/// The vulnerability ingestion is compatible with OSV and the fixtures
+/// are versioned in the repository.
 #[test]
 fn the_ingestion_is_compatible_with_osv() {
     let advisory = read_osv(ADVISORY).expect("the fixture is read");
@@ -57,34 +57,34 @@ fn the_ingestion_is_compatible_with_osv() {
     assert_eq!(advisory.affected[0].fixed_version(), Some("2.0.1"));
     assert!(!advisory.is_withdrawn());
 
-    // Y el fixture esta en el repositorio, versionado con el codigo.
+    // And the fixture is in the repository, versioned with the code.
     assert!(ADVISORY.contains("GHSA-hodei-test-0001"));
 }
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// El emparejamiento de versiones y rangos resuelve la version exacta, el
-/// rango y la version desconocida.
+/// The matching of versions and ranges resolves the exact version, the
+/// range and the unknown version.
 #[test]
 fn the_matching_resolves_the_exact_version_the_range_and_the_unknown_one() {
     let affected = affected_of(ADVISORY);
 
-    // La version exacta.
+    // The exact version.
     assert_eq!(match_version(&affected, "2.0.0"), Match::Affected);
     assert_eq!(match_version(&affected, "1.0.0"), Match::Affected);
 
-    // El rango: la version corregida ya no esta afectada.
+    // The range: the fixed version is no longer affected.
     assert_eq!(match_version(&affected, "2.0.1"), Match::Unaffected);
     assert_eq!(match_version(&affected, "3.0.0"), Match::Unaffected);
 
-    // Y la version desconocida: NO es "no afectada".
+    // And the unknown version: it is NOT "unaffected".
     assert_eq!(
         match_version(&affected, "2024.05.01-SNAPSHOT"),
         Match::Unknown,
         "a version that nobody can order is not a version nobody is affected by"
     );
 
-    // El rango que termina en last_affected.
+    // The range that ends at last_affected.
     let affected = affected_of(ADVISORY_UNKNOWN);
     assert_eq!(match_version(&affected, "3.0.9"), Match::Affected);
     assert_eq!(match_version(&affected, "3.1.0"), Match::Unaffected);
@@ -92,8 +92,8 @@ fn the_matching_resolves_the_exact_version_the_range_and_the_unknown_one() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// La relacion AFFECTED_BY se recorre, y una dependencia transitiva se
-/// distingue de una directa.
+/// The AFFECTED_BY relation is traversed, and a transitive dependency is
+/// told apart from a direct one.
 #[test]
 fn the_affected_by_relation_is_traversed_and_the_depth_is_told() {
     let graph = vec![
@@ -147,7 +147,7 @@ fn the_affected_by_relation_is_traversed_and_the_depth_is_told() {
     assert!(!path.is_direct());
     assert_eq!(path.deployments.len(), 2, "and it runs in two environments");
 
-    // Y una dependencia directa es un paso.
+    // And a direct dependency is one step.
     let mut graph = graph.clone();
     graph.push(Edge {
         from: hrn("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-c"),
@@ -162,7 +162,7 @@ fn the_affected_by_relation_is_traversed_and_the_depth_is_told() {
     assert_eq!(direct.depth, 1);
     assert!(direct.is_direct());
 
-    // Y el radio de impacto nombra lo que esta afectado.
+    // And the blast radius names what is affected.
     let radius = blast_radius(&graph, &vulnerability);
     assert_eq!(radius.affected_subjects.len(), 2);
     assert_eq!(radius.affected_components.len(), 1);
@@ -171,11 +171,11 @@ fn the_affected_by_relation_is_traversed_and_the_depth_is_told() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// La ingesta de VEX cambia el estado del hallazgo segun lo que declara, y
-/// un VEX no verificado no silencia un hallazgo.
+/// The VEX ingestion changes the state of the finding per what it declares, and
+/// an unverified VEX does not silence a finding.
 #[test]
 fn the_vex_changes_the_state_and_an_unverified_one_does_not_silence_it() {
-    // La declaracion que dice que no afecta.
+    // The declaration that says it does not affect.
     let statement = read_vex(VEX_NOT_AFFECTED, "CVE-2024-99999").expect("the fixture is read");
     assert_eq!(statement.status, VexStatus::NotAffected);
     assert!(
@@ -195,8 +195,8 @@ fn the_vex_changes_the_state_and_an_unverified_one_does_not_silence_it() {
     );
     assert_eq!(finding.state, AffectedState::Affected);
 
-    // Con la declaracion verificada, el hallazgo deja de estar afectado y
-    // la declaracion queda al lado.
+    // With the verified declaration, the finding is no longer affected and
+    // the declaration stays alongside.
     let mut verified = statement.clone();
     verified.verified = true;
     apply_vex(&mut finding, &verified);
@@ -205,9 +205,9 @@ fn the_vex_changes_the_state_and_an_unverified_one_does_not_silence_it() {
     assert_eq!(reference.id, statement.id);
     assert!(reference.verified);
 
-    // Y con una declaracion que NO esta verificada, el hallazgo sigue
-    // ahi: una declaracion que nadie comprobaro es una declaracion que
-    // alguien escribio.
+    // And with a declaration that is NOT verified, the finding is still
+    // there: a declaration that nobody checked is a declaration that
+    // someone wrote.
     let mut finding = state_without_vex(
         "GHSA-hodei-test-0001",
         "org.example:lib-b",
@@ -234,8 +234,8 @@ fn the_vex_changes_the_state_and_an_unverified_one_does_not_silence_it() {
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// El caso de seguridad se abre con su estado, y la remediacion
-/// verificada lo cierra.
+/// The security case opens with its state, and the verified
+/// remediation closes it.
 #[test]
 fn the_security_case_opens_with_its_state_and_the_verified_remediation_closes_it() {
     let now = chrono::Utc::now();
@@ -269,7 +269,7 @@ fn the_security_case_opens_with_its_state_and_the_verified_remediation_closes_it
     assert_eq!(case.trigger, "GHSA-hodei-test-0001");
     assert_eq!(case.findings.len(), 1);
 
-    // Y la remediacion verificada lo cierra.
+    // And the verified remediation closes it.
     let state = case.verify_remediation("sha256:fixed", &["production".to_string()], now);
     assert_eq!(state, CaseState::VerifiedFixed);
     assert!(case.state.is_closed());
@@ -283,7 +283,7 @@ fn the_security_case_opens_with_its_state_and_the_verified_remediation_closes_it
 
 // ───────────────────────────── AC6 ─────────────────────────────
 
-/// Un artefacto sin SBOM tiene estado desconocido, no "no afectado".
+/// An artifact without an SBOM has an unknown state, not "unaffected".
 #[test]
 fn an_artifact_without_an_inventory_has_an_unknown_state() {
     let finding = state_without_vex(
@@ -301,7 +301,7 @@ fn an_artifact_without_an_inventory_has_an_unknown_state() {
     );
     assert!(finding.state.is_unknown());
 
-    // Y con inventario, el estado es el que dice el emparejamiento.
+    // And with an inventory, the state is the one the matching says.
     let finding = state_without_vex(
         "GHSA-hodei-test-0001",
         "org.example:lib-b",
@@ -312,8 +312,8 @@ fn an_artifact_without_an_inventory_has_an_unknown_state() {
     );
     assert_eq!(finding.state, AffectedState::Unaffected);
 
-    // Y con inventario y una version que no se puede comparar, tambien
-    // se desconoce.
+    // And with an inventory and a version that cannot be compared, it is also
+    // unknown.
     let finding = state_without_vex(
         "GHSA-hodei-test-0001",
         "org.example:lib-b",
@@ -325,7 +325,7 @@ fn an_artifact_without_an_inventory_has_an_unknown_state() {
     assert_eq!(finding.state, AffectedState::Unknown);
 }
 
-/// Y la evidencia nueva actualiza el caso sin borrar la historia.
+/// And the new evidence updates the case without erasing the history.
 #[test]
 fn the_new_evidence_updates_the_case_without_erasing_the_history() {
     let now = chrono::Utc::now();

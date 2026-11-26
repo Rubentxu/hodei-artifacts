@@ -191,11 +191,11 @@ fn the_event() -> Event {
     )
 }
 
-/// El mundo de la prueba: el runtime, las llamadas que se vieron, el
-/// almacen y el outbox.
+/// The test world: the runtime, the calls that were seen, the
+/// store and the outbox.
 ///
-/// Es un tipo con nombre porque una tupla de cuatro no se puede leer: y
-/// lo que no se puede leer no se puede comprobar.
+/// It is a named type because a four-tuple cannot be read: and
+/// what cannot be read cannot be checked.
 type TheWorld = (
     ReactiveRuntime,
     Arc<Mutex<Vec<String>>>,
@@ -245,8 +245,8 @@ async fn the_plan_is_recorded_before_the_executor_touches() {
         "el plan queda dicho en la traza"
     );
 
-    // Los intents cruzaron el outbox y los recibos dicen aplicado: el
-    // estado del intent vive en el outbox, no en la memoria del proceso.
+    // The intents crossed the outbox and the receipts say applied: the
+    // intent's state lives in the outbox, not in the process memory.
     for identity in calls.lock().unwrap().iter() {
         assert_eq!(
             outbox.state_of(identity),
@@ -258,7 +258,7 @@ async fn the_plan_is_recorded_before_the_executor_touches() {
 
 /// A validation failure in the planning phase leaves the executor with
 /// ZERO calls: the plan said nothing, so nothing is done. And the outbox
-/// has no intents: lo que no se dijo no puede estar pendiente.
+/// has no intents: what was not said cannot be pending.
 #[tokio::test]
 async fn a_validation_failure_touches_nothing() {
     let (runtime, calls, store, outbox) =
@@ -327,7 +327,7 @@ async fn a_preparation_failure_touches_nothing() {
 }
 
 /// An exhausted budget cuts BEFORE anything is planned, and nothing is
-/// touched: el presupuesto que llega tarde ya gasto lo que cortaba.
+/// touched: a budget that arrives late has already spent what it was meant to cut.
 #[tokio::test]
 async fn an_exhausted_budget_touches_nothing() {
     let (runtime, calls, store, _outbox) = runtime_with(

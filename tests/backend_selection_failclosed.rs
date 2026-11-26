@@ -52,7 +52,8 @@ const SHIPPED_PROFILES: &[&str] = &["config/default.toml", "config/release.toml"
 
 /// The minimal graph section a deployment adds to the shared base files:
 /// the authority is the deployment's decision, never the file's.
-const GRAPH_OVERLAY: &str = "[graph]\nendpoint = \"127.0.0.1:9080\"\n\n[graph.tls]\nenabled = false\n";
+const GRAPH_OVERLAY: &str =
+    "[graph]\nendpoint = \"127.0.0.1:9080\"\n\n[graph.tls]\nenabled = false\n";
 
 /// The metadata backends the binary does not implement. The first is the
 /// retired embedded engine; the rest are the spellings a typo or an

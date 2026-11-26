@@ -1,25 +1,25 @@
 #![allow(clippy::module_name_repetitions)]
-//! Dominio compartido (Shared Kernel) para el ecosistema Hodei.
+//! Shared domain (Shared Kernel) for the Hodei ecosystem.
 //!
-//! Este módulo expone únicamente los elementos de lenguaje
-//! verdaderamente transversales (HRN + metadatos de entidades + traits
-//! para el motor de políticas). Cualquier crate que necesite
-//! describir entidades, acciones o construir UIDs de Cedar debe
-//! depender de este módulo en lugar de acoplarse a un bounded context
-//! concreto (p.ej. `policies`, `hodei-iam`, etc.).
+//! This module exposes only the truly cross-cutting language
+//! elements (HRN + entity metadata + traits
+//! for the policy engine). Any crate that needs to
+//! describe entities, actions or build Cedar UIDs must
+//! depend on this module instead of coupling to a specific
+//! bounded context (e.g. `policies`, `hodei-iam`, etc.).
 //!
-//! Principios:
-//! - No incluir lógica de negocio específica.
-//! - Solo tipos estables y abstracciones (HRN, traits de entidades, storage de políticas).
-//! - Evitar introducir dependencias cíclicas (este módulo debe permanecer "en la base").
+//! Principles:
+//! - Do not include specific business logic.
+//! - Only stable types and abstractions (HRN, entity traits, policy storage).
+//! - Avoid introducing cyclic dependencies (this module must remain "at the base").
 //!
-//! Estructura:
-//! - `hrn`: Representa el identificador global de recursos (Hrn).
-//! - `entity`: Traits y tipos para describir entidades, acciones y almacenamiento de políticas.
-//! - `value_objects`: Value Objects tipados del dominio (ServiceName, ResourceTypeName, etc.)
-//! - `attributes`: Tipos agnósticos para representar valores de atributos
+//! Structure:
+//! - `hrn`: Represents the global resource identifier (Hrn).
+//! - `entity`: Traits and types to describe entities, actions and policy storage.
+//! - `value_objects`: Typed Value Objects of the domain (ServiceName, ResourceTypeName, etc.)
+//! - `attributes`: Agnostic types to represent attribute values
 //!
-//! Re-exports clave para ergonomía:
+//! Key re-exports for ergonomics:
 //! - `Hrn`
 //! - `HodeiEntityType`, `HodeiEntity`, `Principal`, `Resource`
 //! - `ActionTrait`, `AttributeType`
@@ -37,7 +37,7 @@ pub mod value_objects;
 #[cfg(test)]
 mod hrn_test;
 
-// Re-export de tipos fundamentales para uso directo por consumidores.
+// Re-export of fundamental types for direct use by consumers.
 pub use entity::{
     ActionTrait, AttributeType, HodeiEntity, HodeiEntityType, PolicyStorage, PolicyStorageError,
     Principal, Resource,
@@ -45,11 +45,11 @@ pub use entity::{
 pub use hrn::Hrn;
 pub use hrn_migration::{HrnMigrationError, HrnSource, MigratedHrn};
 
-// Re-export de Value Objects para uso ergonómico
+// Re-export of Value Objects for ergonomic use
 pub use value_objects::{AttributeName, ResourceTypeName, ServiceName, ValidationError};
 
-// Re-export de tipos de atributos agnósticos
+// Re-export of agnostic attribute types
 pub use attributes::AttributeValue;
 
-// Re-export de tipos de políticas agnósticos
+// Re-export of agnostic policy types
 pub use policy::{HodeiPolicy, HodeiPolicySet, PolicyId};

@@ -17,7 +17,7 @@
 //!   failure, never a permission (AC2). The grant and revoke events ride
 //!   the same transaction as the change they record (AC2).
 //! - **Concurrent activation of different revisions**: one wins, the
-//!   other constata — the HSP-149 CAS pattern ported to the graph
+//!   other takes note — the HSP-149 CAS pattern ported to the graph
 //!   guards (AC3).
 
 use std::sync::Arc;
@@ -563,7 +563,7 @@ async fn the_stale_race_and_a_broken_authority_never_concede_and_the_events_trav
 }
 
 /// AC3: two writers activating different revisions of one digest
-/// aggregate — one wins, the other constata.
+/// aggregate — one wins, the other takes note.
 #[tokio::test]
 async fn two_writers_activating_different_revisions_one_wins_the_other_constata() {
     let Some((_client, store)) = open_store().await else {
@@ -636,7 +636,7 @@ async fn two_writers_activating_different_revisions_one_wins_the_other_constata(
         "the loser constata the revision the aggregate reached: {loser}"
     );
 
-    // The constatación: the aggregate reads at the version the winner
+    // The confirmation: the aggregate reads at the version the winner
     // left, and the active grant is the winner's decision — the newest
     // version of the digest is the one that serves.
     let revision = store

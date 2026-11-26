@@ -1,13 +1,13 @@
-//! Los puertos de la simulacion.
+//! The ports of the simulation.
 //!
-//! La simulacion **lee** y no escribe. No hay un puerto de escritura, y
-//! esa es la garantia de aislamiento: no se puede escribir en el estado
-//! real desde una simulacion porque no existe por donde hacerlo.
+//! The simulation **reads** and does not write. There is no write port, and
+//! that is the isolation guarantee: it is not possible to write to the real state
+//! from a simulation because there is no way to do it.
 //!
-//! Y lo que se lee lleva su VERSION: un puerto que no dice sobre que
-//! generacion del mundo leyo no permite comprobar que el mundo no se
-//! haya movido mientras se evaluaba, y una simulacion que no lo
-//! comprueba devuelve un diff sobre un mundo que puede no existir.
+//! And what is read carries its VERSION: a port that does not say which
+//! generation of the world it read does not allow checking that the world has not
+//! moved while it was being evaluated, and a simulation that does not
+//! check it returns a diff on a world that may not exist.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -18,77 +18,77 @@ use kernel::Hrn;
 use crate::diff::TheDecision;
 use crate::hypothetical::{Hypothetical, RelationFact};
 
-/// El grafo que la simulacion lee.
+/// The graph that the simulation reads.
 ///
-/// El grafo real **no se escribe nunca** desde aqui. El puerto no tiene
-/// un metodo de escritura, y un puerto sin escritura no se puede usar
-/// para escribir.
+/// The real graph is **never written** from here. The port has no
+/// write method, and a port without writes cannot be used
+/// to write.
 #[async_trait]
 pub trait SimulationGraph: Send + Sync {
-    /// Las relaciones de un sujeto: las que parten de el y las que llegan
-    /// a el.
+    /// The relations of a subject: those that leave it and those that arrive
+    /// at it.
     async fn relations_of(&self, subject: &Hrn) -> Result<Vec<RelationFact>, String>;
 
-    /// Cuantas relaciones tiene el grafo.
+    /// How many relations the graph has.
     ///
-    /// Es una guarda GRUESA: dice si el grafo ha cambiado de tamano, y
-    /// no si las relaciones son las mismas. Un cambio que sustituye una
-    /// relacion por otra no lo nota, y por eso la simulacion no se
-    /// apoya solo en esto.
+    /// It is a COARSE guard: it says whether the graph has changed size, and
+    /// not whether the relations are the same. A change that replaces one
+    /// relation with another does not notice it, and for that reason the simulation does not
+    /// rely only on this.
     ///
-    /// El recuento es **de la cuenta**, no del sujeto: cuenta todas las
-    /// relaciones de la cuenta. Una escritura que no toca los sujetos
-    /// que la simulacion lee tambien lo mueve, y la simulacion se dice
-    /// obsoleta. Es a proposito --fallar cerrado--, pero conviene saber
-    ///lo antes de usarlo en produccion.
+    /// The count is **per account**, not per subject: it counts all the
+    /// relations of the account. A write that does not touch the subjects
+    /// that the simulation reads also moves it, and the simulation declares itself
+    /// stale. It is on purpose --failing closed--, but it is worth knowing
+    /// before using it in production.
     async fn relation_count(&self) -> Result<usize, String>;
 
-    /// Todas las relaciones del grafo.
+    /// All the relations of the graph.
     ///
-    /// Es una lectura cara y por eso existe aparte: el estado del grafo
-    /// se compara con lo que se leyo, y comparar necesita el estado
-    /// entero, no solo el de los sujetos afectados.
+    /// It is an expensive read and for that reason it exists separately: the state of the graph
+    /// is compared with what was read, and comparing needs the whole
+    /// state, not just that of the affected subjects.
     async fn all_relations(&self) -> Result<Vec<RelationFact>, String>;
 
-    /// La generacion del grafo de la cuenta: la version que su historia
-    /// ha alcanzado.
+    /// The generation of the account's graph: the version that its history
+    /// has reached.
     ///
-    /// Es un contador monotono, y lo que se compara antes y despues de
-    /// simular para saber si el mundo se ha movido. El numero de
-    /// relaciones no sirve para eso: un recuento no es una version.
+    /// It is a monotonic counter, and it is what is compared before and after
+    /// simulating to know whether the world has moved. The number of
+    /// relations is no use for that: a count is not a version.
     ///
-    /// Y es de la **CUENTA**, no del sujeto: es la historia del grafo
-    /// entero. Una escritura ajena al conjunto que la simulacion lee
-    /// tambien invalida la simulacion.
+    /// And it belongs to the **ACCOUNT**, not the subject: it is the history of the whole
+    /// graph. A write foreign to the set that the simulation reads
+    /// also invalidates the simulation.
     async fn generation(&self) -> Result<u64, String>;
 
-    /// La cuenta a la que pertenece el grafo.
+    /// The account the graph belongs to.
     ///
-    /// La simulacion se hace sobre UNA cuenta, y la base que declara el
-    /// fork tiene que ser de esa misma cuenta: una base de otra cuenta
-    /// no es una base, es una respuesta sobre el mundo de otro.
+    /// The simulation is done over ONE account, and the base that the
+    /// fork declares has to be from that same account: a base from another account
+    /// is not a base, it is an answer about someone else's world.
     fn account(&self) -> String;
 }
 
-/// Quien decide.
+/// Whoever decides.
 ///
-/// La decision se pide con la politica **del fork** y con los hechos
-/// hipoteticos, para que la decision de despues sea la de un mundo donde
-/// los hechos hipoteticos pasaron.
+/// The decision is requested with the **fork's** policy and with the hypothetical
+/// facts, so that the later decision is that of a world where the
+/// hypothetical facts happened.
 ///
-/// El instante llega desde fuera: el nucleo de decision no lee el reloj
-/// de pared. Un reloj inyectado es lo que hace que la misma base y los
-/// mismos hechos den el mismo resultado, y una simulacion reproducible
-/// es la que se puede auditar.
+/// The instant arrives from outside: the decision core does not read the wall
+/// clock. An injected clock is what makes the same base and the
+/// same facts give the same result, and a reproducible simulation
+/// is one that can be audited.
 #[async_trait]
 pub trait DecisionEvaluator: Send + Sync {
-    /// La decision de un sujeto, en el instante que se le indica.
+    /// The decision of a subject, at the instant it is given.
     ///
-    /// La decision lleva **lo que leyo** para decidir: sin eso, la base
-    /// de la simulacion diria sobre que mundo se calculo sin decir que
-    /// evidencia lo decidio, y una evidencia que entra en mitad de la
-    /// simulacion se atribuiria al hecho hipotetico cuando la causa fue
-    /// otra.
+    /// The decision carries **what it read** in order to decide: without that, the base
+    /// of the simulation would say on which world it was computed without saying which
+    /// evidence decided it, and evidence that enters in the middle of the
+    /// simulation would be attributed to the hypothetical fact when the cause was
+    /// another.
     async fn decide(
         &self,
         subject: &Hrn,
@@ -97,12 +97,12 @@ pub trait DecisionEvaluator: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<TheDecision, String>;
 
-    /// Lo que el evaluador lee DE VERDAD para decidir de un sujeto.
+    /// What the evaluator ACTUALLY reads in order to decide about a subject.
     ///
-    /// Es la lectura que se repite al final de la simulacion para
-    /// comprobar que la evidencia que consumio la decision sigue siendo
-    /// la misma. Sin ella, una evidencia que entra mientras se evalua
-    /// seria invisible: no toca el grafo, no cambia el numero de
-    /// relaciones y no mueve la generacion.
+    /// It is the read that is repeated at the end of the simulation to
+    /// check that the evidence consumed by the decision is still
+    /// the same. Without it, evidence that enters while evaluating
+    /// would be invisible: it does not touch the graph, does not change the number of
+    /// relations and does not move the generation.
     async fn the_reads_of(&self, subject: &Hrn) -> Result<ReadSet, String>;
 }

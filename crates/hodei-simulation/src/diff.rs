@@ -1,8 +1,8 @@
-//! El diff: lo que aparece, lo que desaparece y lo que cambia.
+//! The diff: what appears, what disappears and what changes.
 //!
-//! El diff tiene que parecerse al diff de git: se ve que relaciones
-//! aparecen y que relaciones desaparecen, y que decisiones cambian, sin
-//! tener que desplegar nada para averiguarlo.
+//! The diff has to look like a git diff: it shows which relations
+//! appear and which relations disappear, and which decisions change, without
+//! having to deploy anything to find out.
 
 use hodei_evidence::domain::read_set::ReadSet;
 use hodei_trust_policy::TrustPolicy;
@@ -12,41 +12,41 @@ use serde::{Deserialize, Serialize};
 
 use crate::hypothetical::RelationFact;
 
-/// El diff de las relaciones del grafo.
+/// The diff of the graph relations.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct StructuralDiff {
-    /// Las relaciones que aparecen.
+    /// The relations that appear.
     pub appeared: Vec<RelationFact>,
-    /// Las relaciones que desaparecen.
+    /// The relations that disappear.
     pub disappeared: Vec<RelationFact>,
-    /// Los sujetos a los que el cambio llega.
+    /// The subjects the change reaches.
     pub affected_subjects: Vec<Hrn>,
-    /// Los despliegues de esos sujetos.
+    /// The deployments of those subjects.
     ///
-    /// Un despliegue es donde duele el cambio: un artefacto que deja de
-    /// ser promovible duele en el despliegue que lo ejecuta, y el diff
-    /// tiene que decirlo.
+    /// A deployment is where the change hurts: an artifact that stops being
+    /// promotable hurts at the deployment that runs it, and the diff
+    /// has to say so.
     pub affected_deployments: Vec<Hrn>,
 }
 
 impl StructuralDiff {
-    /// Un diff vacio.
+    /// An empty diff.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// El diff entre dos conjuntos de relaciones.
+    /// The diff between two sets of relations.
     ///
-    /// Las relaciones se comparan por su IDENTIDAD (el tipo y los dos
-    /// extremos): dos relaciones con la misma identidad son la misma
-    /// relacion, y compararlas por sus campos seria comparar dos veces la
-    /// misma fila.
+    /// Relations are compared by their IDENTITY (the type and the two
+    /// endpoints): two relations with the same identity are the same
+    /// relation, and comparing them by their fields would be comparing the
+    /// same row twice.
     ///
-    /// Y el diff sale en ORDEN CANONICO: las relaciones que aparecen y
-    /// las que desaparecen van ordenadas por su identidad, no en el
-    /// orden en que las dio cada lado. Un diff cuyo orden depende del
-    /// orden de entrada no se puede comparar con otro diff, y un diff
-    /// que no se puede comparar no se puede auditar.
+    /// And the diff comes out in CANONICAL ORDER: the relations that appear and
+    /// those that disappear are sorted by their identity, not in the
+    /// order in which each side gave them. A diff whose order depends on the
+    /// input order cannot be compared with another diff, and a diff
+    /// that cannot be compared cannot be audited.
     pub fn between(before: &[RelationFact], after: &[RelationFact]) -> Self {
         let before_ids: Vec<String> = before.iter().map(RelationFact::identity).collect();
         let after_ids: Vec<String> = after.iter().map(RelationFact::identity).collect();
@@ -82,88 +82,88 @@ impl StructuralDiff {
         }
     }
 
-    /// Si el diff no dice nada.
+    /// Whether the diff says nothing.
     pub fn is_empty(&self) -> bool {
         self.appeared.is_empty() && self.disappeared.is_empty()
     }
 }
 
-/// Una decision que cambia.
+/// A decision that changes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionChange {
-    /// El sujeto cuya decision cambia.
+    /// The subject whose decision changes.
     pub subject: Hrn,
-    /// Lo que se decidia antes.
+    /// What was decided before.
     pub before: Outcome,
-    /// Lo que se decidiria ahora.
+    /// What would be decided now.
     pub after: Outcome,
-    /// La version de la politica de antes.
+    /// The version of the previous policy.
     pub policy_version_before: String,
-    /// La version de la politica de ahora.
+    /// The version of the current policy.
     pub policy_version_after: String,
 }
 
 impl DecisionChange {
-    /// La decision cambia de verdad.
+    /// The decision really changes.
     ///
-    /// Una decision que sigue igual, aunque se haya vuelto a evaluar, no
-    /// es un cambio: y un diff lleno de ruido no es un diff.
+    /// A decision that stays the same, even if it was evaluated again, is not
+    /// a change: and a diff full of noise is not a diff.
     pub fn is_a_change(&self) -> bool {
         self.before != self.after
     }
 }
 
-/// El diff completo de la simulacion.
+/// The complete diff of the simulation.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct SimulationDiff {
-    /// El diff de las relaciones.
+    /// The diff of the relations.
     pub structural: StructuralDiff,
-    /// Las decisiones que cambian.
+    /// The decisions that change.
     pub decisions: Vec<DecisionChange>,
-    /// La base sobre la que se calculo: el mundo que el diff describe.
+    /// The base on which it was computed: the world that the diff describes.
     ///
-    /// Sin ella el diff es una respuesta sin el mundo al que se refiere:
-    /// no dice sobre que version de la verdad se calculo, y por eso no
-    /// se puede auditar.
+    /// Without it the diff is an answer without the world it refers to:
+    /// it does not say on which version of the truth it was computed, and therefore it
+    /// cannot be audited.
     #[serde(default)]
     pub base: crate::base::SimulationBase,
 }
 
 impl SimulationDiff {
-    /// Un diff vacio.
+    /// An empty diff.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// El diff dice que nada cambia.
+    /// The diff says that nothing changes.
     pub fn is_empty(&self) -> bool {
         self.structural.is_empty() && self.decisions.iter().all(|change| !change.is_a_change())
     }
 
-    /// La forma canonica del diff: lo que se compara entre dos
-    /// simulaciones del mismo mundo.
+    /// The canonical form of the diff: what is compared between two
+    /// simulations of the same world.
     ///
-    /// El diff trae el manifiesto de lecturas, y ese manifiesto lleva el
-    /// orden en que se leyo. Dos simulaciones del mismo mundo leen en
-    /// orden distinto y por eso sus manifiestos son iguales pero no
-    /// identicos: la forma canonica es la que se compara.
+    /// The diff carries the read manifest, and that manifest carries the
+    /// order in which it was read. Two simulations of the same world read in
+    /// different order and therefore their manifests are equal but not
+    /// identical: the canonical form is the one that is compared.
     pub fn canonical(&self) -> crate::compare::CanonicalDiff {
         crate::compare::canonical(self)
     }
 }
 
-/// La decision de un sujeto, con la politica que la produjo.
+/// The decision of a subject, with the policy that produced it.
 ///
-/// Y con lo que se leyo para decidir: una decision sin su manifiesto de
-/// lecturas es una decision que no dice sobre que evidencia se tomo, y
-/// una base de simulacion que no la guarda no puede saber si la
-/// evidencia cambio mientras se evaluaba.
+/// And with what was read to decide: a decision without its read manifest is
+/// a decision that does not say on which evidence it was taken, and
+/// a simulation base that does not keep it cannot know whether the
+/// evidence changed while it was being evaluated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TheDecision {
-    /// Lo que se decidio.
+    /// What was decided.
     pub outcome: Outcome,
-    /// La politica que lo decidio.
+    /// The policy that decided it.
     pub policy: TrustPolicy,
-    /// Lo que se leyo para decidir.
+    /// What was read to decide.
     pub read_set: ReadSet,
 }

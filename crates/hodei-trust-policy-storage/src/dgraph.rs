@@ -1579,8 +1579,8 @@ fn clear_lease_deletes(uid_var: &str) -> String {
     )
 }
 
-/// Whether a receipt says something the node ALREADY says: el mismo
-/// recibo dos veces es un recibo una vez, exactly as the reference says.
+/// Whether a receipt says something the node ALREADY says: the same
+/// receipt twice is a receipt once, exactly as the reference says.
 fn receipt_is_already_true(receipt: &Receipt, state: &str) -> bool {
     match receipt {
         Receipt::Applied => state == "applied",
@@ -1708,7 +1708,7 @@ impl DgraphIntentStore {
         let claimable = node.state == "pending"
             || (node.state == "claimed" && node.lease_until.is_some_and(|until| until <= now));
         if !claimable {
-            // Applied, failed or unknown: lo que ya esta resuelto no se
+            // Applied, failed or unknown: what is already resolved is not
             // reclama; and a live lease belongs to its owner.
             return Ok(None);
         }
@@ -1954,7 +1954,7 @@ impl DgraphIntentStore {
 
     /// The intents that are waiting: the pending ones, plus the claimed
     /// ones whose lease died, which are put back on the market first.
-    /// Lo desconocido NO esta aqui: no se reejecuta, se reconcilia. The
+    /// The unknown is NOT here: it is not re-executed, it is reconciled. The
     /// re-marketing and the listing are two steps: the query of an upsert
     /// runs BEFORE its mutation, so the ones just put back are read after
     /// the fact, not from a stale snapshot.
@@ -2002,7 +2002,7 @@ impl DgraphIntentStore {
     /// Returns an `unknown` intent to `pending`, explicitly: the
     /// reconciliation happened, somebody looked at the real world, and
     /// NOW the intent may be tried again. The receipt it carried goes
-    /// away with it: lo que se reconcilia empieza de nuevo.
+    /// away with it: what is reconciled starts anew.
     async fn reconcile_unknown(&self, identity: &str) -> Result<(), DgraphIntentError> {
         let Some(node) = self.read_intent(identity).await? else {
             return Err(DgraphIntentError::NotUnknown {

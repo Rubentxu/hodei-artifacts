@@ -1,15 +1,15 @@
-//! El fork: un estado aislado para preguntar "que pasaria si".
+//! The fork: an isolated state for asking "what would happen if".
 //!
-//! El fork **no copia** el estado real: lo **superpone**. El estado real
-//! se lee y no se toca, y el fork son los hechos hipoteticos y nada mas.
-//! Esa es la decision del SPIKE-008, y su razon es que una copia cuesta
-//! lo que cuesta el estado (156 s de proyeccion y 656.6 s de
-//! reconstruccion a la escala de referencia) mientras que una superposicion
-//! cuesta lo que cuestan los hechos hipoteticos, que son pocos.
+//! The fork **does not copy** the real state: it **overlays** it. The real state
+//! is read and not touched, and the fork is the hypothetical facts and nothing else.
+//! That is the decision of SPIKE-008, and its reason is that a copy costs
+//! what the state costs (156 s of projection and 656.6 s of
+//! rebuild at the reference scale) whereas an overlay
+//! costs what the hypothetical facts cost, which are few.
 //!
-//! Y la superposicion es **aislada por construccion**: el fork es un
-//! VALOR. No hay un puerto de escritura que lo alcance, y por eso
-//! simular no puede cambiar el grafo real.
+//! And the overlay is **isolated by construction**: the fork is a
+//! VALUE. There is no write port that reaches it, and that is why
+//! simulating cannot change the real graph.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::domain::graph::RelationType;
@@ -19,48 +19,48 @@ use serde::{Deserialize, Serialize};
 
 use crate::hypothetical::{Hypothetical, HypotheticalClaim, RelationFact};
 
-/// El punto del estado real del que sale el fork.
+/// The point of the real state the fork comes from.
 ///
-/// El checkpoint dice **de donde** se parte, y no lleva el estado: el
-/// estado se lee del almacen real, que es lo que se quiere (la verdad de
-/// ahora, no una copia de la verdad de hace rato).
+/// The checkpoint says **where** to start from, and does not carry the state: the
+/// state is read from the real store, which is what is wanted (the truth of
+/// now, not a copy of the truth from a while ago).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checkpoint {
-    /// El identificador del checkpoint.
+    /// The checkpoint's identifier.
     pub id: String,
-    /// La cuenta a la que pertenece.
+    /// The account it belongs to.
     pub account: String,
-    /// El momento del checkpoint.
+    /// The checkpoint's moment.
     pub at: DateTime<Utc>,
-    /// El numero de eventos del ledger en ese punto, si se sabe.
+    /// The number of ledger events at that point, if known.
     ///
-    /// Es la posicion DECLARADA de la que parte el fork, y viaja en el
-    /// manifiesto de la base para que la respuesta diga de donde sale.
-    /// No se verifica contra el ledger: la simulacion no tiene un puerto
-    /// de ledger, y una posicion que no se puede comprobar no se
-    /// presenta como comprobada.
+    /// It is the DECLARED position the fork starts from, and it travels in the
+    /// base's manifest so the response says where it comes from.
+    /// It is not verified against the ledger: the simulation has no ledger
+    /// port, and a position that cannot be checked is not
+    /// presented as checked.
     pub ledger_position: Option<u64>,
-    /// La generacion del grafo en ese punto, si se sabe.
+    /// The graph generation at that point, if known.
     ///
-    /// Es la version contra la que se PREPARO el fork, y la que se
-    /// comprueba al simular: si el grafo ya no esta en esa generacion,
-    /// el fork se hizo contra un mundo que ya no existe, y la
-    /// simulacion se dice obsoleta en vez de responder por el mundo de
-    /// ahora como si fuera el de entonces.
+    /// It is the version the fork was PREPARED against, and the one that is
+    /// checked when simulating: if the graph is no longer at that generation,
+    /// the fork was made against a world that no longer exists, and the
+    /// simulation is declared stale instead of answering for the world of
+    /// now as if it were that of back then.
     ///
-    /// Un checkpoint SIN generacion no se puede simular: una base que no
-    /// dice contra que version se evalua no se puede comprobar.
+    /// A checkpoint WITHOUT a generation cannot be simulated: a base that does not
+    /// say which version it is evaluated against cannot be checked.
     #[serde(default)]
     pub generation: Option<u64>,
 }
 
 impl Checkpoint {
-    /// Un checkpoint, preparado contra una generacion del grafo.
+    /// A checkpoint, prepared against a graph generation.
     ///
-    /// La generacion es OBLIGATORIA: un fork que no dice contra que
-    /// version del mundo se preparo no se puede comprobar, y la
-    /// simulacion lo rechaza en vez de responder por un mundo que nadie
-    /// ha dicho cual era.
+    /// The generation is MANDATORY: a fork that does not say which
+    /// version of the world it was prepared against cannot be checked, and the
+    /// simulation rejects it instead of answering for a world nobody
+    /// has said which one was.
     pub fn new(
         id: impl Into<String>,
         account: impl Into<String>,
@@ -77,25 +77,25 @@ impl Checkpoint {
         }
     }
 
-    /// El checkpoint preparado contra otra generacion del grafo.
+    /// The checkpoint prepared against another graph generation.
     pub fn at_generation(mut self, generation: u64) -> Self {
         self.generation = Some(generation);
         self
     }
 }
 
-/// Los limites de una simulacion.
+/// The limits of a simulation.
 ///
-/// Una simulacion es un recurso, y un recurso sin limite se come la
-/// maquina. Los limites son **declarados**: el que simula sabe de
-/// antemano cuanto puede gastar.
+/// A simulation is a resource, and a resource without a limit eats the
+/// machine. The limits are **declared**: whoever simulates knows in
+/// advance how much it may spend.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationLimits {
-    /// Cuantos hechos hipoteticos puede tener la simulacion.
+    /// How many hypothetical facts the simulation may have.
     pub max_hypotheticals: usize,
-    /// Cuantos sujetos puede tocar.
+    /// How many subjects it may touch.
     pub max_affected_subjects: usize,
-    /// Cuanto vive la simulacion.
+    /// How long the simulation lives.
     pub max_lifetime: chrono::Duration,
 }
 
@@ -109,37 +109,37 @@ impl Default for SimulationLimits {
     }
 }
 
-/// El fork aislado.
+/// The isolated fork.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationFork {
-    /// El identificador de la simulacion.
+    /// The simulation's identifier.
     pub id: String,
-    /// De donde se parte.
+    /// Where it starts from.
     pub base: Checkpoint,
-    /// Los hechos hipoteticos, superpuestos al estado real.
+    /// The hypothetical facts, overlaid on the real state.
     pub facts: Vec<Hypothetical>,
-    /// Los sujetos DECLARADOS que la simulacion toca.
+    /// The DECLARED subjects the simulation touches.
     ///
-    /// Una simulacion que solo cambia la politica no trae hechos, y los
-    /// sujetos no se infieren de lo que no hay: se DECLARAN, y quien
-    /// declara responde de que puede simularlos.
+    /// A simulation that only changes the policy brings no facts, and the
+    /// subjects are not inferred from what is not there: they are DECLARED, and whoever
+    /// declares answers for being able to simulate them.
     #[serde(default)]
     pub subjects: Vec<Hrn>,
-    /// La politica que estaria en vigor, si la simulacion cambia la.
+    /// The policy that would be in force, if the simulation changes it.
     pub policy: Option<TrustPolicy>,
-    /// La politica que esta en vigor ahora, en el estado real.
+    /// The policy in force now, in the real state.
     ///
-    /// Es la que decide "antes", y sin ella el diff de decisiones no
-    /// tendria contra que comparar.
+    /// It is the one that decides "before", and without it the decision diff would
+    /// have nothing to compare against.
     pub base_policy: TrustPolicy,
-    /// Los limites.
+    /// The limits.
     pub limits: SimulationLimits,
-    /// Cuando se creo.
+    /// When it was created.
     pub created_at: DateTime<Utc>,
 }
 
 impl SimulationFork {
-    /// Un fork vacio, sin hechos hipoteticos.
+    /// An empty fork, without hypothetical facts.
     pub fn new(
         id: impl Into<String>,
         base: Checkpoint,
@@ -158,12 +158,12 @@ impl SimulationFork {
         }
     }
 
-    /// Declara los sujetos que la simulacion toca.
+    /// Declares the subjects the simulation touches.
     ///
-    /// Es la seleccion EXPLICITA: los sujetos que se simulan son los que
-    /// se declaran mas los que traen los hechos, y una simulacion que
-    /// solo cambia la politica necesita sujetos declarados, porque de
-    /// los hechos que no hay no se infiere nada.
+    /// It is the EXPLICIT selection: the subjects that are simulated are those
+    /// declared plus those brought by the facts, and a simulation that
+    /// only changes the policy needs declared subjects, because nothing can be inferred from
+    /// facts that are not there.
     pub fn with_subjects(mut self, subjects: Vec<Hrn>) -> Self {
         for subject in subjects {
             if !self.subjects.contains(&subject) {
@@ -173,31 +173,31 @@ impl SimulationFork {
         self
     }
 
-    /// La politica que estaria en vigor en el fork.
+    /// The policy that would be in force in the fork.
     ///
-    /// Es la del fork si la simulacion cambia la politica, y la del estado
-    /// real si no: una simulacion que no toca la politica se evalua con
-    /// la politica de ahora.
+    /// It is the fork's if the simulation changes the policy, and the real
+    /// state's if not: a simulation that does not touch the policy is evaluated with
+    /// the current policy.
     pub fn effective_policy(&self) -> &TrustPolicy {
         self.policy.as_ref().unwrap_or(&self.base_policy)
     }
 
-    /// Superpone un hecho hipotetico.
+    /// Overlays a hypothetical fact.
     pub fn with(mut self, fact: Hypothetical) -> Self {
         self.facts.push(fact);
         self
     }
 
-    /// Superpone una politica hipotetica.
+    /// Overlays a hypothetical policy.
     pub fn with_policy(mut self, policy: TrustPolicy) -> Self {
         self.policy = Some(policy);
         self
     }
 
-    /// Los sujetos que la simulacion toca.
+    /// The subjects the simulation touches.
     ///
-    /// Son los que su decision puede cambiar, y por tanto los que el diff
-    /// de decisiones tiene que mirar.
+    /// They are those whose decision may change, and therefore those the
+    /// decision diff has to look at.
     pub fn affected_subjects(&self) -> Vec<Hrn> {
         let mut subjects: Vec<Hrn> = self.subjects.clone();
         for fact in &self.facts {
@@ -210,7 +210,7 @@ impl SimulationFork {
         subjects
     }
 
-    /// Las relaciones que el fork anade al estado real.
+    /// The relations the fork adds to the real state.
     pub fn added_relations(&self) -> Vec<RelationFact> {
         self.facts
             .iter()
@@ -227,7 +227,7 @@ impl SimulationFork {
             .collect()
     }
 
-    /// Las relaciones que el fork hace desaparecer del estado real.
+    /// The relations the fork makes disappear from the real state.
     pub fn removed_relations(&self) -> Vec<RelationFact> {
         self.facts
             .iter()
@@ -238,11 +238,11 @@ impl SimulationFork {
             .collect()
     }
 
-    /// La relacion que se consulta para un sujeto.
+    /// The relation that is queried for a subject.
     ///
-    /// La del fork es la del estado real MAS las hipoteticas MINUS las que
-    /// el fork sustituye. Y la substitucion se comprueba por identidad:
-    /// dos relaciones con la misma identidad son la misma relacion.
+    /// The fork's is the real state's PLUS the hypothetical ones MINUS those the
+    /// fork replaces. And the substitution is checked by identity:
+    /// two relations with the same identity are the same relation.
     pub fn relations_with(&self, real: &[RelationFact]) -> Vec<RelationFact> {
         let removed: Vec<String> = self
             .removed_relations()
@@ -265,7 +265,7 @@ impl SimulationFork {
         relations
     }
 
-    /// Comprueba que la simulacion cabe en sus limites.
+    /// Checks that the simulation fits within its limits.
     pub fn check_the_limits(&self, now: DateTime<Utc>) -> Result<(), crate::SimulationError> {
         if self.facts.len() > self.limits.max_hypotheticals {
             return Err(crate::SimulationError::TooLarge(format!(
@@ -289,10 +289,10 @@ impl SimulationFork {
             )));
         }
 
-        // La admision de los sujetos: los de OTRA cuenta no entran, y la
-        // comparacion es por componente canonico del HRN, no por texto.
-        // Un fork sin NINGUN sujeto no es una simulacion completa sin
-        // afectados: es una conclusion engañosa, y no se produce.
+        // Admission of the subjects: those of ANOTHER account do not enter, and the
+        // comparison is by canonical component of the HRN, not by text.
+        // A fork with NO subject is not a complete simulation without
+        // those affected: it is a misleading conclusion, and it is not produced.
         let subjects = self.affected_subjects();
         if subjects.is_empty() {
             return Err(crate::SimulationError::NotAllowed(
@@ -313,7 +313,7 @@ impl SimulationFork {
         Ok(())
     }
 
-    /// La relacion de un sujeto, por su relacion.
+    /// A subject's relation, by its relation.
     pub fn relations_of(&self, subject: &Hrn, real: &[RelationFact]) -> Vec<RelationFact> {
         self.relations_with(real)
             .into_iter()
@@ -321,7 +321,7 @@ impl SimulationFork {
             .collect()
     }
 
-    /// Las relaciones de un tipo, del fork.
+    /// The relations of a type, from the fork.
     pub fn relations_of_kind(
         &self,
         real: &[RelationFact],

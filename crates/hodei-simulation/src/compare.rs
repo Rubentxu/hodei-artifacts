@@ -1,15 +1,15 @@
-//! La comparacion pura: lo que se ordena, lo que se deduplica y lo que
-//! se contradice.
+//! The pure comparison: what is ordered, what is deduplicated and what
+//! is contradicted.
 //!
-//! Los helpers de aqui son **puros**: reciben relaciones, identidades y
-//! decisiones, y devuelven relaciones, identidades y decisiones. No leen,
-//! no escriben, no deciden y no llevan objetos de politica: la politica
-//! es un dato de la simulacion, y un helper que la llevara seria un
-//! helper que no se podria comparar con otro.
+//! The helpers here are **pure**: they receive relations, identities and
+//! decisions, and return relations, identities and decisions. They do not read,
+//! do not write, do not decide and do not carry policy objects: policy
+//! is simulation data, and a helper that carried it would be a
+//! helper that could not be compared with another.
 //!
-//! Y son funciones y no metodos porque su forma no depende de quien los
-//! llama: el mismo helper ordena el overlay de un fork y el de otro, y
-//! los dos resultados se comparan.
+//! And they are functions and not methods because their shape does not depend on who
+//! calls them: the same helper orders one fork's overlay and another's, and
+//! the two results are compared.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,22 +18,22 @@ use kernel::Hrn;
 use crate::diff::{DecisionChange, SimulationDiff, StructuralDiff};
 use crate::hypothetical::RelationFact;
 
-/// Un ciclo: las relaciones que lo cierran y los sujetos que toca.
+/// A cycle: the relations that close it and the subjects it touches.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cycle {
-    /// Las relaciones del ciclo, en orden canonico.
+    /// The cycle's relations, in canonical order.
     pub relations: Vec<String>,
-    /// Los sujetos del ciclo, en orden canonico.
+    /// The cycle's subjects, in canonical order.
     pub subjects: Vec<Hrn>,
 }
 
-/// Las relaciones normalizadas: sin duplicados y en orden canonico.
+/// Normalized relations: without duplicates and in canonical order.
 ///
-/// La deduplicacion es por IDENTIDAD --el tipo y los dos extremos--, y de
-/// dos relaciones con la misma identidad gana la que lleva la evidencia
-/// MAS PEQUENA: el resultado no puede depender del orden en que el
-/// almacen devolvio las filas, porque un resultado que depende del orden
-/// de las filas no es un resultado del mundo.
+/// Deduplication is by IDENTITY --the type and the two ends--, and of
+/// two relations with the same identity the one carrying the SMALLEST
+/// evidence wins: the result cannot depend on the order in which the
+/// store returned the rows, because a result that depends on the order
+/// of the rows is not a result of the world.
 pub fn normalize_relations(relations: &[RelationFact]) -> Vec<RelationFact> {
     let mut chosen: BTreeMap<String, RelationFact> = BTreeMap::new();
     for relation in relations {
@@ -49,24 +49,24 @@ pub fn normalize_relations(relations: &[RelationFact]) -> Vec<RelationFact> {
     chosen.into_values().collect()
 }
 
-/// Las decisiones en orden canonico: por sujeto.
+/// Decisions in canonical order: by subject.
 ///
-/// El diff de decisiones se compara con otro diff de decisiones, y dos
-/// listas que se leen en orden distinto no son la misma lista.
+/// A decision diff is compared with another decision diff, and two
+/// lists read in a different order are not the same list.
 pub fn normalize_decisions(decisions: &[DecisionChange]) -> Vec<DecisionChange> {
     let mut decisions = decisions.to_vec();
     decisions.sort_by_key(|change| change.subject.to_string());
     decisions
 }
 
-/// Los ciclos del overlay: las vueltas que se cierran.
+/// The overlay's cycles: the loops that close.
 ///
-/// Un ciclo es un conjunto de relaciones que se pisan entre si: A llega a
-/// B y B vuelve a A.
+/// A cycle is a set of relations that step on each other: A reaches
+/// B and B returns to A.
 ///
-/// Y son TODOS los ciclos, sin filtrar: el filtro de los que introduce
-/// la hipotetica es otra funcion, porque son dos preguntas distintas y
-/// una sola funcion que las mezcla no se puede probar.
+/// And they are ALL the cycles, unfiltered: the filter for the ones the
+/// hypothetical introduces is another function, because they are two different questions and
+/// a single function that mixes them cannot be tested.
 pub fn the_cycles_of(overlay: &[RelationFact]) -> Vec<Cycle> {
     let mut edges: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for relation in overlay {
@@ -75,9 +75,9 @@ pub fn the_cycles_of(overlay: &[RelationFact]) -> Vec<Cycle> {
             .or_default()
             .push((relation.to.to_string(), relation.identity()));
     }
-    // El recorrido tiene que ser el mismo con cualquier orden de entrada:
-    // un ciclo que aparece en una ejecucion y no en otra no es un ciclo
-    // del overlay, es un ciclo del recorrido.
+    // The traversal has to be the same with any input order:
+    // a cycle that appears in one execution and not in another is not a cycle
+    // of the overlay, it is a cycle of the traversal.
     for list in edges.values_mut() {
         list.sort();
     }
@@ -111,11 +111,11 @@ pub fn the_cycles_of(overlay: &[RelationFact]) -> Vec<Cycle> {
     found
 }
 
-/// Los ciclos que la HIPOTETICA introduce.
+/// The cycles the HYPOTHETICAL introduces.
 ///
-/// Un ciclo que ya estaba en el mundo real no lo introduce la
-/// simulacion, y declararlo seria echarle la culpa a la hipotetica. Lo
-/// que la simulacion introduce es lo que declara.
+/// A cycle that was already in the real world is not introduced by the
+/// simulation, and declaring it would be blaming the hypothetical. What
+/// the simulation introduces is what it declares.
 pub fn the_cycles_introduced_by(overlay: &[RelationFact], hypothetical: &[String]) -> Vec<Cycle> {
     the_cycles_of(overlay)
         .into_iter()
@@ -128,12 +128,12 @@ pub fn the_cycles_introduced_by(overlay: &[RelationFact], hypothetical: &[String
         .collect()
 }
 
-/// Los duplicados: las identidades que se dicen mas de una vez.
+/// Duplicates: the identities that are stated more than once.
 ///
-/// Una hipotesis que repite una relacion que ya esta en el mundo dice lo
-/// mismo dos veces, y una hipotesis que repite otra hipotesis tambien.
-/// Las dos se declaran: un diff que las guarda sin decir nada parece un
-/// diff que no ha mirado.
+/// A hypothesis that repeats a relation already in the world says the
+/// same thing twice, and a hypothesis that repeats another hypothesis does too.
+/// Both are declared: a diff that keeps them without saying anything looks like a
+/// diff that did not look.
 pub fn the_duplicates_of(hypothetical: &[RelationFact], observed: &[RelationFact]) -> Vec<String> {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut duplicates: BTreeSet<String> = BTreeSet::new();
@@ -152,12 +152,12 @@ pub fn the_duplicates_of(hypothetical: &[RelationFact], observed: &[RelationFact
     duplicates.into_iter().collect()
 }
 
-/// Las contradicciones: lo que una hipotesis dice y otra desmiente.
+/// Contradictions: what one hypothesis says and another denies.
 ///
-/// Una hipotesis que anade una relacion y otra que la sustituye se
-/// contradicen: una dice que la relacion existe y la otra dice que no.
-/// El overlay no puede obeyed las dos, y el resultado lo dice en vez de
-/// elegir una por su cuenta.
+/// A hypothesis that adds a relation and another that replaces it
+/// contradict each other: one says the relation exists and the other says it does not.
+/// The overlay cannot obey both, and the result says so instead of
+/// picking one on its own.
 pub fn the_contradictions_of(added: &[RelationFact], removed: &[RelationFact]) -> Vec<String> {
     let mut contradictions: Vec<String> = added
         .iter()
@@ -169,12 +169,12 @@ pub fn the_contradictions_of(added: &[RelationFact], removed: &[RelationFact]) -
     contradictions
 }
 
-/// Los sujetos de una relacion, por su identidad.
+/// The subjects of a relation, by its identity.
 pub fn the_subjects_of(identity: &str, relations: &[RelationFact]) -> Vec<Hrn> {
     the_subjects_of_all(std::slice::from_ref(&identity.to_string()), relations)
 }
 
-/// Los sujetos de un conjunto de relaciones, por sus identidades.
+/// The subjects of a set of relations, by their identities.
 pub fn the_subjects_of_all(identities: &[String], relations: &[RelationFact]) -> Vec<Hrn> {
     let mut subjects: Vec<Hrn> = Vec::new();
     for relation in relations
@@ -191,31 +191,31 @@ pub fn the_subjects_of_all(identities: &[String], relations: &[RelationFact]) ->
     subjects
 }
 
-/// La forma canonica de un diff: lo que dos simulaciones del mismo mundo
-/// tienen que compartir.
+/// The canonical form of a diff: what two simulations of the same world
+/// have to share.
 ///
-/// El diff trae el manifiesto de lecturas, y ese manifiesto lleva el ORDEN
-/// en que se leyo. Dos simulaciones del mismo mundo leen en orden distinto
-/// y por eso sus manifiestos son iguales pero no identicos. La forma
-/// canonica es la que se compara: el manifiesto ya ordenado y su huella.
+/// The diff carries the read manifest, and that manifest carries the ORDER
+/// in which it was read. Two simulations of the same world read in a different order
+/// and so their manifests are equal but not identical. The canonical
+/// form is the one compared: the already ordered manifest and its fingerprint.
 ///
-/// El diff estructural y las decisiones ya salen en orden canonico, y
-/// por eso se copian tal cual.
+/// The structural diff and the decisions already come out in canonical order, and
+/// so they are copied as they are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanonicalDiff {
-    /// El diff de las relaciones.
+    /// The relations diff.
     pub structural: StructuralDiff,
-    /// Las decisiones que cambian, en orden canonico.
+    /// The decisions that change, in canonical order.
     pub decisions: Vec<DecisionChange>,
-    /// El manifiesto de lecturas, ordenado.
+    /// The read manifest, ordered.
     pub manifest: String,
-    /// La huella del manifiesto.
+    /// The manifest's fingerprint.
     pub fingerprint: String,
-    /// El sello del contenido leido.
+    /// The stamp of the content read.
     pub seal: String,
 }
 
-/// La forma canonica de un diff.
+/// The canonical form of a diff.
 pub fn canonical(diff: &SimulationDiff) -> CanonicalDiff {
     CanonicalDiff {
         structural: diff.structural.clone(),
@@ -226,20 +226,20 @@ pub fn canonical(diff: &SimulationDiff) -> CanonicalDiff {
     }
 }
 
-/// La evidencia que sostiene una relacion, como texto.
+/// The evidence that supports a relation, as text.
 ///
-/// Es lo que compara cuando dos relaciones tienen la misma identidad y
-/// distinto apoyo: el apoyo MAS PEQUENO gana, porque el resultado no
-/// puede depender del orden en que las filas llegaron.
+/// It is what is compared when two relations have the same identity and
+/// different support: the SMALLEST support wins, because the result cannot
+/// depend on the order in which the rows arrived.
 fn the_evidence_of(relation: &RelationFact) -> String {
     relation.evidence.clone().unwrap_or_default()
 }
 
-/// El recorrido en profundidad que busca las vueltas cerradas.
+/// The depth-first traversal that looks for closed loops.
 ///
-/// El camino lleva el nodo y la relacion por la que se llego a el: al
-/// cerrarse la vuelta, las relaciones del ciclo son las del tramo del
-/// camino mas la que la cierra.
+/// The path carries the node and the relation through which it was reached: when
+/// the loop closes, the cycle's relations are those of the path segment
+/// plus the one that closes it.
 fn visit(
     node: &str,
     edges: &BTreeMap<String, Vec<(String, String)>>,
@@ -255,7 +255,7 @@ fn visit(
     if let Some(list) = edges.get(node) {
         for (to, identity) in list {
             if on_the_path.contains(to) {
-                // Una arista hacia atras: el camino se cierra.
+                // A back edge: the path closes.
                 if let Some(start) = path.iter().position(|(name, _)| name == to) {
                     let mut cycle: Vec<String> = path[start + 1..]
                         .iter()
@@ -282,27 +282,27 @@ mod tests {
     use hodei_evidence::domain::graph::RelationType;
     use hodei_evidence::domain::read_set::{ReadSet, ReadStamp};
 
-    /// El sujeto de las pruebas.
+    /// The test subject.
     fn artefact() -> Hrn {
         Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
     }
 
-    /// El componente de las pruebas.
+    /// The test component.
     fn component() -> Hrn {
         Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
     }
 
-    /// Otro componente de las pruebas.
+    /// Another test component.
     fn other_component() -> Hrn {
         Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
     }
 
-    /// La relacion de un componente a otro.
+    /// The relation from one component to another.
     fn depends_on(from: &Hrn, to: &Hrn) -> RelationFact {
         RelationFact::new(RelationType::DependsOn, from.clone(), to.clone())
     }
 
-    /// Un grafo SIN ciclo: una cadena de dependencias.
+    /// A graph WITHOUT a cycle: a chain of dependencies.
     fn the_chain() -> Vec<RelationFact> {
         vec![
             depends_on(&artefact(), &component()),
@@ -310,7 +310,7 @@ mod tests {
         ]
     }
 
-    /// Un grafo con DOS ciclos que se tocan.
+    /// A graph with TWO cycles that touch.
     fn the_two_cycles() -> Vec<RelationFact> {
         vec![
             depends_on(&artefact(), &component()),
@@ -320,7 +320,7 @@ mod tests {
         ]
     }
 
-    /// Un grafo SIN ciclo no declara ningun ciclo.
+    /// A graph WITHOUT a cycle declares no cycle.
     #[test]
     fn an_acyclic_graph_declares_no_cycle() {
         let cycles = the_cycles_of(&the_chain());
@@ -331,10 +331,10 @@ mod tests {
         );
     }
 
-    /// Un grafo con dos ciclos que se tocan declara LOS DOS.
+    /// A graph with two cycles that touch declares BOTH.
     ///
-    /// Y no uno: un recorrido que encuentra el primer ciclo y se calla
-    /// es un recorrido que no ha mirado el resto.
+    /// And not one: a traversal that finds the first cycle and goes quiet
+    /// is a traversal that has not looked at the rest.
     #[test]
     fn a_graph_with_two_cycles_declares_both() {
         let cycles = the_cycles_of(&the_two_cycles());
@@ -353,7 +353,7 @@ mod tests {
         }
     }
 
-    /// Una dependencia de uno consigo mismo es un ciclo.
+    /// A self-dependency is a cycle.
     #[test]
     fn a_self_dependency_is_a_cycle() {
         let relations = vec![depends_on(&artefact(), &artefact())];
@@ -361,14 +361,14 @@ mod tests {
         assert_eq!(cycles.len(), 1, "la vuelta a si mismo: {:?}", cycles);
     }
 
-    /// Solo se declaran los ciclos que la hipotetica INTRODUCE.
+    /// Only the cycles the hypothetical INTRODUCES are declared.
     ///
-    /// Un ciclo que ya estaba en el mundo real no es culpa de la
-    /// simulacion, y declararlo seria echarle la culpa a la hipotetica.
+    /// A cycle that was already in the real world is not the simulation's
+    /// fault, and declaring it would be blaming the hypothetical.
     #[test]
     fn only_the_cycles_that_the_hypothesis_introduces_are_declared() {
         let mut relations = the_two_cycles();
-        // La hipotetica anade una relacion que NO cierra ningun ciclo.
+        // The hypothetical adds a relation that closes NO cycle.
         let added = depends_on(&artefact(), &other_component());
         let hypothetical = vec![added.identity()];
         relations.push(added);
@@ -379,7 +379,7 @@ mod tests {
         );
     }
 
-    /// Y un ciclo que la hipotetica CIERRA si se declara.
+    /// And a cycle that the hypothetical CLOSES is declared.
     #[test]
     fn the_cycle_that_the_hypothesis_closes_is_declared() {
         let mut relations = the_chain();
@@ -396,8 +396,8 @@ mod tests {
         );
     }
 
-    /// La misma relacion dicha dos veces es UN duplicado, y la que repite
-    /// lo que ya esta en el mundo tambien.
+    /// The same relation stated twice is ONE duplicate, and one that repeats
+    /// what is already in the world too.
     #[test]
     fn the_duplicates_are_declared() {
         let observed = vec![depends_on(&artefact(), &component())];
@@ -419,7 +419,7 @@ mod tests {
         );
     }
 
-    /// Una hipotetica que SUSTITUYE no es un duplicado: es otra cosa.
+    /// A hypothetical that REPLACES is not a duplicate: it is something else.
     #[test]
     fn a_hypothesis_that_replaces_is_not_a_duplicate() {
         let observed = vec![depends_on(&artefact(), &component())];
@@ -431,8 +431,8 @@ mod tests {
         );
     }
 
-    /// Anadir y sustituir la misma relacion a la vez es una
-    /// contradiccion.
+    /// Adding and replacing the same relation at once is a
+    /// contradiction.
     #[test]
     fn the_contradictions_are_declared() {
         let added = vec![depends_on(&artefact(), &other_component())];
@@ -445,9 +445,9 @@ mod tests {
         );
     }
 
-    /// Las relaciones normalizadas no tienen duplicados, y de dos
-    /// relaciones con la misma identidad gana la que lleva la evidencia
-    /// MAS PEQUENA.
+    /// Normalized relations have no duplicates, and of two
+    /// relations with the same identity the one carrying the
+    /// SMALLEST evidence wins.
     #[test]
     fn the_normalized_relations_have_no_duplicates() {
         let first = depends_on(&artefact(), &component()).with_evidence("evd-2");
@@ -467,8 +467,8 @@ mod tests {
         );
     }
 
-    /// Y el orden de las relaciones normalizadas no depende del orden de
-    /// entrada.
+    /// And the order of the normalized relations does not depend on the input
+    /// order.
     #[test]
     fn the_normalized_relations_do_not_depend_on_the_order() {
         let one = depends_on(&artefact(), &component());
@@ -481,7 +481,7 @@ mod tests {
         );
     }
 
-    /// El manifiesto canonico no depende del orden en que se leyo.
+    /// The canonical manifest does not depend on the order in which it was read.
     #[test]
     fn the_manifest_does_not_depend_on_the_order_of_the_reads() {
         let mut first = ReadSet::empty();

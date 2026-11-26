@@ -2,7 +2,7 @@ use kernel::domain::entity::ActionTrait;
 use kernel::domain::value_objects::ServiceName;
 use serde::{Deserialize, Serialize};
 
-// Comando de entrada
+// Input command
 #[derive(Deserialize, Serialize)]
 pub struct ValidatePolicyCommand {
     pub content: String,
@@ -26,7 +26,7 @@ impl ActionTrait for ValidatePolicyCommand {
     }
 }
 
-// DTO de respuesta
+// Response DTO
 #[derive(Serialize)]
 pub struct ValidationResult {
     pub is_valid: bool,

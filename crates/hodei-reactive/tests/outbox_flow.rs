@@ -4,8 +4,8 @@
 //! it end to end: the intent that is said crosses to claimed, the
 //! receipt says what became of it, and the resume picks up whatever a
 //! crash left behind -- without ever doing the same effect twice. The
-//! unknown receipt does NOT come back by itself: lo incierto se
-//! reconcilia, y solo entonces vuelve al mercado.
+//! unknown receipt does NOT come back by itself: what is uncertain gets
+//! reconciled, and only then does it return to the market.
 
 use std::sync::{
     Arc,
@@ -25,11 +25,11 @@ use hodei_reactive::reactions::{
 };
 use hodei_reactive::runtime::{InMemoryExecutionStore, ReactiveRuntime};
 
-/// El sujeto de los intents de prueba.
+/// The subject of the test intents.
 const SUBJECT: &str = "hrn:hodei:artifacts:eu-west-1:acme:Artifact/app";
 
-/// El comportamiento que planifica UN intent de reevaluacion: leer y
-/// decir, y nada mas.
+/// The behaviour that plans ONE re-evaluation intent: read and
+/// say, and nothing more.
 struct OneIntentPlanning;
 
 #[async_trait::async_trait]
@@ -150,13 +150,13 @@ fn the_runtime(answer: Answer) -> (ReactiveRuntime, Arc<SpyExecutor>, Arc<InMemo
     (runtime, executor, outbox)
 }
 
-/// La identidad del intent que el planner dice.
+/// The identity of the intent the planner states.
 fn the_identity() -> String {
     "intent:one_intent:evt-flow-1:decision:evt-flow-1".to_string()
 }
 
-/// El intent cruza el outbox de punta a punta: pendiente, reclamado,
-/// aplicado; y la misma entrega dos veces no lo toca dos veces.
+/// The intent crosses the outbox end to end: pending, claimed,
+/// applied; and the same delivery twice does not touch it twice.
 #[tokio::test]
 async fn the_intent_crosses_the_outbox_and_lands_once() {
     let (runtime, executor, outbox) = the_runtime(Answer::Applied);
@@ -172,7 +172,7 @@ async fn the_intent_crosses_the_outbox_and_lands_once() {
         "el intent quedo aplicado en el outbox"
     );
 
-    // La reentrega del mismo evento: duplicado, sin toques nuevos.
+    // The redelivery of the same event: duplicate, no new touches.
     let second = runtime
         .dispatch_planned(the_event(), Utc::now())
         .await
@@ -185,9 +185,9 @@ async fn the_intent_crosses_the_outbox_and_lands_once() {
     assert_eq!(executor.touches(), 1, "un intent, un toque, ni uno mas");
 }
 
-/// La caida entre decir y hacer: el recibo retryable devuelve el intent
-/// al mercado, y el resume lo reclama y lo aplica, sin repetir el
-/// efecto.
+/// The fall between saying and doing: the retryable receipt returns the intent
+/// to the market, and the resume claims and applies it, without repeating the
+/// effect.
 #[tokio::test]
 async fn a_crash_between_saying_and_doing_is_recovered_by_the_resume() {
     let (runtime, executor, outbox) = the_runtime(Answer::FailsOnce);
@@ -204,7 +204,7 @@ async fn a_crash_between_saying_and_doing_is_recovered_by_the_resume() {
         "el fallo que se puede reintentar vuelve al mercado"
     );
 
-    // La reanudacion: el intent pendiente se reclama y se aplica.
+    // The resumption: the pending intent is claimed and applied.
     let resumed = runtime
         .resume(now + Duration::seconds(1))
         .await
@@ -227,8 +227,8 @@ async fn a_crash_between_saying_and_doing_is_recovered_by_the_resume() {
     );
 }
 
-/// Lo desconocido NO vuelve por si solo: el resume no lo reejecuta, la
-/// reconciliacion explicita lo devuelve al mercado, y entonces si.
+/// The unknown does NOT come back by itself: the resume does not re-execute it, the
+/// explicit reconciliation returns it to the market, and only then.
 #[tokio::test]
 async fn the_unknown_waits_for_the_reconcile() {
     let (runtime, executor, outbox) = the_runtime(Answer::UnknownOnce);
@@ -244,9 +244,9 @@ async fn the_unknown_waits_for_the_reconcile() {
         "el recibo dice que nadie sabe"
     );
 
-    // El resume NO toca lo desconocido: reejecutar sobre un resultado
-    // incierto es repetir el efecto, y la clave de idempotencia lo
-    // prohibia.
+    // The resume does NOT touch the unknown: re-executing over an uncertain
+    // result is repeating the effect, and the idempotency key
+    // forbade it.
     let _ = runtime
         .resume(now + Duration::seconds(1))
         .await
@@ -258,7 +258,7 @@ async fn the_unknown_waits_for_the_reconcile() {
         "sigue desconocido"
     );
 
-    // La reconciliacion: alguien miro el mundo real, y AHORA vuelve.
+    // The reconciliation: someone looked at the real world, and NOW it comes back.
     outbox
         .reconcile(&the_identity())
         .await
@@ -280,8 +280,8 @@ async fn the_unknown_waits_for_the_reconcile() {
     );
 }
 
-/// El ejecutor que no es del tenant del intent se niega a tocar: una
-/// reclamacion no es una identidad.
+/// The executor that is not the intent's tenant refuses to touch: a
+/// claim is not an identity.
 #[tokio::test]
 async fn an_executor_of_another_tenant_refuses_to_touch() {
     let cases = Arc::new(SpyCases::default());
@@ -325,8 +325,8 @@ async fn an_executor_of_another_tenant_refuses_to_touch() {
     );
 }
 
-/// El caso de seguridad que el ejecutor toca, con los datos del intent:
-/// advisory, sujetos impactados y el momento de la observacion.
+/// The security case the executor touches, with the intent's data:
+/// advisory, impacted subjects and the moment of observation.
 #[tokio::test]
 async fn the_case_intent_opens_the_case_of_its_tenant() {
     let cases = Arc::new(SpyCases::default());
@@ -361,7 +361,7 @@ async fn the_case_intent_opens_the_case_of_its_tenant() {
     assert_eq!(decisions.requests.load(Ordering::SeqCst), 0);
 }
 
-/// El sumidero de casos que cuenta lo que toca.
+/// The case sink that counts what it touches.
 #[derive(Default)]
 struct SpyCases {
     opens: AtomicUsize,
@@ -380,7 +380,7 @@ impl SecurityCaseSink for SpyCases {
     }
 }
 
-/// El pidiente de decisiones que cuenta lo que toca.
+/// The decision requester that counts what it touches.
 #[derive(Default)]
 struct SpyDecisions {
     requests: AtomicUsize,

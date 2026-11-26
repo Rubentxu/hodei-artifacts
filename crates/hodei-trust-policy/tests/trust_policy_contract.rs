@@ -26,12 +26,12 @@ use hodei_trust_policy::{
 };
 use kernel::Hrn;
 
-/// The subject of la prueba.
+/// The subject of the test.
 fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/web-1.0.0").expect("an HRN")
 }
 
-/// The evidence of una release que lo tiene todo.
+/// The evidence of a release that has everything.
 fn complete_evidence() -> Vec<EvidenceRecord> {
     let subject = subject();
     let tenant = subject.clone();
@@ -61,7 +61,7 @@ fn complete_evidence() -> Vec<EvidenceRecord> {
     ]
 }
 
-/// Una pieza de evidencia.
+/// A piece of evidence.
 fn record(
     tenant: &Hrn,
     subject: &Hrn,
@@ -88,12 +88,12 @@ fn record(
         .build()
 }
 
-/// La capsula de una release que lo tiene todo.
+/// The capsule of a release that has everything.
 fn complete_capsule() -> hodei_evidence::domain::capsule::TrustCapsule {
     CapsuleAssembler::new().assemble(&subject(), &complete_evidence(), Utc::now())
 }
 
-/// La politica de produccion.
+/// The production policy.
 fn production_policy() -> TrustPolicy {
     TrustPolicy::new(
         "production",
@@ -121,7 +121,7 @@ fn production_policy() -> TrustPolicy {
     )
 }
 
-/// El contexto de una release que lo tiene todo.
+/// The context of a release that has everything.
 fn complete_context() -> TrustContext {
     TrustContext::builder(&complete_capsule())
         .with_risk(RiskFacts {
@@ -137,16 +137,16 @@ fn complete_context() -> TrustContext {
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// La autorizacion y la confianza se evaluan por separado, y el resultado
-/// dice cual de las dos decidio.
+/// Authorization and trust are evaluated separately, and the result
+/// says which of the two decided.
 #[test]
 fn the_authorization_and_the_trust_are_evaluated_separately() {
     let policy = production_policy();
     let gate = PromotionGate::new(policy.clone());
     let context = complete_context();
 
-    // El principal no esta permitido: la decision es de la autorizacion,
-    // y su motivo es un motivo de autorizacion.
+    // The principal is not allowed: the decision is the authorization's,
+    // and its reason is an authorization reason.
     let refused = gate.evaluate(AuthorizationResult::Deny, &context);
     assert_eq!(refused.outcome, Outcome::Deny);
     assert_eq!(refused.decided_by, DecidedBy::Authorization);
@@ -161,8 +161,8 @@ fn the_authorization_and_the_trust_are_evaluated_separately() {
         "and it does not dress a permission failure up as a problem with the artefact"
     );
 
-    // El principal si esta permitido, pero al artefacto le falta el
-    // inventario: la decision es de la confianza.
+    // The principal is allowed, but the artifact is missing the
+    // inventory: the decision is the trust's.
     let context_without_sbom = TrustContext::builder(&complete_capsule())
         .with_risk(RiskFacts {
             established: true,
@@ -209,13 +209,13 @@ fn the_authorization_and_the_trust_are_evaluated_separately() {
         "and it does not blame the principal"
     );
 
-    // Y cuando los dos estan conformes, ninguno de los dos decidio.
+    // And when both are satisfied, neither of the two decided.
     let allowed = gate.evaluate(AuthorizationResult::Permit, &context);
     assert_eq!(allowed.outcome, Outcome::Allow);
     assert_eq!(allowed.decided_by, DecidedBy::Neither);
 }
 
-/// Una autorizacion que no pudo decidir no es un permiso.
+/// An authorization that could not decide is not a permission.
 #[test]
 fn an_indeterminate_authorization_does_not_open_the_door() {
     let gate = PromotionGate::new(production_policy());
@@ -227,8 +227,8 @@ fn an_indeterminate_authorization_does_not_open_the_door() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// El contexto es versionado y determinista: el mismo contexto produce la
-/// misma evaluacion.
+/// The context is versioned and deterministic: the same context produces the
+/// same evaluation.
 #[test]
 fn the_context_is_versioned_and_the_evaluation_is_deterministic() {
     let context = complete_context();
@@ -239,7 +239,7 @@ fn the_context_is_versioned_and_the_evaluation_is_deterministic() {
     let second = evaluate(&context, &policy);
     assert_eq!(first, second, "the same context gives the same evaluation");
 
-    // Y dos contextos con el mismo contenido son el mismo contexto.
+    // And two contexts with the same content are the same context.
     let other = TrustContext::builder(&complete_capsule())
         .with_risk(RiskFacts {
             critical_known: 0,
@@ -257,7 +257,7 @@ fn the_context_is_versioned_and_the_evaluation_is_deterministic() {
     );
 }
 
-/// El decision dice que version del contexto lo produjo.
+/// The decision says which version of the context produced it.
 #[test]
 fn the_decision_names_the_version_of_everything_that_took_part_in_it() {
     let policy = production_policy();
@@ -275,8 +275,8 @@ fn the_decision_names_the_version_of_everything_that_took_part_in_it() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// La decision de confianza es inmutable y lleva codigos de motivo, no
-/// texto libre.
+/// The trust decision is immutable and carries reason codes, not
+/// free text.
 #[test]
 fn the_decision_is_immutable_and_carries_reason_codes() {
     let policy = production_policy();
@@ -287,8 +287,8 @@ fn the_decision_is_immutable_and_carries_reason_codes() {
         "a decision that allows has no reason against it"
     );
 
-    // El motivo es un codigo de un conjunto cerrado, y el codigo se puede
-    // leer de nuevo.
+    // The reason is a code from a closed set, and the code can be
+    // read back.
     let missing = evaluate(&missing_sbom_context(), &policy);
     assert_eq!(missing.outcome, Outcome::Deny);
     assert!(missing.has_reason(ReasonCode::TrustSbomMissing));
@@ -299,7 +299,7 @@ fn the_decision_is_immutable_and_carries_reason_codes() {
     );
 }
 
-/// La decision no se puede cambiar despues de tomada.
+/// The decision cannot be changed after it is taken.
 #[test]
 fn the_decision_cannot_be_changed_after_it_is_made() {
     let decision = evaluate(&complete_context(), &production_policy());
@@ -308,12 +308,12 @@ fn the_decision_cannot_be_changed_after_it_is_made() {
         serde_json::from_str(&json).expect("the decision is read");
     assert_eq!(read, decision, "what is written is what is read");
 
-    // Y el conjunto de requisitos dice lo que paso con cada uno.
+    // And the set of requirements says what happened with each one.
     assert!(read.requirements.iter().all(|outcome| outcome.satisfied));
 }
 
-/// La capsula de una release sin inventario: la integridad esta, y el
-/// inventario no.
+/// The capsule of a release without an inventory: the integrity is there, and the
+/// inventory is not.
 fn capsule_without_sbom() -> hodei_evidence::domain::capsule::TrustCapsule {
     hodei_evidence::domain::capsule::TrustCapsule {
         subject: subject(),
@@ -332,7 +332,7 @@ fn capsule_without_sbom() -> hodei_evidence::domain::capsule::TrustCapsule {
     }
 }
 
-/// El contexto sin inventario.
+/// The context without an inventory.
 fn missing_sbom_context() -> TrustContext {
     let capsule = capsule_without_sbom();
     TrustContext::builder(&capsule)
@@ -344,8 +344,8 @@ fn missing_sbom_context() -> TrustContext {
         .build()
 }
 
-/// La politica decide si lo que falta es una negacion o una peticion de
-/// aprobacion, y el motor no lo decide.
+/// The policy decides whether what is missing is a denial or a request for
+/// approval, and the engine does not decide it.
 #[test]
 fn the_policy_says_whether_a_failure_denies_or_asks_for_approval() {
     let denying = TrustPolicy::new(
@@ -380,8 +380,8 @@ fn the_policy_says_whether_a_failure_denies_or_asks_for_approval() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// El conjunto de politicas se activa con historial, y se puede saber que
-/// version produjo una decision.
+/// The policy set is activated with history, and it is possible to know which
+/// version produced a decision.
 #[test]
 fn the_policy_set_is_activated_with_history() {
     let registry = PolicyRegistry::empty();
@@ -397,7 +397,7 @@ fn the_policy_set_is_activated_with_history() {
     assert_eq!(first.version, "1.0.0");
     assert_eq!(first.activated_by, "alice");
 
-    // Se activa otra version.
+    // Another version is activated.
     let second_policy = TrustPolicy::new(
         "production",
         "2.0.0",
@@ -411,7 +411,7 @@ fn the_policy_set_is_activated_with_history() {
     );
     assert_eq!(second.version, "2.0.0");
 
-    // El historial tiene las dos, y la activa es la ultima.
+    // The history has both, and the active one is the last.
     assert_eq!(registry.activation_count(), 2);
     let history: Vec<Activation> = registry.history();
     assert_eq!(history.len(), 2);
@@ -425,16 +425,16 @@ fn the_policy_set_is_activated_with_history() {
         "2.0.0"
     );
 
-    // Y la version vieja sigue en el historial: cambiar la politica no
-    // reescribe el pasado.
+    // And the old version remains in the history: changing the policy does not
+    // rewrite the past.
     let old = registry
         .activation_of("production", "1.0.0")
         .expect("the old activation is still there");
     assert_eq!(old.activated_by, "alice");
 }
 
-/// Una decision dice que version de la politica la produjo, y esa version
-/// se puede resolver despues.
+/// A decision says which version of the policy produced it, and that version
+/// can be resolved afterwards.
 #[test]
 fn a_decision_can_be_resolved_against_the_version_that_produced_it() {
     let registry = PolicyRegistry::empty();
@@ -449,8 +449,8 @@ fn a_decision_can_be_resolved_against_the_version_that_produced_it() {
         .expect("the version of the decision is resolvable");
     assert_eq!(activation.activated_by, "alice");
 
-    // Y tras cambiar la politica, la decision vieja sigue nombrando la
-    // version que la produjo.
+    // And after changing the policy, the old decision still names the
+    // version that produced it.
     registry.activate(
         TrustPolicy::new("production", "2.0.0", Vec::new()),
         "bob",
@@ -462,12 +462,12 @@ fn a_decision_can_be_resolved_against_the_version_that_produced_it() {
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// La conclusion del SPIKE-004: la politica de confianza NO se expresa en
-/// Cedar, y la frontera esta escrita.
+/// The conclusion of SPIKE-004: the trust policy is NOT expressed in
+/// Cedar, and the boundary is written down.
 #[test]
 fn the_trust_policy_is_not_written_in_cedar_and_the_boundary_is_written_down() {
-    // La frontera: Cedar decide QUIEN; la politica de confianza decide SI
-    // EL ARTEFACTO CUMPLE. Y el codigo lo dice, no solo la documentacion.
+    // The boundary: Cedar decides WHO; the trust policy decides WHETHER
+    // THE ARTIFACT COMPLIES. And the code says so, not just the documentation.
     let source = include_str!("../src/lib.rs");
     assert!(
         source.contains("The trust gate is not written in Cedar"),
@@ -486,7 +486,7 @@ fn the_trust_policy_is_not_written_in_cedar_and_the_boundary_is_written_down() {
 
 // ───────────────────────────── La excepcion ─────────────────────────────
 
-/// Una excepcion viva waivea el requisito, y su uso queda en la decision.
+/// A live exception waives the requirement, and its use is recorded in the decision.
 #[test]
 fn an_active_exception_waives_the_requirement_and_stays_in_the_trace() {
     let policy = TrustPolicy::new(
@@ -532,7 +532,7 @@ fn an_active_exception_waives_the_requirement_and_stays_in_the_trace() {
     );
 }
 
-/// Una excepcion caducada no se puede reutilizar.
+/// An expired exception cannot be reused.
 #[test]
 fn an_expired_exception_cannot_be_reused() {
     let policy = TrustPolicy::new(
@@ -574,7 +574,7 @@ fn an_expired_exception_cannot_be_reused() {
     );
 }
 
-/// Una excepcion que no es la que la politica nombra no waivea nada.
+/// An exception that is not the one the policy names waives nothing.
 #[test]
 fn only_the_named_exception_waives_the_requirement() {
     let policy = TrustPolicy::new(
@@ -606,7 +606,7 @@ fn only_the_named_exception_waives_the_requirement() {
     assert_eq!(evaluate(&context, &policy).outcome, Outcome::Deny);
 }
 
-/// El entorno de destino llega al contexto.
+/// The destination environment reaches the context.
 #[test]
 fn the_target_environment_is_part_of_the_context() {
     let context = TrustContext::builder(&complete_capsule())

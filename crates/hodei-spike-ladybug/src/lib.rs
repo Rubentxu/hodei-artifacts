@@ -1,8 +1,8 @@
-//! El prototipo de la proyeccion analitica (SPIKE-003).
+//! The prototype of the analytical projection (SPIKE-003).
 //!
-//! Vive en su propia crate por una razon medida: la libreria precompilada
-//! de LadybugDB trae su propio zstd y no convive con el de SurrealDB en el
-//! mismo binario. Una proyeccion secundaria es un proceso aparte, y el
-//! prototipo tiene que parecerse a lo que seria.
+//! It lives in its own crate for a measured reason: LadybugDB's precompiled
+//! library brings its own zstd and does not coexist with SurrealDB's in the
+//! same binary. A secondary projection is a separate process, and the
+//! prototype has to resemble what that would be.
 
 #![forbid(unsafe_code)]

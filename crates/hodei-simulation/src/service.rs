@@ -1,27 +1,27 @@
-//! El servicio que hace la simulacion.
+//! The service that runs the simulation.
 //!
-//! El recorrido es el de una pregunta de "que pasaria si":
+//! The walk-through is that of a "what would happen if" question:
 //!
-//! 1. Se comprueban los **limites** de la simulacion, antes de hacer
-//!    nada: una simulacion que no cabe no se ejecuta.
-//! 2. Se **fija la base**: la cuenta, la generacion del grafo, las
-//!    relaciones que se van a leer y la evidencia que consume la
-//!    decision, con sus sellos.
-//! 3. Se lee el estado real del grafo, **solo lectura**.
-//! 4. Se calcula el **diff estructural**: las relaciones del estado real
-//!    contra las del fork.
-//! 5. Se calculan las **decisiones** de antes y de despues, para los
-//!    sujetos que la simulacion toca, y se queda solo las que cambian.
-//! 6. Se **comprueba la base otra vez**: si el mundo se ha movido, la
-//!    simulacion se dice obsoleta en vez de devolver un diff sobre un
-//!    mundo que ya no existe.
+//! 1. The **limits** of the simulation are checked, before doing
+//!    anything: a simulation that does not fit is not run.
+//! 2. The **base is pinned**: the account, the generation of the graph, the
+//!    relations that will be read and the evidence consumed by the
+//!    decision, with their seals.
+//! 3. The real state of the graph is read, **read-only**.
+//! 4. The **structural diff** is computed: the relations of the real state
+//!    against those of the fork.
+//! 5. The **decisions** from before and after are computed, for the
+//!    subjects that the simulation touches, and only those that change are kept.
+//! 6. The **base is checked again**: if the world has moved, the
+//!    simulation declares itself stale instead of returning a diff on a
+//!    world that no longer exists.
 //!
-//! Y en ningun momento se escribe. El grafo real se comprueba al final:
-//! se vuelve a leer lo que se leyo, se compara con lo que se evaluo y,
-//! si el mundo se movio, se dice con un error que lo dice. Eso no es una
-//! promesa sino una comprobacion, y tiene su limite honesto: lo que se
-//! lee despues del ultimo sello queda fuera, porque una comprobacion
-//! sin transaccion tiene una ventana y no se puede tapar.
+//! And at no point is anything written. The real graph is checked at the end:
+//! what was read is read again, compared with what was evaluated and,
+//! if the world moved, it is said with an error that says so. That is not a
+//! promise but a check, and it has its honest limit: what is read
+//! after the last seal is left out, because a check
+//! without a transaction has a window and it cannot be closed.
 
 use std::sync::Arc;
 
@@ -35,57 +35,57 @@ use crate::hypothetical::RelationFact;
 use crate::ports::{DecisionEvaluator, SimulationGraph};
 use crate::result::SimulationResult;
 
-/// La simulacion hecha: el diff y lo que se leyo.
+/// The simulation done: the diff and what was read.
 ///
-/// Lo que se leyo no va en el diff --el diff habla de lo que aparece y
-/// de lo que desaparece-- pero si va en el resultado, que separa lo
-/// observado de lo hipotetico.
+/// What was read does not go in the diff --the diff speaks of what appears and
+/// of what disappears-- but it does go in the result, which separates the
+/// observed from the hypothetical.
 struct TheSimulation {
-    /// El diff de la simulacion.
+    /// The diff of the simulation.
     diff: SimulationDiff,
-    /// Las relaciones que se leyeron del grafo real.
+    /// The relations that were read from the real graph.
     observed: Vec<RelationFact>,
-    /// Cuantas relaciones tiene la cuenta: lo que dice la cobertura.
+    /// How many relations the account has: what the coverage says.
     relations_in_the_account: usize,
 }
 
-/// Por que no se pudo simular.
+/// Why it could not be simulated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SimulationError {
-    /// La simulacion es mas grande de lo que permite.
+    /// The simulation is bigger than what is allowed.
     TooLarge(String),
-    /// La simulacion ha vivido mas de lo que permite.
+    /// The simulation has lived longer than what is allowed.
     Expired(String),
-    /// El estado real no se pudo leer.
+    /// The real state could not be read.
     Unavailable(String),
-    /// La simulacion pide lo que no puede: sujetos de otra cuenta o un
-    /// alcance vacio que daria una conclusion engañosa.
+    /// The simulation asks for what it cannot: subjects of another account or an
+    /// empty scope that would give a misleading conclusion.
     NotAllowed(String),
-    /// Una LECTURA que la decision necesita fallo. No se reemplaza por
-    /// una coleccion vacia ni por un resultado: sin lo que hay que leer,
-    /// la decision no se toma.
+    /// A READ that the decision needs failed. It is not replaced by
+    /// an empty collection or by a result: without what has to be read,
+    /// the decision is not taken.
     ReadFailed(String),
-    /// La base se movio mientras se evaluaba: el mundo contra el que se
-    /// leyo ya no es el mundo de ahora.
+    /// The base moved while it was being evaluated: the world against which it
+    /// was read is no longer the world of now.
     ///
-    /// No es un fallo de la simulacion: es su respuesta. Un diff
-    /// calculado sobre un mundo que nadie tiene es un diff que no dice
-    /// la verdad, y se dice antes que devolverlo.
+    /// It is not a failure of the simulation: it is its answer. A diff
+    /// computed on a world that nobody has is a diff that does not tell
+    /// the truth, and that is said instead of returning it.
     StaleBase {
-        /// Que se movio: la generacion del grafo, las relaciones leidas,
-        /// el numero de relaciones o la evidencia.
+        /// What moved: the generation of the graph, the relations read,
+        /// the number of relations or the evidence.
         source: String,
-        /// Lo que se esperaba.
+        /// What was expected.
         expected: String,
-        /// Lo que se encontro.
+        /// What was found.
         found: String,
     },
-    /// La base no dice contra que version del mundo se evaluo.
+    /// The base does not say against which version of the world it was evaluated.
     ///
-    /// Sin version declarada no hay nada que comprobar: una base sin
-    /// version no esta obsoleta, es INCOMPROBABLE, y una base
-    /// incomprobable no puede sostener una respuesta. Se dice en vez de
-    /// simular sobre un mundo que nadie ha dicho cual era.
+    /// Without a declared version there is nothing to check: a base without a
+    /// version is not stale, it is UNCHECKABLE, and an
+    /// uncheckable base cannot support an answer. It is said instead of
+    /// simulating on a world that nobody has said what it was.
     NoVersion(String),
 }
 
@@ -124,23 +124,23 @@ impl std::fmt::Display for SimulationError {
 
 impl std::error::Error for SimulationError {}
 
-/// El servicio de la simulacion.
+/// The simulation service.
 pub struct SimulationService {
     graph: Arc<dyn SimulationGraph>,
     decisions: Arc<dyn DecisionEvaluator>,
 }
 
 impl SimulationService {
-    /// El servicio sobre un grafo y un evaluador.
+    /// The service over a graph and an evaluator.
     pub fn new(graph: Arc<dyn SimulationGraph>, decisions: Arc<dyn DecisionEvaluator>) -> Self {
         Self { graph, decisions }
     }
 
-    /// Las relaciones del grafo real.
+    /// The relations of the real graph.
     ///
-    /// Lo expone el servicio para que se pueda comprobar que el grafo no
-    /// ha cambiado: una simulacion que no deja rastro es lo que se quiere,
-    /// y "no deja rastro" se comprueba, no se promete.
+    /// It is exposed by the service so that it can be checked that the graph has not
+    /// changed: a simulation that leaves no trace is what is wanted,
+    /// and "leaves no trace" is checked, not promised.
     pub async fn graph_relations(&self) -> Result<Vec<RelationFact>, SimulationError> {
         let mut response = self
             .graph
@@ -151,12 +151,12 @@ impl SimulationService {
         Ok(response)
     }
 
-    /// Simula y devuelve el diff.
+    /// Simulates and returns the diff.
     ///
-    /// El `now` es el reloj de la simulacion: el mismo instante para
-    /// todo el recorrido, y el que llega al nucleo de decision. No se
-    /// lee el reloj de pared en ningun sitio, y por eso la misma base y
-    /// los mismos hechos dan el mismo diff.
+    /// `now` is the clock of the simulation: the same instant for
+    /// the whole walk-through, and the one that reaches the decision core. The wall
+    /// clock is not read anywhere, and for that reason the same base and
+    /// the same facts give the same diff.
     pub async fn simulate(
         &self,
         fork: &SimulationFork,
@@ -165,12 +165,12 @@ impl SimulationService {
         Ok(self.the_simulation(fork, now).await?.diff)
     }
 
-    /// Simula y devuelve el **resultado**: el contrato versionado.
+    /// Simulates and returns the **result**: the versioned contract.
     ///
-    /// El resultado es el diff mas lo que el diff no dice: que se ha
-    /// observado, que se ha hipotetizado, que politicas intervinieron,
-    /// que se ha cubierto y que conflictos tiene el escenario. Y viaja
-    /// sin objetos de politica: solo con sus sellos.
+    /// The result is the diff plus what the diff does not say: what has been
+    /// observed, what has been hypothesized, which policies intervened,
+    /// what has been covered and what conflicts the scenario has. And it travels
+    /// without policy objects: only with their seals.
     pub async fn simulate_result(
         &self,
         fork: &SimulationFork,
@@ -185,26 +185,26 @@ impl SimulationService {
         ))
     }
 
-    /// La simulacion hecha: el diff y lo que se leyo.
+    /// The simulation done: the diff and what was read.
     ///
-    /// El diff no lleva las relaciones observadas --solo las que aparecen
-    /// y las que desaparecen-- y el resultado si las lleva: por eso el
-    /// recorrido se queda con las dos cosas.
+    /// The diff does not carry the observed relations --only those that appear
+    /// and those that disappear-- and the result does carry them: that is why the
+    /// walk-through keeps both things.
     async fn the_simulation(
         &self,
         fork: &SimulationFork,
         now: DateTime<Utc>,
     ) -> Result<TheSimulation, SimulationError> {
-        // 1. Los limites, antes de nada.
+        // 1. The limits, before anything else.
         fork.check_the_limits(now).map_err(|error| match error {
             crate::SimulationError::TooLarge(message) => SimulationError::TooLarge(message),
             crate::SimulationError::Expired(message) => SimulationError::Expired(message),
             other => other,
         })?;
 
-        // 2. La cuenta: la base de OTRA cuenta no es una base. El grafo
-        // es de una cuenta y el fork declara otra, y una simulacion no
-        // puede ser de las dos a la vez.
+        // 2. The account: the base of ANOTHER account is not a base. The graph
+        // belongs to one account and the fork declares another, and a simulation cannot
+        // be of both at once.
         let account = self.graph.account();
         if account != fork.base.account {
             return Err(SimulationError::NotAllowed(format!(
@@ -213,10 +213,10 @@ impl SimulationService {
             )));
         }
 
-        // 3. La generacion: el fork tiene que decir contra que version
-        // se preparo, y esa version tiene que ser la de ahora. Un fork
-        // sin version no se puede comprobar, y una base que no se puede
-        // comprobar no sostiene una respuesta.
+        // 3. The generation: the fork has to say against which version
+        // it was prepared, and that version has to be that of now. A fork
+        // without a version cannot be checked, and a base that cannot be
+        // checked does not support an answer.
         let generation = self
             .graph
             .generation()
@@ -236,64 +236,64 @@ impl SimulationService {
             });
         }
 
-        // 4. El numero de relaciones de antes: el aislamiento se comprueba
-        // contra el.
+        // 4. The number of relations from before: isolation is checked
+        // against it.
         let relations_before = self
             .graph
             .relation_count()
             .await
             .map_err(SimulationError::Unavailable)?;
 
-        // 5. Los sujetos, en orden canonico. El diff de decisiones tiene
-        // que hablar de los mismos sujetos en el mismo orden que el
-        // diff estructural, y el orden de declaracion de un fork no es
-        // un orden: es el orden en que a alguien se le ocurrio
-        // declararlos.
+        // 5. The subjects, in canonical order. The decision diff has
+        // to speak of the same subjects in the same order as the
+        // structural diff, and the declaration order of a fork is not
+        // an order: it is the order in which someone happened to think of
+        // declaring them.
         let subjects = {
             let mut subjects = fork.affected_subjects();
             subjects.sort_by_key(|subject| subject.to_string());
             subjects
         };
 
-        // 6. El diff estructural.
+        // 6. The structural diff.
         let real = self.the_relations_of(&subjects).await?;
 
-        // Y la base, con lo que se ha leido: el manifiesto de lo leido y
-        // el sello de su contenido.
+        // And the base, with what has been read: the manifest of what was read and
+        // the seal of its content.
         let mut base = SimulationBase::new(account, now)
             .with_generation("graph", generation)
             .with_relations(&real)
             .with_policy(&fork.base_policy);
-        // Y la politica que ESTA en vigor en el fork, que es la que decide
-        // el "despues". Sellar solo la de antes dejaria el manifiesto a
-        // medias de lo que produjo la decision.
+        // And the policy that IS in force in the fork, which is the one that decides
+        // the "after". Sealing only the one from before would leave the manifest
+        // half of what produced the decision.
         base = base.with_policy(fork.effective_policy());
-        // Y la posicion del ledger que declara el punto de partida, si
-        // se sabe. Es una posicion DECLARADA, no verificada: la
-        // simulacion no tiene un puerto de ledger contra el que
-        // comprobarla, y una posicion que no se puede verificar no se
-        // presenta como verificada.
+        // And the ledger position that declares the starting point, if
+        // known. It is a DECLARED position, not a verified one: the
+        // simulation has no ledger port against which to
+        // check it, and a position that cannot be verified is not
+        // presented as verified.
         base.declared_ledger_position = fork.base.ledger_position;
         let seal_before = base.seal.clone();
 
         let forked = fork.relations_with(&real);
         let mut structural = StructuralDiff::between(&real, &forked);
 
-        // Los sujetos afectados son los del fork y los del diff: una
-        // simulacion que solo cambia la politica no cambia ninguna
-        // relacion, y aun asi hay sujetos a los que les afecta.
+        // The affected subjects are those of the fork and those of the diff: a
+        // simulation that only changes the policy changes no
+        // relation, and even so there are subjects it affects.
         for subject in &subjects {
             if !structural.affected_subjects.contains(subject) {
                 structural.affected_subjects.push(subject.clone());
             }
         }
-        // El HRN no tiene orden natural, y el orden estable es por su
-        // forma: el diff no depende del orden en que se leyó.
+        // The HRN has no natural order, and the stable order is by its
+        // shape: the diff does not depend on the order in which it was read.
         structural
             .affected_subjects
             .sort_by_key(|subject| subject.to_string());
 
-        // Y los despliegues de los sujetos a los que el cambio llega.
+        // And the deployments of the subjects that the change reaches.
         structural.affected_deployments = forked
             .iter()
             .filter(|relation| {
@@ -302,21 +302,21 @@ impl SimulationService {
             })
             .map(|relation| relation.to.clone())
             .collect();
-        // Sin repetir y en orden canonico: un despliegue que aparece dos
-        // veces no dice mas que uno que aparece una, y el orden no puede
-        // depender del orden en que las relaciones las dio el grafo.
+        // Without repeats and in canonical order: a deployment that appears twice
+        // says no more than one that appears once, and the order cannot
+        // depend on the order in which the graph gave the relations.
         structural
             .affected_deployments
             .sort_by_key(|deployment| deployment.to_string());
         structural.affected_deployments.dedup();
 
-        // 7. Las decisiones: las de antes con la politica de antes, y las
-        // de despues con la del fork. El instante es el de la
-        // simulacion, no el del reloj de pared.
+        // 7. The decisions: those from before with the policy from before, and those
+        // from after with that of the fork. The instant is that of the
+        // simulation, not that of the wall clock.
         //
-        // Y cada decision trae lo que leyo: esa lectura entra en la
-        // base, porque una base que no dice que evidencia se consumio no
-        // dice sobre que mundo se calculo la respuesta.
+        // And each decision brings what it read: that read enters the
+        // base, because a base that does not say what evidence was consumed does not
+        // say on which world the answer was computed.
         let mut decisions: Vec<DecisionChange> = Vec::new();
         for subject in &subjects {
             let before = self
@@ -344,22 +344,22 @@ impl SimulationService {
             }
         }
 
-        // 8. La comprobacion final: el mundo no se ha movido.
+        // 8. The final check: the world has not moved.
         //
-        // La generacion dice si la historia del grafo ha avanzado, y el
-        // sello de contenido dice si lo que se leyo es lo mismo. Los dos
-        // hacen falta: el numero de relaciones no los sustituye, porque
-        // una relacion sustituida por otra deja el numero igual.
+        // The generation says whether the graph's history has advanced, and the
+        // content seal says whether what was read is the same. Both are
+        // needed: the number of relations does not replace them, because
+        // a relation replaced by another leaves the number the same.
         //
-        // Y el estado de "despues" se toma en orden INVERSO al del
-        // "antes": primero los marcadores gruesos y al final los finos.
-        // El sello va el ultimo porque es el que distingue el cambio
-        // mas pequeño --una relacion que cambia de evidencia-- y porque
-        // no depende de que el cambio pase por el ledger de deltas. Lo
-        // que se lee despues del sello queda fuera de la comprobacion, y
-        // es una ventana que no se puede cerrar sin una lectura
-        // transaccional: se dice aqui para que no se prometa mas de lo
-        // que se cumple.
+        // And the "after" state is taken in INVERSE order to the "before":
+        // first the coarse markers and at the end the fine ones.
+        // The seal goes last because it is the one that distinguishes the
+        // smallest change --a relation whose evidence changes-- and because
+        // it does not depend on the change going through the delta ledger. What
+        // is read after the seal is outside the check, and
+        // is a window that cannot be closed without a transactional
+        // read: it is said here so that no more is promised than
+        // is delivered.
         let generation_after = self
             .graph
             .generation()
@@ -396,10 +396,10 @@ impl SimulationService {
             });
         }
 
-        // Y la evidencia: la que consume la decision. No toca el grafo,
-        // asi que los tres guards de arriba no la ven, y sin esta
-        // comprobacion una evidencia que entra en mitad de la
-        // simulacion se atribuiria al hecho hipotetico.
+        // And the evidence: what the decision consumes. It does not touch the graph,
+        // so the three guards above do not see it, and without this
+        // check evidence that enters in the middle of the
+        // simulation would be attributed to the hypothetical fact.
         let mut reads_after = ReadSet::empty();
         for subject in &subjects {
             let reads = self
@@ -430,7 +430,7 @@ impl SimulationService {
         })
     }
 
-    /// Las relaciones de los sujetos, en orden canonico.
+    /// The relations of the subjects, in canonical order.
     async fn the_relations_of(
         &self,
         subjects: &[kernel::Hrn],
@@ -447,11 +447,11 @@ impl SimulationService {
                     .iter_mut()
                     .find(|one| one.is_the_same_as(&relation))
                 {
-                    // La misma relacion con distinto apoyo: gana la de la
-                    // evidencia MAS PEQUENA. El resultado no puede
-                    // depender del orden en que el almacen devolvio las
-                    // filas, porque un sello que depende del orden no es
-                    // un sello del mundo.
+                    // The same relation with different support: the one with the
+                    // SMALLEST evidence wins. The result cannot
+                    // depend on the order in which the store returned the
+                    // rows, because a seal that depends on order is not
+                    // a seal of the world.
                     Some(known) => {
                         if the_evidence_of(&relation) < the_evidence_of(known) {
                             *known = relation;
@@ -466,10 +466,10 @@ impl SimulationService {
     }
 }
 
-/// La evidencia que sostiene una relacion, como texto.
+/// The evidence that supports a relation, as text.
 ///
-/// Es lo que compara cuando dos relaciones tienen la misma identidad y
-/// distinto apoyo.
+/// It is what is compared when two relations have the same identity and
+/// different support.
 fn the_evidence_of(relation: &RelationFact) -> String {
     relation.evidence.clone().unwrap_or_default()
 }

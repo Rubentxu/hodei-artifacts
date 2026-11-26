@@ -1,19 +1,19 @@
-//! El alcance de la recuperacion: lo que se puede mirar y lo que no.
+//! The retrieval scope: what can be looked at and what cannot.
 //!
-//! Una investigacion se hace sobre un subgrafo, y el subgrafo se pide
-//! **expresamente**: quien pregunta (verificado), el sujeto y los limites.
-//! Una consulta que se salga de lo pedido no es una consulta: es una fuga,
-//! y la fuga de una cuenta a otra es el peor fallo que puede tener este
-//! sistema.
+//! An investigation is carried out over a subgraph, and the subgraph is requested
+//! **explicitly**: the asker (verified), the subject and the limits.
+//! A query that goes beyond what was requested is not a query: it is a leak,
+//! and a leak from one account to another is the worst failure this
+//! system can have.
 //!
-//! Por eso el alcance se comprueba **dos veces**: una cuando se recupera
-//! (el que recupera autoriza ANTES de leer) y otra cuando se usa (el que
-//! investiga comprueba lo que le han dado). La segunda comprobacion es la
-//! que importa: un recuperador que se equivoca no puede filtrar nada.
+//! That is why the scope is checked **twice**: once when retrieving
+//! (the retriever authorizes BEFORE reading) and once when used (the one that
+//! investigates checks what it was given). The second check is the
+//! one that matters: a retriever that makes a mistake cannot leak anything.
 //!
-//! Y las cuentas NO se comparan con texto: se comparan los **componentes
-//! canonicos del HRN**. Un `contains` o un `split` ad hoc es una
-//! comprobacion que un HRN parecido engana; `account_id()` no.
+//! And accounts are NOT compared with text: the **canonical HRN
+//! components** are compared. An ad hoc `contains` or `split` is a
+//! check that a similar HRN fools; `account_id()` is not.
 
 use async_trait::async_trait;
 use hodei_evidence::domain::graph::NodeKind;
@@ -23,35 +23,35 @@ use serde::{Deserialize, Serialize};
 use crate::read_set::ReadSet;
 use crate::redact::redact;
 
-/// Cuanto se fia de un texto.
+/// How much a text is trusted.
 ///
-/// Un texto de evidencia es **dato**, nunca instruccion. Una descripcion
-/// de SBOM la escribe el que publica el paquete, y un README lo escribe
-/// quien quiera: los dos son texto de un atacante en cuanto el atacante
-/// es quien publica.
+/// An evidence text is **data**, never instruction. An SBOM description
+/// is written by whoever publishes the package, and a README by
+/// whoever wants: both are attacker text as soon as the attacker
+/// is the one publishing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustLevel {
-    /// El texto es evidencia: se lee, se cita, no se obedece.
+    /// The text is evidence: it is read, cited, not obeyed.
     Untrusted,
-    /// El texto lo escribio el sistema: eso si es instruccion.
+    /// The text was written by the system: that is indeed instruction.
     Trusted,
 }
 
-/// El presupuesto de una recuperacion.
+/// The budget of a retrieval.
 ///
-/// Una investigacion es un recurso, y el contexto que se le da al modelo
-/// tiene un coste: cuantas evidencias se cargan, cuantas relaciones
-/// entran y cuantos bytes de contenido se bajan. Los limites son
-/// **declarados**, y lo que no cabe se OMITE, no se trunca: no se baja
-/// un blob entero para cortarlo despues.
+/// An investigation is a resource, and the context given to the model
+/// has a cost: how many pieces of evidence are loaded, how many relations
+/// enter and how many bytes of content are downloaded. The limits are
+/// **declared**, and what does not fit is OMITTED, not truncated: a
+/// whole blob is not downloaded to cut it afterwards.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetrievalBudget {
-    /// Cuantas evidencias se cargan, como maximo.
+    /// How many pieces of evidence are loaded, at most.
     pub max_objects: usize,
-    /// Cuantos hechos de relacion entran, como maximo.
+    /// How many relation facts enter, at most.
     pub max_relations: usize,
-    /// Cuantos bytes de contenido se bajan, en total.
+    /// How many bytes of content are downloaded, in total.
     pub max_bytes: u64,
 }
 
@@ -65,29 +65,29 @@ impl Default for RetrievalBudget {
     }
 }
 
-/// El alcance de una recuperacion.
+/// The scope of a retrieval.
 ///
-/// El actor es la identidad **verificada** que pide la investigacion, y
-/// la cuenta NO se dice: se toma del sujeto por su componente canonico.
-/// Un actor de cuenta A y un sujeto de cuenta B no forman un alcance: lo
-/// rechazan las dos comprobaciones.
+/// The actor is the **verified** identity that requests the investigation, and
+/// the account is NOT stated: it is taken from the subject by its canonical component.
+/// An actor of account A and a subject of account B do not form a scope: both
+/// checks reject it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetrievalScope {
-    /// Quien pregunta, verificado.
+    /// Who asks, verified.
     pub actor: Hrn,
-    /// El sujeto del que se parte.
+    /// The subject to start from.
     pub subject: Hrn,
-    /// Cuantos nodos puede tocar la recuperacion.
+    /// How many nodes the retrieval may touch.
     pub max_nodes: usize,
-    /// A cuanta profundidad puede bajar.
+    /// How deep it may go.
     pub max_depth: usize,
-    /// Cuanto puede gastar la recuperacion.
+    /// How much the retrieval may spend.
     #[serde(default)]
     pub budget: RetrievalBudget,
 }
 
 impl RetrievalScope {
-    /// Un alcance con los limites por defecto.
+    /// A scope with the default limits.
     pub fn new(actor: Hrn, subject: Hrn) -> Self {
         Self {
             actor,
@@ -98,38 +98,38 @@ impl RetrievalScope {
         }
     }
 
-    /// La cuenta de la investigacion, por el componente canonico del
-    /// sujeto. Nunca se dice como texto libre.
+    /// The account of the investigation, by the canonical component of the
+    /// subject. It is never stated as free text.
     pub fn the_account(&self) -> &str {
         self.subject.account_id()
     }
 
-    /// Si el alcance cruza cuentas: el actor y el sujeto de cuentas
-    /// distintas no forman un alcance.
+    /// Whether the scope crosses accounts: an actor and a subject of different
+    /// accounts do not form a scope.
     pub fn crosses_accounts(&self) -> bool {
         self.actor.account_id() != self.subject.account_id()
     }
 }
 
-/// El estado de un hecho recuperado.
+/// The state of a retrieved fact.
 ///
-/// Las distinciones SON el contrato: un contenido ausente (Missing), un
-/// almacen que no contesto (Unavailable), un texto que no se pudo
-/// decodificar (Undecodable) y un hecho que el presupuesto dejo fuera
-/// (OmittedByBudget) son cuatro cosas distintas, y ninguna de ellas se
-/// disfraza de texto inventado ni de ausencia silenciosa de hechos.
+/// The distinctions ARE the contract: absent content (Missing), a
+/// store that did not answer (Unavailable), a text that could not be
+/// decoded (Undecodable) and a fact that the budget left out
+/// (OmittedByBudget) are four different things, and none of them is
+/// disguised as invented text or as a silent absence of facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactStatus {
-    /// El contenido se leyo y se entrega.
+    /// The content was read and is delivered.
     Loaded,
-    /// La evidencia existe y su contenido no esta.
+    /// The evidence exists and its content is not there.
     Missing,
-    /// El almacen no pudo contestar.
+    /// The store could not answer.
     Unavailable,
-    /// El contenido existe y no se pudo decodificar como texto.
+    /// The content exists and could not be decoded as text.
     Undecodable,
-    /// El presupuesto lo dejo fuera ANTES de leerse.
+    /// The budget left it out BEFORE it was read.
     OmittedByBudget,
 }
 
@@ -140,48 +140,48 @@ impl Default for FactStatus {
     }
 }
 
-/// Cuanto de lo que hay se entrego.
+/// How much of what exists was delivered.
 ///
-/// Una recuperacion parcial se DECLARA: un scope conocido pero
-/// incompleto no puede presentarse como respuesta exhaustiva.
+/// A partial retrieval is DECLARED: a known but incomplete scope
+/// cannot be presented as an exhaustive answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Coverage {
-    /// Se entrego todo lo que hay.
+    /// Everything that exists was delivered.
     #[default]
     Complete,
-    /// Se entrego una parte, y se dice cuanta se dejo fuera.
+    /// A part was delivered, and it says how much was left out.
     Partial {
-        /// Cuantos hechos se dejaron fuera por el presupuesto.
+        /// How many facts were left out by the budget.
         omitted: usize,
     },
 }
 
-/// Un hecho recuperado, con su procedencia.
+/// A retrieved fact, with its provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopedFact {
-    /// El identificador de la evidencia.
+    /// The identifier of the evidence.
     ///
-    /// Es lo que se cita, y una cita que no resuelve no vale.
+    /// It is what is cited, and a citation that does not resolve is not valid.
     pub evidence_id: String,
-    /// El texto. Es DATO, nunca instruccion.
+    /// The text. It is DATA, never instruction.
     pub text: String,
-    /// El camino del grafo por el que se llego al hecho.
+    /// The graph path by which the fact was reached.
     pub path: Vec<Hrn>,
-    /// De que clase de nodo es el sujeto del camino.
+    /// What kind of node the path's subject is.
     pub kind: NodeKind,
-    /// Cuanto se fia del texto.
+    /// How much the text is trusted.
     pub trust: TrustLevel,
-    /// El estado del hecho. Por defecto, cargado: los hechos que venian
-    /// sin estado son hechos leidos.
+    /// The state of the fact. By default, loaded: facts that came
+    /// without a state are facts that were read.
     #[serde(default)]
     pub status: FactStatus,
 }
 
 impl ScopedFact {
-    /// Un hecho de evidencia, que es dato y no instruccion. El texto se
-    /// REDACTA aqui mismo: lo que sale hacia el modelo no lleva
-    /// secretos.
+    /// An evidence fact, which is data and not instruction. The text is
+    /// REDACTED right here: what goes out to the model carries no
+    /// secrets.
     pub fn untrusted(
         evidence_id: impl Into<String>,
         text: impl Into<String>,
@@ -198,43 +198,43 @@ impl ScopedFact {
     }
 }
 
-/// Lo que una recuperacion entrega: los hechos, CUANTO de lo que hay y
-/// el manifiesto de lo que se leyo.
+/// What a retrieval delivers: the facts, HOW MUCH of what exists, and
+/// the manifest of what was read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RetrievedContext {
-    /// Los hechos, en el orden de su clave estable.
+    /// The facts, in the order of their stable key.
     pub facts: Vec<ScopedFact>,
-    /// Si la recuperacion fue completa o se omitio algo.
+    /// Whether the retrieval was complete or something was omitted.
     pub coverage: Coverage,
-    /// El manifiesto de las lecturas: identificadores, digests y
-    /// generaciones, sin contenido crudo.
+    /// The manifest of the reads: identifiers, digests and
+    /// generations, without raw content.
     pub read_set: ReadSet,
 }
 
-/// Por que la recuperacion no pudo hacerse.
+/// Why the retrieval could not be carried out.
 ///
-/// Un rechazo de autorizacion es EXPLICITO: nunca una respuesta vacia
-/// que parezca cero evidencia, y nunca un texto que haya que adivinar.
+/// An authorization rejection is EXPLICIT: never an empty answer
+/// that looks like zero evidence, and never a text that has to be guessed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RetrievalError {
-    /// Quien pregunta no puede leer el recurso. La puerta esta cerrada.
+    /// The asker cannot read the resource. The door is closed.
     NotAuthorized {
-        /// Quien preguntaba.
+        /// Who was asking.
         actor: String,
-        /// El recurso que no puede leer.
+        /// The resource that cannot be read.
         resource: String,
     },
-    /// El mundo cambio mientras se leia: la generacion de una fuente al
-    /// empezar la lectura ya no es la del final. No hay snapshot
-    /// coherente que presentar, y una lectura obsoleta se dice
-    /// obsoleta.
+    /// The world changed while being read: the generation of a source at the
+    /// start of the read is no longer the one at the end. There is no coherent
+    /// snapshot to present, and an obsolete read is declared
+    /// obsolete.
     Stale {
         source: String,
         expected: u64,
         found: u64,
     },
-    /// El almacen no pudo atender. Negar es cerrar: si no se pudo
-    /// comprobar el permiso, no se lee.
+    /// The store could not serve. Denying is closing: if the permission
+    /// could not be checked, it is not read.
     Unavailable(String),
 }
 
@@ -259,28 +259,28 @@ impl std::fmt::Display for RetrievalError {
     }
 }
 
-/// El permiso de lectura de la evidencia.
+/// The read permission for the evidence.
 ///
-/// El Authorizer compartido llega por este puerto: cada recurso que se
-/// lee se autoriza ANTES de leerse, y una denegacion o un error es una
-/// puerta cerrada, nunca una lectura silenciosa. La IA no es autoridad:
-/// este puerto lo implementa el motor de politicas determinista.
+/// The shared Authorizer arrives through this port: every resource that is
+/// read is authorized BEFORE being read, and a denial or an error is a
+/// closed door, never a silent read. AI is not an authority:
+/// this port is implemented by the deterministic policy engine.
 #[async_trait]
 pub trait EvidenceReadAuthorizer: Send + Sync {
-    /// Ok si el actor puede leer el recurso; Err con el por que si no.
+    /// Ok if the actor can read the resource; Err with the reason if not.
     async fn can_read(&self, actor: &Hrn, resource: &Hrn) -> Result<(), String>;
 }
 
-/// Por que un hecho no cabe en el alcance.
+/// Why a fact does not fit in the scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScopeViolation {
-    /// El sujeto del hecho no es el sujeto de la pregunta.
+    /// The fact's subject is not the question's subject.
     AnotherSubject,
-    /// El camino es mas profundo de lo permitido.
+    /// The path is deeper than allowed.
     TooDeep(usize),
-    /// Hay mas hechos de los que caben.
+    /// There are more facts than fit.
     TooMany(usize),
-    /// El camino pasa por un nodo de otra cuenta.
+    /// The path goes through a node of another account.
     AnotherAccount,
 }
 
@@ -312,15 +312,15 @@ impl std::fmt::Display for ScopeViolation {
     }
 }
 
-/// Comprueba que los hechos caben en el alcance.
+/// Checks that the facts fit in the scope.
 ///
-/// Esta es la comprobacion que **no se fia** de quien recupero: el
-/// servicio la hace sobre lo que le dieron, y por eso un recuperador que
-/// se equivoca no puede meter nada. Las cuentas se comparan por los
-/// componentes canonicos del HRN, nunca por texto.
+/// This is the check that **does not trust** whoever retrieved: the
+/// service does it over what it was given, and that is why a retriever that
+/// makes a mistake cannot let anything in. Accounts are compared by the
+/// canonical components of the HRN, never by text.
 pub fn check_the_scope(scope: &RetrievalScope, facts: &[ScopedFact]) -> Result<(), ScopeViolation> {
-    // Un alcance que ya cruza cuentas no es un alcance: nada de lo que
-    // traiga es de la cuenta del que pregunta.
+    // A scope that already crosses accounts is not a scope: nothing it
+    // brings belongs to the asker's account.
     if scope.crosses_accounts() {
         return Err(ScopeViolation::AnotherAccount);
     }
@@ -336,9 +336,9 @@ pub fn check_the_scope(scope: &RetrievalScope, facts: &[ScopedFact]) -> Result<(
         if fact.path.len() > scope.max_depth + 1 {
             return Err(ScopeViolation::TooDeep(fact.path.len() - 1));
         }
-        // El camino tiene que empezar por el sujeto de la pregunta y no
-        // puede salirse de la cuenta: componente canonico contra
-        // componente canonico.
+        // The path must start at the question's subject and
+        // cannot leave the account: canonical component against
+        // canonical component.
         if fact.path.first() != Some(&scope.subject) {
             return Err(ScopeViolation::AnotherSubject);
         }

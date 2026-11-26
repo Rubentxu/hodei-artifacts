@@ -1,16 +1,16 @@
-//! El fixture en memoria: el mundo que la conformidad necesita sin base
-//! de datos.
+//! The in-memory fixture: the world that conformance needs without a
+//! database.
 //!
-//! La simulacion se lee contra un grafo, y un grafo de verdad es un
-//! grafo de verdad. Para comprobar que la simulacion se comporta igual
-//! con cualquier adaptador hace falta un adaptador que no sea el de
-//! verdad: este es, y son las mismas relaciones con las mismas reglas,
-//! pero guardadas en memoria.
+//! The simulation is read against a graph, and a real graph is a
+//! real graph. To check that the simulation behaves the same
+//! with any adapter an adapter that is not the real one is
+//! needed: this is it, and it holds the same relations with the same rules,
+//! but kept in memory.
 //!
-//! Vive en el dominio y no en el almacen porque es lo que hace que la
-//! suite de conformidad sea **portable**: el dominio la puede correr sin
-//! base de datos, y un adaptador de verdad la corre con las mismas
-//! cuentas.
+//! It lives in the domain and not in the store because it is what makes the
+//! conformance suite **portable**: the domain can run it without a
+//! database, and a real adapter runs it with the same
+//! accounts.
 
 use std::sync::{Arc, Mutex};
 
@@ -27,12 +27,12 @@ use crate::diff::TheDecision;
 use crate::hypothetical::{Hypothetical, HypotheticalClaim, RelationFact};
 use crate::ports::{DecisionEvaluator, SimulationGraph};
 
-/// El grafo en memoria.
+/// The in-memory graph.
 ///
-/// Guarda las relaciones y su generacion, y no mas. No tiene un metodo
-/// de escritura en el puerto de la simulacion, y por eso simular contra
-/// el no puede cambiar el mundo: el unico que puede moverlo es el que
-/// lo prepara.
+/// It holds the relations and their generation, and no more. It has no write method
+/// on the simulation port, and that is why simulating against
+/// it cannot change the world: the only one that can move it is whoever
+/// prepares it.
 pub struct InMemoryGraph {
     relations: Mutex<Vec<RelationFact>>,
     generation: Mutex<u64>,
@@ -40,7 +40,7 @@ pub struct InMemoryGraph {
 }
 
 impl InMemoryGraph {
-    /// Un grafo en memoria, con su cuenta.
+    /// An in-memory graph, with its account.
     pub fn new(account: impl Into<String>) -> Arc<Self> {
         Arc::new(Self {
             relations: Mutex::new(Vec::new()),
@@ -49,7 +49,7 @@ impl InMemoryGraph {
         })
     }
 
-    /// Las relaciones que tiene ahora mismo.
+    /// The relations it has right now.
     pub fn the_relations(&self) -> Vec<RelationFact> {
         self.relations
             .lock()
@@ -57,7 +57,7 @@ impl InMemoryGraph {
             .clone()
     }
 
-    /// La generacion que tiene ahora mismo.
+    /// The generation it has right now.
     pub fn the_generation(&self) -> u64 {
         *self
             .generation
@@ -65,7 +65,7 @@ impl InMemoryGraph {
             .expect("la generacion no esta envenenada")
     }
 
-    /// Deja el mundo como dice el fixture.
+    /// Leaves the world as the fixture says.
     pub fn set_the_world(&self, relations: Vec<RelationFact>, generation: u64) {
         *self.relations.lock().expect("el grafo no esta envenenado") = relations;
         *self
@@ -102,12 +102,12 @@ impl SimulationGraph for InMemoryGraph {
     }
 }
 
-/// El evaluador en memoria.
+/// The in-memory evaluator.
 ///
-/// Es el evaluador mas simple que se puede escribir sin mentir: dice
-/// DENY cuando la politica prohibe el riesgo establecido y el sujeto
-/// tiene una vulnerabilidad critica y alcanzable, y ALLOW en el resto.
-/// Lo que no sabe, no lo dice.
+/// It is the simplest evaluator that can be written without lying: it says
+/// DENY when the policy prohibits the established risk and the subject
+/// has a critical and reachable vulnerability, and ALLOW otherwise.
+/// What it does not know, it does not say.
 pub struct InMemoryDecisions;
 
 #[async_trait]
@@ -151,10 +151,10 @@ impl DecisionEvaluator for InMemoryDecisions {
     }
 }
 
-/// El mundo de conformidad en memoria.
+/// The in-memory conformance world.
 ///
-/// Es el adaptador de la suite contra un grafo que no es un grafo de
-/// verdad: las mismas relaciones, las mismas reglas y ningun disco.
+/// It is the suite's adapter against a graph that is not a real
+/// graph: the same relations, the same rules and no disk.
 pub struct InMemoryConformance {
     graph: Arc<InMemoryGraph>,
     tenant: Hrn,
@@ -162,7 +162,7 @@ pub struct InMemoryConformance {
 }
 
 impl InMemoryConformance {
-    /// El mundo en memoria de una cuenta.
+    /// An account's in-memory world.
     pub fn new(account: impl Into<String>, tenant: Hrn) -> Self {
         let account = account.into();
         Self {
@@ -172,7 +172,7 @@ impl InMemoryConformance {
         }
     }
 
-    /// El grafo en memoria, por si hay que mirarlo.
+    /// The in-memory graph, in case it needs to be inspected.
     pub fn the_graph(&self) -> Arc<InMemoryGraph> {
         self.graph.clone()
     }

@@ -1,75 +1,75 @@
-//! La simulacion: preguntar "que pasaria si" sin tocar la verdad.
+//! The simulation: asking "what would happen if" without touching the truth.
 //!
-//! Cambiar una politica de promocion y descubrir despues que rompio tres
-//! despliegues es un mal negocio. Aqui se responde a esa pregunta sin
-//! desplegar nada: un **fork** superpuesto al estado real, y un **diff**
-//! que dice que relaciones aparecen, que relaciones desaparecen y que
-//! decisiones cambian.
+//! Changing a promotion policy and discovering afterwards that it broke three
+//! deployments is a bad deal. Here that question is answered without
+//! deploying anything: a **fork** overlaid on the real state, and a **diff**
+//! that says which relations appear, which relations disappear and which
+//! decisions change.
 //!
-//! # La decision del SPIKE-008: superposicion, no copia
+//! # The SPIKE-008 decision: overlay, not copy
 //!
-//! El SPIKE-008 comparaba cuatro mecanismos:
+//! SPIKE-008 compared four mechanisms:
 //!
-//! 1. reproducir desde un checkpoint en un namespace aislado;
-//! 2. una superposicion copy-on-write sobre la proyeccion base;
-//! 3. un snapshot o una rama nativa del almacen;
-//! 4. un checkpoint mas una superposicion.
+//! 1. replay from a checkpoint in an isolated namespace;
+//! 2. a copy-on-write overlay on the base projection;
+//! 3. a native snapshot or branch of the store;
+//! 4. a checkpoint plus an overlay.
 //!
-//! **Se elige la superposicion (2 y 4)**, y la razon es una cuenta:
+//! **The overlay is chosen (2 and 4)**, and the reason is arithmetic:
 //!
-//! - Una **copia** cuesta lo que cuesta el estado: a la escala de
-//!   referencia, la proyeccion tarda 156 s y la reconstruccion 656.6 s. Y
-//!   eso es por simulacion, cada vez que alguien pregunta.
-//! - Una **superposicion** cuesta lo que cuestan los hechos hipoteticos,
-//!   que son pocos: el fork es un VALOR, no una copia.
-//! - El **almacen no tiene ramas portables**: el motor embebido bloquea
-//!   el directorio, y una rama del almacen seria una copia de archivos
-//!   con las suas trampas.
+//! - A **copy** costs what the state costs: at the reference
+//!   scale, the projection takes 156 s and the reconstruction 656.6 s. And
+//!   that is per simulation, every time someone asks.
+//! - An **overlay** costs what the hypothetical facts cost,
+//!   which are few: the fork is a VALUE, not a copy.
+//! - The **store has no portable branches**: the embedded engine locks
+//!   the directory, and a store branch would be a file copy
+//!   with its own pitfalls.
 //!
-//! Y el aislamiento no es una promesa, es una **construccion**: el puerto
-//! del grafo **no tiene un metodo de escritura**, y el servicio comprueba
-//! al final que el mundo sobre el que se evaluo sigue siendo el mismo
-//! que se leyo.
+//! And isolation is not a promise, it is a **construction**: the graph
+//! port **has no write method**, and the service checks
+//! at the end that the world on which it evaluated is still the same
+//! one that was read.
 //!
-//! # La base fijada
+//! # The pinned base
 //!
-//! Una simulacion que no dice **sobre que mundo** se calculo es una
-//! respuesta sin apellido. Por eso el diff lleva su base: la cuenta, el
-//! reloj, la generacion del grafo, el sello del contenido leido y el
-//! manifiesto de lo que se leyo --las relaciones, la politica y la
-//! evidencia que consume la decision--.
+//! A simulation that does not say **on which world** it was computed is an
+//! answer without a surname. That is why the diff carries its base: the account, the
+//! clock, the generation of the graph, the seal of the content read and the
+//! manifest of what was read --the relations, the policy and the
+//! evidence consumed by the decision--.
 //!
-//! Y esa base se **comprueba dos veces**: si el mundo se ha movido
-//! mientras se evaluaba, la simulacion se dice obsoleta en vez de
-//! devolver un diff sobre un mundo que ya no existe. El fork tiene que
-//! declarar contra que generacion se preparo, y la simulacion no acepta
-//! una base sin version: una base que no se puede comprobar no sostiene
-//! una respuesta.
+//! And that base is **checked twice**: if the world moved
+//! while it was being evaluated, the simulation declares itself stale instead of
+//! returning a diff on a world that no longer exists. The fork has to
+//! declare which generation it was prepared against, and the simulation does not accept
+//! a base without a version: a base that cannot be checked does not support
+//! an answer.
 //!
-//! # Lo que el diff dice
+//! # What the diff says
 //!
-//! El diff se parece al diff de git: se ve que relaciones **aparecen** y
-//! que relaciones **desaparecen**, y que **decisiones cambian**, con la
-//! version de la politica que las produjo. Y una decision que sigue igual
-//! no es un cambio: un diff lleno de ruido no es un diff.
+//! The diff resembles a git diff: you see which relations **appear** and
+//! which relations **disappear**, and which **decisions change**, with the
+//! version of the policy that produced them. And a decision that stays the same
+//! is not a change: a diff full of noise is not a diff.
 //!
-//! # Los limites
+//! # The limits
 //!
-//! Una simulacion es un recurso, y un recurso sin limite se come la
-//! maquina. Los limites son **declarados** --cuantos hechos, cuantos
-//! sujetos, cuanto vive-- y se comprueban **antes** de hacer nada.
+//! A simulation is a resource, and a resource without a limit eats the
+//! machine. The limits are **declared** --how many facts, how many
+//! subjects, how long it lives-- and are checked **before** doing anything.
 //!
-//! # El contrato versionado
+//! # The versioned contract
 //!
-//! El diff es el interior de la simulacion. El **resultado** es el
-//! contrato de fuera: lo que recibe un consumidor, y por eso esta
-//! versionado, separa lo observado de lo hipotetico, dice que se ha
-//! cubierto y que no, y declara los conflictos del escenario en vez de
-//! esconderlos.
+//! The diff is the interior of the simulation. The **result** is the
+//! outer contract: what a consumer receives, and for that reason it is
+//! versioned, separates the observed from the hypothetical, says what has been
+//! covered and what has not, and declares the scenario's conflicts instead of
+//! hiding them.
 //!
-//! Y el contrato viaja **sin objetos de politica**: lo que viaja es el
-//! sello de la politica --su identificador y su version--, porque un
-//! contrato que arrastra el objeto entero deja de ser portable.
+//! And the contract travels **without policy objects**: what travels is the
+//! seal of the policy --its identifier and its version--, because a
+//! contract that drags the whole object along stops being portable.
 
 #![forbid(unsafe_code)]
 

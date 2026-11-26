@@ -1,13 +1,13 @@
-//! El contrato del resultado de una simulacion.
+//! The contract of a simulation result.
 //!
-//! El resultado es lo que se entrega: un contrato **versionado** que
-//! separa lo observado de lo hipotetico, dice que politicas
-//! intervinieron, dice que se ha cubierto y que no, y declara los
-//! conflictos del escenario en vez de esconderlos.
+//! The result is what is delivered: a **versioned** contract that
+//! separates what was observed from what is hypothetical, says which policies
+//! took part, says what has been covered and what has not, and declares the
+//! scenario's conflicts instead of hiding them.
 //!
-//! Y lo hace sin arrastrar objetos de politica: lo que viaja es el
-//! sello --identificador y version--, porque un contrato que lleva la
-//! politica entera deja de ser portable.
+//! And it does so without dragging policy objects along: what travels is the
+//! seal (identifier and version), because a contract that carries the
+//! whole policy stops being portable.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::domain::graph::RelationType;
@@ -21,49 +21,49 @@ use hodei_simulation::{Checkpoint, SimulationFork, SimulationTag};
 use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
 
-/// El instante de las pruebas: uno solo.
+/// The instant of the tests: only one.
 fn the_now() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
         .expect("un instante fijo")
         .with_timezone(&Utc)
 }
 
-/// El sujeto de la simulacion.
+/// The subject of the simulation.
 fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
 }
 
-/// El componente del que depende.
+/// The component it depends on.
 fn component_v1() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
 }
 
-/// El segundo componente.
+/// The second component.
 fn component_v2() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
 }
 
-/// El componente al que se sube.
+/// The component being upgraded to.
 fn component_v3() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v3").expect("un HRN")
 }
 
-/// Un sujeto que la simulacion no toca: su relacion no se lee.
+/// A subject that the simulation does not touch: its relation is not read.
 fn other() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/other-1.0.0").expect("un HRN")
 }
 
-/// Otro sujeto que la simulacion no toca.
+/// Another subject that the simulation does not touch.
 fn another() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/another-1.0.0").expect("un HRN")
 }
 
-/// La politica de ahora: la que no prohibe nada.
+/// The current policy: the one that forbids nothing.
 fn the_policy() -> TrustPolicy {
     TrustPolicy::new("production", "1.0.0", Vec::new())
 }
 
-/// La politica hipotetica: la que prohibe el riesgo establecido.
+/// The hypothetical policy: the one that forbids the established risk.
 fn the_strict_policy() -> TrustPolicy {
     TrustPolicy::new(
         "production",
@@ -72,7 +72,7 @@ fn the_strict_policy() -> TrustPolicy {
     )
 }
 
-/// El grafo del mundo: dos dependencias del sujeto y una que no es suya.
+/// The world graph: two dependencies of the subject and one that is not its own.
 fn the_graph() -> std::sync::Arc<InMemoryGraph> {
     let graph = InMemoryGraph::new("acme");
     graph.set_the_world(
@@ -88,12 +88,12 @@ fn the_graph() -> std::sync::Arc<InMemoryGraph> {
     graph
 }
 
-/// El servicio de la simulacion sobre el grafo.
+/// The simulation service over the graph.
 fn the_service(graph: std::sync::Arc<InMemoryGraph>) -> SimulationService {
     SimulationService::new(graph, std::sync::Arc::new(InMemoryDecisions))
 }
 
-/// El fork de la simulacion.
+/// The simulation fork.
 fn the_fork() -> SimulationFork {
     SimulationFork::new(
         "sim-1",
@@ -103,12 +103,12 @@ fn the_fork() -> SimulationFork {
     )
 }
 
-/// La etiqueta de la simulacion.
+/// The simulation label.
 fn the_tag() -> SimulationTag {
     SimulationTag::new("sim-1", the_now())
 }
 
-/// La hipotetica del riesgo: el sujeto queda expuesto.
+/// The risk hypothetical: the subject is left exposed.
 fn the_risk() -> Hypothetical {
     Hypothetical {
         tag: the_tag(),
@@ -121,7 +121,7 @@ fn the_risk() -> Hypothetical {
     }
 }
 
-/// El resultado de una simulacion con el riesgo y la politica estricta.
+/// The result of a simulation with the risk and the strict policy.
 async fn the_result() -> SimulationResult {
     let graph = the_graph();
     let service = the_service(graph);
@@ -132,12 +132,12 @@ async fn the_result() -> SimulationResult {
         .expect("la simulacion se hace")
 }
 
-// ───────────────────────────── la version ─────────────────────────────
+// ───────────────────────────── the version ─────────────────────────────
 
-/// El resultado declara la version del contrato.
+/// The result declares the contract version.
 ///
-/// Un contrato que no dice su version es un contrato que no se puede
-/// evolve: el consumidor no sabe si lo que lee es lo que espera.
+/// A contract that does not state its version is a contract that cannot
+/// evolve: the consumer does not know whether what it reads is what it expects.
 #[tokio::test]
 async fn the_result_declares_its_version() {
     let result = the_result().await;
@@ -145,7 +145,7 @@ async fn the_result_declares_its_version() {
     assert_eq!(result.version, SIMULATION_RESULT_VERSION);
     assert_eq!(result.version, "1.0.0");
 
-    // Y el JSON que se lleva dice lo mismo.
+    // And the JSON that is carried says the same.
     let json = serde_json::to_string(&result).expect("el resultado se serializa");
     assert!(
         json.contains("\"version\":\"1.0.0\""),
@@ -153,18 +153,18 @@ async fn the_result_declares_its_version() {
     );
 }
 
-// ───────────────────────────── lo observado y lo hipotetico ─────────────────────────────
+// ───────────────────────────── the observed and the hypothetical ─────────────────────────────
 
-/// El resultado separa lo observado de lo hipotetico.
+/// The result separates what was observed from what is hypothetical.
 ///
-/// Y la hipotetica **no se publica como hecho del grafo**: las
-/// relaciones observadas son las que estaban, y la hipotetica viaja en
-/// su propio campo.
+/// And the hypothetical is **not published as a graph fact**: the
+/// observed relations are those that were there, and the hypothetical travels in
+/// its own field.
 #[tokio::test]
 async fn the_result_separates_the_observed_from_the_hypothetical() {
     let result = the_result().await;
 
-    // Lo observado: las relaciones que estaban en el mundo.
+    // The observed: the relations that were in the world.
     assert_eq!(
         result.observed.relations.len(),
         1,
@@ -180,8 +180,8 @@ async fn the_result_separates_the_observed_from_the_hypothetical() {
         "y la relacion hipotetica NO esta entre las observadas"
     );
 
-    // Lo hipotetico: los escenarios, marcados como tales. Son dos: el
-    // riesgo y la politica hipotetica.
+    // The hypothetical: the scenarios, marked as such. There are two: the
+    // risk and the hypothetical policy.
     assert_eq!(
         result.hypotheses.len(),
         2,
@@ -205,8 +205,8 @@ async fn the_result_separates_the_observed_from_the_hypothetical() {
     ));
     assert_eq!(hypothesis.subjects, vec![subject()]);
 
-    // Y la relacion hipotetica, si la hay, tampoco esta entre las
-    // observadas.
+    // And the hypothetical relation, if there is one, is not among the
+    // observed ones either.
     let graph = the_graph();
     let service = the_service(graph);
     let fork = the_fork().with(Hypothetical {
@@ -240,27 +240,27 @@ async fn the_result_separates_the_observed_from_the_hypothetical() {
     );
 }
 
-// ───────────────────────────── las politicas ─────────────────────────────
+// ───────────────────────────── the policies ─────────────────────────────
 
-/// El resultado dice que politicas intervinieron.
+/// The result says which policies took part.
 ///
-/// La de antes, la de despues y la hipotetica: con su identificador y su
-/// version, y sin el objeto entero.
+/// The previous one, the later one and the hypothetical one: with their identifier and
+/// version, and without the whole object.
 #[tokio::test]
 async fn the_result_says_which_policies_intervened() {
     let result = the_result().await;
 
-    // La politica que estaba en vigor.
+    // The policy that was in force.
     assert_eq!(result.observed.policy.id, "production");
     assert_eq!(result.observed.policy.version, "1.0.0");
 
-    // Y las dos versiones de cada decision que cambia.
+    // And the two versions of each decision that changes.
     assert_eq!(result.decisions.len(), 1, "la decision que cambia");
     let change = &result.decisions[0];
     assert_eq!(change.policy_version_before, "1.0.0");
     assert_eq!(change.policy_version_after, "2.0.0");
 
-    // Y la politica hipotetica viaja como hipotetica, con su sello.
+    // And the hypothetical policy travels as hypothetical, with its seal.
     let hypothetical_policy = result
         .hypotheses
         .iter()
@@ -275,11 +275,11 @@ async fn the_result_says_which_policies_intervened() {
     }
 }
 
-/// Y el contrato NO lleva la politica entera: solo su sello.
+/// And the contract does NOT carry the whole policy: only its seal.
 ///
-/// Un contrato que arrastra el objeto de la politica deja de ser
-/// portable, y lo que se necesita para saber que reglas se aplicaron
-/// es la version.
+/// A contract that drags the policy object stops being
+/// portable, and what is needed to know which rules were applied
+/// is the version.
 #[tokio::test]
 async fn the_result_does_not_carry_a_policy_object() {
     let result = the_result().await;
@@ -295,9 +295,9 @@ async fn the_result_does_not_carry_a_policy_object() {
     );
 }
 
-// ───────────────────────────── la base ─────────────────────────────
+// ───────────────────────────── the base ─────────────────────────────
 
-/// El resultado lleva el sello de la base: sobre que mundo se calculo.
+/// The result carries the base's seal: over which world it was computed.
 #[tokio::test]
 async fn the_result_carries_the_stamp_of_the_base() {
     let result = the_result().await;
@@ -327,12 +327,12 @@ async fn the_result_carries_the_stamp_of_the_base() {
     );
 }
 
-// ───────────────────────────── la cobertura ─────────────────────────────
+// ───────────────────────────── the coverage ─────────────────────────────
 
-/// El resultado dice que se ha cubierto y que no.
+/// The result says what has been covered and what has not.
 ///
-/// La relacion del otro sujeto no se lee, y el resultado lo dice: un
-/// resultado que no dice lo que no ha visto parece completo.
+/// The other subject's relation is not read, and the result says so: a
+/// result that does not say what it has not seen looks complete.
 #[tokio::test]
 async fn the_result_carries_the_coverage() {
     let result = the_result().await;
@@ -366,12 +366,12 @@ async fn the_result_carries_the_coverage() {
     );
 }
 
-// ───────────────────────────── los conflictos ─────────────────────────────
+// ───────────────────────────── the conflicts ─────────────────────────────
 
-/// El ciclo del overlay se declara.
+/// The overlay cycle is declared.
 ///
-/// Un overlay que cierra un ciclo y se presenta como un overlay normal
-/// es un overlay que nadie puede leer.
+/// An overlay that closes a cycle and presents itself as a normal overlay
+/// is an overlay that nobody can read.
 #[tokio::test]
 async fn the_cycle_of_the_overlay_is_declared() {
     let graph = the_graph();
@@ -403,7 +403,7 @@ async fn the_cycle_of_the_overlay_is_declared() {
     );
 }
 
-/// El duplicado se declara: dos hipoteticas que dicen lo mismo.
+/// The duplicate is declared: two hypotheticals that say the same thing.
 #[tokio::test]
 async fn the_duplicate_of_the_hypothesis_is_declared() {
     let graph = the_graph();
@@ -439,8 +439,8 @@ async fn the_duplicate_of_the_hypothesis_is_declared() {
     );
 }
 
-/// La contradiccion se declara: una relacion que se anade y se
-/// sustituye a la vez.
+/// The contradiction is declared: a relation that is added and
+/// replaced at the same time.
 #[tokio::test]
 async fn the_contradiction_of_the_hypotheses_is_declared() {
     let graph = the_graph();
@@ -474,12 +474,12 @@ async fn the_contradiction_of_the_hypotheses_is_declared() {
     );
 }
 
-// ───────────────────────────── la reproducibilidad ─────────────────────────────
+// ───────────────────────────── the reproducibility ─────────────────────────────
 
-/// La misma simulacion da el mismo resultado.
+/// The same simulation gives the same result.
 ///
-/// El reloj es inyectado, el resultado es canonico y por eso dos
-/// simulaciones del mismo mundo se pueden comparar.
+/// The clock is injected, the result is canonical and therefore two
+/// simulations of the same world can be compared.
 #[tokio::test]
 async fn the_same_simulation_gives_the_same_result() {
     let first = the_result().await;

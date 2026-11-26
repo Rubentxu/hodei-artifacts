@@ -41,7 +41,7 @@ pub struct PlaygroundEvaluateCommand {
 }
 
 impl PlaygroundEvaluateCommand {
-    /// Crea un comando usando un esquema en línea (JSON)
+    /// Creates a command using an inline schema (JSON)
     pub fn new_with_inline_schema(
         inline_schema: String,
         inline_policies: Vec<String>,
@@ -55,7 +55,7 @@ impl PlaygroundEvaluateCommand {
         }
     }
 
-    /// Crea un comando usando una versión de esquema almacenada
+    /// Creates a command using a stored schema version
     pub fn new_with_schema_version(
         schema_version: String,
         inline_policies: Vec<String>,

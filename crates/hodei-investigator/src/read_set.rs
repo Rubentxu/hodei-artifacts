@@ -1,10 +1,10 @@
-//! El read-set del investigador.
+//! The investigator's read-set.
 //!
-//! La primitiva vive en [`hodei_evidence::domain::read_set`] porque es
-//! de DOMINIO compartido: el investigador la usa para sellar lo que leyo
-//! y la simulacion la usa para fijar la base sobre la que evalua. Este
-//! modulo es la puerta de entrada del investigador y no define nada:
-//! reexporta la misma primitiva, de modo que un manifiesto escrito por
-//! uno verifica el del otro.
+//! The primitive lives in [`hodei_evidence::domain::read_set`] because it is
+//! shared DOMAIN: the investigator uses it to seal what it read
+//! and the simulation uses it to pin the base on which it evaluates. This
+//! module is the investigator's entry point and defines nothing:
+//! it re-exports the same primitive, so that a manifest written by
+//! one verifies that of the other.
 
 pub use hodei_evidence::domain::read_set::{ReadKind, ReadSet, ReadStamp};

@@ -1,34 +1,34 @@
-//! El contrato versionado del resultado de una simulacion.
+//! The versioned contract of a simulation's result.
 //!
-//! El diff de la simulacion dice que relaciones aparecen, que relaciones
-//! desaparecen y que decisiones cambian. Eso es el **interior** del
-//! resultado. El resultado es el contrato de fuera: lo que un consumidor
-//! --una consola, un informe, un segundo servicio-- recibe, y por eso
-//! tiene que estar versionado, separar lo observado de lo hipotetico y
-//! decir que ha cubierto y que no.
+//! The simulation diff says which relations appear, which relations
+//! disappear and which decisions change. That is the **interior** of the
+//! result. The result is the outer contract: what a consumer
+//! --a console, a report, a second service-- receives, and that is why it
+//! has to be versioned, separate the observed from the hypothetical, and
+//! say what it has covered and what it has not.
 //!
-//! # Las tres separaciones
+//! # The three separations
 //!
-//! El contrato separa tres cosas que se confunden muy facil:
+//! The contract separates three things that are very easily confused:
 //!
-//! - **Lo observado**: el estado real, tal como se leyo. Las relaciones
-//!   que estaban en el grafo, la politica que estaba en vigor y la
-//!   evidencia que se consumio para decidir.
-//! - **Lo hipotetico**: los escenarios que se superponen. Van marcados
-//!   como hipoteticos, y **no se publican como hechos del grafo**: una
-//!   hipotetica que se confunde con un hecho es una mentira con formato
-//!   de dato.
-//! - **Lo que no se ha cubierto**: la cobertura y los conflictos. Un
-//!   resultado que no dice lo que no ha mirado parece completo.
+//! - **The observed**: the real state, as it was read. The relations
+//!   that were in the graph, the policy that was in force and the
+//!   evidence that was consumed to decide.
+//! - **The hypothetical**: the scenarios that are overlaid. They are marked
+//!   as hypothetical, and are **not published as graph facts**: a
+//!   hypothetical confused with a fact is a lie formatted
+//!   as data.
+//! - **What has not been covered**: coverage and conflicts. A
+//!   result that does not say what it has not looked at seems complete.
 //!
-//! # El contrato viaja sin objetos de politica
+//! # The contract travels without policy objects
 //!
-//! La politica COMPLETA no viaja: es un objeto grande, con forma de
-//! politica, y un contrato que lo lleva deja de ser portable. Lo que
-//! viaja es el **sello** de la politica --su identificador y su
-//! version--, que es lo que hace falta para saber que reglas se
-//! aplicaron. Los helpers de comparacion y normalizacion trabajan con
-//! sellos y jamas con objetos de politica.
+//! The FULL policy does not travel: it is a large object, shaped like a
+//! policy, and a contract that carries it stops being portable. What
+//! travels is the policy's **stamp** --its identifier and its
+//! version--, which is what is needed to know which rules were
+//! applied. The comparison and normalization helpers work with
+//! stamps and never with policy objects.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::domain::graph::RelationType;
@@ -43,27 +43,27 @@ use crate::diff::{DecisionChange, SimulationDiff, StructuralDiff};
 use crate::fork::SimulationFork;
 use crate::hypothetical::{Hypothetical, HypotheticalClaim, RelationFact};
 
-/// La version del contrato.
+/// The contract version.
 ///
-/// El contrato cambia, y cuando cambia se declara con OTRO numero: un
-/// consumidor que lee la version `1.0.0` sabe lo que puede esperar de
-/// el, y un consumidor que lee otra version sabe que tiene que mirar.
+/// The contract changes, and when it changes it is declared with ANOTHER number: a
+/// consumer reading version `1.0.0` knows what to expect from
+/// it, and a consumer reading another version knows it has to look.
 pub const SIMULATION_RESULT_VERSION: &str = "1.0.0";
 
-/// El sello de una politica: su identificador y su version.
+/// A policy's stamp: its identifier and its version.
 ///
-/// Es lo que viaja en vez de la politica: lo que hace falta para saber
-/// que reglas se aplicaron, sin arrastrar el objeto entero.
+/// It is what travels instead of the policy: what is needed to know
+/// which rules were applied, without dragging the whole object along.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PolicyStamp {
-    /// El identificador del conjunto de reglas.
+    /// The ruleset's identifier.
     pub id: String,
-    /// La version del conjunto de reglas.
+    /// The ruleset's version.
     pub version: String,
 }
 
 impl PolicyStamp {
-    /// El sello de una politica.
+    /// A policy's stamp.
     pub fn of(policy: &TrustPolicy) -> Self {
         Self {
             id: policy.id.clone(),
@@ -72,132 +72,132 @@ impl PolicyStamp {
     }
 }
 
-/// El sello de una evidencia: su identificador y el digest de su
-/// contenido.
+/// An evidence's stamp: its identifier and the digest of its
+/// content.
 ///
-/// El digest es lo que permite comprobar el origen: si la evidencia
-/// cambia de contenido, cambia el digest.
+/// The digest is what allows checking the origin: if the evidence
+/// changes content, the digest changes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EvidenceStamp {
-    /// El identificador de la evidencia.
+    /// The evidence's identifier.
     pub id: String,
-    /// El digest de su contenido.
+    /// The digest of its content.
     pub digest: String,
 }
 
-/// La version de una fuente de lecturas.
+/// The version of a read source.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SourceStamp {
-    /// La fuente: el grafo, la evidencia, la politica.
+    /// The source: the graph, the evidence, the policy.
     pub source: String,
-    /// La version que se leyo de esa fuente.
+    /// The version that was read from that source.
     pub version: u64,
 }
 
-/// El sello de la base: sobre que mundo se calculo el resultado.
+/// The base's stamp: which world the result was computed over.
 ///
-/// Es lo que hace auditable el resultado: sin el, una respuesta dice
-/// que pasaria si y no dice sobre que version de la verdad.
+/// It is what makes the result auditable: without it, an answer says
+/// what would happen and does not say over which version of the truth.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BaseStamp {
-    /// La cuenta a la que pertenece la simulacion.
+    /// The account the simulation belongs to.
     pub account: String,
-    /// El instante en el que se evaluo.
+    /// The instant it was evaluated.
     pub evaluated_at: DateTime<Utc>,
-    /// La generacion del grafo contra la que se evaluo.
+    /// The graph generation it was evaluated against.
     pub generation: Option<u64>,
-    /// El sello del contenido leido: el digest de las relaciones leidas.
+    /// The stamp of the content read: the digest of the relations read.
     pub seal: String,
-    /// La huella del manifiesto de lecturas.
+    /// The fingerprint of the read manifest.
     pub fingerprint: String,
-    /// La posicion del ledger que declara el punto de partida, si se
-    /// sabe. Es una posicion DECLARADA, no verificada.
+    /// The ledger position that declares the starting point, if
+    /// known. It is a DECLARED position, not a verified one.
     pub declared_ledger_position: Option<u64>,
-    /// La version de cada fuente que se leyo.
+    /// The version of each source that was read.
     pub sources: Vec<SourceStamp>,
 }
 
-/// Lo OBSERVADO: el estado real, tal como se leyo.
+/// The OBSERVED: the real state, as it was read.
 ///
-/// Lo que esta aqui estuvo en el mundo. Lo que no esta aqui, no estuvo.
+/// What is here was in the world. What is not here, was not.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ObservedState {
-    /// Las relaciones observadas, en orden canonico y sin duplicados.
+    /// The observed relations, in canonical order and without duplicates.
     pub relations: Vec<RelationFact>,
-    /// La politica que estaba en vigor.
+    /// The policy that was in force.
     pub policy: PolicyStamp,
-    /// La evidencia que se consumio para decidir.
+    /// The evidence that was consumed to decide.
     pub evidence: Vec<EvidenceStamp>,
 }
 
-/// Un escenario hipotetico, en forma portable.
+/// A hypothetical scenario, in portable form.
 ///
-/// Es una hipotetica y se dice: viaja en su propio campo y nunca se
-/// mezcla con las relaciones observadas.
+/// It is a hypothetical and says so: it travels in its own field and is never
+/// mixed with the observed relations.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hypothesis {
-    /// La simulacion a la que pertenece la hipotetica.
+    /// The simulation the hypothetical belongs to.
     pub simulation: String,
-    /// El momento en que se creo la hipotetica.
+    /// The moment the hypothetical was created.
     pub created_at: DateTime<Utc>,
-    /// Lo que dice la hipotetica.
+    /// What the hypothetical says.
     pub kind: HypothesisKind,
-    /// Los sujetos que la hipotetica toca.
+    /// The subjects the hypothetical touches.
     pub subjects: Vec<Hrn>,
 }
 
-/// Lo que dice una hipotetica.
+/// What a hypothetical says.
 ///
-/// Y en ninguna de las variantes viaja la politica completa: la
-/// hipotetica de politica lleva su sello.
+/// And in none of the variants does the full policy travel: the
+/// policy hypothetical carries its stamp.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HypothesisKind {
-    /// Una relacion que existiria.
+    /// A relation that would exist.
     Relation {
-        /// De que relacion se trata.
+        /// Which relation it is.
         relation: RelationType,
-        /// El nodo del que parte.
+        /// The node it starts from.
         from: Hrn,
-        /// El nodo al que llega.
+        /// The node it arrives at.
         to: Hrn,
-        /// La identidad de la relacion que SUSTITUYE, si sustituye a
-        /// alguna.
+        /// The identity of the relation it REPLACES, if it replaces
+        /// any.
         replaces: Option<String>,
     },
-    /// Un riesgo que habria.
+    /// A risk that there would be.
     Risk {
-        /// El sujeto al que llega.
+        /// The subject it reaches.
         subject: Hrn,
-        /// La vulnerabilidad.
+        /// The vulnerability.
         advisory: String,
-        /// Si es critica.
+        /// Whether it is critical.
         critical: bool,
-        /// Si es alcanzable.
+        /// Whether it is reachable.
         reachable: bool,
     },
-    /// Una ventana en la que un constructor no se fia.
+    /// A window in which a builder is not trusted.
     UntrustedWindow {
-        /// El principio de la ventana.
+        /// The start of the window.
         from: DateTime<Utc>,
-        /// El final de la ventana.
+        /// The end of the window.
         to: DateTime<Utc>,
-        /// Los sujetos a los que alcanza la ventana.
+        /// The subjects the window reaches.
         subjects: Vec<Hrn>,
     },
-    /// Una politica que estaria en vigor.
+    /// A policy that would be in force.
     Policy {
-        /// El sello de la politica, no la politica.
+        /// The policy's stamp, not the policy.
         policy: PolicyStamp,
     },
 }
 
 impl Hypothesis {
-    /// La clave canonica: dos hipoteticas con la misma clave son la misma
-    /// hipotetica.
+    /// The canonical key: two hypotheticals with the same key are the same
+    /// hypothetical.
     ///
-    /// La clave es lo que ordena el resultado, y por eso no depende del
-    /// orden en que se declararon los hechos.
+    /// The key is what orders the result, and that is why it does not depend on the
+    /// order in which the facts were declared.
     pub fn the_key(&self) -> String {
         match &self.kind {
             HypothesisKind::Relation {
@@ -233,97 +233,97 @@ impl Hypothesis {
     }
 }
 
-/// La cobertura: que se ha mirado y que no.
+/// Coverage: what has been looked at and what has not.
 ///
-/// Un resultado que no dice lo que no ha visto parece completo, y un
-/// resultado que parece completo se usa como si lo fuera.
+/// A result that does not say what it has not seen seems complete, and a
+/// result that seems complete gets used as if it were.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Coverage {
-    /// Los sujetos DECLARADOS: los que alguien nombro.
+    /// The DECLARED subjects: those someone named.
     pub declared_subjects: Vec<Hrn>,
-    /// Los sujetos EVALUADOS: los declarados y los que traen los hechos.
+    /// The EVALUATED subjects: the declared ones and those brought by the facts.
     pub evaluated_subjects: Vec<Hrn>,
-    /// Las relaciones que se leyeron del grafo real.
+    /// The relations that were read from the real graph.
     pub relations_read: usize,
-    /// Las relaciones de la cuenta que NO se leyeron.
+    /// The account's relations that were NOT read.
     ///
-    /// La simulacion lee las relaciones de los sujetos que toca, no las
-    /// de toda la cuenta. El numero dice lo que no se ha visto.
+    /// The simulation reads the relations of the subjects it touches, not those
+    /// of the whole account. The number says what has not been seen.
     pub relations_not_read: usize,
-    /// Lo que se quedo fuera, con su motivo.
+    /// What was left out, with its reason.
     pub omitted: Vec<Omission>,
 }
 
-/// Lo que se quedo fuera de la cobertura.
+/// What was left out of coverage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Omission {
-    /// El sujeto que se quedo fuera, si se sabe cual es.
+    /// The subject that was left out, if it is known which one it is.
     pub subject: Option<Hrn>,
-    /// El motivo.
+    /// The reason.
     pub reason: String,
 }
 
-/// Un conflicto que la simulacion declara.
+/// A conflict that the simulation declares.
 ///
-/// Un conflicto no es un fallo: es una contradiccion del escenario que se
-/// dice en vez de esconderse. Un overlay que cierra un ciclo y se
-/// presenta como un overlay normal es un overlay que nadie puede leer.
+/// A conflict is not a failure: it is a contradiction in the scenario that is
+/// stated instead of being hidden. An overlay that closes a cycle and presents
+/// itself as a normal overlay is an overlay nobody can read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Conflict {
-    /// La clase del conflicto.
+    /// The conflict's kind.
     pub kind: ConflictKind,
-    /// El detalle, en texto.
+    /// The detail, as text.
     pub detail: String,
-    /// Los sujetos que el conflicto toca.
+    /// The subjects the conflict touches.
     pub subjects: Vec<Hrn>,
 }
 
-/// Las clases de conflicto.
+/// The conflict kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ConflictKind {
-    /// El overlay cierra un ciclo.
+    /// The overlay closes a cycle.
     Cycle,
-    /// La misma relacion se dice dos veces.
+    /// The same relation is stated twice.
     Duplicate,
-    /// Dos hipoteticas se contradicen.
+    /// Two hypotheticals contradict each other.
     Contradiction,
 }
 
-/// El contrato versionado del resultado de una simulacion.
+/// The versioned contract of a simulation's result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SimulationResult {
-    /// La version del contrato.
+    /// The contract version.
     pub version: String,
-    /// La simulacion a la que pertenece el resultado.
+    /// The simulation the result belongs to.
     pub simulation: String,
-    /// La cuenta de la simulacion.
+    /// The simulation's account.
     pub account: String,
-    /// El sello de la base: sobre que mundo se calculo.
+    /// The base's stamp: which world it was computed over.
     pub base: BaseStamp,
-    /// Lo que se observo.
+    /// What was observed.
     pub observed: ObservedState,
-    /// Los escenarios hipoteticos, en orden canonico.
+    /// The hypothetical scenarios, in canonical order.
     pub hypotheses: Vec<Hypothesis>,
-    /// El diff de las relaciones.
+    /// The relations diff.
     pub structural: StructuralDiff,
-    /// Las decisiones que cambian, en orden canonico.
+    /// The decisions that change, in canonical order.
     pub decisions: Vec<DecisionChange>,
-    /// La cobertura.
+    /// The coverage.
     pub coverage: Coverage,
-    /// Los conflictos que el escenario declara.
+    /// The conflicts the scenario declares.
     pub conflicts: Vec<Conflict>,
 }
 
 impl SimulationResult {
-    /// El resultado a partir del diff, del fork y de lo que se observo.
+    /// The result built from the diff, the fork and what was observed.
     ///
-    /// La construccion es **pura**: no lee, no escribe y no decide. Lo
-    /// que se le da es lo que ya se sabe, y lo que sale es el contrato.
+    /// The construction is **pure**: it does not read, does not write and does not decide. What
+    /// it is given is what is already known, and what comes out is the contract.
     ///
-    /// El numero de relaciones de la cuenta es el total del grafo, no el
-    /// de los sujetos tocados: la cobertura dice lo que no se ha leido, y
-    /// para eso hace falta el total.
+    /// The account's relation count is the graph total, not that
+    /// of the touched subjects: coverage says what has not been read, and
+    /// for that the total is needed.
     pub fn of(
         diff: &SimulationDiff,
         fork: &SimulationFork,
@@ -350,10 +350,10 @@ impl SimulationResult {
         }
     }
 
-    /// Si el resultado no dice nada.
+    /// Whether the result says nothing.
     ///
-    /// Un resultado sin diferencias, sin decisiones y sin conflictos no
-    /// dice nada: y un resultado que no dice nada no es un resultado.
+    /// A result without differences, without decisions and without conflicts
+    /// says nothing: and a result that says nothing is not a result.
     pub fn is_empty(&self) -> bool {
         self.structural.is_empty()
             && self.decisions.is_empty()
@@ -362,7 +362,7 @@ impl SimulationResult {
     }
 }
 
-/// El sello de la base de un diff.
+/// The stamp of a diff's base.
 fn the_base_stamp_of(base: &SimulationBase) -> BaseStamp {
     let mut sources: Vec<SourceStamp> = base
         .read_set
@@ -390,7 +390,7 @@ fn the_base_stamp_of(base: &SimulationBase) -> BaseStamp {
     }
 }
 
-/// La evidencia que se leyo para decidir, en orden canonico.
+/// The evidence that was read to decide, in canonical order.
 fn the_evidence_of(read_set: &ReadSet) -> Vec<EvidenceStamp> {
     let mut evidence: Vec<EvidenceStamp> = read_set
         .stamps
@@ -406,12 +406,12 @@ fn the_evidence_of(read_set: &ReadSet) -> Vec<EvidenceStamp> {
     evidence
 }
 
-/// Los escenarios hipoteticos del fork, en orden canonico.
+/// The fork's hypothetical scenarios, in canonical order.
 ///
-/// La politica hipotetica del fork es una hipotetica mas: no viaja en
-/// la lista de hechos --porque es un campo del fork y no un hecho-- pero
-/// es tan hipotetica como el resto, y si no se declara el consumidor no
-/// sabe que reglas se aplicaron.
+/// The fork's hypothetical policy is one more hypothetical: it does not travel in
+/// the list of facts --because it is a field of the fork and not a fact-- but
+/// it is as hypothetical as the rest, and if it is not declared the consumer does not
+/// know which rules were applied.
 fn the_hypotheses_of(fork: &SimulationFork) -> Vec<Hypothesis> {
     let mut hypotheses: Vec<Hypothesis> = fork.facts.iter().map(the_hypothesis_of).collect();
     if let Some(policy) = &fork.policy {
@@ -428,7 +428,7 @@ fn the_hypotheses_of(fork: &SimulationFork) -> Vec<Hypothesis> {
     hypotheses
 }
 
-/// Un hecho hipotetico, proyectado a forma portable.
+/// A hypothetical fact, projected to portable form.
 fn the_hypothesis_of(fact: &Hypothetical) -> Hypothesis {
     let kind = match &fact.claim {
         HypotheticalClaim::Relation {
@@ -475,7 +475,7 @@ fn the_hypothesis_of(fact: &Hypothetical) -> Hypothesis {
     }
 }
 
-/// La cobertura de la simulacion.
+/// The simulation's coverage.
 fn the_coverage_of(
     fork: &SimulationFork,
     observed: &[RelationFact],
@@ -510,12 +510,12 @@ fn the_coverage_of(
     }
 }
 
-/// Los conflictos que el escenario declara.
+/// The conflicts the scenario declares.
 ///
-/// Los tres son del overlay y ninguno es del mundo real: un ciclo que ya
-/// estaba no es de la simulacion, una relacion que ya existia no la
-/// introduce la hipotetica y una contradiccion entre dos hipoteticas es
-/// de quien las declaro.
+/// All three belong to the overlay and none to the real world: a cycle that was already
+/// there is not the simulation's, a relation that already existed is not
+/// introduced by the hypothetical and a contradiction between two hypotheticals is
+/// the fault of whoever declared them.
 fn the_conflicts_of(
     fork: &SimulationFork,
     observed: &[RelationFact],

@@ -1,28 +1,28 @@
-//! Value Objects para el dominio compartido
+//! Value Objects for the shared domain
 //!
-//! Este módulo define tipos "newtype" que encapsulan primitivos del dominio
-//! con validación y semántica específica. Estos Value Objects son agnósticos
-//! a cualquier motor de políticas (como Cedar) y representan conceptos
-//! fundamentales del lenguaje de dominio de Hodei.
+//! This module defines "newtype" types that encapsulate domain primitives
+//! with specific validation and semantics. These Value Objects are agnostic
+//! to any policy engine (such as Cedar) and represent fundamental
+//! concepts of Hodei's domain language.
 //!
-//! # Principios de Diseño
+//! # Design Principles
 //!
-//! - **Validación en construcción**: Los constructores validan el formato
-//! - **Inmutabilidad**: Una vez creados, no pueden modificarse
-//! - **Tipo seguro**: El compilador garantiza el uso correcto
-//! - **Agnóstico**: Sin dependencias de infraestructura externa
+//! - **Validation on construction**: Constructors validate the format
+//! - **Immutability**: Once created, they cannot be modified
+//! - **Type safe**: The compiler guarantees correct usage
+//! - **Agnostic**: No dependencies on external infrastructure
 //!
-//! # Ejemplos
+//! # Examples
 //!
 //! ```
 //! use kernel::domain::value_objects::{ServiceName, ResourceTypeName, AttributeName};
 //!
-//! // Construcción válida
+//! // Valid construction
 //! let service = ServiceName::new("iam").unwrap();
 //! let resource_type = ResourceTypeName::new("User").unwrap();
 //! let attr = AttributeName::new("email").unwrap();
 //!
-//! // Acceso al valor interno
+//! // Access to the inner value
 //! assert_eq!(service.as_str(), "iam");
 //! assert_eq!(resource_type.as_str(), "User");
 //! ```
@@ -33,56 +33,56 @@ use std::ops::Deref;
 use thiserror::Error;
 
 // ============================================================================
-// Errores de Validación
+// Validation Errors
 // ============================================================================
 
-/// Errores que pueden ocurrir al crear Value Objects
+/// Errors that may occur when creating Value Objects
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    /// El valor está vacío cuando se requiere contenido
+    /// The value is empty when content is required
     #[error("Value cannot be empty")]
     EmptyValue,
 
-    /// El formato no cumple con las reglas del dominio
+    /// The format does not comply with the domain rules
     #[error("Invalid format: {0}")]
     InvalidFormat(String),
 
-    /// El valor excede la longitud máxima permitida
+    /// The value exceeds the maximum allowed length
     #[error("Value too long: maximum {max} characters, got {actual}")]
     TooLong { max: usize, actual: usize },
 
-    /// El valor no cumple con el patrón esperado
+    /// The value does not match the expected pattern
     #[error("Invalid pattern: {reason}")]
     InvalidPattern { reason: String },
 }
 
 // ============================================================================
-// ServiceName - Nombre de servicio en kebab-case
+// ServiceName - Service name in kebab-case
 // ============================================================================
 
-/// Representa el nombre de un servicio (namespace lógico)
+/// Represents the name of a service (logical namespace)
 ///
-/// # Formato Esperado
+/// # Expected Format
 ///
-/// - Lowercase kebab-case (ej: "iam", "organizations", "supply-chain")
-/// - Solo caracteres alfanuméricos y guiones
-/// - No puede empezar ni terminar con guión
-/// - Longitud máxima: 64 caracteres
+/// - Lowercase kebab-case (e.g. "iam", "organizations", "supply-chain")
+/// - Only alphanumeric characters and hyphens
+/// - Cannot start or end with a hyphen
+/// - Maximum length: 64 characters
 ///
-/// # Ejemplos
+/// # Examples
 ///
 /// ```
 /// use kernel::domain::value_objects::ServiceName;
 ///
-/// // Válidos
+/// // Valid
 /// assert!(ServiceName::new("iam").is_ok());
 /// assert!(ServiceName::new("supply-chain").is_ok());
 /// assert!(ServiceName::new("hodei-organizations").is_ok());
 ///
-/// // Inválidos
-/// assert!(ServiceName::new("").is_err());           // Vacío
-/// assert!(ServiceName::new("IAM").is_err());        // Mayúsculas
-/// assert!(ServiceName::new("-iam").is_err());       // Empieza con guión
+/// // Invalid
+/// assert!(ServiceName::new("").is_err());           // Empty
+/// assert!(ServiceName::new("IAM").is_err());        // Uppercase
+/// assert!(ServiceName::new("-iam").is_err());       // Starts with hyphen
 /// assert!(ServiceName::new("iam_service").is_err()); // Underscore
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -90,27 +90,27 @@ pub enum ValidationError {
 pub struct ServiceName(String);
 
 impl ServiceName {
-    /// Longitud máxima permitida para un nombre de servicio
+    /// Maximum allowed length for a service name
     pub const MAX_LENGTH: usize = 64;
 
-    /// Crea un nuevo ServiceName con validación
+    /// Creates a new ServiceName with validation
     ///
-    /// # Errores
+    /// # Errors
     ///
-    /// Retorna `ValidationError` si:
-    /// - El valor está vacío
-    /// - Contiene caracteres no permitidos
-    /// - Excede la longitud máxima
-    /// - No sigue el formato kebab-case
+    /// Returns `ValidationError` if:
+    /// - The value is empty
+    /// - It contains disallowed characters
+    /// - It exceeds the maximum length
+    /// - It does not follow the kebab-case format
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
 
-        // Validar no vacío
+        // Validate non-empty
         if value.is_empty() {
             return Err(ValidationError::EmptyValue);
         }
 
-        // Validar longitud
+        // Validate length
         if value.len() > Self::MAX_LENGTH {
             return Err(ValidationError::TooLong {
                 max: Self::MAX_LENGTH,
@@ -118,27 +118,27 @@ impl ServiceName {
             });
         }
 
-        // Validar formato kebab-case
+        // Validate kebab-case format
         Self::validate_kebab_case(&value)?;
 
         Ok(Self(value))
     }
 
-    /// Valida que el string siga el formato kebab-case
+    /// Validates that the string follows the kebab-case format
     fn validate_kebab_case(value: &str) -> Result<(), ValidationError> {
-        // No puede empezar o terminar con guión
+        // Cannot start or end with a hyphen
         if value.starts_with('-') || value.ends_with('-') {
             return Err(ValidationError::InvalidPattern {
                 reason: "Cannot start or end with hyphen".to_string(),
             });
         }
 
-        // Solo lowercase, números y guiones
+        // Only lowercase, digits and hyphens
         for (i, ch) in value.chars().enumerate() {
             match ch {
                 'a'..='z' | '0'..='9' => continue,
                 '-' => {
-                    // No permitir guiones consecutivos
+                    // Do not allow consecutive hyphens
                     if i > 0 && value.chars().nth(i - 1) == Some('-') {
                         return Err(ValidationError::InvalidPattern {
                             reason: "Cannot have consecutive hyphens".to_string(),
@@ -157,12 +157,12 @@ impl ServiceName {
         Ok(())
     }
 
-    /// Obtiene el valor como &str
+    /// Gets the value as &str
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Consume el Value Object y retorna el String interno
+    /// Consumes the Value Object and returns the inner String
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -189,59 +189,59 @@ impl fmt::Display for ServiceName {
 }
 
 // ============================================================================
-// ResourceTypeName - Nombre de tipo de recurso en PascalCase
+// ResourceTypeName - Resource type name in PascalCase
 // ============================================================================
 
-/// Representa el nombre de un tipo de recurso
+/// Represents the name of a resource type
 ///
-/// # Formato Esperado
+/// # Expected Format
 ///
-/// - PascalCase (ej: "User", "Group", "ServiceControlPolicy")
-/// - Solo caracteres alfanuméricos
-/// - Debe empezar con mayúscula
-/// - Longitud máxima: 64 caracteres
+/// - PascalCase (e.g. "User", "Group", "ServiceControlPolicy")
+/// - Only alphanumeric characters
+/// - Must start with an uppercase letter
+/// - Maximum length: 64 characters
 ///
-/// # Ejemplos
+/// # Examples
 ///
 /// ```
 /// use kernel::domain::value_objects::ResourceTypeName;
 ///
-/// // Válidos
+/// // Valid
 /// assert!(ResourceTypeName::new("User").is_ok());
 /// assert!(ResourceTypeName::new("Group").is_ok());
 /// assert!(ResourceTypeName::new("ServiceControlPolicy").is_ok());
 ///
-/// // Inválidos
-/// assert!(ResourceTypeName::new("").is_err());        // Vacío
-/// assert!(ResourceTypeName::new("user").is_err());    // Minúscula
-/// assert!(ResourceTypeName::new("User-Group").is_err()); // Guión
+/// // Invalid
+/// assert!(ResourceTypeName::new("").is_err());        // Empty
+/// assert!(ResourceTypeName::new("user").is_err());    // Lowercase
+/// assert!(ResourceTypeName::new("User-Group").is_err()); // Hyphen
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ResourceTypeName(String);
 
 impl ResourceTypeName {
-    /// Longitud máxima permitida para un nombre de tipo de recurso
+    /// Maximum allowed length for a resource type name
     pub const MAX_LENGTH: usize = 64;
 
-    /// Crea un nuevo ResourceTypeName con validación
+    /// Creates a new ResourceTypeName with validation
     ///
-    /// # Errores
+    /// # Errors
     ///
-    /// Retorna `ValidationError` si:
-    /// - El valor está vacío
-    /// - No empieza con mayúscula
-    /// - Contiene caracteres no alfanuméricos
-    /// - Excede la longitud máxima
+    /// Returns `ValidationError` if:
+    /// - The value is empty
+    /// - It does not start with an uppercase letter
+    /// - It contains non-alphanumeric characters
+    /// - It exceeds the maximum length
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
 
-        // Validar no vacío
+        // Validate non-empty
         if value.is_empty() {
             return Err(ValidationError::EmptyValue);
         }
 
-        // Validar longitud
+        // Validate length
         if value.len() > Self::MAX_LENGTH {
             return Err(ValidationError::TooLong {
                 max: Self::MAX_LENGTH,
@@ -249,15 +249,15 @@ impl ResourceTypeName {
             });
         }
 
-        // Validar formato PascalCase
+        // Validate PascalCase format
         Self::validate_pascal_case(&value)?;
 
         Ok(Self(value))
     }
 
-    /// Valida que el string siga el formato PascalCase
+    /// Validates that the string follows the PascalCase format
     fn validate_pascal_case(value: &str) -> Result<(), ValidationError> {
-        // Debe empezar con mayúscula
+        // Must start with an uppercase letter
         if let Some(first) = value.chars().next()
             && !first.is_uppercase()
         {
@@ -266,7 +266,7 @@ impl ResourceTypeName {
             });
         }
 
-        // Solo alfanuméricos
+        // Only alphanumerics
         if !value.chars().all(|ch| ch.is_alphanumeric()) {
             return Err(ValidationError::InvalidFormat(
                 "Only alphanumeric characters allowed (PascalCase)".to_string(),
@@ -276,12 +276,12 @@ impl ResourceTypeName {
         Ok(())
     }
 
-    /// Obtiene el valor como &str
+    /// Gets the value as &str
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Consume el Value Object y retorna el String interno
+    /// Consumes the Value Object and returns the inner String
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -308,60 +308,60 @@ impl fmt::Display for ResourceTypeName {
 }
 
 // ============================================================================
-// AttributeName - Nombre de atributo en snake_case o camelCase
+// AttributeName - Attribute name in snake_case or camelCase
 // ============================================================================
 
-/// Representa el nombre de un atributo de entidad
+/// Represents the name of an entity attribute
 ///
-/// # Formato Esperado
+/// # Expected Format
 ///
-/// - snake_case o camelCase (ej: "email", "created_at", "isActive")
-/// - Solo caracteres alfanuméricos y underscore
-/// - No puede empezar con número
-/// - Longitud máxima: 64 caracteres
+/// - snake_case or camelCase (e.g. "email", "created_at", "isActive")
+/// - Only alphanumeric characters and underscore
+/// - Cannot start with a digit
+/// - Maximum length: 64 characters
 ///
-/// # Ejemplos
+/// # Examples
 ///
 /// ```
 /// use kernel::domain::value_objects::AttributeName;
 ///
-/// // Válidos
+/// // Valid
 /// assert!(AttributeName::new("email").is_ok());
 /// assert!(AttributeName::new("created_at").is_ok());
 /// assert!(AttributeName::new("isActive").is_ok());
 /// assert!(AttributeName::new("user_id").is_ok());
 ///
-/// // Inválidos
-/// assert!(AttributeName::new("").is_err());           // Vacío
-/// assert!(AttributeName::new("123name").is_err());    // Empieza con número
-/// assert!(AttributeName::new("user-name").is_err());  // Guión
+/// // Invalid
+/// assert!(AttributeName::new("").is_err());           // Empty
+/// assert!(AttributeName::new("123name").is_err());    // Starts with a digit
+/// assert!(AttributeName::new("user-name").is_err());  // Hyphen
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct AttributeName(String);
 
 impl AttributeName {
-    /// Longitud máxima permitida para un nombre de atributo
+    /// Maximum allowed length for an attribute name
     pub const MAX_LENGTH: usize = 64;
 
-    /// Crea un nuevo AttributeName con validación
+    /// Creates a new AttributeName with validation
     ///
-    /// # Errores
+    /// # Errors
     ///
-    /// Retorna `ValidationError` si:
-    /// - El valor está vacío
-    /// - Empieza con número
-    /// - Contiene caracteres no permitidos
-    /// - Excede la longitud máxima
+    /// Returns `ValidationError` if:
+    /// - The value is empty
+    /// - It starts with a digit
+    /// - It contains disallowed characters
+    /// - It exceeds the maximum length
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
 
-        // Validar no vacío
+        // Validate non-empty
         if value.is_empty() {
             return Err(ValidationError::EmptyValue);
         }
 
-        // Validar longitud
+        // Validate length
         if value.len() > Self::MAX_LENGTH {
             return Err(ValidationError::TooLong {
                 max: Self::MAX_LENGTH,
@@ -369,15 +369,15 @@ impl AttributeName {
             });
         }
 
-        // Validar formato
+        // Validate format
         Self::validate_identifier(&value)?;
 
         Ok(Self(value))
     }
 
-    /// Valida que el string sea un identificador válido
+    /// Validates that the string is a valid identifier
     fn validate_identifier(value: &str) -> Result<(), ValidationError> {
-        // No puede empezar con número
+        // Cannot start with a digit
         if let Some(first) = value.chars().next()
             && first.is_numeric()
         {
@@ -386,7 +386,7 @@ impl AttributeName {
             });
         }
 
-        // Solo alfanuméricos y underscore
+        // Only alphanumerics and underscore
         for (i, ch) in value.chars().enumerate() {
             if !ch.is_alphanumeric() && ch != '_' {
                 return Err(ValidationError::InvalidFormat(format!(
@@ -399,12 +399,12 @@ impl AttributeName {
         Ok(())
     }
 
-    /// Obtiene el valor como &str
+    /// Gets the value as &str
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Consume el Value Object y retorna el String interno
+    /// Consumes the Value Object and returns the inner String
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -439,7 +439,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // Tests de ServiceName
+    // ServiceName tests
     // ========================================================================
 
     #[test]
@@ -532,7 +532,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de ResourceTypeName
+    // ResourceTypeName tests
     // ========================================================================
 
     #[test]
@@ -594,7 +594,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de AttributeName
+    // AttributeName tests
     // ========================================================================
 
     #[test]
@@ -662,7 +662,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de Serialización
+    // Serialization tests
     // ========================================================================
 
     #[test]
@@ -696,7 +696,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: PartialEq y Eq
+    // Additional tests: PartialEq and Eq
     // ========================================================================
 
     #[test]
@@ -730,7 +730,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Hash
+    // Additional tests: Hash
     // ========================================================================
 
     #[test]
@@ -739,10 +739,10 @@ mod tests {
 
         let mut set = HashSet::new();
         set.insert(ServiceName::new("iam").unwrap());
-        set.insert(ServiceName::new("iam").unwrap()); // Duplicado
+        set.insert(ServiceName::new("iam").unwrap()); // Duplicate
         set.insert(ServiceName::new("organizations").unwrap());
 
-        assert_eq!(set.len(), 2); // Solo dos únicos
+        assert_eq!(set.len(), 2); // Only two unique
     }
 
     #[test]
@@ -751,10 +751,10 @@ mod tests {
 
         let mut set = HashSet::new();
         set.insert(ResourceTypeName::new("User").unwrap());
-        set.insert(ResourceTypeName::new("User").unwrap()); // Duplicado
+        set.insert(ResourceTypeName::new("User").unwrap()); // Duplicate
         set.insert(ResourceTypeName::new("Group").unwrap());
 
-        assert_eq!(set.len(), 2); // Solo dos únicos
+        assert_eq!(set.len(), 2); // Only two unique
     }
 
     #[test]
@@ -763,14 +763,14 @@ mod tests {
 
         let mut set = HashSet::new();
         set.insert(AttributeName::new("email").unwrap());
-        set.insert(AttributeName::new("email").unwrap()); // Duplicado
+        set.insert(AttributeName::new("email").unwrap()); // Duplicate
         set.insert(AttributeName::new("username").unwrap());
 
-        assert_eq!(set.len(), 2); // Solo dos únicos
+        assert_eq!(set.len(), 2); // Only two unique
     }
 
     // ========================================================================
-    // Tests adicionales: Clone
+    // Additional tests: Clone
     // ========================================================================
 
     #[test]
@@ -798,7 +798,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: AsRef<str>
+    // Additional tests: AsRef<str>
     // ========================================================================
 
     #[test]
@@ -823,7 +823,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: into_inner
+    // Additional tests: into_inner
     // ========================================================================
 
     #[test]
@@ -848,7 +848,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Edge cases de validación
+    // Additional tests: validation edge cases
     // ========================================================================
 
     #[test]
@@ -859,7 +859,7 @@ mod tests {
 
     #[test]
     fn service_name_all_numbers_valid() {
-        // Los números están permitidos en kebab-case
+        // Digits are allowed in kebab-case
         let result = ServiceName::new("123");
         assert!(result.is_ok());
     }
@@ -908,7 +908,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Casos límite de longitud
+    // Additional tests: length boundary cases
     // ========================================================================
 
     #[test]
@@ -934,7 +934,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: ValidationError details
+    // Additional tests: ValidationError details
     // ========================================================================
 
     #[test]
@@ -976,7 +976,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales: Display con diferentes casos
+    // Additional tests: Display with different cases
     // ========================================================================
 
     #[test]
