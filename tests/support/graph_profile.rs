@@ -535,7 +535,7 @@ pub async fn seed_groups(tenant: &GraphTenant, groups: &[serde_json::Value]) {
         }
         config.config_settings = settings;
         let format = match group["format"].as_str() {
-            Some(name @ ("npm" | "maven2" | "pypi" | "go" | "nuget" | "oci")) => {
+            Some(name @ ("npm" | "maven2" | "pypi" | "go" | "nuget" | "oci" | "rpm")) => {
                 format_of(Some(name))
             }
             _ => RepositoryFormat::Raw,
