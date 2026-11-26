@@ -212,6 +212,8 @@ pipeline {
                         "--test hsp314_f3b2_reactor_dgraph_it",
                         "--test hsp314_f3b3_reactor_wiring_it",
                         "--test hsp323_reaction_status_it",
+                        // HSP-151 / HSP-321: the Policy Studio API over the real binary and Dgraph.
+                        "--test hsp151_policy_studio",
                         // HSP-78 AC1/AC2: the real binary is SIGKILLed at exact points of the cycle (gate in front of Dgraph).
                         "--test hsp323_reaction_crash_it",
                         "--test hsp314_f3c_investigation_wiring_it",
