@@ -53,9 +53,12 @@ use hodei_catalog::conformance::{
 };
 use hodei_catalog::{RepositoryFormat, RepositoryMode};
 use serde_json::{Value, json};
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// The account of the person who creates repositories in this test.
 const ACCOUNT: &str = "acme";
@@ -110,25 +113,13 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
 }
 
 /// The application with a real catalog behind it.
-async fn app_with(authorizer: Arc<dyn AuthorizerPort>) -> (axum::Router, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-    let store = Arc::new(hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(hodei_catalog::AllowAllAuthorizer),
-    ));
-    store.initialize().await.expect("initialize");
+async fn app_with(authorizer: Arc<dyn AuthorizerPort>) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
+    let store = Arc::new(tmp.tenant().catalog_store().await);
 
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("schema.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -148,13 +139,13 @@ async fn app_with(authorizer: Arc<dyn AuthorizerPort>) -> (axum::Router, tempfil
         )
         .with_catalog(store.clone(), store.clone())
         .with_catalog_search(store.clone())
-        .with_trust_ledger(store.clone());
+        .with_trust_ledger(Arc::new(tmp.tenant().trust_store().await));
 
     (build_router(state, &config), tmp)
 }
 
 /// The application with the policy that creates repositories.
-async fn app() -> (axum::Router, tempfile::TempDir) {
+async fn app() -> (axum::Router, Workdir) {
     app_with(cedar()).await
 }
 

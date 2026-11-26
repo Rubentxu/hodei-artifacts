@@ -24,15 +24,18 @@ use hodei_authz::{
     IndeterminateReason, PrincipalAuthenticator, PrincipalClaims, PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogError, CatalogReader, CatalogSearch, CatalogWriter, DigestScope,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    CatalogError, CatalogReader, CatalogSearch, CatalogWriter, DigestScope, RepositoryConfig,
+    RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
     search::{SearchPage, SearchQuery},
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use serde_json::{Value, json};
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// The first account.
 const ACCOUNT: &str = "acme";
@@ -173,7 +176,7 @@ fn a_guarded_descriptor(account: &str, key: &str) -> RepositoryDescriptor {
 /// The application with a real catalog behind it.
 async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
-) -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
+) -> (axum::Router, Arc<DgraphCatalogStore>, Workdir) {
     app_with_search(authorizer, None).await
 }
 
@@ -184,25 +187,13 @@ async fn app_with(
 async fn app_with_search(
     authorizer: Arc<dyn AuthorizerPort>,
     searcher: Option<Arc<dyn CatalogSearch>>,
-) -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-    let store = Arc::new(SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(AllowAllAuthorizer),
-    ));
-    store.initialize().await.expect("initialize");
+) -> (axum::Router, Arc<DgraphCatalogStore>, Workdir) {
+    let tmp = Workdir::new();
+    let store = Arc::new(tmp.tenant().catalog_store().await);
 
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("schema.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -225,18 +216,18 @@ async fn app_with_search(
             Some(searcher) => searcher,
             None => store.clone(),
         })
-        .with_trust_ledger(store.clone());
+        .with_trust_ledger(Arc::new(tmp.tenant().trust_store().await));
 
     (build_router(state, &config), store, tmp)
 }
 
 /// The application with the policy of the test.
-async fn app() -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
+async fn app() -> (axum::Router, Arc<DgraphCatalogStore>, Workdir) {
     app_with(cedar()).await
 }
 
 /// A catalog with two accounts and a repository that alice cannot read.
-async fn a_catalog(store: &SurrealCatalogStore) {
+async fn a_catalog(store: &DgraphCatalogStore) {
     for (account, key, format) in [
         (ACCOUNT, READABLE, RepositoryFormat::PyPi),
         (ACCOUNT, UNREADABLE, RepositoryFormat::Raw),
@@ -580,8 +571,8 @@ async fn the_capabilities_say_what_can_be_created() {
     assert_eq!(of("nuget")["modes"], json!(["hosted", "proxy"]));
     assert_eq!(
         of("apt")["modes"],
-        json!(["hosted"]),
-        "the distro client installs from what this hub publishes"
+        json!(["hosted", "proxy", "group"]),
+        "the apt surface serves the hosted, the proxy and the group one"
     );
     assert_eq!(of("rpm")["modes"], json!(["hosted"]));
     assert_eq!(

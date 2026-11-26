@@ -420,6 +420,65 @@ pipeline {
                     artifacts = "target/uat/raw-conformity.md",
                     allowEmptyArchive = false,
                 )
+                // HSP-314 F4 S2c-B2: the OCI contract (pull and index), the doc-9
+                // UAT, the resolution bundle, the capsule, the raw hosted contract,
+                // the console and the capability matrix over the graph profile. A
+                // report of a previous run is not evidence of this one: they are
+                // deleted before running, so that a suite that passes without
+                // writing them shows.
+                sh("rm -f target/uat/oci-index-conformity.md target/uat/doc9.md")
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp118_bundle_contract",
+                        "--test hsp126_capsule_oci",
+                        "--test har04_raw_hosted_contract",
+                        "--test hsp114_console_contract",
+                        "--test hsp142_capability_matrix",
+                        "--test blob_integrity_contract",
+                        "--test doc9_uat",
+                        "--test oci_pull_contract",
+                        "--test oci_index_contract",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+                // La UAT de doc-9 trae sus dieciseis escenarios, cada uno
+                // con su comando y su resultado. La cuenta se comprueba
+                // aqui y no en el test, porque el binario de pruebas no
+                // garantiza el orden: un escenario que no se ejecute se
+                // nota cuando el binario ha terminado.
+                sh(
+                    "if [ ! -f target/uat/doc9.md ]; then " +
+                        "echo 'the doc-9 report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                // La cuenta de escenarios: el informe tiene que traer
+                // los dieciseis, cada uno una vez. La comprobacion
+                // vive en un script porque el DSL de la pipeline no
+                // admite variables de shell en los literales, y una
+                // comprobacion con variables es lo que hace falta.
+                sh("bash scripts/check-doc9-uat.sh target/uat/doc9.md")
+                // Y el del indice, las etiquetas y los referrers, que es
+                // **otro** informe otra vez: el del push certify el
+                // push, y un caso de referrers en el no dice nada de lo
+                // que el gate cree.
+                sh(
+                    "if [ ! -f target/uat/oci-index-conformity.md ]; then " +
+                        "echo 'the OCI index report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                sh("cat target/uat/oci-index-conformity.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-index-conformity.md",
+                    allowEmptyArchive = false,
+                )
+                // Y el de la UAT de doc-9, que es la evidencia de la
+                // puerta del hito: dieciseis escenarios, cada uno con su
+                // comando y su resultado, y la lista de lo que no se ha
+                // podido certificar.
+                sh("cat target/uat/doc9.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/doc9.md",
+                    allowEmptyArchive = false,
+                )
             }
         }
 
@@ -573,27 +632,25 @@ pipeline {
         // vive en exactamente una suite (tests/ci_suites.rs).
         stage("legacy (embedded engine)") {
             timestamps {
-                // Los informes de una ejecucion anterior no son evidencia de esta:
-                // se borran antes de correr, para que una suite que pase sin
-                // escribirlos se note.
-                sh("rm -f target/uat/oci-push-conformity.md target/uat/oci-index-conformity.md target/uat/doc9.md")
+                // El informe de una ejecucion anterior no es evidencia de esta:
+                // se borra antes de correr, para que una suite que pase sin
+                // escribirlo se note.
+                sh("rm -f target/uat/oci-push-conformity.md")
                 sh(
                     "cargo test --workspace --features legacy " + listOf(
-                        "--test hsp118_bundle_contract",
-                        "--test hsp126_capsule_oci",
                         "--test audit_events",
                         "--test repository_create",
                         "--test repository_read",
-                        "--test har04_raw_hosted_contract",
+                        // La busqueda del grafo no sirve el canal de confianza ni el
+                        // estado de confianza (HTTP 400 con un repositorio trusted): sigue
+                        // en el motor embebido hasta que la busqueda lea el libro de
+                        // concesiones del grafo.
                         "--test hsp113_search_e2e",
-                        "--test hsp114_console_contract",
                         "--test hsp132_registry_list",
-                        "--test hsp142_capability_matrix",
-                        "--test blob_integrity_contract",
-                        "--test doc9_uat",
-                        "--test oci_pull_contract",
+                        // La sesion de subida OCI es durable en el perfil de grafo: el
+                        // caso del reinicio de esta suite asume una sesion en memoria
+                        // y no es portable sin una decision de producto.
                         "--test oci_push_contract",
-                        "--test oci_index_contract",
                     ).joinToString(" ")
                 )
                 // El informe del push OCI es la evidencia de la otra
@@ -606,50 +663,11 @@ pipeline {
                         "echo 'the OCI push report is missing: the suite did not write it' >&2; " +
                         "exit 1; fi"
                 )
-                // La UAT de doc-9 trae sus dieciseis escenarios, cada uno
-                // con su comando y su resultado. La cuenta se comprueba
-                // aqui y no en el test, porque el binario de pruebas no
-                // garantiza el orden: un escenario que no se ejecute se
-                // nota cuando el binario ha terminado.
-                sh(
-                    "if [ ! -f target/uat/doc9.md ]; then " +
-                        "echo 'the doc-9 report is missing: the suite did not write it' >&2; " +
-                        "exit 1; fi"
-                )
-                // La cuenta de escenarios: el informe tiene que traer
-                // los dieciseis, cada uno una vez. La comprobacion
-                // vive en un script porque el DSL de la pipeline no
-                // admite variables de shell en los literales, y una
-                // comprobacion con variables es lo que hace falta.
-                sh("bash scripts/check-doc9-uat.sh target/uat/doc9.md")
                 // Y el del push OCI, que dice que el protocolo se habla
                 // con un cliente de verdad.
                 sh("cat target/uat/oci-push-conformity.md")
                 archiveArtifacts(
                     artifacts = "target/uat/oci-push-conformity.md",
-                    allowEmptyArchive = false,
-                )
-                // Y el del indice, las etiquetas y los referrers, que es
-                // **otro** informe otra vez: el del push certify el
-                // push, y un caso de referrers en el no dice nada de lo
-                // que el gate cree.
-                sh(
-                    "if [ ! -f target/uat/oci-index-conformity.md ]; then " +
-                        "echo 'the OCI index report is missing: the suite did not write it' >&2; " +
-                        "exit 1; fi"
-                )
-                sh("cat target/uat/oci-index-conformity.md")
-                archiveArtifacts(
-                    artifacts = "target/uat/oci-index-conformity.md",
-                    allowEmptyArchive = false,
-                )
-                // Y el de la UAT de doc-9, que es la evidencia de la
-                // puerta del hito: dieciseis escenarios, cada uno con su
-                // comando y su resultado, y la lista de lo que no se ha
-                // podido certificar.
-                sh("cat target/uat/doc9.md")
-                archiveArtifacts(
-                    artifacts = "target/uat/doc9.md",
                     allowEmptyArchive = false,
                 )
             }

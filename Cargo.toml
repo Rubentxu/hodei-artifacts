@@ -387,17 +387,14 @@ path = "tests/hsp304_formats_dgraph_it.rs"
 [[test]]
 name = "blob_integrity_contract"
 path = "tests/blob_integrity_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "doc9_uat"
 path = "tests/doc9_uat.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "har04_raw_hosted_contract"
 path = "tests/har04_raw_hosted_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp104_gc_e2e"
@@ -459,13 +456,11 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp114_console_contract"
 path = "tests/hsp114_console_contract.rs"
-required-features = ["legacy"]
 
 
 [[test]]
 name = "hsp118_bundle_contract"
 path = "tests/hsp118_bundle_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp119_cargo_cli"
@@ -523,7 +518,6 @@ path = "tests/hsp124_quota_e2e.rs"
 [[test]]
 name = "hsp126_capsule_oci"
 path = "tests/hsp126_capsule_oci.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp134_risk_facts_e2e"
@@ -544,7 +538,6 @@ path = "tests/hsp138_s3_arranque_e2e.rs"
 [[test]]
 name = "hsp142_capability_matrix"
 path = "tests/hsp142_capability_matrix.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp143_namespaces_e2e"
@@ -667,12 +660,10 @@ path = "tests/oci_e2e_contract.rs"
 [[test]]
 name = "oci_index_contract"
 path = "tests/oci_index_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "oci_pull_contract"
 path = "tests/oci_pull_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "oci_push_contract"

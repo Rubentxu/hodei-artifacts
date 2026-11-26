@@ -1,40 +1,30 @@
 // Extraido literal de tests/hsp118_bundle_contract.rs: una capsula que
 // no se exporte desde un paquete real no prueba nada. Imports y
 // constantes los pone el test que incluye este andamiaje.
-async fn open(path: &std::path::Path) -> Surreal<Db> {
-    let mut last = String::new();
-    for _ in 0..20 {
-        match Surreal::new::<RocksDb>(path).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                return db;
-            }
-            Err(error) => {
-                last = error.to_string();
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    }
-    panic!("the database could not be opened: {last}");
-}
-
 /// Un registro con su catalogo y su almacen, en un directorio propio.
 struct Site {
-    tmp: tempfile::TempDir,
-    store: SurrealCatalogStore,
+    tmp: Workdir,
+    store: DgraphCatalogStore,
+    trust: hodei_trust_policy_storage::DgraphTrustStore,
+    provenance: hodei_artifacts_api::proxy::dgraph_ledger::DgraphProvenanceLedger,
     cas: std::path::PathBuf,
 }
 
 impl Site {
     async fn new() -> Self {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let store = SurrealCatalogStore::with_authorizer(
-            open(&tmp.path().join("db")).await,
-            Arc::new(AllowAllAuthorizer),
-        );
-        store.initialize().await.expect("initialize");
+        // A REAL Dgraph namespace per site, with the real catalog store.
+        let tmp = Workdir::new();
+        let store = tmp.tenant().catalog_store().await;
+        let trust = tmp.tenant().trust_store().await;
+        let provenance = tmp.tenant().provenance_ledger().await;
         let cas = tmp.path().join("cas");
-        Site { tmp, store, cas }
+        Site {
+            tmp,
+            store,
+            trust,
+            provenance,
+            cas,
+        }
     }
 
     fn blobs(&self) -> FileBlobStore {
@@ -162,10 +152,13 @@ impl Site {
         config_version: u64,
         age_secs: i64,
     ) {
-        self.store
+        self.provenance
             .record(&ProvenanceReceipt {
+                // The id is a graph key: the production ids are UUIDs, so the
+                // slashes of the path cannot ride in it.
                 id: format!(
-                    "prv-{path}-{upstream_id}-{config_version}-{}",
+                    "prv-{}-{upstream_id}-{config_version}-{}",
+                    path.replace('/', "_"),
                     outcome.as_str()
                 ),
                 account: account.to_string(),
@@ -201,8 +194,8 @@ async fn export_with(
     let blobs = site.blobs();
     let report = bundles::export(
         &site.store,
-        &site.store,
-        &site.store,
+        &site.provenance,
+        &site.trust,
         &blobs,
         "acme",
         "mirror",
@@ -224,7 +217,7 @@ async fn import_into(
     bundles::import(
         &site.store,
         &site.store,
-        &site.store,
+        &site.provenance,
         &blobs,
         account,
         repository,

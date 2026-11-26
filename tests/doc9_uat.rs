@@ -8,7 +8,7 @@
 mod doc9_support;
 mod support;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use doc9_support::{
@@ -470,7 +470,8 @@ fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_surv
 // CAT-01 — el catalogo sobrevive al reinicio.
 // ---------------------------------------------------------------------------
 
-/// La ruta de la base donde el proceso de escritura deja el catalogo.
+/// El localizador del tenant Dgraph donde el proceso de escritura deja el
+/// catalogo (`graph://<namespace>/<clave>`).
 const RESTART_PATH: &str = "DOC9_UAT_RESTART_PATH";
 
 /// La fase de escritura del reinicio, en su propio proceso.
@@ -482,31 +483,24 @@ const RESTART_PATH: &str = "DOC9_UAT_RESTART_PATH";
 /// escribiera y se saliera **sin comprobar nada**, y el test pasaria en
 /// verde sin haber verificado nada. Con dos tests, el que verifica no
 /// tiene rama que lo saltee, y el que escribe falla si se lo lanza sin
-/// la ruta.
+/// el localizador.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo del test de reinicio"]
 async fn the_catalog_is_written_for_the_restart() {
-    let path = std::env::var(RESTART_PATH).expect(
+    let locator = std::env::var(RESTART_PATH).expect(
         "this test only runs as the writing process of the restart test, \
-         which passes it the path of the database",
+         which passes it the locator of the graph tenant",
     );
-    write_the_catalog(std::path::Path::new(&path)).await;
+    let tenant = support::graph_profile::GraphTenant::from_locator(&locator)
+        .expect("the locator names a graph tenant");
+    write_the_catalog(&tenant).await;
 }
 
 /// Escribe el catalogo y lo deja donde el proceso que verifica lo leera.
-async fn write_the_catalog(path: &Path) {
+async fn write_the_catalog(tenant: &support::graph_profile::GraphTenant) {
     let content = the_content();
     let digest = the_digest(&content);
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path)
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-
-    let catalog = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(hodei_catalog::AllowAllAuthorizer),
-    );
-    catalog.initialize().await.expect("initialize");
+    let catalog = tenant.catalog_store().await;
     catalog
         .create_repository(
             FIRST_ACCOUNT,
@@ -529,13 +523,12 @@ async fn write_the_catalog(path: &Path) {
 /// reinicio: no basta con que haya una fila, tiene que ser la misma. Y
 /// el reinicio es de verdad: otro proceso, no el mismo.
 ///
-/// El motor de disco no suelta el bloqueo del directorio mientras el
-/// proceso lo tiene abierto, asi que un reinicio en el mismo proceso no
-/// seria un reinicio: seria la misma base abierta dos veces.
+/// El catalogo vive en un namespace del alpha, no en el proceso: lo que
+/// escribe el hijo lo lee el padre con un cliente nuevo, abierto despues de
+/// que el proceso escritor haya muerto.
 #[tokio::test]
 async fn cat_01_the_catalog_resolves_the_same_digest_after_a_restart() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let path = tmp.path().join("db");
+    let tenant = support::graph_profile::GraphTenant::create();
 
     // El proceso que escribe es otro proceso, y se espera a que termine.
     let binary = std::env::current_exe().expect("the test binary");
@@ -544,23 +537,14 @@ async fn cat_01_the_catalog_resolves_the_same_digest_after_a_restart() {
         .arg("the_catalog_is_written_for_the_restart")
         .arg("--ignored")
         .arg("--nocapture")
-        .env(RESTART_PATH, path.to_string_lossy().as_ref())
+        .env(RESTART_PATH, tenant.locator())
         .status()
         .await
         .expect("the writing process");
     assert!(status.success(), "the writing process failed: {status}");
 
-    // Un proceso nuevo, sobre la misma base, ve lo mismo.
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_path())
-        .await
-        .expect("rocksdb reopens");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-
-    let reopened = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(hodei_catalog::AllowAllAuthorizer),
-    );
-    reopened.initialize().await.expect("initialize");
+    // Un cliente nuevo, sobre el mismo namespace, ve lo mismo.
+    let reopened = tenant.catalog_store().await;
 
     let repository = reopened
         .repository(FIRST_ACCOUNT, FIRST_REPOSITORY)
@@ -717,18 +701,14 @@ async fn cat_02_two_concurrent_publications_leave_one_winner_and_a_conflict() {
     let deployment = Deployment::new();
     let content = the_content();
 
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(
-        deployment.directory.path().join("db"),
-    )
-    .await
-    .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-
-    let catalog = Arc::new(hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(hodei_catalog::AllowAllAuthorizer),
-    ));
-    catalog.initialize().await.expect("initialize");
+    let catalog = Arc::new(
+        deployment
+            .graph
+            .as_ref()
+            .expect("the harness always runs on the graph profile")
+            .catalog_store()
+            .await,
+    );
     catalog
         .create_repository(
             FIRST_ACCOUNT,
@@ -814,18 +794,12 @@ async fn cat_03_two_accounts_with_the_same_path_see_only_their_own() {
     let first_digest = the_digest(&first_content);
     let second_digest = the_digest(&second_content);
 
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(
-        deployment.directory.path().join("db"),
-    )
-    .await
-    .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-
-    let catalog = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(hodei_catalog::AllowAllAuthorizer),
-    );
-    catalog.initialize().await.expect("initialize");
+    let catalog = deployment
+        .graph
+        .as_ref()
+        .expect("the harness always runs on the graph profile")
+        .catalog_store()
+        .await;
     catalog
         .create_repository(
             FIRST_ACCOUNT,
