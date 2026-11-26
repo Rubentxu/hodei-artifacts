@@ -310,6 +310,7 @@ async fn bootstrap_graph_profile(
     // opened to give it an answer.
     let app_state = app_state.with_investigation_limits(config.investigation.clone());
     let app_state = crate::public_url_wiring::wire_public_url_and_signing(app_state, config)?;
+    let app_state = wire_graph_publishers(app_state, config, &graph).await?;
     let app_state = crate::risk_facts::wire_graph_risk_facts(app_state, config, &graph).await?;
     let app_state = crate::evidence_dgraph::wire_graph_evidence_reader(app_state, &graph).await?;
     let app_state = crate::reactor_dgraph::wire_graph_reactor(app_state, config, &graph).await?;
@@ -326,6 +327,41 @@ async fn bootstrap_graph_profile(
         schema_version
     );
     Ok(app_state)
+}
+
+/// Mounts the trusted publishers (HSP-152) over the graph authority when the
+/// deployment declares the credential secret.
+///
+/// The JWKS of the issuers goes through the egress of the proxy plane, so a
+/// deployment with a secret but without the proxy plane cannot boot: the
+/// exchange would have no way to obtain keys, and a feature that can only
+/// fail closed is a deployment error.
+async fn wire_graph_publishers(
+    state: AppState,
+    config: &AppConfig,
+    graph: &crate::profile::GraphAuthority,
+) -> Result<AppState, BootstrapError> {
+    let Some(secret) = config.security.publisher_credential_secret.as_deref() else {
+        return Ok(state);
+    };
+    let Some(plane) = state.proxy_plane.clone() else {
+        return Err(BootstrapError::Security(
+            "publisher_credential_secret requires the proxy plane (egress) to fetch JWKS"
+                .to_string(),
+        ));
+    };
+    let registry = crate::publishers::dgraph::DgraphPublisherRegistry::open(graph.client.clone())
+        .await
+        .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
+    let service = crate::publishers::PublishersService::new(
+        Arc::new(registry),
+        plane.fetcher.clone(),
+        secret,
+        crate::publishers::PublisherSettings::default(),
+    )
+    .map_err(BootstrapError::Security)?;
+    info!("trusted publishers (OIDC exchange) are enabled");
+    Ok(state.with_publishers(Arc::new(service)))
 }
 
 /// The store of content the deployment chose, with the operations that
@@ -574,6 +610,13 @@ fn configure_production_security(
         config.security.investigation_api_enabled,
     )
     .map_err(|error| BootstrapError::Security(format!("invalid authorization bundle: {error}")))?;
+    // An instance that mounts the trusted publishers has to be able to
+    // decide who may manage them.
+    if security.publisher_credential_secret.is_some() {
+        crate::actions::check_publishers_declared(&schema).map_err(|error| {
+            BootstrapError::Security(format!("invalid authorization bundle: {error}"))
+        })?;
+    }
     // An instance that can promote has to be able to decide who may.
     if state.trust_plane.is_some() {
         crate::actions::check_promotion_declared(&schema).map_err(|error| {

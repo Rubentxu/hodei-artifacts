@@ -169,6 +169,11 @@ pub struct AppState {
     /// Optional, and fail-closed: a proxy repository with no plane answers
     /// `501` and the service makes no outbound request.
     pub(crate) proxy_plane: Option<Arc<crate::proxy::ProxyPlane>>,
+    /// The trusted publishers service (HSP-152): the OIDC exchange and the
+    /// verifier of the short publisher credentials. Optional and
+    /// fail-closed: without it the exchange and the management routes
+    /// answer `501` and the publish surface accepts user credentials only.
+    pub(crate) publishers: Option<Arc<crate::publishers::PublishersService>>,
     /// The promotion service and the policy it decides with.
     ///
     /// Optional: without it the promotion routes answer `501` and nothing
@@ -356,6 +361,7 @@ impl AppState {
             scrub: None,
             trust_ledger: None,
             proxy_plane: None,
+            publishers: None,
             trust_plane: None,
             policy_lifecycle: None,
             studio_policy_id: "default".to_string(),
@@ -434,6 +440,7 @@ impl AppState {
             scrub: None,
             trust_ledger: None,
             proxy_plane: None,
+            publishers: None,
             trust_plane: None,
             policy_lifecycle: None,
             studio_policy_id: "default".to_string(),
@@ -639,6 +646,15 @@ impl AppState {
     /// Inject the egress and provenance ledger of the remote proxy.
     pub fn with_proxy_plane(mut self, plane: Arc<crate::proxy::ProxyPlane>) -> Self {
         self.proxy_plane = Some(plane);
+        self
+    }
+
+    /// Wire the trusted publishers service (HSP-152).
+    pub fn with_publishers(
+        mut self,
+        publishers: Arc<crate::publishers::PublishersService>,
+    ) -> Self {
+        self.publishers = Some(publishers);
         self
     }
 

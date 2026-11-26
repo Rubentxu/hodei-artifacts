@@ -39,6 +39,7 @@ pub mod profile;
 pub mod proxy;
 pub mod public_url;
 pub mod public_url_wiring;
+pub mod publishers;
 pub mod quota;
 pub mod quota_dgraph;
 pub mod raw;

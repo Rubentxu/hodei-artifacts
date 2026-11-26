@@ -81,6 +81,58 @@ async fn the_repository(
     .await
 }
 
+/// The verified context of a publish request and whether it came from a
+/// publisher credential.
+///
+/// A publisher credential that is not live is a 401; one that is valid but
+/// bound to another repository (or without `upload`) is a 403. The audit
+/// trail names the workload; the token and the credential never travel to it.
+async fn the_publish_context(
+    state: &AppState,
+    headers: &HeaderMap,
+    uri: &OriginalUri,
+    correlation: &str,
+) -> Result<(VerifiedContext, bool), RawApiError> {
+    let token = crate::handlers::bearer_token(headers).ok_or(RawApiError::Unauthorized)?;
+    if !crate::publishers::credential::announces_publisher(&token) {
+        return Ok((the_context(state, headers).await?, false));
+    }
+    let service = state.publishers.as_ref().ok_or(RawApiError::Unauthorized)?;
+    let gate_error = |error: crate::publishers::GateError| match error {
+        crate::publishers::GateError::Invalid => RawApiError::Unauthorized,
+        crate::publishers::GateError::OutsideScope => RawApiError::Forbidden,
+        crate::publishers::GateError::Unavailable => RawApiError::Unavailable,
+    };
+    let verified = service
+        .verify_credential(&token)
+        .await
+        .map_err(gate_error)?;
+    let target = the_target(uri)?;
+    if !verified.may_upload_to(&target.repository) {
+        record_audit(
+            state,
+            &verified.claims.sub,
+            &verified.claims.account,
+            "publishers.publish",
+            &target.repository,
+            AuditResult::Denied,
+            correlation,
+        );
+        return Err(gate_error(crate::publishers::GateError::OutsideScope));
+    }
+    let context = service.context_of(&token).await.map_err(gate_error)?;
+    record_audit(
+        state,
+        &verified.claims.sub,
+        &verified.claims.account,
+        "publishers.publish",
+        &target.repository,
+        AuditResult::Allowed,
+        correlation,
+    );
+    Ok((context, true))
+}
+
 /// `PUT /repository/{repository}/{*path}`
 ///
 /// Publishes the body content at that address.
@@ -99,15 +151,24 @@ pub async fn publish(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response, RawApiError> {
-    let context = the_context(&state, &headers).await?;
+    // The identity comes through one of two doors: the short credential of a
+    // trusted publisher (OIDC exchange, HSP-152) or the user credential of
+    // always. Each verifier only sees the credentials of its kind.
+    let correlation = correlation_id(&headers, &state.identity);
+    let (context, by_publisher) = the_publish_context(&state, &headers, &uri, &correlation).await?;
     let target = the_target(&uri)?;
     let repository = the_repository(&state, &context, &target.repository).await?;
-    the_decision(
-        &state,
-        &context,
-        crate::actions::upload_asset(),
-        &repository,
-    )?;
+    // The credential of a publisher IS its grant (the registry record an
+    // administrator authorized with `ManageTrustedPublishers`), already
+    // checked against this repository and `upload`; Cedar decides for users.
+    if !by_publisher {
+        the_decision(
+            &state,
+            &context,
+            crate::actions::upload_asset(),
+            &repository,
+        )?;
+    }
     // What a proxy says comes from its upstream, not from whoever asks. It goes
     // after Cedar: whoever cannot upload receives the same 403 as in
     // any other repository, and does not find out the mode.
@@ -117,7 +178,6 @@ pub async fn publish(
         ));
     }
 
-    let correlation = correlation_id(&headers, &state.identity);
     // A Maven 2 repository decides here what is stored and what is only validated.
     let maven_file = if repository.format == RepositoryFormat::Maven2 {
         match super::maven::the_write(&repository, &target.asset_path)? {

@@ -48,6 +48,16 @@ pub fn manage_repository_admission() -> ActionId {
     ActionId::new("artifacts", "ManageRepositoryAdmission").expect("a valid action")
 }
 
+/// Managing the trusted publishers of a repository (HSP-152).
+///
+/// A trusted publisher binds an OIDC identity to the publication into the
+/// repository, so whoever writes it decides who can publish without a
+/// long-lived secret. It is its own action: `CreateRepository`,
+/// `UploadAsset` and the other management actions never imply it.
+pub fn manage_trusted_publishers() -> ActionId {
+    ActionId::new("artifacts", "ManageTrustedPublishers").expect("a valid action")
+}
+
 /// Reading the trust capsule of a release.
 ///
 /// The capsule is a read: it is a view of the evidence that is there, and
@@ -112,6 +122,7 @@ pub fn all() -> Vec<ActionId> {
         create_repository(),
         manage_repository_tags(),
         manage_repository_admission(),
+        manage_trusted_publishers(),
         read_capsule(),
         access_admin_api(),
         upload_asset(),
@@ -120,6 +131,13 @@ pub fn all() -> Vec<ActionId> {
         revoke_promotion(),
         investigate(),
     ]
+}
+
+/// Check that the bundle declares the action of the trusted publishers.
+///
+/// Only an instance that wires the publishers has to declare it.
+pub fn check_publishers_declared(schema: &Schema) -> Result<(), String> {
+    check_declared(schema, &manage_trusted_publishers())
 }
 
 /// Check that the bundle declares the two actions of the promotion.
