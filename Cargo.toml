@@ -567,7 +567,6 @@ path = "tests/hsp143_npm_namespaces_cli.rs"
 [[test]]
 name = "hsp157_terraform_mirror"
 path = "tests/hsp157_terraform_mirror.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp158_terraform_modules_client"
@@ -625,7 +624,6 @@ path = "tests/hsp235_rpm_proxy.rs"
 [[test]]
 name = "hsp238_public_url"
 path = "tests/hsp238_public_url.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp288_native_guides"
@@ -657,12 +655,10 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp304_terraform_init"
 path = "tests/hsp304_terraform_init.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp313_signed_archive_url"
 path = "tests/hsp313_signed_archive_url.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp88_investigation_query"
