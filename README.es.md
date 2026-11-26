@@ -17,7 +17,7 @@
 
 ## Perfil productivo: Dgraph + S3 (HSP-314 F2)
 
-El build por defecto y el archivo/imagen OCI de release son el **perfil de grafo**: un Alpha de Dgraph es la autoridad única de los metadatos y los bytes viven en S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). El motor embebido SurrealDB/RocksDB es opt-in (`--features legacy`) y se retira en HSP-314 F4. Despliega con [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (solo la API, con tu Dgraph y tu S3) o el [chart de Helm](charts/hodei-artifacts/README.md); véase [`docs/community/operations.md`](docs/community/operations.md). La investigación, los hechos de riesgo y el reactor de CVE no están cableados en este perfil todavía (HSP-314 F3) y siguen cerrados.
+El build por defecto y el archivo/imagen OCI de release son el **perfil de grafo**: un Alpha de Dgraph es la autoridad única de los metadatos y los bytes viven en S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). El motor embebido (SurrealDB/RocksDB) y la feature `legacy` se retiraron en HSP-314 F4: el grafo es el único perfil y un despliegue sin `[graph]` se rechaza con `GRAPH_PROFILE_REQUIRED`. Despliega con [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (solo la API, con tu Dgraph y tu S3) o el [chart de Helm](charts/hodei-artifacts/README.md); véase [`docs/community/operations.md`](docs/community/operations.md). La investigación, los hechos de riesgo y el reactor de CVE no están cableados en este perfil todavía (HSP-314 F3) y siguen cerrados.
 
 ## Quickstart en 60 segundos (sin compilar Rust)
 
@@ -109,29 +109,29 @@ cargo run --bin hodei-artifacts-api
 
 ### Arquitectura del workspace
 
-El workspace activo en [`Cargo.toml`](Cargo.toml) contiene 26 miembros (25 crates en `crates/` más el crate raíz `.`). Nueve crates heredados en `crates/` están excluidos del workspace (ver [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)).
+El workspace activo en [`Cargo.toml`](Cargo.toml) contiene 24 miembros (23 crates en `crates/` más el crate raíz `.`). Los crates de la generación anterior que estaban excluidos se eliminaron (ver [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)).
 
-- `.` — `hodei-artifacts-api` (API HTTP Axum, router, handlers, bootstrap, CLI de recuperación)
+- `.` — `hodei-artifacts-api` (API HTTP Axum, router, handlers, bootstrap)
 - `crates/kernel` — Núcleo compartido: HRN v2, dominio, puertos
 - `crates/hodei-iam` — Identity & Access Management
 - `crates/hodei-policies` — Motor Cedar: schema, validación, evaluación
 - `crates/hodei-evidence` — Dominio y verificación de evidencia
-- `crates/hodei-evidence-storage` — Almacenamiento SurrealDB para evidencia
+- `crates/hodei-evidence-storage` — Almacenamiento Dgraph para evidencia
 - `crates/hodei-trust-policy` — Políticas de confianza y puertas de promoción
-- `crates/hodei-trust-policy-storage` — Almacenamiento SurrealDB para políticas de confianza
+- `crates/hodei-trust-policy-storage` — Almacenamiento Dgraph para políticas de confianza
 - `crates/hodei-risk` — Hechos y evaluación de riesgo
-- `crates/hodei-risk-storage` — Almacenamiento SurrealDB para riesgo
+- `crates/hodei-risk-storage` — Almacenamiento Dgraph para riesgo
 - `crates/hodei-reachability` — Análisis de alcanzabilidad y linaje
 - `crates/hodei-reactive` — Coordinación reactiva de eventos y ciclo de vida
 - `crates/hodei-hub` — Hub de blobs direccionado por contenido e integridad
 - `crates/hodei-hub-s3` — Adaptador de almacén compatible con S3
 - `crates/hodei-catalog` — Catálogo de repositorios, matriz de conformidad y reglas proxy/group
-- `crates/hodei-catalog-storage` — Almacenamiento SurrealDB para el catálogo
+- `crates/hodei-catalog-storage` — Almacenamiento Dgraph para el catálogo
 - `crates/hodei-audit` — Registro de eventos de auditoría de seguridad
 - `crates/hodei-investigator` — Motor de investigación de cadena de suministro
-- `crates/hodei-investigator-storage` — Almacenamiento SurrealDB para investigaciones
+- `crates/hodei-investigator-storage` — Almacenamiento Dgraph para investigaciones
 - `crates/hodei-simulation` — Simulación de políticas y grafo
-- `crates/hodei-simulation-storage` — Almacenamiento SurrealDB para simulaciones
+- `crates/hodei-simulation-storage` — Almacenamiento Dgraph para simulaciones
 - `crates/hodei-counterfactual` — Evaluación contrafactual de políticas
 - `crates/hodei-spike-ladybug` — Spike de almacenamiento en grafo
 - `crates/hodei-graph-client` — Cliente de consultas de grafo

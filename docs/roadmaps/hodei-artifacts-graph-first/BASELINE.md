@@ -9,6 +9,12 @@ ejecutar la herramienta real en el árbol real; cuando una comprobación no pudo
 ejecutarse se marca `NOT_RUN` con su causa concreta, nunca se omite ni se
 aproxima.
 
+> **Nota (HSP-314 F4).** Este documento es un registro histórico del censo de
+> H0 y no se reescribe. Las menciones a SurrealDB, RocksDB y a la feature
+> `legacy` describen el estado de entonces: el motor embebido se retiró del
+> producto y el único perfil actual es el grafo (`RUN_MODE=dgraph`,
+> `config/dgraph.toml`). El estado vigente está en `ARCHITECTURE_STATUS.md`.
+
 ---
 
 ## 1. Inventario remoto (medido)
