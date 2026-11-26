@@ -283,6 +283,12 @@ pipeline {
                         "--test hsp112_pypi_cli",
                         "--test admin_surface",
                         "--test iam_scope",
+                        // HSP-314 P4: the three suites that measured a defect of the graph
+                        // profile (lost npm packument update, double 413 of two concurrent
+                        // quota uploads, Go module paths with the `!` case escape).
+                        "--test hsp111_npm_e2e",
+                        "--test hsp121_go_e2e",
+                        "--test hsp124_quota_e2e",
                         // HSP-314 F4 S2b (A'): las suites en proceso (bootstrap con
                         // `Workdir`) y la readiness con fakes.
                         "--test capsule_read",
@@ -566,15 +572,12 @@ pipeline {
                         "--test hsp104_gc_e2e",
                         "--test hsp107_proxy_cache_e2e",
                         "--test hsp108_group_e2e",
-                        "--test hsp111_npm_e2e",
                         "--test hsp143_namespaces_e2e",
-                        "--test hsp121_go_e2e",
                         "--test hsp297_format_prefixes",
                         "--test hsp297_trusted_listings",
                         // Hugging Face: siembra HF sin portar.
                         "--test hsp218_hf_client",
                         "--test hsp304_format_access",
-                        "--test hsp124_quota_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
                     ).joinToString(" ")

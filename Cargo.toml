@@ -445,7 +445,6 @@ path = "tests/hsp111_npm_cli.rs"
 [[test]]
 name = "hsp111_npm_e2e"
 path = "tests/hsp111_npm_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp112_pypi_cli"
@@ -494,7 +493,6 @@ path = "tests/hsp121_go_client.rs"
 [[test]]
 name = "hsp121_go_e2e"
 path = "tests/hsp121_go_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp121_helm_oci"
@@ -523,7 +521,6 @@ path = "tests/hsp123_migration_e2e.rs"
 [[test]]
 name = "hsp124_quota_e2e"
 path = "tests/hsp124_quota_e2e.rs"
-required-features = ["legacy"]
 
 
 [[test]]
