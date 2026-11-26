@@ -200,6 +200,9 @@ pipeline {
                         "--test hsp208_simulation_dgraph_it",
                         "--test hsp314_dgraph_risk_facts_it",
                         "--test hsp314_f3b0_dgraph_ports_it",
+                        // HSP-318: the retired M3 and M7 UATs, rewritten on Dgraph.
+                        "--test hsp318_m3_promotion_dgraph_it",
+                        "--test hsp318_m7_simulation_dgraph_it",
                         "--test hsp314_p2_dgraph_schema_it",
                         "--test hsp314_graph_risk_facts_it",
                         "--test hsp314_graph_evidence_reader_it",
