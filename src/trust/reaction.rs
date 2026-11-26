@@ -1,54 +1,54 @@
-//! El ciclo reactivo completo en el servicio real: advisory entra,
-//! reevaluación corre, distribución bloquea (HSP-137).
+//! The complete reactive cycle in the real service: advisory comes in,
+//! reevaluation runs, distribution blocks (HSP-137).
 //!
-//! El motor (`hodei-reactive`) y sus adaptadores de dominio
-//! (`PromotionDecisionRequester`, `DomainIntentExecutor`, el outbox
-//! duradero) existían y estaban probados, pero solo
-//! vivían en los tests de sus crates. Este módulo es la composition root
-//! de ese ciclo: los conecta a las piezas que el servicio ya construye
-//! (el grafo, el catálogo, el plano de confianza, los hechos de riesgo) y
-//! añade lo único que no existía en ninguna parte:
+//! The engine (`hodei-reactive`) and its domain adapters
+//! (`PromotionDecisionRequester`, `DomainIntentExecutor`, the durable
+//! outbox) existed and were tested, but only
+//! lived in the tests of their crates. This module is the composition root
+//! of that cycle: it connects them to the pieces the service already builds
+//! (the graph, the catalog, the trust plane, the risk facts) and
+//! adds the only thing that did not exist anywhere:
 //!
-//! - una **entrada soportada** de advisories que reutiliza la proyección
-//!   del dominio (`hodei_risk::projection`) —no un motor nuevo— y despacha
-//!   el `VulnerabilityAccepted` por el camino planificado (intent→recibo);
-//! - un **radio de impacto multi-cuenta**: la lectura del crate fija un
-//!   tenant al construirse, y el servicio es multi-cuenta, así que aquí el
-//!   tenant se resuelve por la cuenta del asunto, con la MISMA plantilla
-//!   (`investigation.graph_tenant_template`) que usan promociones y
-//!   riesgos. La autoridad sigue siendo el HRN canónico: una cuenta no
-//!   lee el grafo de otra;
-//! - el **contexto real de reevaluación**: la reevaluación decide contra
-//!   la misma cápsula y los mismos hechos de riesgo que decidió la
-//!   promoción original. Con un contexto vacío toda reevaluación negaría
-//!   por hueco propio y arrancaría concesiones ajenas al hecho — justo lo
-//!   que la AC2 prohíbe;
-//! - los **barridores de vigencia**: la concesión caduca (excepción
-//!   agotada o política sustituida) y eso se reevalúa, no se descubre
-//!   solo al servir;
-//! - la **reconciliación tras crash**: los intents que un `kill -9` dejó
-//!   dichos se persiguen con `resume` al arrancar, sin repetir el efecto
-//!   cuyo recibo ya está cerrado.
+//! - a **supported entry** for advisories that reuses the domain's
+//!   projection (`hodei_risk::projection`) --not a new engine-- and dispatches
+//!   the `VulnerabilityAccepted` through the planned path (intent->receipt);
+//! - a **multi-account blast radius**: the crate's reader fixes a
+//!   tenant at construction, and the service is multi-account, so here the
+//!   tenant is resolved from the subject's account, with the SAME template
+//!   (`investigation.graph_tenant_template`) that promotions and
+//!   risks use. The authority remains the canonical HRN: an account does not
+//!   read another's graph;
+//! - the **real reevaluation context**: the reevaluation decides against
+//!   the same capsule and the same risk facts that decided the original
+//!   promotion. With an empty context every reevaluation would deny
+//!   for its own gap and would strip concessions unrelated to the fact -- exactly what
+//!   AC2 forbids;
+//! - the **validity sweeps**: the concession expires (exhausted exception
+//!   or superseded policy) and that is reevaluated, not discovered only
+//!   when serving;
+//! - **post-crash reconciliation**: the intents a `kill -9` left
+//!   said are pursued with `resume` at startup, without repeating the effect
+//!   whose receipt is already closed.
 //!
-//! # Por qué la vigencia necesita planificadores propios
+//! # Why validity needs its own planners
 //!
-//! El motor cierra el mundo una vez por clave de efecto: un recibo
-//! `applied` bajo una idempotencia ya no se toca, nunca, aunque llegue un
-//! evento nuevo (`runtime.rs`: la supresión consulta `applied_effects()`
-//! por idempotencia a secas). Eso es correcto para la entrega duplicada y
-//! letal para el paso del tiempo: `PlannedExceptionExpiryReaction` fija su
-//! clave en `decision:expired:{subject}`, y la segunda caducidad del mismo
-//! sujeto se suprimiría para siempre. Aquí cada barrido dice un evento
-//! nuevo por diseño —identificador fresco, clave de efecto fresca— cuando
-//! hay concesiones nuevas que vencer, y el identificador de la pasada
-//! forma parte del nombre: un crash a mitad deja los intents dichos y el
-//! `resume` los persigue; los efectos cerrados se suprimen, que es
-//! exactamente lo que la AC3 pide — reconverger sin duplicar recibos.
+//! The engine closes the world once per effect key: an `applied` receipt
+//! under an idempotency is never touched again, even if a new
+//! event arrives (`runtime.rs`: suppression consults `applied_effects()`
+//! by bare idempotency). That is right for duplicate delivery and
+//! lethal for the passage of time: `PlannedExceptionExpiryReaction` fixes its
+//! key at `decision:expired:{subject}`, and the second expiry of the same
+//! subject would be suppressed forever. Here each sweep says a new event
+//! by design --fresh identifier, fresh effect key-- when
+//! there are new concessions to expire, and the pass identifier
+//! is part of the name: a crash midway leaves the intents said and
+//! `resume` pursues them; closed effects are suppressed, which is
+//! exactly what AC3 asks for -- reconverge without duplicating receipts.
 //!
-//! Lo que este módulo deliberately NO hace: no decide nada. La decisión
-//! la toma `PromotionService` con la política activa; aquí solo se dicen
-//! los hechos, se piden las reevaluaciones y se persiguen los
-//! vencimientos.
+//! What this module deliberately does NOT do: it decides nothing. The decision
+//! is made by `PromotionService` with the active policy; here only
+//! the facts are said, reevaluations are requested and expirations are
+//! pursued.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -93,11 +93,11 @@ use crate::evidence::EvidenceReader;
 use crate::risk_facts::to_trust_facts;
 use crate::trust::promotion::{TRUSTED_DISTRIBUTION, TrustPlane, TrustedChannelTargets};
 
-/// Por qué el ciclo no pudo recorrer un tramo.
+/// Why the cycle could not traverse a stretch.
 ///
-/// El fallo es un valor: la entrada la provoca un cliente (un documento
-/// malformado, una cuenta ajena al grafo) y un pánico en el hilo del
-/// servidor no es una respuesta honesta.
+/// The failure is a value: the input is provoked by a client (a malformed
+/// document, an account foreign to the graph) and a panic in the server
+/// thread is not an honest response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReactorError {
     /// The advisory or the inventory is not a document this service reads.
@@ -146,40 +146,40 @@ pub struct AdvisoryAdmission {
     pub elapsed_millis: u128,
 }
 
-/// Lo que un barrido tocó.
+/// What a sweep touched.
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct SweepCounters {
-    /// Concesiones cuya vigencia se agotó y fueron reevaluadas.
+    /// Concessions whose validity was exhausted and were reevaluated.
     pub expired_reevaluated: usize,
-    /// Concesiones cuya versión de política ya no es la activa.
+    /// Concessions whose policy version is no longer the active one.
     pub superseded_reevaluated: usize,
-    /// Concesiones renovadas: la reevaluación volvió a concederlas.
+    /// Concessions renewed: the reevaluation granted them again.
     pub regenerated: usize,
-    /// Pasadas que ya estaban dichas: el barrido no repite efectos.
+    /// Passes that were already said: the sweep does not repeat effects.
     pub already_said: usize,
 }
 
-/// El tenant de la composición estampado en los intents.
+/// The composition's tenant stamped on the intents.
 ///
-/// No es una identidad de cuenta: la autoridad multi-cuenta del ciclo es
-/// el HRN del asunto, que el radio de impacto y el peticionario de
-/// decisiones validan en cada llamada. La marca existe porque el contrato
-/// del intent la exige (un intent sin dueño no se reconcilia), y el
-/// ejecutor la comprueba contra la composición que sirve.
+/// It is not an account identity: the cycle's multi-account authority is
+/// the subject's HRN, which the blast radius and the decision requester
+/// validate on every call. The mark exists because the intent's contract
+/// demands it (an intent without an owner is not reconciled), and the
+/// executor checks it against the composition it serves.
 const COMPOSITION_MARK: &str = "hodei";
 
-/// El techo de sujetos que un solo evento de drift puede nombrar.
+/// The cap on subjects a single drift event can name.
 ///
-/// Un barrido que encontrara más deja el resto para el siguiente: decir
-/// mil intents en un evento no es más honesto que decirlos en dos
-/// pasadas, y el presupuesto del motor tiene que quedar holgado para la
-/// cadena que cada sujeto dispara.
+/// A sweep that found more leaves the rest for the next one: saying
+/// a thousand intents in one event is no more honest than saying them in two
+/// passes, and the engine's budget has to stay roomy for the
+/// chain each subject triggers.
 const MAX_DRIFT_SUBJECTS: usize = 1024;
 
-/// El techo de filas de deltas que una pasada de reconciliación lee.
+/// The cap on delta rows a reconciliation pass reads.
 const MAX_RECONCILE_DELTAS: usize = 512;
 
-/// El techo de concesiones que una pasada del barrido de vigencia lee.
+/// The cap on concessions a validity-sweep pass reads.
 const MAX_SWEEP_GRANTS: usize = 4096;
 
 /// The blast radius of the service: the tenant of every question comes
@@ -1022,7 +1022,7 @@ impl VulnerabilityReactor {
 
         for row in &rows {
             let Some(subject) = row.subject.as_deref() else {
-                // A concession without the vigencia contract belongs to
+                // A concession without the validity contract belongs to
                 // a subject this cycle cannot name: the serving path
                 // hides it, and there is no HRN to reevaluate.
                 continue;

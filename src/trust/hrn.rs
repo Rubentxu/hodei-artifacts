@@ -1,18 +1,18 @@
-//! El nombre de un artefacto del catalogo para la politica de confianza.
+//! The name of a catalog artifact for the trust policy.
 //!
-//! La capsula y la evidencia hablan de HRN de artefacto
-//! (`artifact/<repositorio>/<algoritmo>-<hex>`); el catalogo habla de
-//! repositorio y digest. Este es el unico sitio donde se traduce una cosa
-//! en la otra, para que quien promueve y quien evalua la evidencia
-//! nombren el mismo sujeto.
+//! The capsule and the evidence speak of artifact HRNs
+//! (`artifact/<repository>/<algorithm>-<hex>`); the catalog speaks of
+//! repository and digest. This is the only place where one is translated
+//! into the other, so that whoever promotes and whoever evaluates the evidence
+//! name the same subject.
 
 use hodei_evidence::ContentDigest;
 use kernel::Hrn;
 
-/// El HRN del artefacto que es `digest` dentro de `repository`.
+/// The HRN of the artifact that is `digest` within `repository`.
 ///
-/// La region es la del repositorio: un artefacto vive donde vive su
-/// repositorio.
+/// The region is the repository's: an artifact lives where its
+/// repository lives.
 pub fn artifact_hrn(region: &str, account: &str, repository: &str, digest: &ContentDigest) -> Hrn {
     Hrn::with_region(
         "hodei".to_string(),
