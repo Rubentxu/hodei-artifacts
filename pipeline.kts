@@ -511,6 +511,9 @@ pipeline {
                         // Release verificable: SBOM SPDX/CycloneDX, provenance,
                         // matriz de licencias y firma OpenPGP (HSP-244).
                         "--test hsp244_verifiable_release",
+                        // El SBOM de la imagen construida no lista surrealdb ni
+                        // rocksdb (HSP-310); sin podman/syft: NOT_RUN visible.
+                        "--test hsp310_image_sbom",
                         // Instalador y bundle de release verificable
                         // (HSP-259, HSP-263): scripts contra tarballs reales.
                         "--test hsp259_installer",
