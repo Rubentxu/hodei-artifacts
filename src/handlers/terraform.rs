@@ -1,33 +1,33 @@
-//! La superficie **terraform**: el *network mirror protocol* de
-//! Terraform/OpenTofu sobre un repositorio de Hodei.
+//! The **terraform** surface: the *network mirror protocol* of
+//! Terraform/OpenTofu over a Hodei repository.
 //!
-//! Vive en `/terraform/{repositorio}/...` y habla el protocolo de mirror
-//! de providers: la gramatica de rutas y de documentos esta en
-//! `hodei_catalog::terraform` (pura) y aqui solo hay lo que necesita
-//! efectos.
+//! Lives at `/terraform/{repository}/...` and speaks the provider mirror
+//! protocol: the grammar of paths and documents is in
+//! `hodei_catalog::terraform` (pure) and here there is only what needs
+//! effects.
 //!
-//! La modalidad servida es **mirror**, y el mirror es un proxy: cada
-//! lectura se trae del upstream con la cache, los recibos y el
-//! single-flight de la infraestructura compartida, y se sirve **tal
-//! cual**. Los zips de providers son contenido inmutable y se guardan en
-//! el CAS con el digest de los bytes que el upstream entrego, de manera
-//! que el SHA256 que el cliente verifica contra su lockfile es el del
-//! upstream, nunca un recalculo. Los documentos JSON del protocolo son
-//! revalidables: el upstream publica versiones nuevas.
+//! The mode served is **mirror**, and the mirror is a proxy: each
+//! read is fetched from the upstream with the cache, the receipts and the
+//! single-flight of the shared infrastructure, and served **as
+//! is**. Provider zips are immutable content and are stored in
+//! the CAS with the digest of the bytes the upstream delivered, so
+//! that the SHA256 the client verifies against its lockfile is the upstream's,
+//! never a recalculation. The protocol's JSON documents are
+//! revalidatable: the upstream publishes new versions.
 //!
-//! No es un registry de origen ni un module registry: aqui no se publica,
-//! y un mirror no sabe ni quiere saber de `terraform publish`.
+//! It is not an origin registry nor a module registry: nothing is published here,
+//! and a mirror neither knows nor wants to know about `terraform publish`.
 //!
-//! **El zip y la URL firmada.** Terraform descarga el archivo de un network
-//! mirror sin enviar credencial alguna, de modo que un hub que autentica
-//! toda lectura no podria servirlo. El documento de version que el mirror
-//! entrega a un lector autenticado declara por eso, para cada plataforma,
-//! una URL del zip firmada y de corta vida (`signed_url`): acotada a ese
-//! zip, ese repositorio y esa cuenta. Canjearla no necesita `Authorization`
-//! y no sirve para nada mas. La autorizacion (Cedar) se evalua al emitir;
-//! la puerta de confianza se aplica ademas al canjear, por digest. Sin
-//! claves de firma el documento de version falla cerrado y el mirror no
-//! emite URLs.
+//! **The zip and the signed URL.** Terraform downloads the archive from a network
+//! mirror without sending any credential, so a hub that authenticates
+//! every read could not serve it. The version document the mirror
+//! delivers to an authenticated reader therefore declares, for each platform,
+//! a short-lived signed URL of the zip (`signed_url`): scoped to that
+//! zip, that repository and that account. Redeeming it needs no `Authorization`
+//! and is good for nothing else. Authorization (Cedar) is evaluated on issue;
+//! the trust gate is additionally applied on redeeming, by digest. Without
+//! signing keys the version document fails closed and the mirror does not
+//! issue URLs.
 
 use axum::{
     body::Body,
@@ -50,14 +50,14 @@ use crate::resolution::{
 };
 use crate::signed_url::{Claims, Scope};
 
-/// Lo que pasa con una peticion que no se puede servir.
+/// What happens to a request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error del protocolo del mirror.
+    /// An error from the mirror protocol.
     Terraform(TerraformError),
-    /// El mirror no puede emitir URLs de archivo: no hay clave de firma.
+    /// The mirror cannot issue archive URLs: there is no signing key.
     SigningUnavailable,
 }
 
@@ -77,15 +77,15 @@ impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             Self::Raw(error) => error.the_verdict(),
-            // La ruta que la gramatica rechaza es un recurso que no hay:
-            // el mirror no explica por que una ruta es mala, dice que no
-            // existe. Nada se filtra a quien tantea el servicio.
+            // A path the grammar rejects is a resource that does not exist:
+            // the mirror does not explain why a path is bad, it says it does not
+            // exist. Nothing leaks to whoever probes the service.
             Self::Terraform(_) => (
                 StatusCode::NOT_FOUND,
                 "there is nothing at that path".to_string(),
             ),
-            // Se dice claro: es una decision del operador, no un fallo del
-            // cliente, y quien lee el log de `terraform init` debe saberlo.
+            // It is stated plainly: it is an operator decision, not a client
+            // failure, and whoever reads the `terraform init` log must know it.
             Self::SigningUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "this mirror cannot issue archive URLs because no signing key is configured; the operator must add a key to [signing]".to_string(),
@@ -102,9 +102,9 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El resto de la ruta de `/terraform/{repositorio}/{resto}`, sin
-/// decodificar: las reglas del protocolo son las unicas que pueden
-/// interpretar un `%2f`.
+/// The rest of the path of `/terraform/{repository}/{rest}`, without
+/// decoding: the protocol rules are the only ones that may
+/// interpret a `%2f`.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -117,13 +117,13 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// Cualquier peticion de `/terraform/{repositorio}/...`.
+/// Any request to `/terraform/{repository}/...`.
 ///
-/// La modalidad decide el dialecto: un repositorio **proxy** habla el
-/// protocolo de mirror (aqui) y un **hosted** habla el protocolo de
-/// registry de modulos (delegado en `terraform_modules`). El mirror solo
-/// lee: un `PUT` o un `POST` no es una publicacion, es un metodo que el
-/// protocolo no tiene.
+/// The mode decides the dialect: a **proxy** repository speaks the
+/// mirror protocol (here) and a **hosted** one speaks the module
+/// registry protocol (delegated to `terraform_modules`). The mirror only
+/// reads: a `PUT` or a `POST` is not a publication, it is a method the
+/// protocol does not have.
 pub async fn handle(
     State(state): State<AppState>,
     method: Method,
@@ -133,8 +133,8 @@ pub async fn handle(
 ) -> Result<Response, Failure> {
     let (repository_key, rest) = the_split(&uri)?;
     if hodei_catalog::terraform_modules::is_registry_path(&rest) {
-        // El dialecto del registry responde con su propia forma de error:
-        // su superficie responde completa, y aqui solo se entrega.
+        // The registry dialect answers with its own error shape:
+        // its surface answers in full, and here it is only delivered.
         return Ok(crate::handlers::terraform_modules::handle(
             State(state),
             method,
@@ -173,8 +173,8 @@ pub async fn handle(
         &[RepositoryFormat::Terraform],
     )
     .await?;
-    // Un repositorio hosted habla el protocolo de registry de modulos, no
-    // este: sus rutas del mirror no existen.
+    // A hosted repository speaks the module registry protocol, not
+    // this one: its mirror paths do not exist.
     if repository.mode != hodei_catalog::RepositoryMode::Proxy {
         return Err(RawApiError::NotFound.into());
     }
@@ -256,13 +256,13 @@ fn record_outcome_of(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura (mirror)
+// Reads (mirror)
 // ---------------------------------------------------------------------------
 
-/// Una lectura del mirror: la ruta del protocolo ES el camino del asset,
-/// y el upstream sirve por el mismo camino. El documento llega del
-/// upstream y se sirve tal cual: reescribir un indice o un zip romperia
-/// los checksums que el cliente compara contra su lockfile.
+/// A mirror read: the protocol path IS the asset's path,
+/// and the upstream serves by the same path. The document arrives from the
+/// upstream and is served as is: rewriting an index or a zip would break
+/// the checksums the client compares against its lockfile.
 async fn read(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -551,7 +551,7 @@ async fn serve_archive(
 }
 
 // ---------------------------------------------------------------------------
-// Respuestas
+// Responses
 // ---------------------------------------------------------------------------
 
 fn body_response(

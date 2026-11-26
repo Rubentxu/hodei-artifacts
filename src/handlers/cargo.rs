@@ -1,20 +1,20 @@
-//! La superficie **cargo**: `cargo publish` y la resolucion sparse de
-//! `cargo add` / `cargo build` contra un repositorio de Hodei.
+//! The **cargo** surface: `cargo publish` and the sparse resolution of
+//! `cargo add` / `cargo build` against a Hodei repository.
 //!
-//! Vive en `/cargo/{repositorio}/...` y habla el protocolo del registro en
-//! su variante sparse: la gramatica de rutas y de documentos esta en
-//! `hodei_catalog::cargo` (pura) y aqui solo hay lo que necesita efectos.
+//! Lives at `/cargo/{repository}/...` and speaks the registry protocol in
+//! its sparse variant: the grammar of paths and documents is in
+//! `hodei_catalog::cargo` (pure) and here there is only what needs effects.
 //!
-//! Cada version publicada deja **dos assets inmutables**: los bytes del
-//! .crate en `{nombre}/-/{nombre}-{version}.crate` y su linea de indice en
-//! `{nombre}/-/index/{version}.json`. El indice se ensambla listando esos
-//! documentos, nunca reescribiendolos: una version publicada es para
-//! siempre, y dos publicadores concurrentes no pueden pisarse porque cada
-//! uno escribe su propia version.
+//! Each published version leaves **two immutable assets**: the bytes of the
+//! .crate at `{name}/-/{name}-{version}.crate` and its index line at
+//! `{name}/-/index/{version}.json`. The index is assembled by listing those
+//! documents, never by rewriting them: a published version is forever,
+//! and two concurrent publishers cannot overwrite each other because each
+//! one writes its own version.
 //!
-//! La modalidad servida hoy es **hosted**: el proxy de cargo necesita un
-//! upstream validado con cliente real antes de poder declararse, y un
-//! repositorio cuyo modo no se sirve no se puede ni crear.
+//! The mode served today is **hosted**: the cargo proxy needs an
+//! upstream validated with a real client before it can be declared, and a
+//! repository whose mode is not served cannot even be created.
 
 use axum::{
     body::Body,
@@ -40,14 +40,14 @@ use crate::handlers::{correlation_id, record_audit};
 use crate::public_url::TheOrigin;
 use crate::raw::conditional;
 
-/// Lo que pasa con una peticion que no se puede servir.
+/// What happens to a request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error del protocolo cargo.
+    /// An error from the cargo protocol.
     Cargo(CargoError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -93,8 +93,8 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El resto de la ruta de `/cargo/{repositorio}/{resto}`, sin decodificar:
-/// las reglas del protocolo son las unicas que pueden interpretar un `%2f`.
+/// The rest of the path of `/cargo/{repository}/{rest}`, undecoded:
+/// the protocol rules are the only ones that may interpret a `%2f`.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -107,11 +107,11 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// La URL base del indice tal y como la ve el cliente.
+/// The base URL of the index as the client sees it.
 ///
-/// El origen lo decide el despliegue y no la peticion: el `Host` y el
-/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
-/// una URL que el cliente mueve es una URL que el cliente envenena.
+/// The origin is decided by the deployment and not by the request: the `Host` and
+/// `X-Forwarded-Proto` of a request can be written by anyone, and
+/// a URL the client moves is a URL the client poisons.
 fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
     origin
         .url(&format!("/cargo/{repository}"))
@@ -121,8 +121,8 @@ fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
         .map_err(Failure::from)
 }
 
-/// Cargo manda el token sin esquema: `Authorization: <jwt>`. La superficie
-/// compartida solo habla Bearer, asi que aqui se normaliza la cabecera.
+/// Cargo sends the token without a scheme: `Authorization: <jwt>`. The shared
+/// surface only speaks Bearer, so the header is normalized here.
 fn normalize_authorization(headers: &mut HeaderMap) {
     let raw = headers
         .get(header::AUTHORIZATION)
@@ -140,7 +140,7 @@ fn normalize_authorization(headers: &mut HeaderMap) {
     }
 }
 
-/// Cualquier peticion de `/cargo/{repositorio}/...`.
+/// Any request to `/cargo/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -265,11 +265,11 @@ fn record_outcome(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
-/// El indice sparse de un crate: la concatenacion NDJSON de sus lineas,
-/// ordenada por version. No hay documento que reescribir: se ensambla.
+/// The sparse index of a crate: the NDJSON concatenation of its lines,
+/// ordered by version. There is no document to rewrite: it is assembled.
 async fn read_index(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -313,7 +313,7 @@ async fn read_index(
         lines.push((version, line));
     }
     if lines.is_empty() {
-        // Cargo espera un 404 que diga que el crate no existe aqui.
+        // Cargo expects a 404 saying the crate does not exist here.
         return Err(Failure::plain(
             StatusCode::NOT_FOUND,
             "there is no crate of that name in this repository",
@@ -339,7 +339,7 @@ async fn read_index(
     ))
 }
 
-/// Los bytes de un .crate, verificados contra su asset.
+/// The bytes of a .crate, verified against its asset.
 async fn read_crate(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -396,7 +396,7 @@ async fn read_crate(
     Ok(response)
 }
 
-/// `If-None-Match` contra el etag del indice: un 304 dice que no cambio.
+/// `If-None-Match` against the index etag: a 304 says it did not change.
 fn conditional_read(
     etag: &str,
     headers: &HeaderMap,
@@ -448,7 +448,7 @@ fn body_response(
     response
 }
 
-/// Publicar: la version es inmutable, y eso se dice antes de escribir nada.
+/// Publish: the version is immutable, and that is stated before writing anything.
 async fn publish(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -488,8 +488,8 @@ async fn publish(
     let crate_path = format!("{name}/-/{name}-{version}.crate");
     let (_, writer) = the_catalog(state)?;
 
-    // Una version ya publicada es para siempre: idéntica es un si,
-    // distinta es un no que explica por que.
+    // An already-published version is forever: an identical one is a yes,
+    // a different one is a no that explains why.
     if let Some(existing) = existing_line(state, context, &repository.repo_key, &doc_path).await? {
         if existing["cksum"].as_str() == Some(cksum.as_str()) {
             return Ok(json_response(
@@ -510,7 +510,7 @@ async fn publish(
     let line = cargo::index_line(&new.header, &cksum)?;
     let line_bytes = serde_json::to_vec(&line).expect("a line serializes");
 
-    // 1. Los bytes del .crate, conmutados antes del catalogo.
+    // 1. The .crate bytes, swapped in before the catalog.
     let (crate_digest, crate_length) = write_the_content(
         state,
         context.account().as_str(),
@@ -535,7 +535,7 @@ async fn publish(
     )
     .await?;
 
-    // 2. La linea de indice, inmutable como su version.
+    // 2. The index line, immutable like its version.
     let (doc_digest, doc_length) = write_the_content(
         state,
         context.account().as_str(),
@@ -590,8 +590,8 @@ async fn existing_line(
     Ok(serde_json::from_slice(&bytes).ok())
 }
 
-/// Escribe un asset inmutable; el conflicto con el mismo digest es el eco
-/// de una publicacion interrumpida, no una reescritura.
+/// Writes an immutable asset; a conflict with the same digest is the echo
+/// of an interrupted publication, not a rewrite.
 #[allow(clippy::too_many_arguments)]
 async fn publish_asset(
     context: &hodei_authz::VerifiedContext,
@@ -629,8 +629,8 @@ async fn publish_asset(
     }
 }
 
-/// El error de publicacion de una lectura de lista: la lista no la provoca
-/// un conflicto, pero el mismo traductor sabe que significa cada variante.
+/// The publication error of a list read: the list is not caused
+/// by a conflict, but the same translator knows what each variant means.
 fn the_publication_error_ref(error: &CatalogError) -> RawApiError {
     match error {
         CatalogError::Denied { .. } => RawApiError::Forbidden,

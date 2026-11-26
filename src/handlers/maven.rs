@@ -1,27 +1,27 @@
-//! Maven 2 hosted sobre la superficie de contenido.
+//! Maven 2 hosted over the content surface.
 //!
-//! Un repositorio Maven 2 hosted usa las mismas rutas y el mismo modelo que
-//! el crudo (`/repository/{repo}/{*path}`): cada fichero es un asset cuyo
-//! contenido vive en el almacen por digest. Lo que cambia es lo que se
-//! decide **antes** de guardar y **al** servir lo que Maven llama
-//! metadatos:
+//! A hosted Maven 2 repository uses the same routes and the same model as
+//! the raw one (`/repository/{repo}/{*path}`): each file is an asset whose
+//! content lives in the store by digest. What changes is what is
+//! decided **before** storing and **when** serving what Maven calls
+//! metadata:
 //!
-//! - **Escribir.** La ruta tiene que ser una ruta Maven 2 valida, la version
-//!   tiene que caber en la politica del repositorio, y la sustitucion no la
-//!   decide el cliente: una release no cambia (salvo `release_redeploy`), un
-//!   snapshot con marca de tiempo no cambia, y el nombre flotante
-//!   `-SNAPSHOT` se repone. Un POM se lee antes de guardarlo y sus
-//!   coordenadas tienen que ser las de su ruta.
-//! - **`maven-metadata.xml` y checksums.** No se guardan: se **derivan** del
-//!   catalogo cada vez que se piden. Asi no hay un fichero de metadatos que
-//!   pueda quedar a medias ni dos despliegues concurrentes que se lo pisen:
-//!   lo que se lista es lo que hay publicado, y una version aparece cuando
-//!   existe su POM. Lo que un cliente sube con esos nombres se **valida** y
-//!   se acepta sin guardar, para que `mvn deploy` termine igual que contra
-//!   cualquier otro repositorio.
-//! - **Checksums de un fichero.** Se comparan con el resumen calculado del
-//!   contenido guardado: si el cliente sube uno que no es el del fichero, se
-//!   rechaza; si lo es, se acepta (el servidor ya lo sabe) sin guardarlo.
+//! - **Writing.** The path must be a valid Maven 2 path, the version
+//!   must fit the repository's policy, and replacement is not
+//!   decided by the client: a release does not change (except `release_redeploy`), a
+//!   timestamped snapshot does not change, and the floating name
+//!   `-SNAPSHOT` is replaced. A POM is read before storing it and its
+//!   coordinates must be those of its path.
+//! - **`maven-metadata.xml` and checksums.** They are not stored: they are **derived** from the
+//!   catalog every time they are requested. This way there is no metadata file that
+//!   can be left half-written, nor two concurrent deployments overwriting it:
+//!   what is listed is what is published, and a version appears when
+//!   its POM exists. What a client uploads under those names is **validated** and
+//!   accepted without storing, so that `mvn deploy` ends the same as against
+//!   any other repository.
+//! - **File checksums.** They are compared with the digest computed from the
+//!   stored content: if the client uploads one that is not the file's, it is
+//!   rejected; if it is, it is accepted (the server already knows it) without storing it.
 
 use std::collections::HashSet;
 
@@ -48,49 +48,49 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::raw::{conditional, policy::ReplacePolicy};
 
-/// Cuanto se lee del almacen de una vez al calcular un resumen: un jar de un
-/// gigabyte no cabe en memoria.
+/// How much is read from the store at once when computing a digest: a one-gigabyte
+/// jar does not fit in memory.
 const HASH_CHUNK: u64 = 4 * 1024 * 1024;
 
-/// Lo que una escritura pide hacer.
+/// What a write asks to do.
 pub(super) enum Write {
-    /// Un fichero del artefacto: se guarda.
+    /// A file of the artifact: it is stored.
     File {
-        /// El fichero, ya analizado.
+        /// The file, already analyzed.
         file: MavenFile,
-        /// Si su direccion se puede reponer.
+        /// Whether its address can be replaced.
         replace: ReplacePolicy,
     },
-    /// Metadatos o checksum: se validan y no se guardan.
+    /// Metadata or checksum: validated and not stored.
     Absorbed(Absorbed),
 }
 
-/// Lo que se valida y se acepta sin guardar.
+/// What is validated and accepted without storing.
 pub(super) enum Absorbed {
     /// `maven-metadata.xml`.
     Metadata(MetadataLevel),
-    /// Un checksum de `maven-metadata.xml`.
+    /// A checksum of `maven-metadata.xml`.
     MetadataChecksum(Algorithm),
-    /// Un checksum de un fichero del artefacto.
+    /// A checksum of a file of the artifact.
     FileChecksum {
-        /// El algoritmo.
+        /// The algorithm.
         algorithm: Algorithm,
-        /// La ruta del fichero del que es checksum.
+        /// The path of the file it is the checksum of.
         subject_path: String,
     },
 }
 
-/// La configuracion Maven de un repositorio.
+/// The Maven configuration of a repository.
 fn the_config(repository: &RepositoryDescriptor) -> Result<MavenConfig, RawApiError> {
-    // Se valida al guardar el repositorio; si ahora no se entiende, el
-    // repositorio esta mal y no se sirve a medias.
+    // Validated when the repository is saved; if it is not understood now, the
+    // repository is broken and is not served halfway.
     MavenConfig::of_settings(&repository.config.config_settings).map_err(|error| {
         tracing::warn!(error = %error, "the maven settings of a repository cannot be read");
         RawApiError::Unavailable
     })
 }
 
-/// Que hay que hacer con una escritura en una ruta de un repositorio Maven 2.
+/// What must be done with a write at a path of a Maven 2 repository.
 pub(super) fn the_write(
     repository: &RepositoryDescriptor,
     asset_path: &str,
@@ -108,7 +108,7 @@ pub(super) fn the_write(
             let replace = match file.kind {
                 VersionKind::Release if config.release_redeploy => ReplacePolicy::Allow,
                 VersionKind::Release | VersionKind::Timestamped { .. } => ReplacePolicy::Deny,
-                // El nombre flotante es el que un snapshot repone.
+                // The floating name is the one a snapshot replaces.
                 VersionKind::Snapshot => ReplacePolicy::Allow,
             };
             Ok(Write::File { file, replace })
@@ -144,7 +144,7 @@ pub(super) fn the_write(
     }
 }
 
-/// Lee un cuerpo entero con un tope.
+/// Reads a whole body with a cap.
 async fn read_limited(body: Body, limit: usize) -> Result<Vec<u8>, RawApiError> {
     let mut stream = body.into_data_stream();
     let mut bytes: Vec<u8> = Vec::new();
@@ -158,11 +158,11 @@ async fn read_limited(body: Body, limit: usize) -> Result<Vec<u8>, RawApiError> 
     Ok(bytes)
 }
 
-/// El cuerpo de un fichero, listo para guardar.
+/// The body of a file, ready to store.
 ///
-/// Un POM se lee entero antes de guardarlo: sus coordenadas tienen que ser
-/// las de su ruta, y un POM que no lo es no deja ni un byte en el almacen.
-/// El resto de ficheros pasa por trozos, sin tocarse.
+/// A POM is read whole before storing it: its coordinates must be
+/// those of its path, and a POM that is not leaves not a single byte in the store.
+/// The rest of the files pass through in chunks, untouched.
 pub(super) async fn the_file_body(file: &MavenFile, body: Body) -> Result<Body, RawApiError> {
     if !file.is_pom() {
         return Ok(body);
@@ -181,14 +181,14 @@ pub(super) async fn the_file_body(file: &MavenFile, body: Body) -> Result<Body, 
     Ok(Body::from(bytes))
 }
 
-/// El resumen de un contenido guardado, leido por trozos.
+/// The digest of stored content, read in chunks.
 async fn checksum_of(
     state: &AppState,
     asset: &AssetRecord,
     algorithm: Algorithm,
 ) -> Result<String, RawApiError> {
     if algorithm == Algorithm::Sha256 {
-        // El digest del contenido ya es su SHA-256.
+        // The content's digest is already its SHA-256.
         return Ok(asset.digest.value.to_ascii_lowercase());
     }
     let store = the_content_store(state)?;
@@ -201,8 +201,8 @@ async fn checksum_of(
             .await
             .map_err(|error| the_blob_error(&error))?;
         if chunk.is_empty() {
-            // Un almacen que devuelve menos de lo que dice el catalogo esta
-            // roto: no se inventa un resumen.
+            // A store that returns less than the catalog says is
+            // broken: a digest is not invented.
             return Err(RawApiError::Internal);
         }
         hasher.update(&chunk);
@@ -211,7 +211,7 @@ async fn checksum_of(
     Ok(hasher.finish())
 }
 
-/// Un resumen en curso.
+/// A digest in progress.
 enum Hasher {
     Md5(Md5),
     Sha1(Sha1),
@@ -248,15 +248,15 @@ impl Hasher {
     }
 }
 
-/// El resumen de unos bytes en memoria.
+/// The digest of some in-memory bytes.
 fn checksum_of_bytes(bytes: &[u8], algorithm: Algorithm) -> String {
     let mut hasher = Hasher::of(algorithm);
     hasher.update(bytes);
     hasher.finish()
 }
 
-/// Valida lo que un cliente sube con nombre de metadatos o de checksum, y lo
-/// acepta sin guardarlo.
+/// Validates what a client uploads under a metadata or checksum name, and
+/// accepts it without storing it.
 pub(super) async fn absorb(
     state: &AppState,
     context: &VerifiedContext,
@@ -325,8 +325,8 @@ pub(super) async fn absorb(
     Ok(response)
 }
 
-/// Lo que hay publicado bajo un prefijo, con los digests que la compuerta de
-/// confianza deja servir.
+/// What is published under a prefix, with the digests the trust gate
+/// lets be served.
 async fn known_under(
     state: &AppState,
     context: &VerifiedContext,
@@ -359,7 +359,7 @@ async fn known_under(
         .collect())
 }
 
-/// Los metadatos derivados de lo publicado, si hay algo que describir.
+/// The metadata derived from what is published, if there is anything to describe.
 async fn derived_metadata(
     state: &AppState,
     context: &VerifiedContext,
@@ -391,10 +391,10 @@ async fn derived_metadata(
     })
 }
 
-/// Lo que se sirve en una ruta de metadatos o de checksum.
+/// What is served at a metadata or checksum path.
 ///
-/// `Ok(None)` dice que la ruta no es de metadatos ni de checksum: la sirve el
-/// flujo normal del fichero.
+/// `Ok(None)` says the path is not a metadata or checksum path: the normal
+/// file flow serves it.
 pub(super) async fn the_derived(
     state: &AppState,
     context: &VerifiedContext,
@@ -432,9 +432,9 @@ pub(super) async fn the_derived(
                         the_current_asset(state, context, &repository.repo_key, &subject_path)
                             .await?
                             .ok_or(RawApiError::NotFound)?;
-                    // El resumen de un fichero es del fichero: la compuerta
-                    // de confianza decide sobre su digest, igual que al
-                    // descargarlo.
+                    // A file's digest belongs to the file: the trust
+                    // gate decides on its digest, just as when
+                    // downloading it.
                     crate::trust::admit(
                         state,
                         context.account().as_str(),
@@ -461,13 +461,13 @@ pub(super) async fn the_derived(
     .map(Some)
 }
 
-/// Lo que un grupo anade a una respuesta derivada: quien aporto el contenido
-/// y en que version de su configuracion.
+/// What a group adds to a derived response: who contributed the content
+/// and in which version of its configuration.
 #[derive(Default)]
 pub(super) struct GroupTrace {
-    /// Los miembros que aportaron, separados por comas.
+    /// The members that contributed, separated by commas.
     pub from: Option<String>,
-    /// La version de la configuracion del grupo.
+    /// The version of the group's configuration.
     pub version: Option<u64>,
 }
 
@@ -488,7 +488,7 @@ fn apply_trace(response: &mut Response, trace: &GroupTrace) {
     }
 }
 
-/// La respuesta de un contenido derivado: condicionales, cabeceras y cuerpo.
+/// The response of derived content: conditionals, headers and body.
 fn respond_derived(
     content: Vec<u8>,
     content_type: &'static str,
@@ -528,7 +528,7 @@ fn respond_derived(
         header::HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
-    // Derivado de lo publicado: quien lo guarde tiene que revalidarlo.
+    // Derived from what is published: whoever stores it must revalidate it.
     response_headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     if let Ok(value) = HeaderValue::from_str(&length.to_string()) {
         response_headers.insert(header::CONTENT_LENGTH, value);
@@ -537,15 +537,15 @@ fn respond_derived(
 }
 
 // ---------------------------------------------------------------------------
-// Grupos y proxies.
+// Groups and proxies.
 // ---------------------------------------------------------------------------
 
-/// Si la politica de versiones de un repositorio Maven 2 admite la ruta.
+/// Whether the version policy of a Maven 2 repository admits the path.
 ///
-/// Un proxy aplica la misma politica que un hosted (`release` / `snapshot`):
-/// una version que el repositorio no admite no se pide al upstream. Lo que
-/// no es un fichero ni unos metadatos de version se deja pasar: el proxy no
-/// inventa reglas sobre rutas que no entiende.
+/// A proxy applies the same policy as a hosted one (`release` / `snapshot`):
+/// a version the repository does not admit is not requested from the upstream. What
+/// is neither a file nor version metadata is let through: the proxy does not
+/// invent rules about paths it does not understand.
 pub(crate) fn admits_path(
     repository: &RepositoryDescriptor,
     asset_path: &str,
@@ -564,9 +564,9 @@ pub(crate) fn admits_path(
             subject: Subject::Metadata(MetadataLevel::Version { version, .. }),
             ..
         }) => version.ends_with(maven::SNAPSHOT_SUFFIX),
-        // Lo que no se entiende pasa, salvo que cuelgue de una carpeta
-        // `-SNAPSHOT`: ahi un nombre raro no es una forma de esquivar la
-        // politica.
+        // What is not understood passes, unless it hangs under a `-SNAPSHOT`
+        // folder: there a strange name is not a way of dodging the
+        // policy.
         _ => {
             let in_snapshot_directory = asset_path
                 .rsplit('/')
@@ -578,17 +578,17 @@ pub(crate) fn admits_path(
     Ok(config.admits(snapshot))
 }
 
-/// Lo que un miembro hoja de un grupo aporta a unos metadatos.
+/// What a leaf member of a group contributes to metadata.
 struct Piece {
-    /// Los bytes que el miembro sirve en esa ruta de metadatos.
+    /// The bytes the member serves at that metadata path.
     bytes: Vec<u8>,
-    /// Lo que aportan a la lista de versiones del artefacto.
+    /// What they contribute to the artifact's version list.
     contribution: maven::Contribution,
-    /// Si lo sirve un upstream tal cual (y no se deriva de lo publicado).
+    /// Whether an upstream serves it as is (and it is not derived from what is published).
     verbatim: bool,
 }
 
-/// Lee un fichero de metadatos que un proxy tiene, con tope de tamano.
+/// Reads a metadata file a proxy has, with a size cap.
 async fn read_cached(state: &AppState, asset: &AssetRecord) -> Result<Vec<u8>, RawApiError> {
     if asset.size_bytes > maven::MAX_XML_BYTES as u64 {
         tracing::warn!("a proxied maven metadata file is larger than the limit");
@@ -604,10 +604,10 @@ async fn read_cached(state: &AppState, asset: &AssetRecord) -> Result<Vec<u8>, R
     Ok(bytes.to_vec())
 }
 
-/// Lo que un miembro hoja aporta a los metadatos de `level`.
+/// What a leaf member contributes to the metadata of `level`.
 ///
-/// `Ok(None)` es un MISS: el miembro no tiene metadatos para esa ruta, o la
-/// compuerta de confianza oculta el fichero que los respalda.
+/// `Ok(None)` is a MISS: the member has no metadata for that path, or the
+/// trust gate hides the file that backs it.
 async fn the_piece(
     state: &AppState,
     context: &VerifiedContext,
@@ -638,9 +638,9 @@ async fn the_piece(
         .await
         {
             Ok(()) => {}
-            // Los de artefacto son una union: un miembro que los oculta no
-            // aporta. Los de version los sirve un solo miembro: ocultos es
-            // un 404 y no se busca en el siguiente, como con un fichero.
+            // The artifact ones are a union: a member that hides them does not
+            // contribute. The version ones are served by a single member: hidden is
+            // a 404 and the next one is not searched, as with a file.
             Err(crate::trust::Admission::Hidden) => {
                 return match level {
                     MetadataLevel::Artifact { .. } => Ok(None),
@@ -657,8 +657,8 @@ async fn the_piece(
             } => {
                 let mut declared = maven::declared_contribution(&bytes, group_id, artifact_id)
                     .map_err(|_| RawApiError::BadGateway("the upstream metadata cannot be read"))?;
-                // Un proxy no ofrece versiones que su politica no admite: el
-                // cliente las pediria y recibiria un 404.
+                // A proxy does not offer versions its policy does not admit: the
+                // client would request them and receive a 404.
                 let config = the_config(member)?;
                 declared
                     .versions
@@ -673,7 +673,7 @@ async fn the_piece(
             verbatim: true,
         }));
     }
-    // Un hosted aporta lo que tiene publicado.
+    // A hosted one contributes what it has published.
     match level {
         MetadataLevel::Artifact {
             group_id,
@@ -701,11 +701,11 @@ async fn the_piece(
     }
 }
 
-/// Los metadatos que sirve un grupo: de artefacto, la union de las
-/// versiones de todos los miembros; de version, los del primer miembro que
-/// los tiene.
+/// The metadata a group serves: for the artifact, the union of the
+/// versions of all members; for the version, those of the first member that
+/// has them.
 ///
-/// Devuelve los bytes y los miembros que aportaron. El rastro queda en
+/// Returns the bytes and the members that contributed. The trail is left in
 /// `trail`.
 async fn group_metadata(
     state: &AppState,
@@ -719,12 +719,12 @@ async fn group_metadata(
     use super::raw_group::Step;
 
     let mut pieces: Vec<(String, Piece)> = Vec::new();
-    // Un proxy sin red y sin copia no tiene nada que aportar: se sigue con
-    // el siguiente. Si al final nadie sirvio, ese es el error.
+    // A proxy without network and without a copy has nothing to contribute: the next
+    // one is tried. If in the end nobody served, that is the error.
     let mut offline: Option<RawApiError> = None;
-    // La reserva de namespaces del grupo se consulta antes de preguntar a
-    // sus miembros: los que dejo fuera quedan en el rastro, y sus upstreams
-    // no aportan versiones aunque tengan mas.
+    // The group's namespace reservation is consulted before asking its
+    // members: those it left out remain in the trail, and their upstreams
+    // do not contribute versions even if they have more.
     let (leaves, denied, judgement) =
         super::raw_group::the_governed_leaves(state, context, group, metadata_path).await?;
     for key in &denied {
@@ -736,7 +736,7 @@ async fn group_metadata(
             Ok(Some(piece)) => {
                 trail.push((key.clone(), Step::Hit));
                 pieces.push((key, piece));
-                // Los de version no se fusionan: gana el primero.
+                // The version ones are not merged: the first one wins.
                 if matches!(level, MetadataLevel::Version { .. }) {
                     break;
                 }
@@ -788,9 +788,9 @@ async fn group_metadata(
     match maven::merged_metadata(group_id, artifact_id, &contributions) {
         Some(xml) => Ok((xml.into_bytes(), contributors(true))),
         None => {
-            // Metadatos que no listan versiones (por ejemplo los de un
-            // grupo de plugins): no se fusionan, se sirve el primero que
-            // un upstream trae, tal cual.
+            // Metadata that does not list versions (for example that of a
+            // plugin group): it is not merged, the first one an
+            // upstream brings is served, as is.
             let (key, piece) = pieces
                 .into_iter()
                 .find(|(_, piece)| {
@@ -802,8 +802,8 @@ async fn group_metadata(
     }
 }
 
-/// El checksum de un fichero que sirve un grupo: es el del fichero del
-/// miembro que gana esa ruta, nunca el de un sidecar de otro miembro.
+/// The checksum of a file served by a group: it is that of the file of the
+/// member that wins that path, never that of another member's sidecar.
 async fn group_file_checksum(
     state: &AppState,
     context: &VerifiedContext,
@@ -816,8 +816,8 @@ async fn group_file_checksum(
     let resolution =
         super::raw_group::the_group_asset(state, context, group, subject_path, correlation).await;
     trail.extend(resolution.trail.iter().cloned());
-    // El recorrido del grupo ya aplico la reserva de namespaces: los
-    // miembros que dejo fuera aparecen en el rastro como `deny`.
+    // The group traversal already applied the namespace reservation: the
+    // members it left out appear in the trail as `deny`.
     let won = resolution.outcome?;
     crate::trust::admit(
         state,
@@ -831,10 +831,10 @@ async fn group_file_checksum(
     Ok((text.into_bytes(), vec![won.member.repo_key]))
 }
 
-/// Lo que un grupo Maven sirve en una ruta de metadatos o de checksum.
+/// What a Maven group serves at a metadata or checksum path.
 ///
-/// `Ok(None)` dice que la ruta es de un fichero: la resuelve el grupo como
-/// cualquier otro (gana el primer miembro que lo tiene).
+/// `Ok(None)` says the path is a file path: the group resolves it like
+/// any other (the first member that has it wins).
 pub(super) async fn the_group_derived(
     state: &AppState,
     context: &VerifiedContext,

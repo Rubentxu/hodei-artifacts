@@ -1,24 +1,24 @@
-//! La superficie de contenido **crudo**: publicar, descargar y describir.
+//! The **raw** content surface: publish, download and describe.
 //!
-//! Un repositorio crudo guarda bytes en una ruta. No hay paquetes, ni
-//! versiones, ni formatos: hay una dirección y un contenido.
+//! A raw repository stores bytes at a path. There are no packages, nor
+//! versions, nor formats: there is an address and a content.
 //!
-//! Las tres peticiones hacen lo mismo en los tres primeros pasos, y por
-//! eso lo hacen en el mismo sitio:
+//! The three requests do the same in the first three steps, and so
+//! they do it in the same place:
 //!
-//! 1. **Autenticar.** El token va primero, siempre: una petición sin
-//!    credencial es un 401 antes de mirar la ruta, el repositorio o
-//!    cualquier otra cosa.
-//! 2. **Leer la ruta.** Con las reglas de [`crate::raw::path`], que
-//!    rechazan el traversal, la codificación doble, los caracteres de
-//!    control y las rutas ambiguas.
-//! 3. **Buscar el repositorio** en la cuenta **verificada**. Un
-//!    repositorio de otra cuenta no existe para esta cuenta, y se
-//!    responde con el mismo 404 que un repositorio que no existe.
+//! 1. **Authenticate.** The token goes first, always: a request without a
+//!    credential is a 401 before looking at the path, the repository or
+//!    anything else.
+//! 2. **Read the path.** With the rules of [`crate::raw::path`], which
+//!    reject traversal, double encoding, control characters
+//!    and ambiguous paths.
+//! 3. **Look up the repository** in the **verified** account. A
+//!    repository of another account does not exist for this account, and it is
+//!    answered with the same 404 as a repository that does not exist.
 //!
-//! Y después, la decisión de Cedar con la acción que corresponde:
-//! `UploadAsset` para publicar, `DownloadAsset` para descargar. Sin
-//! permiso no hay contenido, y sin contenido no se dice que lo hay.
+//! And then, the Cedar decision with the corresponding action:
+//! `UploadAsset` to publish, `DownloadAsset` to download. Without
+//! permission there is no content, and without content it is not said that there is any.
 
 use axum::{
     body::Body,
@@ -40,12 +40,12 @@ use crate::raw::{conditional, path, policy, range};
 
 const CONTENT_TYPE: &str = "application/octet-stream";
 
-/// La cabecera donde el cliente declara el digest del contenido.
+/// The header where the client declares the content digest.
 ///
-/// No es obligatorio: si no viene, el digest se calcula sobre lo que
-/// llega. Si viene, se **comprueba**: un cliente que declara un digest
-/// y envía otra cosa está roto, y un servidor que lo acepta sin
-/// comprobar está mintiendo sobre lo que tiene.
+/// It is not mandatory: if absent, the digest is computed over what
+/// arrives. If present, it is **checked**: a client that declares a digest
+/// and sends something else is broken, and a server that accepts it without
+/// checking is lying about what it has.
 const CHECKSUM_HEADER: &str = "x-checksum-sha256";
 
 pub use crate::resolution::ResolutionError as RawApiError;
@@ -57,16 +57,16 @@ pub(super) use crate::resolution::{
     the_publication_error, the_repository_in, the_resolved_asset, write_the_content,
 };
 
-/// La ruta pedida, con sus reglas.
+/// The requested path, with its rules.
 fn the_target(uri: &OriginalUri) -> Result<path::RawTarget, RawApiError> {
     path::the_target(uri.path()).map_err(|error| RawApiError::BadRequest(error.message()))
 }
 
-/// El repositorio, en la cuenta verificada.
+/// The repository, in the verified account.
 ///
-/// La cuenta viene del principal: un repositorio de otra cuenta no
-/// existe para esta, y se responde con el mismo 404 que uno que no
-/// existe nunca tuvo.
+/// The account comes from the principal: a repository of another account does not
+/// exist for this one, and it is answered with the same 404 as one that
+/// never existed.
 async fn the_repository(
     state: &AppState,
     context: &VerifiedContext,
@@ -83,16 +83,16 @@ async fn the_repository(
 
 /// `PUT /repository/{repository}/{*path}`
 ///
-/// Publica el contenido del cuerpo en esa dirección.
+/// Publishes the body content at that address.
 ///
-/// El contenido se escribe **por trozos** en el almacén de contenido: un
-/// fichero de un gigabyte no cabe en memoria, y un servidor que lo
-/// guarda en memoria no puede servir un artefacto de un gigabyte.
+/// The content is written **in chunks** to the content store: a
+/// one-gigabyte file does not fit in memory, and a server that
+/// keeps it in memory cannot serve a one-gigabyte artifact.
 ///
-/// Y el asset y su evento de auditoría se escriben en la **misma**
-/// transacción del catalogo: si el evento no se puede escribir, el asset
-/// no se publica. Lo que si queda es el blob sin referenciar, que es
-/// reconciliable.
+/// And the asset and its audit event are written in the **same**
+/// catalog transaction: if the event cannot be written, the asset
+/// is not published. What does remain is the unreferenced blob, which is
+/// reconcilable.
 pub async fn publish(
     State(state): State<AppState>,
     uri: OriginalUri,
@@ -108,9 +108,9 @@ pub async fn publish(
         crate::actions::upload_asset(),
         &repository,
     )?;
-    // Lo que dice un proxy sale de su upstream, no de quien pregunta. Va
-    // después de Cedar: quien no puede subir recibe el mismo 403 que en
-    // cualquier otro repositorio, y no averigua el modo.
+    // What a proxy says comes from its upstream, not from whoever asks. It goes
+    // after Cedar: whoever cannot upload receives the same 403 as in
+    // any other repository, and does not find out the mode.
     if !repository.mode.accepts_client_writes() {
         return Err(RawApiError::MethodNotAllowed(
             "this repository does not accept uploads",
@@ -118,7 +118,7 @@ pub async fn publish(
     }
 
     let correlation = correlation_id(&headers, &state.identity);
-    // Un repositorio Maven 2 decide aqui que se guarda y que solo se valida.
+    // A Maven 2 repository decides here what is stored and what is only validated.
     let maven_file = if repository.format == RepositoryFormat::Maven2 {
         match super::maven::the_write(&repository, &target.asset_path)? {
             super::maven::Write::Absorbed(absorbed) => {
@@ -145,8 +145,8 @@ pub async fn publish(
         .map(|asset| conditional::the_etag(&asset.digest));
     let current_digest = current.as_ref().map(|asset| asset.digest.clone());
 
-    // La condición se comprueba **antes** de escribir los bytes: una
-    // petición que no se va a hacer no deja bytes en el almacén.
+    // The condition is checked **before** writing the bytes: a
+    // request that is not going to be carried out leaves no bytes in the store.
     let outcome = conditional::the_write_condition(
         conditional::the_if_match(&headers).as_deref(),
         conditional::the_if_none_match(&headers).as_deref(),
@@ -156,11 +156,11 @@ pub async fn publish(
         return Err(RawApiError::PreconditionFailed);
     }
 
-    // Si la dirección publica una vez, publicar otro contenido es un
-    // conflicto. Y se dice **antes** de leer el cuerpo cuando el cliente
-    // ha declarado el digest: un cliente que ya sabe que no puede
-    // publicar no tiene por que enviar el contenido.
-    // En Maven la sustitucion la decide la version del fichero, no `raw.replace`.
+    // If the address publishes once, publishing other content is a
+    // conflict. And this is said **before** reading the body when the client
+    // has declared the digest: a client that already knows it cannot
+    // publish has no reason to send the content.
+    // In Maven the replacement is decided by the file's version, not by `raw.replace`.
     let replace = match &maven_file {
         Some((_, replace)) => *replace,
         None => policy::the_replace_policy(&repository.config.config_settings),
@@ -176,9 +176,9 @@ pub async fn publish(
         ));
     }
 
-    // Cuando la dirección publica una vez, el contenido que llega tiene
-    // que ser **el mismo** que ya hay. Si no lo es, la escritura se
-    // aborta y no queda ni un byte en el almacén.
+    // When the address publishes once, the incoming content must
+    // be **the same** as what is already there. If it is not, the write is
+    // aborted and not a single byte is left in the store.
     let refuse_replacement = match (replace, current_digest.as_ref()) {
         (policy::ReplacePolicy::Deny, Some(current)) => Some(current),
         _ => None,
@@ -199,10 +199,10 @@ pub async fn publish(
     let publication = Publication {
         repository: target.repository.clone(),
         asset_path: target.asset_path.clone(),
-        // La versión de un contenido crudo es el **contenido**: una
-        // versión publicada no cambia, y si el contenido cambia, es otra
-        // versión. La ruta es el nombre del paquete, porque en un
-        // repositorio crudo la ruta es lo que nombra el contenido.
+        // The version of raw content is the **content**: a
+        // published version does not change, and if the content changes, it is another
+        // version. The path is the package name, because in a
+        // raw repository the path is what names the content.
         coordinates: PackageCoordinates {
             package_name: target.asset_path.clone(),
             package_version: digest.value.clone(),
@@ -212,22 +212,22 @@ pub async fn publish(
         tags: Vec::new(),
         actor: context.principal().subject().as_str().to_string(),
         correlation_id: correlation.clone(),
-        // La sustitución la decide el **repositorio**, no el cliente: una
-        // dirección publica una vez salvo que la configuración del
-        // repositorio diga que se puede reponer. Lo que no se reescribe
-        // es la versión anterior, que sigue estando.
+        // Replacement is decided by the **repository**, not the client: an
+        // address publishes once unless the repository's configuration
+        // says it can be replaced. What is not rewritten
+        // is the previous version, which is still there.
         overwrite: replace == policy::ReplacePolicy::Allow,
-        // La condición del cliente viaja al catálogo, que la comprueba
-        // **dentro** de la transacción que escribe. La comprobación de
-        // arriba es una cortesía: dice pronto lo que va a pasar, pero la
-        // que vale es la del catálogo, porque allí no hay ventana entre
-        // el comprobar y el escribir.
+        // The client's condition travels to the catalog, which checks it
+        // **inside** the transaction that writes. The check
+        // above is a courtesy: it says early what is going to happen, but the
+        // one that counts is the catalog's, because there is no window there between
+        // checking and writing.
         precondition: conditional::the_precondition(
             conditional::the_if_match(&headers).as_deref(),
             conditional::the_if_none_match(&headers).as_deref(),
         ),
-        // Un contenido crudo no cuelga de nada: el `subject` es una
-        // relacion de los manifiestos de OCI, y aqui no hay manifiesto.
+        // Raw content hangs from nothing: the `subject` is a
+        // relation of OCI manifests, and here there is no manifest.
         subject: None,
     };
 
@@ -238,10 +238,10 @@ pub async fn publish(
         .map_err(|error| the_publication_error(&error))?;
 
     let etag = conditional::the_etag(&outcome.reference.digest);
-    // El estado lo dice el **catálogo**, no una lectura que se hizo antes
-    // de escribir: lo que hay ahora es la verdad, y una lectura anterior
-    // puede estar caduca. El cuerpo dice lo mismo, y no se contradice
-    // consigo mismo.
+    // The status is stated by the **catalog**, not by a read made before
+    // writing: what is there now is the truth, and an earlier read
+    // may be stale. The body says the same, and does not contradict
+    // itself.
     let (status, created, replaced) = match outcome.disposition {
         AssetDisposition::Created => (StatusCode::CREATED, true, false),
         AssetDisposition::Replaced => (StatusCode::OK, false, true),
@@ -258,10 +258,10 @@ pub async fn publish(
     });
     let mut response = (status, axum::Json(body)).into_response();
     apply_common_headers(&mut response, &etag, &correlation);
-    // La `Location` es una **referencia URI**: la ruta que se acaba de
-    // publicar, tal y como se puede escribir en una URI. Los segmentos
-    // admitidos son los de RFC 3986, así que la referencia es válida sin
-    // codificar nada.
+    // The `Location` is a **URI reference**: the path that was just
+    // published, as it can be written in a URI. The admitted segments
+    // are those of RFC 3986, so the reference is valid without
+    // encoding anything.
     if let Ok(location) = HeaderValue::from_str(&format!(
         "/repository/{}/{}",
         target.repository, target.asset_path
@@ -271,30 +271,30 @@ pub async fn publish(
     Ok(response)
 }
 
-/// Lo que pide la lectura de procedencia.
+/// What the provenance read asks for.
 #[derive(Debug, serde::Deserialize)]
 pub struct ProvenanceQuery {
-    /// La clave del repositorio.
+    /// The repository key.
     pub repository: String,
-    /// La ruta del contenido.
+    /// The path of the content.
     pub path: String,
 }
 
 /// `GET /api/v1/provenance?repository=&path=`
 ///
-/// Los recibos de procedencia de una ruta de un proxy, el más reciente
-/// primero. Lo autoriza la misma acción que leer el contenido
-/// (`DownloadAsset`): quien puede bajarlo puede saber de dónde vino.
+/// The provenance receipts of a proxy path, the most recent
+/// first. It is authorized by the same action as reading the content
+/// (`DownloadAsset`): whoever can download it can know where it came from.
 ///
-/// La respuesta no lleva credenciales ni consultas: el recibo ya las
-/// excluye al escribirse.
+/// The response carries no credentials or queries: the receipt already
+/// excludes them when written.
 pub async fn provenance(
     State(state): State<AppState>,
     axum::extract::Query(query): axum::extract::Query<ProvenanceQuery>,
     headers: HeaderMap,
 ) -> Result<Response, RawApiError> {
     let context = the_context(&state, &headers).await?;
-    // La ruta se valida con las mismas reglas que la del contenido.
+    // The path is validated with the same rules as the content's.
     let target = path::the_target(&format!("/repository/{}/{}", query.repository, query.path))
         .map_err(|error| RawApiError::BadRequest(error.message()))?;
     let repository = the_repository(&state, &context, &target.repository).await?;
@@ -319,8 +319,8 @@ pub async fn provenance(
         )
         .await
         .map_err(|error| the_publication_error(&error))?;
-    // Un recibo habla de un digest: si el canal no deja servir ese digest,
-    // tampoco dice que existe. Es la misma compuerta que la lectura.
+    // A receipt speaks of a digest: if the channel does not let that digest be served,
+    // it does not say it exists either. It is the same gate as the read.
     let mut admitted = Vec::with_capacity(receipts.len());
     for receipt in receipts {
         match crate::trust::admit(
@@ -365,11 +365,11 @@ pub async fn provenance(
 
 /// `GET /repository/{repository}/{*path}`
 ///
-/// Devuelve el contenido de esa dirección.
+/// Returns the content at that address.
 ///
-/// Admite `Range` y las condiciones `If-Match` e `If-None-Match`, según
-/// RFC 9110. Y dice que admite rangos con `Accept-Ranges`, que es lo
-/// que un cliente lee para saber si puede pedir un tramo.
+/// Supports `Range` and the `If-Match` and `If-None-Match` conditions, per
+/// RFC 9110. And it says it supports ranges with `Accept-Ranges`, which is what
+/// a client reads to know whether it can request a chunk.
 pub async fn download(
     State(state): State<AppState>,
     uri: OriginalUri,
@@ -381,11 +381,11 @@ pub async fn download(
 
 /// `HEAD /repository/{repository}/{*path}`
 ///
-/// Lo mismo que `GET`, sin el cuerpo. Las cabeceras son las mismas, y
-/// `Content-Length` es el de la respuesta que habría dado el `GET`: el
-/// del contenido entero, o el del tramo cuando la petición pide un
-/// tramo. Un `HEAD` que dice una longitud y después un `GET` dice otra
-/// es un servidor que no sabe lo que tiene.
+/// The same as `GET`, without the body. The headers are the same, and
+/// `Content-Length` is that of the response the `GET` would have given: that
+/// of the whole content, or that of the chunk when the request asks for a
+/// chunk. A `HEAD` that states one length and then a `GET` states another
+/// is a server that does not know what it has.
 pub async fn describe(
     State(state): State<AppState>,
     uri: OriginalUri,
@@ -395,10 +395,10 @@ pub async fn describe(
     Ok(response)
 }
 
-/// El contenido de una dirección, con sus condiciones y su rango.
+/// The content of an address, with its conditions and its range.
 ///
-/// El parámetro `head` dice si la respuesta lleva el cuerpo: `HEAD` trae
-/// las mismas cabeceras y ningún byte.
+/// The `head` parameter says whether the response carries the body: `HEAD` brings
+/// the same headers and no bytes.
 async fn the_content(
     state: AppState,
     uri: OriginalUri,
@@ -407,13 +407,13 @@ async fn the_content(
 ) -> Result<(Response, String), RawApiError> {
     let context = the_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
-    // El rastro dice lo que pasó, **también** cuando lo que pasó es que
-    // no se pudo servir: un registro que no dice quién intentó leer y
-    // fue rechazado es un registro con un agujero.
+    // The trail says what happened, **also** when what happened is that
+    // it could not be served: a log that does not say who tried to read and
+    // was rejected is a log with a hole.
     let resource = match the_target(&uri) {
         Ok(target) => format!("{}/{}", target.repository, target.asset_path),
-        // Una ruta que no se puede leer no tiene nombre: se dice la que
-        // llegó, que es lo que el cliente mandó.
+        // A path that cannot be read has no name: the one that
+        // arrived is stated, which is what the client sent.
         Err(_) => uri.path().to_string(),
     };
     let outcome = the_content_of(&state, &context, &uri, &headers, head, &correlation).await;
@@ -434,7 +434,7 @@ async fn the_content(
     outcome
 }
 
-/// El contenido, una vez que se sabe quién lo pide.
+/// The content, once it is known who requests it.
 async fn the_content_of(
     state: &AppState,
     context: &VerifiedContext,
@@ -453,11 +453,11 @@ async fn the_content_of(
     )?;
 
     let correlation = correlation.to_string();
-    // En Maven, metadatos y checksums no se guardan en un hosted: se derivan
-    // de lo publicado. Un grupo los compone con lo que aportan sus miembros
-    // (la union de versiones, el checksum del fichero que gana). Un proxy
-    // sirve los del upstream tal cual, como cualquier otro contenido. El
-    // resto de rutas sigue el flujo normal.
+    // In Maven, metadata and checksums are not stored in a hosted one: they are derived
+    // from what is published. A group composes them from what its members contribute
+    // (the union of versions, the checksum of the file that wins). A proxy
+    // serves those of the upstream as is, like any other content. The
+    // rest of the paths follow the normal flow.
     if repository.format == RepositoryFormat::Maven2 {
         let derived = match repository.mode {
             RepositoryMode::Hosted => {
@@ -497,10 +497,10 @@ async fn the_content_of(
         repository,
     } = the_resolved_asset(state, context, repository, &target.asset_path, &correlation).await?;
 
-    // La compuerta de confianza: Cedar ya dijo que esta persona puede
-    // leer el repositorio; falta decir si este **digest** puede servirse
-    // por su canal. Va antes de las condiciones de lectura: un 304 o un
-    // 412 diria que el contenido existe.
+    // The trust gate: Cedar already said this person can
+    // read the repository; it remains to say whether this **digest** may be served
+    // through its channel. It goes before the read conditions: a 304 or a
+    // 412 would say the content exists.
     crate::trust::admit(
         state,
         context.account().as_str(),
@@ -519,8 +519,8 @@ async fn the_content_of(
     match outcome {
         conditional::ReadOutcome::Failed => return Err(RawApiError::PreconditionFailed),
         conditional::ReadOutcome::NotModified => {
-            // El cliente ya tiene este contenido: 304, con la etiqueta
-            // para que sepa cuál tiene.
+            // The client already has this content: 304, with the tag
+            // so that it knows which one it has.
             let mut response = StatusCode::NOT_MODIFIED.into_response();
             apply_common_headers(&mut response, &etag, &correlation);
             apply_cache_headers(&mut response, &served);
@@ -544,11 +544,11 @@ async fn the_content_of(
         }
     };
 
-    // El `HEAD` no trae el cuerpo, pero trae **las mismas cabeceras** que
-    // traería el `GET`: la longitud que dice es la de la respuesta, que
-    // con un tramo es la del tramo, y no la del contenido entero. Un
-    // `HEAD` que dice `Content-Length: 100` y un `GET` que devuelve diez
-    // bytes son dos servidores que no se conocen.
+    // `HEAD` brings no body, but it brings **the same headers** that
+    // `GET` would bring: the length it states is that of the response, which
+    // with a chunk is the chunk's, and not that of the whole content. A
+    // `HEAD` that says `Content-Length: 100` and a `GET` that returns ten
+    // bytes are two servers that do not know each other.
     let (body, status, content_range, response_length) = match request {
         range::RangeRequest::Whole => {
             if head {
@@ -598,8 +598,8 @@ async fn the_content_of(
     response
         .headers_mut()
         .insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    // El contenido es binario y no se renderiza: se dice, para que el
-    // navegador no lo invente.
+    // The content is binary and is not rendered: this is stated, so that the
+    // browser does not make it up.
     response.headers_mut().insert(
         header::HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
@@ -610,8 +610,8 @@ async fn the_content_of(
         response.headers_mut().insert(header::CONTENT_RANGE, value);
     }
     if head {
-        // Un HEAD dice cuanto trae la respuesta, y la respuesta no trae
-        // nada: lo que dice es la longitud que tendría el `GET`.
+        // A HEAD says how much the response brings, and the response brings
+        // nothing: what it states is the length the `GET` would have.
         if let Ok(value) = HeaderValue::from_str(&response_length.to_string()) {
             response.headers_mut().insert(header::CONTENT_LENGTH, value);
         }
@@ -619,12 +619,12 @@ async fn the_content_of(
     Ok((response, correlation))
 }
 
-/// El digest que declara el cliente, si declara alguno.
+/// The digest the client declares, if it declares one.
 ///
-/// Una cabecera que no es un digest es una cabecera **mal formada**, no una
-/// cabecera ausente: el cliente ha dicho algo, y lo que ha dicho no tiene
-/// sentido. Aceptarla en silencio sería aceptar una promesa que no se
-/// puede comprobar.
+/// A header that is not a digest is a **malformed** header, not an
+/// absent one: the client has said something, and what it said makes no
+/// sense. Accepting it silently would be accepting a promise that cannot
+/// be checked.
 fn declared_digest(headers: &HeaderMap) -> Result<Option<ContentDigest>, RawApiError> {
     let Some(value) = headers.get(CHECKSUM_HEADER) else {
         return Ok(None);
@@ -633,9 +633,9 @@ fn declared_digest(headers: &HeaderMap) -> Result<Option<ContentDigest>, RawApiE
         .to_str()
         .map_err(|_| RawApiError::BadRequest("the declared digest is not valid"))?
         .trim();
-    // El nombre del algoritmo no distingue mayúsculas: `SHA256:` dice lo
-    // mismo que `sha256:`. Un prefijo que no es el de este algoritmo es
-    // una promesa que no se puede comprobar.
+    // The algorithm name is case-insensitive: `SHA256:` says the
+    // same as `sha256:`. A prefix that is not that of this algorithm is
+    // a promise that cannot be checked.
     let value = match value.split_once(':') {
         Some((algorithm, value)) if algorithm.eq_ignore_ascii_case("sha256") => value,
         Some(_) => {
@@ -655,12 +655,12 @@ fn declared_digest(headers: &HeaderMap) -> Result<Option<ContentDigest>, RawApiE
 }
 
 // ---------------------------------------------------------------------------
-// Fonteria comun de las superficies de sistema operativo (apt, yum)
+// Common plumbing of the operating system surfaces (apt, yum)
 // ---------------------------------------------------------------------------
 
-/// La respuesta comun de un documento: estado, cuerpo, tipo, etag,
-/// cabeceras comunes y `nosniff`. La comparten apt y yum porque el
-/// contrato HTTP es el mismo: bytes deterministas con condicionales.
+/// The common response of a document: status, body, type, etag,
+/// common headers and `nosniff`. It is shared by apt and yum because the
+/// HTTP contract is the same: deterministic bytes with conditionals.
 pub(super) fn system_body_response(
     status: StatusCode,
     body: Vec<u8>,
@@ -681,9 +681,9 @@ pub(super) fn system_body_response(
     response
 }
 
-/// `If-None-Match`/`If-Match` contra el etag de un documento: un 304
-/// dice que no cambio; `None` dice que quien llama debe servir el
-/// cuerpo. Con HEAD no se envia cuerpo, solo el tamano.
+/// `If-None-Match`/`If-Match` against a document's etag: a 304
+/// says it did not change; `None` says the caller must serve the
+/// body. With HEAD no body is sent, only the size.
 pub(super) fn system_conditional_read(
     etag: &str,
     headers: &HeaderMap,
@@ -715,9 +715,9 @@ pub(super) fn system_conditional_read(
     }
 }
 
-/// Sirve un documento derivado (indice, cabecera, firma): su etag es el
-/// digest de los bytes que se responden, y las condicionales valen
-/// sobre ese mismo documento.
+/// Serves a derived document (index, header, signature): its etag is the
+/// digest of the bytes that are answered, and the conditionals apply
+/// over that same document.
 pub(super) fn serve_system_bytes(
     bytes: Vec<u8>,
     content_type: &str,
@@ -739,9 +739,9 @@ pub(super) fn serve_system_bytes(
     ))
 }
 
-/// Escribe un asset inmutable en el catalogo. El conflicto con el mismo
-/// digest es el eco de una publicacion interrumpida, no una
-/// reescritura; con otros bytes es un 409 con el motivo dado.
+/// Writes an immutable asset to the catalog. A conflict with the same
+/// digest is the echo of an interrupted publication, not a
+/// rewrite; with other bytes it is a 409 with the given reason.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn publish_system_asset(
     context: &VerifiedContext,
@@ -779,8 +779,8 @@ pub(super) async fn publish_system_asset(
     }
 }
 
-/// El momento cero: sin publicaciones, la fecha de un indice es la del
-/// epoch para que el documento sea determinista.
+/// The zero moment: without publications, an index's date is that of the
+/// epoch so that the document is deterministic.
 pub(super) fn epoch_moment() -> chrono::DateTime<chrono::Utc> {
     chrono::DateTime::from_timestamp(0, 0).expect("the epoch is a valid moment")
 }

@@ -1,43 +1,43 @@
-//! La superficie **hf**: el dialecto de lectura del Hugging Face Hub
-//! (`hf download` de `huggingface_hub` 1.x, que habla httpx) sobre un
-//! repositorio **hosted** de Hodei.
+//! The **hf** surface: the read dialect of the Hugging Face Hub
+//! (`hf download` of `huggingface_hub` 1.x, which speaks httpx) over a
+//! **hosted** Hodei repository.
 //!
-//! Vive en `/hf/{repository}/...` y habla el dialecto que fija el
-//! cliente, verificado en el spike de HSP-169 contra huggingface.co y
-//! contra un fixture local (FMT-07 de `uat/UAT-FORMATS.md`): la tabla de
-//! rutas, el documento de revision JSON y las cabeceras del resolve son
-//! los que `hodei_catalog::hf` (puro) sirve, y aqui solo hay efectos.
+//! Lives at `/hf/{repository}/...` and speaks the dialect fixed by the
+//! client, verified in the HSP-169 spike against huggingface.co and
+//! against a local fixture (FMT-07 of `uat/UAT-FORMATS.md`): the route table,
+//! the JSON revision document and the resolve headers are
+//! those served by `hodei_catalog::hf` (pure), and here there are only effects.
 //!
-//! El flujo del cliente es el del hub clasico:
+//! The client flow is that of the classic hub:
 //!
-//! 1. `GET /api/models/{repo_id}/revision/{rev}`: el documento de
-//!    revision; el `sha` del documento es el commit que el cliente usa
-//!    despues en los resolve.
-//! 2. `HEAD /{repo_id}/resolve/{rev}/{rfilename}`: una `302` con
-//!    `X-Repo-Commit`, `X-Linked-Etag` (el sha256), `X-Linked-Size` y una
-//!    `Location` **relativa** (una ruta, sin scheme ni host) hacia el
-//!    blob. El cliente solo sigue los redirects relativos.
-//! 3. `HEAD`/`GET {Location}`: la metadata se lee de la respuesta final y
-//!    los bytes van **en streaming**, a tramos del CAS, sin buffer
-//!    completo en memoria: los pesos de un modelo son el artefacto
-//!    grande tipico.
+//! 1. `GET /api/models/{repo_id}/revision/{rev}`: the revision
+//!    document; the document's `sha` is the commit the client later uses
+//!    in the resolves.
+//! 2. `HEAD /{repo_id}/resolve/{rev}/{rfilename}`: a `302` with
+//!    `X-Repo-Commit`, `X-Linked-Etag` (the sha256), `X-Linked-Size` and a
+//!    **relative** `Location` (a path, without scheme or host) to the
+//!    blob. The client only follows relative redirects.
+//! 3. `HEAD`/`GET {Location}`: the metadata is read from the final response and
+//!    the bytes are **streamed**, in CAS chunks, without a full buffer
+//!    in memory: a model's weights are the typical large
+//!    artifact.
 //!
-//! La identidad del blob es su sha256: es el etag que el cliente usa para
-//! nombrar su cache y el digest que el CAS garantiza al servir. El
-//! cliente clasico SOLO verifica el tamaño —el sha256 declarado en
-//! `X-Linked-Etag` no lo comprueba—: la integridad la garantiza el CAS
-//! del servidor (conexion con HSP-105), que no entrega bytes que no son
-//! su digest.
+//! The blob's identity is its sha256: it is the etag the client uses to
+//! name its cache and the digest the CAS guarantees when serving. The
+//! classic client ONLY verifies the size --it does not check the sha256 declared in
+//! `X-Linked-Etag`--: integrity is guaranteed by the server's CAS
+//! (connection with HSP-105), which does not deliver bytes that are not
+//! its digest.
 //!
-//! El servidor no anuncia `X-Xet-*`: el cliente cae a la ruta HTTP
-//! clasica, el dialecto que este release sirve (decision del fixture del
-//! spike, documentada). La escritura no se declara: el upload clasico y
-//! el xet quedan fuera, y el contenido entra por la siembra del hub.
+//! The server does not announce `X-Xet-*`: the client falls back to the classic
+//! HTTP route, the dialect this release serves (a decision from the spike
+//! fixture, documented). Writing is not declared: the classic upload and
+//! xet are out of scope, and content enters through the hub's seeding.
 //!
-//! La autenticacion es la del hub, mapeada al dialecto: el cliente lleva
-//! su token como `Authorization: Bearer <key>`, y el hub verifica la
-//! credencial como bearer del principal. El scoping por cuenta es el del
-//! hub, no el del formato.
+//! Authentication is the hub's, mapped to the dialect: the client carries
+//! its token as `Authorization: Bearer <key>`, and the hub verifies the
+//! credential as the principal's bearer. Per-account scoping is the
+//! hub's, not the format's.
 
 use axum::{
     body::{Body, Bytes},
@@ -64,17 +64,17 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::handlers::{bearer_token, correlation_id};
 
-/// El tramo que el CAS entrega por lectura: el mismo tamaño con el que
-/// el fixture del spike sirvio sus 256 MiB, y el que deja el RSS del
-/// servidor acotado mientras el cliente escribe a disco.
+/// The chunk the CAS delivers per read: the same size with which
+/// the spike fixture served its 256 MiB, and the one that keeps the server's
+/// RSS bounded while the client writes to disk.
 const THE_CHUNK: u64 = 64 * 1024;
 
-/// Lo que pasa con una peticion que no se puede servir.
+/// What happens to a request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un estado y una razon.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -90,9 +90,9 @@ impl IntoResponse for Failure {
             Self::Raw(error) => error.the_verdict(),
             Self::Plain(status, message) => (status, message),
         };
-        // El dialecto del hub lleva sus errores como JSON plano: el CLI
-        // imprime el estado y la razon, y no hay una forma del protocolo
-        // que el cliente convierta en otra cosa.
+        // The hub dialect carries its errors as plain JSON: the CLI
+        // prints the status and the reason, and there is no protocol shape
+        // that the client would turn into anything else.
         let body = json!({ "error": message });
         let mut response = (status, axum::Json(body)).into_response();
         if status == StatusCode::UNAUTHORIZED {
@@ -105,21 +105,21 @@ impl IntoResponse for Failure {
 }
 
 impl Failure {
-    /// Un error con un estado y una razon.
+    /// An error with a status and a reason.
     fn the_failure(status: StatusCode, detail: &str) -> Self {
         Self::Plain(status, detail.to_string())
     }
 
-    /// Lo que no esta no dice que estuvo: un `404` sin explicacion de si
-    /// existio en otro sitio.
+    /// What is not there does not say it once was: a `404` with no explanation of whether it
+    /// existed elsewhere.
     fn the_absence() -> Self {
         Self::Raw(RawApiError::NotFound)
     }
 }
 
-/// El resto de la ruta de `/hf/{repository}/{rest}`, sin decodificar: las
-/// reglas de la gramatica del protocolo son las unicas que pueden mirar
-/// un `%2f`.
+/// The rest of the path of `/hf/{repository}/{rest}`, undecoded: the
+/// protocol grammar rules are the only ones that may look at
+/// a `%2f`.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -132,7 +132,7 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// Cualquier peticion de `/hf/{repository}/...`.
+/// Any request to `/hf/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     method: Method,
@@ -148,9 +148,9 @@ pub async fn handle(
     let context = the_context(&state, &headers).await?;
     let repository =
         the_repository_in(&state, &context, &repository_key, &[RepositoryFormat::Hf]).await?;
-    // La modalidad servida es la hosted: un proxy del hub real es otro
-    // dialecto (el upstream anuncia xet) que este release no ha
-    // verificado, y no se declara.
+    // The mode served is hosted: a proxy of the real hub is another
+    // dialect (the upstream announces xet) that this release has not
+    // verified, and it is not declared.
     if repository.mode != RepositoryMode::Hosted {
         return Err(Failure::the_absence());
     }
@@ -179,12 +179,12 @@ pub async fn handle(
     .await
 }
 
-/// El principal verificado de las credenciales del cliente.
+/// The verified principal of the client's credentials.
 ///
-/// El CLI lleva el token como `Authorization: Bearer <key>`: el hub
-/// verifica la credencial como bearer del principal, y el scoping por
-/// cuenta es la que el token lleva. Una credencial que el hub no puede
-/// verificar no es una identidad.
+/// The CLI carries the token as `Authorization: Bearer <key>`: the hub
+/// verifies the credential as the principal's bearer, and per-account
+/// scoping is whatever the token carries. A credential the hub cannot
+/// verify is not an identity.
 async fn the_context(state: &AppState, headers: &HeaderMap) -> Result<VerifiedContext, Failure> {
     let token = bearer_token(headers).ok_or(Failure::the_failure(
         StatusCode::UNAUTHORIZED,
@@ -209,11 +209,11 @@ fn json_response(status: StatusCode, value: &Value, correlation: &str) -> Respon
 }
 
 // ---------------------------------------------------------------------------
-// Lecturas
+// Reads
 // ---------------------------------------------------------------------------
 
-/// Una lectura de la superficie: el documento de revision, la `302` del
-/// resolve y los bytes del blob.
+/// A read of the surface: the revision document, the `302` of the
+/// resolve and the blob bytes.
 #[allow(clippy::too_many_arguments)]
 async fn read(
     state: &AppState,
@@ -227,9 +227,9 @@ async fn read(
     match route {
         Route::ApiRevision(model, rev) => {
             let snapshot = the_snapshot(state, context, repository, &model).await?;
-            // Una revision que no es la rama `main` ni el commit del
-            // snapshot es una revision que el hub no llego a servir: el
-            // catalogo guarda el estado actual, no una historia de ramas.
+            // A revision that is neither the `main` branch nor the snapshot's
+            // commit is a revision the hub never got to serve: the
+            // catalog keeps the current state, not a branch history.
             if rev != "main" && rev != snapshot.commit {
                 return Err(Failure::the_absence());
             }
@@ -263,9 +263,9 @@ async fn read(
                     correlation,
                 ))
             } else {
-                // Un `GET` del resolve entrega los mismos bytes que la
-                // `Location`: el redirect es una forma de nombrar el
-                // blob, no una manera de cambiar lo que se sirve.
+                // A resolve `GET` delivers the same bytes as the
+                // `Location`: the redirect is a way of naming the
+                // blob, not a way of changing what is served.
                 let asset_path = model.asset_path(&filename);
                 the_blob(
                     state,
@@ -280,9 +280,9 @@ async fn read(
             }
         }
         Route::Blob(model, digest, filename) => {
-            // El digest de la ruta nombra el contenido: una URL que
-            // nadie construyo con el sha256 de lo que hay es una URL que
-            // no se sirve.
+            // The path's digest names the content: a URL that
+            // nobody built with the sha256 of what is there is a URL that
+            // is not served.
             let snapshot = the_snapshot(state, context, repository, &model).await?;
             let Some(record) = snapshot.the_record_of(&filename) else {
                 return Err(Failure::the_absence());
@@ -310,24 +310,24 @@ async fn read(
     }
 }
 
-/// El snapshot de un modelo: los ficheros que el catalogo guarda hoy.
+/// The snapshot of a model: the files the catalog holds today.
 ///
-/// El commit es el digest del listado que lo forma: dos snapshots con el
-/// mismo contenido son el mismo commit, y el commit solo cambia cuando
-/// cambia el contenido que declara.
+/// The commit is the digest of the listing that forms it: two snapshots with the
+/// same content are the same commit, and the commit only changes when
+/// the content it declares changes.
 struct Snapshot {
-    /// El modelo del snapshot.
+    /// The snapshot's model.
     model: ModelRef,
-    /// El commit del snapshot.
+    /// The snapshot's commit.
     commit: String,
-    /// El momento en que el contenido se movio por ultima vez.
+    /// The moment the content last moved.
     last_modified: DateTime<Utc>,
-    /// Los assets del catalogo del modelo, tal cual llegaron.
+    /// The model's catalog assets, exactly as they arrived.
     records: Vec<AssetRecord>,
 }
 
 impl Snapshot {
-    /// El asset de un fichero del snapshot, si esta.
+    /// The asset of a snapshot file, if present.
     fn the_record_of(&self, filename: &str) -> Option<&AssetRecord> {
         let prefix = format!("{}/", self.model.asset_prefix());
         self.records
@@ -335,8 +335,8 @@ impl Snapshot {
             .find(|record| record.asset_path.strip_prefix(&prefix) == Some(filename))
     }
 
-    /// Los `rfilename` del snapshot, en el orden determinista del
-    /// listado.
+    /// The `rfilename`s of the snapshot, in the deterministic order of the
+    /// listing.
     fn the_filenames(&self) -> Vec<String> {
         let prefix = format!("{}/", self.model.asset_prefix());
         let mut names: Vec<String> = self
@@ -349,7 +349,7 @@ impl Snapshot {
     }
 }
 
-/// El snapshot de un modelo, leido del catalogo.
+/// The snapshot of a model, read from the catalog.
 async fn the_snapshot(
     state: &AppState,
     context: &VerifiedContext,
@@ -382,7 +382,7 @@ async fn the_snapshot(
     })
 }
 
-/// Los assets de un modelo, en la cuenta del principal.
+/// The assets of a model, in the principal's account.
 async fn assets_under(
     state: &AppState,
     context: &VerifiedContext,
@@ -407,9 +407,9 @@ async fn assets_under(
         .map_err(Failure::from)
 }
 
-/// La `302` del resolve: la metadata viaja en cabeceras y la `Location`
-/// es una ruta relativa hacia el blob. El cuerpo no hay: el cliente solo
-/// lee cabeceras aqui.
+/// The resolve `302`: the metadata travels in headers and the `Location`
+/// is a relative path to the blob. There is no body: the client only
+/// reads headers here.
 fn the_redirect(
     repository_key: &str,
     model: &ModelRef,
@@ -437,14 +437,14 @@ fn the_redirect(
     response
 }
 
-/// Los bytes del blob, servidos desde el CAS.
+/// The blob bytes, served from the CAS.
 ///
-/// El contenido va en **streaming**: el CAS se lee a tramos de 64 KiB y
-/// cada tramo sale tal cual, sin buffer completo en memoria. La longitud
-/// declarada es la del asset del catalogo, la misma que el
-/// `Content-Length` anuncia al cliente; un tramo que no llega es un
-/// error de transporte, no un contenido corto. Un `HEAD` responde la
-/// metadata final del redirect (la que el cliente lee) sin los bytes.
+/// The content is **streamed**: the CAS is read in 64 KiB chunks and
+/// each chunk goes out as is, without a full buffer in memory. The declared
+/// length is that of the catalog asset, the same one the
+/// `Content-Length` announces to the client; a chunk that does not arrive is a
+/// transport error, not short content. A `HEAD` answers the final
+/// redirect metadata (the one the client reads) without the bytes.
 async fn the_blob(
     state: &AppState,
     context: &VerifiedContext,
@@ -462,9 +462,9 @@ async fn the_blob(
         resolved_by: _,
         repository: backing,
     } = resolved;
-    // El contenido que se sirve es el que la URL nombra: el etag del
-    // asset y el sha256 de la ruta son el mismo digest, y si no lo son,
-    // la URL era de otro contenido que ya no esta.
+    // The content served is the one the URL names: the asset's etag and
+    // the path's sha256 are the same digest, and if they are not,
+    // the URL was for other content that is no longer there.
     if asset.digest.value != meta.sha256 {
         return Err(Failure::the_absence());
     }
@@ -489,8 +489,8 @@ async fn the_blob(
         header::HeaderName::from_static("x-content-type-options"),
         HeaderValue::from_static("nosniff"),
     );
-    // La metadata del dialecto: el `HEAD` final del redirect es donde el
-    // cliente la lee, y la repite el `GET` por la misma honestidad.
+    // The dialect metadata: the final `HEAD` of the redirect is where the
+    // client reads it, and the `GET` repeats it out of the same honesty.
     for (name, value) in meta.the_linked_headers() {
         if let Ok(value) = HeaderValue::from_str(&value) {
             response
@@ -500,9 +500,9 @@ async fn the_blob(
     }
     apply_cache_headers(&mut response, &served);
     apply_common_headers(&mut response, &etag, correlation);
-    // El `ETag` del dialecto es el sha256 entre comillas, la forma del
-    // hub clasico (la del fixture del spike): el etag condicional del hub
-    // viaja en el `X-Linked-Etag` que ya va puesto.
+    // The dialect's `ETag` is the quoted sha256, the form of the classic
+    // hub (that of the spike fixture): the hub's conditional etag
+    // travels in the `X-Linked-Etag` that is already set.
     if let Ok(value) = HeaderValue::from_str(&format!("\"{}\"", meta.sha256)) {
         response.headers_mut().insert(header::ETAG, value);
     }
@@ -512,8 +512,8 @@ async fn the_blob(
     Ok(response)
 }
 
-/// Los bytes del blob como un cuerpo en streaming: tramos del CAS que
-/// salen tal cual llegan.
+/// The blob bytes as a streaming body: CAS chunks that
+/// go out as they arrive.
 fn the_streamed_body(store: Arc<dyn BlobStore>, digest: ContentDigest, size: u64) -> Body {
     let stream = futures_util::stream::try_unfold(
         (store, digest, size, 0u64),

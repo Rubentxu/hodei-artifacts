@@ -1,52 +1,52 @@
-//! La superficie **PyPI**: `twine upload` y `pip install` contra un
-//! repositorio de Hodei.
+//! The **PyPI** surface: `twine upload` and `pip install` against a
+//! Hodei repository.
 //!
-//! Vive en `/pypi/{repositorio}/...` y habla la Simple API: la gramatica
-//! de nombres, de ficheros y de documentos esta en `hodei_catalog::pypi`
-//! (pura) y aqui solo hay lo que necesita efectos.
+//! Lives at `/pypi/{repository}/...` and speaks the Simple API: the grammar
+//! of names, files and documents is in `hodei_catalog::pypi`
+//! (pure) and here there is only what needs effects.
 //!
-//! # Las rutas
+//! # The routes
 //!
-//! - `GET /pypi/{repositorio}/simple/` — el indice de los proyectos.
-//! - `GET /pypi/{repositorio}/simple/{proyecto}/` — la pagina de un
-//!   proyecto.
-//! - `GET /pypi/{repositorio}/files/{proyecto}/{fichero}` — la distribucion.
-//! - `POST /pypi/{repositorio}/` — la subida (`twine upload`).
-//! - `POST /pypi/{repositorio}/yank` — retirar una version.
+//! - `GET /pypi/{repository}/simple/` — the index of projects.
+//! - `GET /pypi/{repository}/simple/{project}/` — the page of a
+//!   project.
+//! - `GET /pypi/{repository}/files/{project}/{file}` — the distribution.
+//! - `POST /pypi/{repository}/` — the upload (`twine upload`).
+//! - `POST /pypi/{repository}/yank` — withdraw a version.
 //!
-//! # Como se autentica
+//! # How it authenticates
 //!
-//! `pip` y `twine` no saben mandar un `Bearer`: los dos hacen
-//! autenticacion basica. Por eso esta superficie acepta las dos formas: la
-//! cabecera `Bearer` con la credencial de la plataforma, y la basica, cuya
-//! contrasena **es** la credencial de la plataforma (el usuario es
-//! informativo), como en el endpoint de token de OCI.
+//! `pip` and `twine` cannot send a `Bearer`: both use
+//! basic authentication. That is why this surface accepts both forms: the
+//! `Bearer` header with the platform credential, and the basic one, whose
+//! password **is** the platform credential (the user is
+//! informative), as in the OCI token endpoint.
 //!
-//! Lo que se puede hacer lo decide Cedar en cada peticion, como en el resto
-//! de superficies: la credencial lleva una identidad, no unos permisos.
+//! What can be done is decided by Cedar on each request, as in the rest
+//! of the surfaces: the credential carries an identity, not permissions.
 //!
-//! # El indice lo escribe esta pagina
+//! # The index is written by this page
 //!
-//! El HTML que sale de aqui lo pinta este servicio, con los valores
-//! escapados. Un proxy no devuelve el HTML del upstream: lo vuelve a
-//! pintar con lo que el upstream declaro en su JSON. Un upstream puede
-//! publicar lo que quiera en su HTML; lo que el cliente recibe de aqui no
-//! lo puede inyectar.
+//! The HTML that comes out of here is rendered by this service, with the values
+//! escaped. A proxy does not return the upstream's HTML: it renders it again
+//! with what the upstream declared in its JSON. An upstream may
+//! publish whatever it wants in its HTML; what the client receives from here
+//! cannot be injected by it.
 //!
-//! # El documento de un proyecto
+//! # A project's document
 //!
-//! Es una **instantanea**: cada publicacion y cada retiro escribe un
-//! documento nuevo en el almacen de contenido y mueve el puntero de la
-//! ruta con una precondicion sobre el digest anterior. Las distribuciones
-//! son contenido inmutable en su propia ruta, y no se tocan al reescribir
-//! el documento.
+//! It is a **snapshot**: each publication and each withdrawal writes a new
+//! document in the content store and moves the path pointer
+//! with a precondition on the previous digest. Distributions
+//! are immutable content at their own path, and are not touched when rewriting
+//! the document.
 //!
-//! # Lo que se comprueba de una subida
+//! # What is checked on an upload
 //!
-//! El hash que declara el cliente tiene que ser el de los bytes que han
-//! llegado, y el nombre y la version tienen que ser los del nombre del
-//! fichero. Un cliente que miente no publica: el indice no puede prometer
-//! un hash que no es el del contenido que se descarga.
+//! The hash the client declares must be that of the bytes that
+//! arrived, and the name and version must be those of the file
+//! name. A client that lies does not publish: the index cannot promise
+//! a hash that is not that of the content being downloaded.
 
 use axum::{
     body::Body,
@@ -78,29 +78,29 @@ use crate::resolution::{
     write_the_content,
 };
 
-/// Cuantas veces se reintenta una escritura del documento que pierde la
-/// carrera con otra.
+/// How many times a document write that loses the race to another
+/// is retried.
 const MAX_ATTEMPTS: usize = 6;
 
-/// Cuantos campos puede traer una subida.
+/// How many fields an upload may carry.
 ///
-/// El `twine` manda unos cuantos: la accion, la version del protocolo, el
-/// nombre, la version, el hash, el `requires-python` y el fichero. Un
-/// limite alto de sobra y uno bajo delatan a un cliente que no es un
-/// cliente.
+/// `twine` sends a few: the action, the protocol version, the
+/// name, the version, the hash, the `requires-python` and the file. A
+/// limit that is far too high and one that is too low give away a client that is not a
+/// client.
 const MAX_PARTS: usize = 64;
 
-/// Lo que se le dice al cliente cuando se agotan los reintentos.
+/// What the client is told when the retries run out.
 const CONTENDED: &str = "the project is being updated concurrently; retry it";
 
-/// Lo que pasa con una peticion que no se puede servir.
+/// What happens to a request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error del protocolo PyPI.
+    /// An error from the PyPI protocol.
     Pypi(pypi::PypiError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -196,11 +196,11 @@ impl Failure {
         }
     }
 
-    /// La longitud del contenido cuando la respuesta es un `416`.
+    /// The content length when the response is a `416`.
     ///
-    /// RFC 9110 pide que la respuesta a un rango que no se puede servir
-    /// diga en `Content-Range` cual es la longitud de lo que hay: sin esa
-    /// cabecera el cliente no sabe ni cuanto tiene.
+    /// RFC 9110 asks that the response to a range that cannot be served
+    /// state in `Content-Range` the length of what exists: without that
+    /// header the client does not even know how much there is.
     fn unsatisfiable_length(&self) -> Option<u64> {
         match self {
             Self::Raw(RawApiError::RangeNotSatisfiable(length)) => Some(*length),
@@ -213,9 +213,9 @@ impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         let (status, message) = self.status_and_message();
         let mut response = (status, message).into_response();
-        // El consejo de cuando volver viaja con la negativa por
-        // saturacion, tambien en esta superficie: el veredicto es uno
-        // solo, y la cabecera no es un detalle del transporte crudo.
+        // The advice on when to come back travels with the refusal for
+        // saturation, in this surface as well: the verdict is a single
+        // one, and the header is not a detail of the raw transport.
         if let Self::Raw(error) = &self
             && let Some(seconds) = error.the_retry_after()
             && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
@@ -242,7 +242,7 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El repositorio y el resto de la ruta de `/pypi/{repositorio}/{resto}`.
+/// The repository and the rest of the path of `/pypi/{repository}/{rest}`.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -250,8 +250,8 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
         .ok_or(RawApiError::NotFound)?;
     let (repository, rest) = match rest.split_once('/') {
         Some((repository, rest)) => (repository, rest),
-        // `/pypi/{repositorio}` sin mas: la subida de `twine`, que publica
-        // en la raiz del repositorio.
+        // `/pypi/{repository}` alone: the `twine` upload, which publishes
+        // at the root of the repository.
         None => (rest, ""),
     };
     if repository.is_empty() || !crate::raw::path::valid_repository_name(repository) {
@@ -260,11 +260,11 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// La URL base de este repositorio tal y como la ve el cliente.
+/// The base URL of this repository as the client sees it.
 ///
-/// El origen lo decide el despliegue y no la peticion: el `Host` y el
-/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
-/// una URL que el cliente mueve es una URL que el cliente envenena.
+/// The origin is decided by the deployment and not by the request: the `Host` and
+/// `X-Forwarded-Proto` of a request can be written by anyone, and
+/// a URL the client moves is a URL the client poisons.
 fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
     origin
         .url(&format!("/pypi/{repository}"))
@@ -274,16 +274,16 @@ fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
         .map_err(Failure::from)
 }
 
-/// El prefijo donde viven los ficheros, tal y como lo guarda el documento.
+/// The prefix where the files live, as the document stores it.
 fn the_files_base(repository: &str) -> String {
     format!("/pypi/{}/files", repository)
 }
 
-/// La credencial de la peticion.
+/// The credential of the request.
 ///
-/// La cabecera `Bearer` lleva la credencial de la plataforma. Las
-/// credenciales basicas tambien, en la **contrasena**: el usuario es
-/// informativo, y es como las lleva el protocolo de Docker.
+/// The `Bearer` header carries the platform credential. Basic
+/// credentials do too, in the **password**: the user is
+/// informative, and that is how the Docker protocol carries them.
 fn the_credential(headers: &HeaderMap) -> Option<String> {
     if let Some(token) = bearer_token(headers) {
         return Some(token);
@@ -303,7 +303,7 @@ fn the_credential(headers: &HeaderMap) -> Option<String> {
     Some(password.to_string())
 }
 
-/// La identidad verificada de quien pide.
+/// The verified identity of whoever asks.
 async fn the_pypi_context(
     state: &AppState,
     headers: &HeaderMap,
@@ -312,33 +312,33 @@ async fn the_pypi_context(
     Ok(verify_credential_context(state, &credential).await?)
 }
 
-/// Lo que la peticion necesita saber de si misma.
+/// What the request needs to know about itself.
 struct Ask<'a> {
-    /// Si lo que se pide es solo la cabeza de la respuesta.
+    /// Whether what is requested is only the head of the response.
     head: bool,
-    /// Las cabeceras de la peticion.
+    /// The headers of the request.
     headers: &'a HeaderMap,
-    /// La correlacion de la peticion.
+    /// The correlation of the request.
     correlation: &'a str,
 }
 
-/// Un fichero de un proyecto y el repositorio del que sale.
+/// A file of a project and the repository it comes from.
 struct FileView {
-    /// Lo que el indice sabe del fichero.
+    /// What the index knows about the file.
     entry: FileEntry,
-    /// El repositorio que lo tiene.
+    /// The repository that has it.
     owner: RepositoryDescriptor,
 }
 
-/// El documento de un proyecto, con la procedencia de cada fichero.
+/// The document of a project, with the provenance of each file.
 struct ProjectView {
-    /// El nombre normalizado del proyecto.
+    /// The normalized name of the project.
     name: String,
-    /// Los ficheros, en el orden en que se publican.
+    /// The files, in the order they are published.
     files: Vec<FileView>,
 }
 
-/// Cualquier peticion de `/pypi/{repositorio}/...`.
+/// Any request to `/pypi/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -347,7 +347,7 @@ pub async fn handle(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response, Failure> {
-    // La autenticacion es la primera puerta, como en el resto de superficies.
+    // Authentication is the first gate, as in the rest of the surfaces.
     let context = the_pypi_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
     let (repository_key, rest) = the_split(&uri)?;
@@ -493,14 +493,14 @@ pub async fn handle(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
-/// El indice de los proyectos del repositorio.
+/// The index of the repository's projects.
 ///
-/// Un proxy no puede enumerar lo que no conoce: su indice va vacio, y el
-/// cliente pregunta por el proyecto que quiere. Un hosted y un grupo si
-/// pueden: el primero tiene sus assets, y el segundo los de sus miembros.
+/// A proxy cannot enumerate what it does not know: its index is empty, and the
+/// client asks for the project it wants. A hosted one and a group can:
+/// the first has its assets, and the second those of its members.
 async fn the_root(
     state: &AppState,
     context: &VerifiedContext,
@@ -511,7 +511,7 @@ async fn the_root(
 ) -> Result<Response, Failure> {
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     let projects = the_projects(state, context, repository, correlation).await?;
-    // Los proyectos del repositorio, en orden.
+    // The repository's projects, in order.
     let base = the_base(origin, &repository.repo_key)?;
     let representation = pypi::negotiate(headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()));
     let (body, content_type) = match representation {
@@ -528,7 +528,7 @@ async fn the_root(
     Ok(the_page(body, content_type, None, correlation))
 }
 
-/// Los proyectos del repositorio, en orden.
+/// The repository's projects, in order.
 async fn the_projects(
     state: &AppState,
     context: &VerifiedContext,
@@ -538,7 +538,7 @@ async fn the_projects(
     match repository.mode {
         RepositoryMode::Group => {
             let mut projects: Vec<String> = Vec::new();
-            // Los miembros de un grupo son hojas: ninguno es otro grupo.
+            // The members of a group are leaves: none is another group.
             for member in super::raw_group::the_leaves(state, context, repository).await? {
                 for project in the_leaf_projects(state, context, &member, correlation).await? {
                     if !projects.contains(&project) {
@@ -553,7 +553,7 @@ async fn the_projects(
     }
 }
 
-/// Los proyectos de un repositorio que no es un grupo.
+/// The projects of a repository that is not a group.
 async fn the_leaf_projects(
     state: &AppState,
     context: &VerifiedContext,
@@ -561,8 +561,8 @@ async fn the_leaf_projects(
     correlation: &str,
 ) -> Result<Vec<String>, Failure> {
     if repository.mode == RepositoryMode::Proxy {
-        // Lo que hay en el upstream no se puede enumerar sin pedirlo
-        // proyecto a proyecto.
+        // What is in the upstream cannot be enumerated without requesting it
+        // project by project.
         let _ = correlation;
         return Ok(Vec::new());
     }
@@ -574,8 +574,8 @@ async fn the_leaf_projects(
     let mut projects: Vec<String> = assets
         .iter()
         .map(|asset| asset.asset_path.clone())
-        // Un documento de proyecto no tiene separador; las
-        // distribuciones si.
+        // A project document has no separator; the
+        // distributions do.
         .filter(|path| !path.contains('/'))
         .collect();
     projects.sort();
@@ -583,7 +583,7 @@ async fn the_leaf_projects(
     Ok(projects)
 }
 
-/// La pagina de un proyecto.
+/// The page of a project.
 async fn the_project_page(
     state: &AppState,
     context: &VerifiedContext,
@@ -634,7 +634,7 @@ async fn the_project_page(
     Ok(the_page(body, content_type, Some(&etag), ask.correlation))
 }
 
-/// El documento de un proyecto, con la procedencia de cada fichero.
+/// The document of a project, with the provenance of each file.
 async fn the_project(
     state: &AppState,
     context: &VerifiedContext,
@@ -645,16 +645,16 @@ async fn the_project(
     match repository.mode {
         RepositoryMode::Group => {
             let mut files: Vec<FileView> = Vec::new();
-            // La reserva de namespaces del grupo se consulta con el nombre
-            // del proyecto: un upstream publico no aporta ficheros a un
-            // nombre reservado, aunque tenga versiones mayores. Los
-            // miembros que quedan fuera no se consultan.
+            // The group's namespace reservation is consulted with the project
+            // name: a public upstream does not contribute files to a
+            // reserved name, even if it has higher versions. The
+            // members left out are not consulted.
             let (leaves, denied, judgement) =
                 super::raw_group::the_governed_leaves(state, context, repository, project.as_str())
                     .await?;
             for member in leaves {
-                // Un miembro que no tiene el proyecto no es un fallo: se
-                // sigue con el siguiente.
+                // A member that does not have the project is not a failure: the
+                // next one is tried.
                 let view =
                     match the_leaf_project(state, context, &member, project, correlation).await {
                         Ok(view) => view,
@@ -662,7 +662,7 @@ async fn the_project(
                         Err(other) => return Err(other),
                     };
                 for file in view.files {
-                    // Gana el primer miembro que tiene el fichero.
+                    // The first member that has the file wins.
                     if !files
                         .iter()
                         .any(|known| known.entry.filename == file.entry.filename)
@@ -691,7 +691,7 @@ async fn the_project(
     }
 }
 
-/// El documento de un repositorio que no es un grupo.
+/// The document of a repository that is not a group.
 async fn the_leaf_project(
     state: &AppState,
     context: &VerifiedContext,
@@ -724,11 +724,11 @@ async fn the_leaf_project(
     })
 }
 
-/// Los ficheros que el canal de confianza deja servir.
+/// The files the trust channel lets be served.
 ///
-/// El canal abierto no filtra nada. El canal `trusted` deja servir solo los
-/// digests con concesion activa, y el indice no anuncia lo que no se puede
-/// descargar: es lo mismo que hace la superficie OCI con sus listados.
+/// The open channel filters nothing. The `trusted` channel only lets be served the
+/// digests with an active grant, and the index does not announce what cannot be
+/// downloaded: it is the same as what the OCI surface does with its listings.
 async fn the_admitted_files(
     state: &AppState,
     context: &VerifiedContext,
@@ -745,7 +745,7 @@ async fn the_admitted_files(
     }
 }
 
-/// El documento de un proyecto tal y como lo publico el upstream.
+/// The document of a project exactly as the upstream published it.
 async fn the_proxy_project(
     state: &AppState,
     context: &VerifiedContext,
@@ -775,11 +775,11 @@ async fn the_proxy_project(
     let files = files
         .into_iter()
         .filter_map(|entry| {
-            // Un upstream puede declarar un nombre que no es una
-            // distribucion. No se anuncia: un enlace que no se puede
-            // descargar es un enlace roto, y el indice no los publica.
+            // An upstream may declare a name that is not a
+            // distribution. It is not announced: a link that cannot be
+            // downloaded is a broken link, and the index does not publish them.
             pypi::Distribution::parse(&entry.filename).ok()?;
-            // La URL del upstream puede ser relativa: es relativa a su base.
+            // The upstream URL may be relative: it is relative to its base.
             let entry = match entry.source.as_deref() {
                 Some(source) if !source.contains("://") => {
                     let source = upstream
@@ -801,8 +801,8 @@ async fn the_proxy_project(
         })
         .collect();
     Ok(ProjectView {
-        // El nombre del upstream puede venir sin normalizar: el indice
-        // lo dice como lo dice PEP 503, o no lo dice.
+        // The upstream name may come unnormalized: the index
+        // states it as PEP 503 does, or does not state it.
         name: ProjectName::parse(&document.name)
             .map(|name| name.as_str().to_string())
             .unwrap_or_else(|_| project.as_str().to_string()),
@@ -810,7 +810,7 @@ async fn the_proxy_project(
     })
 }
 
-/// Lee un documento de proyecto.
+/// Reads a project document.
 fn the_document(bytes: &[u8]) -> Result<ProjectDocument, Failure> {
     let value: Value = serde_json::from_slice(bytes)
         .map_err(|_| RawApiError::BadGateway("the stored project document is not valid"))?;
@@ -819,7 +819,7 @@ fn the_document(bytes: &[u8]) -> Result<ProjectDocument, Failure> {
         .map_err(Failure::Raw)
 }
 
-/// La distribucion de un proyecto.
+/// The distribution of a project.
 async fn the_file(
     state: &AppState,
     context: &VerifiedContext,
@@ -845,7 +845,7 @@ async fn the_file(
         ask.correlation,
     )
     .await?;
-    // Lo que se sirve tiene que ser lo que el indice promised.
+    // What is served must be what the index promised.
     if asset.digest.value != file.entry.sha256 {
         return Err(RawApiError::BadGateway(
             "the distribution does not match the hash the index published",
@@ -868,10 +868,10 @@ async fn the_file(
     }
     let store = the_content_store(state)?;
     let length = asset.size_bytes;
-    // El tramo se sirve como lo sirve la superficie cruda: un `Range` que
-    // se entiende es un 206 con su `Content-Range`, y uno que no se
-    // entiende se ignora. El `pip` de hoy pide tramos para no bajar dos
-    // veces lo mismo.
+    // The range is served as the raw surface serves it: a `Range` that
+    // is understood is a 206 with its `Content-Range`, and one that is not
+    // understood is ignored. Today's `pip` requests ranges so as not to download
+    // the same thing twice.
     let request = match crate::raw::range::the_range(
         ask.headers
             .get(header::RANGE)
@@ -944,11 +944,11 @@ async fn the_file(
     Ok(response)
 }
 
-/// El asset de una distribucion, de donde venga.
+/// The asset of a distribution, wherever it comes from.
 ///
-/// En un hosted esta en el catalogo. En un proxy se trae del upstream por
-/// la URL que el propio upstream declara, y se guarda para no volver a
-/// pedirlo.
+/// In a hosted one it is in the catalog. In a proxy it is fetched from the upstream via
+/// the URL the upstream itself declares, and stored so as not to request
+/// it again.
 async fn the_distribution(
     state: &AppState,
     context: &VerifiedContext,
@@ -976,9 +976,9 @@ async fn the_distribution(
             correlation,
         )
         .await?;
-        // La compuerta de confianza va tambien aqui: el software que
-        // trae el upstream es software, y lo que el canal no admite no se
-        // sirve ni porque venga de fuera.
+        // The trust gate goes here too: the software the upstream
+        // brings is software, and what the channel does not admit is not
+        // served even if it comes from outside.
         crate::trust::admit(
             state,
             context.account().as_str(),
@@ -992,15 +992,15 @@ async fn the_distribution(
     let asset = the_current_asset(state, context, &owner.repo_key, asset_path)
         .await?
         .ok_or(RawApiError::NotFound)?;
-    // La compuerta de confianza va antes de servir: lo que no se admite es
-    // un 404, como lo que no existe.
+    // The trust gate goes before serving: what is not admitted is
+    // a 404, like what does not exist.
     crate::trust::admit(state, context.account().as_str(), owner, &asset.digest)
         .await
         .map_err(the_admission_error)?;
     Ok(asset)
 }
 
-/// El upstream de un repositorio proxy.
+/// The upstream of a proxy repository.
 fn the_upstream(repository: &RepositoryDescriptor) -> Result<UpstreamConfig, Failure> {
     UpstreamConfig::of(&repository.config)
         .ok()
@@ -1008,7 +1008,7 @@ fn the_upstream(repository: &RepositoryDescriptor) -> Result<UpstreamConfig, Fai
         .ok_or_else(|| Failure::plain(StatusCode::BAD_GATEWAY, "the proxy is not configured"))
 }
 
-/// Una respuesta con el cuerpo ya listo.
+/// A response with the body already ready.
 fn the_page(
     body: Vec<u8>,
     content_type: &'static str,
@@ -1034,18 +1034,18 @@ fn the_page(
 }
 
 // ---------------------------------------------------------------------------
-// Escritura
+// Writes
 // ---------------------------------------------------------------------------
 
-/// El permiso de escribir: Cedar y el modo del repositorio.
+/// The permission to write: Cedar and the repository mode.
 fn the_write_gate(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
 ) -> Result<(), Failure> {
     the_decision(state, context, crate::actions::upload_asset(), repository)?;
-    // Lo que dice un proxy sale de su upstream. Va despues de Cedar: quien
-    // no puede subir recibe el mismo 403 en cualquier repositorio.
+    // What a proxy says comes from its upstream. It goes after Cedar: whoever
+    // cannot upload receives the same 403 in any repository.
     if !repository.mode.accepts_client_writes() {
         return Err(
             RawApiError::MethodNotAllowed("this repository does not accept uploads").into(),
@@ -1054,19 +1054,19 @@ fn the_write_gate(
     Ok(())
 }
 
-/// Lo que dejo una escritura del documento.
+/// What a document write left behind.
 struct Written {
-    /// El digest del documento nuevo.
+    /// The digest of the new document.
     digest: ContentDigest,
-    /// Si el documento cambio.
+    /// Whether the document changed.
     changed: bool,
 }
 
-/// Aplica un cambio al documento de un proyecto y lo publica.
+/// Applies a change to a project's document and publishes it.
 ///
-/// El cambio se **reevalua** contra lo que hay en cada intento: si otro
-/// escritor movio el puntero entre la lectura y la escritura, el catalogo
-/// rechaza la precondicion, se relee y se vuelve a aplicar.
+/// The change is **re-evaluated** against what is there on each attempt: if another
+/// writer moved the pointer between the read and the write, the catalog
+/// rejects the precondition, it is re-read and applied again.
 async fn update_document<F>(
     state: &AppState,
     context: &VerifiedContext,
@@ -1121,8 +1121,8 @@ where
         let publication = Publication {
             repository: repository.repo_key.clone(),
             asset_path: project.as_str().to_string(),
-            // Cada instantanea es una version distinta del documento: la
-            // identifica su contenido, y la anterior sigue estando.
+            // Each snapshot is a distinct version of the document: it is
+            // identified by its content, and the previous one is still there.
             coordinates: PackageCoordinates {
                 package_name: format!("{}{}", project.as_str(), pypi::PROJECT_COORDINATES_SUFFIX),
                 package_version: digest.value.clone(),
@@ -1153,14 +1153,14 @@ where
     Err(Failure::plain(StatusCode::CONFLICT, CONTENDED))
 }
 
-/// Que el indice del proyecto pueda guardar esta entrada.
+/// Whether the project index can store this entry.
 ///
-/// El documento del proyecto tiene un tope: el del contenido que acepta
-/// este servicio. Si la entrada no cabe, se dice **antes** de publicar la
-/// distribucion. El tamano se mira con el documento que hay ahora, y el
-/// documento que se escriba despues lo comprueba otra vez: entre las dos
-/// cosas puede haber cambiado el mundo, y lo que manda es el segundo
-/// control.
+/// The project document has a cap: that of the content this service
+/// accepts. If the entry does not fit, this is said **before** publishing the
+/// distribution. The size is checked against the document as it is now, and the
+/// document that gets written afterwards checks it again: between the two
+/// things the world may have changed, and what rules is the second
+/// check.
 async fn the_index_fits(
     state: &AppState,
     context: &VerifiedContext,
@@ -1182,7 +1182,7 @@ async fn the_index_fits(
             None => pypi::ProjectDocument::new(project.as_str()),
         };
     if document.file(&entry.filename).is_some() {
-        // Ya estaba: el documento no crece.
+        // It was already there: the document does not grow.
         return Ok(());
     }
     document
@@ -1196,7 +1196,7 @@ async fn the_index_fits(
     Ok(())
 }
 
-/// `POST /pypi/{repositorio}/`: la subida de `twine`.
+/// `POST /pypi/{repository}/`: the `twine` upload.
 async fn upload(
     state: &AppState,
     context: &VerifiedContext,
@@ -1207,8 +1207,8 @@ async fn upload(
     the_write_gate(state, context, repository)?;
     let (fields, file) = the_multipart(state, request).await?;
     let (filename, bytes) = file.ok_or(pypi::PypiError::MissingFile)?;
-    // El hash se calcula aqui: lo que declara el cliente se comprueba
-    // contra los bytes que han llegado.
+    // The hash is computed here: what the client declares is checked
+    // against the bytes that arrived.
     let sha256 = hex_of(&Sha256::digest(&bytes));
     let upload = pypi::parse_upload(&fields, &filename, &sha256)?;
 
@@ -1221,9 +1221,9 @@ async fn upload(
         yanked: None,
         source: None,
     };
-    // El indice del proyecto tiene que caber: si no cabe, se dice antes
-    // de publicar la distribucion. Publicar y luego no poder anunciar
-    // deja el contenido publicado y invisible.
+    // The project index must be able to hold it: if it does not fit, this is said before
+    // publishing the distribution. Publishing and then being unable to announce
+    // leaves the content published and invisible.
     the_index_fits(state, context, repository, &upload.project, &entry).await?;
 
     let (digest, length) = write_the_content(
@@ -1239,11 +1239,11 @@ async fn upload(
         repository: repository.repo_key.clone(),
         asset_path: asset_path.clone(),
         coordinates: PackageCoordinates {
-            // Una version de PyPI puede tener mas de un fichero--el wheel
-            // y el sdist-- y cada uno es contenido distinto. Por eso el
-            // nombre de las coordenadas es el del fichero: dos
-            // distribuciones de la misma version no son la misma version
-            // publicada.
+            // A PyPI version may have more than one file--the wheel
+            // and the sdist-- and each is distinct content. That is why the
+            // name in the coordinates is the file's: two
+            // distributions of the same version are not the same published
+            // version.
             package_name: asset_path.clone(),
             package_version: upload.version.clone(),
         },
@@ -1252,8 +1252,8 @@ async fn upload(
         tags: Vec::new(),
         actor: context.principal().subject().as_str().to_string(),
         correlation_id: correlation.to_string(),
-        // Una distribucion es inmutable: publicarla otra vez con otros
-        // bytes es un conflicto, no una sustitucion.
+        // A distribution is immutable: publishing it again with other
+        // bytes is a conflict, not a replacement.
         overwrite: false,
         precondition: None,
         subject: None,
@@ -1264,7 +1264,7 @@ async fn upload(
     {
         Ok(_) => {}
         Err(CatalogError::Conflict { .. }) => {
-            // El mismo contenido otra vez no es un problema: es lo mismo.
+            // The same content again is not a problem: it is the same.
             let existing =
                 the_current_asset(state, context, &repository.repo_key, &asset_path).await?;
             if existing.is_none_or(|asset| asset.digest != digest) {
@@ -1283,7 +1283,7 @@ async fn upload(
         correlation,
         |document| {
             if document.file(&entry.filename).is_some() {
-                // Ya estaba: el documento no cambia.
+                // It was already there: the document does not change.
                 return Ok(false);
             }
             document.add(entry.clone())?;
@@ -1305,13 +1305,13 @@ async fn upload(
     Ok(response)
 }
 
-/// Los campos y el fichero de una subida.
+/// The fields and the file of an upload.
 ///
-/// El limite es el del contenido: una distribucion que no cabe no se
-/// publica, y se dice antes de gastarla. El limite cuenta **todos** los
-/// bytes de la subida, no los de un campo: el `twine` manda unos cuantos
-/// campos de texto y el fichero, y un cliente que manda mil campos
-/// vacios no gasta memoria.
+/// The limit is the content's: a distribution that does not fit is not
+/// published, and this is said before spending it. The limit counts **all** the
+/// bytes of the upload, not those of one field: `twine` sends a few text
+/// fields and the file, and a client that sends a thousand empty
+/// fields does not spend memory.
 async fn the_multipart(
     state: &AppState,
     request: Request<Body>,
@@ -1358,15 +1358,15 @@ async fn the_multipart(
         match filename {
             Some(filename) => {
                 if name != "content" {
-                    // Una parte con nombre de fichero que no es la
-                    // distribucion--la firma del `twine upload --sign`--
-                    // no es una segunda distribucion: se ignora. Esta
-                    // superficie no guarda firmas.
+                    // A part with a file name that is not the
+                    // distribution--the signature of `twine upload --sign`--
+                    // is not a second distribution: it is ignored. This
+                    // surface does not store signatures.
                     continue;
                 }
                 if file.is_some() {
-                    // Dos distribuciones en una subida: no se elige una, se
-                    // dice que no.
+                    // Two distributions in one upload: one is not chosen, it is
+                    // said no.
                     return Err(Failure::plain(
                         StatusCode::BAD_REQUEST,
                         "the upload carries more than one distribution",
@@ -1380,13 +1380,13 @@ async fn the_multipart(
     Ok((fields, file))
 }
 
-/// El error de una subida que no se puede leer.
+/// The error of an upload that cannot be read.
 ///
-/// Un cuerpo que pasa del tope no es un formulario malo: es un cuerpo
-/// demasiado grande, y el `413` lo dice el propio `axum`. Es el mismo
-/// `413` que dice el manejador cuando lo que se pasa del tope son los
-/// bytes del fichero: lo que el cliente necesita saber es que no cabe, y
-/// no de que capa viene el rechazo.
+/// A body that exceeds the cap is not a bad form: it is a body
+/// that is too large, and the `413` is stated by `axum` itself. It is the same
+/// `413` the handler states when what exceeds the cap is the file's
+/// bytes: what the client needs to know is that it does not fit, and
+/// not which layer the rejection comes from.
 fn the_upload_error(status: StatusCode) -> Failure {
     if status == StatusCode::PAYLOAD_TOO_LARGE {
         return RawApiError::PayloadTooLarge.into();
@@ -1394,12 +1394,12 @@ fn the_upload_error(status: StatusCode) -> Failure {
     Failure::plain(StatusCode::BAD_REQUEST, "the upload cannot be read")
 }
 
-/// `POST /pypi/{repositorio}/yank`: retira una version.
+/// `POST /pypi/{repository}/yank`: withdraws a version.
 ///
-/// Es una extension propia: PyPI no tiene una API para esto, y un cliente
-/// de linea de comandos no la tiene. Lo que hace es lo que dice PEP 592:
-/// la version deja de ser elegible, y sigue downloadable si se pide
-/// exactamente.
+/// It is an own extension: PyPI has no API for this, and a command-line
+/// client does not have one. What it does is what PEP 592 says:
+/// the version stops being eligible, and remains downloadable if requested
+/// exactly.
 async fn yank(
     state: &AppState,
     context: &VerifiedContext,
@@ -1423,8 +1423,8 @@ async fn yank(
         .get("version")
         .and_then(Value::as_str)
         .ok_or(RawApiError::BadRequest("the version is missing"))?;
-    // La version se canoniza: el documento guarda las versiones como las
-    // llevan los nombres de los ficheros, y esas son canonicas.
+    // The version is canonicalized: the document stores versions as the
+    // file names carry them, and those are canonical.
     let Some(version) = pypi::canonical_version(version) else {
         return Err(RawApiError::BadRequest("the version is not valid").into());
     };

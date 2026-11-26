@@ -1,32 +1,32 @@
-//! La resolucion de un repositorio de grupo en la superficie RAW.
+//! The resolution of a group repository on the RAW surface.
 //!
-//! Un grupo no guarda nada: es una lista ordenada de repositorios (hosted,
-//! proxy u otros grupos). Leer una ruta del grupo recorre los miembros en
-//! orden y gana el primero que la tiene.
+//! A group stores nothing: it is an ordered list of repositories (hosted,
+//! proxy or other groups). Reading a path of the group walks the members in
+//! order and the first one that has it wins.
 //!
-//! # MISS y ERROR no son lo mismo
+//! # MISS and ERROR are not the same
 //!
-//! - **MISS**: el miembro dice con certeza que no tiene la ruta (un hosted
-//!   sin ese asset; un proxy cuyo upstream responde 404, o que la tiene
-//!   recordada como ausente). Se sigue con el siguiente.
-//! - **ERROR**: cualquier otra cosa (el catalogo no responde, el upstream
-//!   falla o agota el tiempo, el ambito no se sirve...). La resolucion se
-//!   detiene y se contesta ese error. Saltar al siguiente miembro serviria
-//!   un contenido que quiza no es el que el primero habria dado: un
-//!   fallo transitorio cambiaria silenciosamente lo que se descarga.
+//! - **MISS**: the member says with certainty that it does not have the path (a hosted one
+//!   without that asset; a proxy whose upstream answers 404, or that has it
+//!   remembered as absent). The next one is tried.
+//! - **ERROR**: anything else (the catalog does not respond, the upstream
+//!   fails or times out, the scope is not served...). The resolution
+//!   stops and that error is answered. Jumping to the next member would serve
+//!   content that perhaps is not what the first would have given: a
+//!   transient failure would silently change what is downloaded.
 //!
-//! # Permisos
+//! # Permissions
 //!
-//! Cedar decide sobre cada repositorio: el grupo (`DownloadAsset` sobre su
-//! HRN, en `the_content_of`) y **cada miembro** (aqui). Un miembro que el
-//! principal no puede leer se omite de la resolucion, sin decir que existe:
-//! el grupo no da acceso a lo que el principal no podria leer por su ruta
-//! directa, y la ruta directa no hereda nada del grupo.
+//! Cedar decides on each repository: the group (`DownloadAsset` on its
+//! HRN, in `the_content_of`) and **each member** (here). A member the
+//! principal cannot read is omitted from the resolution, without saying it exists:
+//! the group does not grant access to what the principal could not read via its
+//! direct path, and the direct path inherits nothing from the group.
 //!
-//! La compuerta de confianza se aplica despues, sobre el miembro que gano
-//! y su digest. Si la compuerta lo oculta, el resultado es un 404: no se
-//! busca en el siguiente miembro, porque entonces la revocacion de un
-//! digest haria aparecer otro contenido en su lugar.
+//! The trust gate is applied afterwards, on the member that won
+//! and its digest. If the gate hides it, the result is a 404: the
+//! next member is not searched, because then the revocation of a
+//! digest would make other content appear in its place.
 
 use std::collections::HashMap;
 
@@ -42,18 +42,18 @@ use crate::resolution::{
     the_namespace_policy, the_proxy_asset, the_reservation_explanation,
 };
 
-/// Como acabo la consulta a un miembro.
+/// How the query to a member ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Step {
-    /// El miembro tenia la ruta.
+    /// The member had the path.
     Hit,
-    /// El miembro dijo con certeza que no la tiene.
+    /// The member said with certainty that it does not have it.
     Miss,
-    /// El miembro no se consulto: la reserva de namespaces del grupo lo
-    /// deja fuera para esta ruta. Queda en el rastro porque la negativa se
-    /// explica, no se disimula.
+    /// The member was not queried: the group's namespace reservation
+    /// leaves it out for this path. It stays in the trail because the refusal is
+    /// explained, not hidden.
     Deny,
-    /// El miembro fallo: la resolucion se detuvo ahi.
+    /// The member failed: the resolution stopped there.
     Error,
 }
 
@@ -68,32 +68,32 @@ impl Step {
     }
 }
 
-/// Lo que gano una resolucion de grupo.
+/// What a group resolution won.
 pub(crate) struct Won {
-    /// El miembro hoja que tenia la ruta.
+    /// The leaf member that had the path.
     pub member: RepositoryDescriptor,
-    /// Lo que el miembro sirve en esa ruta.
+    /// What the member serves at that path.
     pub asset: AssetRecord,
-    /// Como se sirvio, si el miembro es un proxy.
+    /// How it was served, if the member is a proxy.
     pub served: Option<(CacheStatus, Option<(String, String)>)>,
 }
 
-/// La resolucion: lo que gano (o el error) y el orden de lo consultado.
+/// The resolution: what won (or the error) and the order of what was queried.
 pub(crate) struct Resolution {
-    /// El resultado.
+    /// The result.
     pub outcome: Result<Won, RawApiError>,
-    /// Cada miembro consultado, en orden, con su resultado.
+    /// Each member queried, in order, with its result.
     pub trail: Vec<(String, Step)>,
 }
 
 impl Resolution {
-    /// El rastro en una linea: `internal:miss,mirror:hit`.
+    /// The trail on one line: `internal:miss,mirror:hit`.
     pub fn trail_line(&self) -> String {
         trail_text(&self.trail)
     }
 }
 
-/// Un rastro en una linea: `internal:miss,mirror:hit`.
+/// A trail on one line: `internal:miss,mirror:hit`.
 pub(super) fn trail_text(trail: &[(String, Step)]) -> String {
     trail
         .iter()
@@ -102,8 +102,8 @@ pub(super) fn trail_text(trail: &[(String, Step)]) -> String {
         .join(",")
 }
 
-/// Deja en la auditoria el rastro de una resolucion: que grupo, en que
-/// version de su configuracion, que miembros se consultaron y como acabo.
+/// Leaves in the audit the trail of a resolution: which group, in which
+/// version of its configuration, which members were queried and how it ended.
 pub(crate) fn record_resolution(
     state: &AppState,
     context: &VerifiedContext,
@@ -133,15 +133,15 @@ pub(crate) fn record_resolution(
 }
 
 fn the_failure(error: GroupError) -> RawApiError {
-    // Los miembros se validaron al guardar el grupo; si ahora no cuadran
-    // (se reconfiguro otro grupo, un miembro ya no existe) el grupo esta
-    // mal configurado y no se resuelve a medias.
+    // The members were validated when the group was saved; if they now do not add up
+    // (another group was reconfigured, a member no longer exists) the group is
+    // misconfigured and is not resolved halfway.
     tracing::warn!(error = %error, "a group repository does not resolve");
     RawApiError::Unavailable
 }
 
-/// Si el principal puede leer este repositorio. Es la decision de Cedar
-/// sobre su HRN, la misma que aplica su ruta directa.
+/// Whether the principal can read this repository. It is Cedar's decision
+/// on its HRN, the same one its direct path applies.
 fn can_read(
     state: &AppState,
     context: &VerifiedContext,
@@ -158,8 +158,8 @@ fn can_read(
         .map_err(|_| RawApiError::Internal)
 }
 
-/// Lee los repositorios que alcanza el grupo y dice cuales puede leer el
-/// principal.
+/// Reads the repositories the group reaches and says which ones the
+/// principal can read.
 async fn the_members(
     state: &AppState,
     context: &VerifiedContext,
@@ -196,8 +196,8 @@ async fn the_members(
                     Lookup::Hidden
                 } else {
                     let members = if descriptor.mode == RepositoryMode::Group {
-                        // Un grupo interno que no se lee es un grupo roto:
-                        // se falla cerrado, no se trata como vacio.
+                        // An internal group that is not read is a broken group:
+                        // it fails closed, it is not treated as empty.
                         match GroupConfig::of(&descriptor.config) {
                             Ok(Some(nested)) => nested.members,
                             _ => return Err(RawApiError::Unavailable),
@@ -221,10 +221,10 @@ async fn the_members(
     Ok((known, found))
 }
 
-/// Resuelve una ruta en un grupo.
+/// Resolves a path in a group.
 ///
-/// El grupo ya paso la decision de Cedar y el filtro de formato y ambito
-/// de `the_repository`; aqui solo se recorren sus miembros.
+/// The group already passed Cedar's decision and the format and scope filter
+/// of `the_repository`; here only its members are walked.
 pub(crate) async fn the_group_asset(
     state: &AppState,
     context: &VerifiedContext,
@@ -237,8 +237,8 @@ pub(crate) async fn the_group_asset(
     Resolution { outcome, trail }
 }
 
-/// Los miembros hoja de un grupo, en el orden en que se consultan, ya
-/// leidos y filtrados por lo que el principal puede leer.
+/// The leaf members of a group, in the order they are queried, already
+/// read and filtered by what the principal can read.
 pub(super) async fn the_leaves(
     state: &AppState,
     context: &VerifiedContext,
@@ -262,18 +262,18 @@ pub(super) async fn the_leaves(
         .collect()
 }
 
-/// Lo que un grupo deja pasar de sus hojas para **una ruta**: las hojas
-/// que se consultan y los miembros proxy que la reserva de namespaces del
-/// grupo denego.
+/// What a group lets through from its leaves for **a path**: the leaves
+/// that are queried and the proxy members that the group's namespace reservation
+/// denied.
 ///
-/// La reserva vive en la configuracion del grupo y se consulta siempre,
-/// antes de mirar que tiene cada miembro: una ruta reservada no se sirve
-/// desde ningun upstream publico del grupo, ni del primero ni del ultimo,
-/// y un upstream caido no la convierte en fallback. Los miembros hosted
-/// son la fuente interna y no los toca la reserva.
+/// The reservation lives in the group's configuration and is always consulted,
+/// before looking at what each member has: a reserved path is not served
+/// from any public upstream of the group, neither the first nor the last,
+/// and a down upstream does not turn it into a fallback. The hosted members
+/// are the internal source and the reservation does not touch them.
 ///
-/// La politica del grupo, si no se entiende, no degrada a "sin reserva":
-/// es un grupo mal configurado y no se resuelve a medias.
+/// The group's policy, if not understood, does not degrade to "no reservation":
+/// it is a misconfigured group and is not resolved halfway.
 pub(super) async fn the_governed_leaves(
     state: &AppState,
     context: &VerifiedContext,
@@ -307,8 +307,8 @@ pub(super) async fn the_governed_leaves(
     Ok((consulted, denied, Some(judgement)))
 }
 
-/// La explicacion de una negativa por reserva a nivel de grupo: la regla
-/// que aplico y los miembros que quedaron fuera.
+/// The explanation of a refusal due to a group-level reservation: the rule
+/// that applied and the members that were left out.
 pub(super) fn the_group_reservation_explanation(
     group: &RepositoryDescriptor,
     judgement: &hodei_catalog::Judgement,
@@ -322,8 +322,8 @@ pub(super) fn the_group_reservation_explanation(
     RawApiError::ReservedNamespace(the_reservation_explanation(judgement, denied))
 }
 
-/// El miembro se lee como se leeria por su ruta directa: esta release solo
-/// sirve el ambito global.
+/// The member is read as it would be read via its direct path: this release only
+/// serves the global scope.
 pub(super) fn global_only(member: &RepositoryDescriptor) -> Result<(), RawApiError> {
     if member.config.digest_scope == hodei_catalog::DigestScope::Global {
         Ok(())
@@ -342,11 +342,11 @@ async fn resolve(
     correlation: &str,
     trail: &mut Vec<(String, Step)>,
 ) -> Result<Won, RawApiError> {
-    // Un proxy sin red y sin copia no la tiene a su alcance: se sigue con el
-    // siguiente miembro. Si ninguno la sirve, ese es el error.
+    // A proxy without network and without a copy does not have it within reach: the
+    // next member is tried. If none serves it, that is the error.
     let mut offline: Option<RawApiError> = None;
-    // Los miembros que la reserva del grupo dejo fuera: con ellos, la
-    // negativa final se explica en lugar de parecer un simple 404.
+    // The members the group's reservation left out: with them, the
+    // final refusal is explained instead of looking like a plain 404.
     let (leaves, denied, judgement) =
         the_governed_leaves(state, context, group, asset_path).await?;
     for key in &denied {
@@ -366,8 +366,8 @@ async fn resolve(
                         status,
                         provenance,
                     }) => Ok(Some((asset, Some((status, provenance))))),
-                    // Un 404 de un proxy es que el upstream no la tiene (o
-                    // que no es suya): es un MISS, no un fallo.
+                    // A 404 from a proxy means the upstream does not have it (or
+                    // that it is not its own): it is a MISS, not a failure.
                     Err(RawApiError::NotFound) => Ok(None),
                     Err(other) => Err(other),
                 }

@@ -1,24 +1,24 @@
-//! La superficie **yum**: el repositorio RPM que un `dnf` real puede
-//! leer y escribir contra un repositorio hosted de Hodei.
+//! The **yum** surface: the RPM repository that a real `dnf` can
+//! read and write against a Hodei hosted repository.
 //!
-//! Vive en `/yum/{repositorio}/...` y habla el formato de
-//! `createrepo_c`: la gramatica de contenedores, indices y rutas esta
-//! en `hodei_catalog::yum` (pura) y aqui solo hay lo que necesita
-//! efectos: el almacen, el catalogo y la firma OpenPGP de `repomd.xml`.
+//! Lives at `/yum/{repository}/...` and speaks the `createrepo_c`
+//! format: the grammar of containers, indexes and paths is
+//! in `hodei_catalog::yum` (pure) and here there is only what needs
+//! effects: the store, the catalog and the OpenPGP signature of `repomd.xml`.
 //!
-//! Cada `.rpm` publicado deja **dos assets inmutables**: los bytes en
-//! `pool/{archivo}.rpm` y su ficha `<package>` en esa misma ruta con
-//! sufijo `.record`. El indice `primary` se ensambla listando fichas,
-//! nunca reescribiendo un documento compartido: una version publicada
-//! es para siempre y dos publicadores concurrentes no pueden pisarse.
-//! Si una caida deja el `.rpm` sin ficha, el paquete es invisible para
-//! dnf, nunca corrupto.
+//! Each published `.rpm` leaves **two immutable assets**: the bytes at
+//! `pool/{file}.rpm` and its `<package>` record at that same path with
+//! a `.record` suffix. The `primary` index is assembled by listing records,
+//! never by rewriting a shared document: a published version
+//! is forever and two concurrent publishers cannot overwrite each other.
+//! If an outage leaves the `.rpm` without a record, the package is invisible to
+//! dnf, never corrupt.
 //!
-//! En modo **proxy** el repositorio no guarda lo que se publica en el:
-//! trae el repodata de su upstream y lo sirve **tal cual**, con la firma
-//! y la clave del upstream, y comprueba el checksum que cada metadata
-//! declara antes de servirlo. Un proxy no reconstruye el repodata ajeno:
-//! lo que se firma es lo que se sirve.
+//! In **proxy** mode the repository does not store what is published in it:
+//! it fetches the repodata from its upstream and serves it **as is**, with the upstream's
+//! signature and key, and checks the checksum each metadata file
+//! declares before serving it. A proxy does not rebuild foreign repodata:
+//! what is signed is what is served.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -47,14 +47,14 @@ use crate::handlers::apt::normalize_authorization;
 use crate::handlers::{correlation_id, record_audit};
 use crate::raw::conditional;
 
-/// Lo que pasa con una peticion yum que no se puede servir.
+/// What happens to a yum request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error del formato rpm.
+    /// An error from the rpm format.
     Yum(YumError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -94,8 +94,8 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El resto de la ruta de `/yum/{repositorio}/{resto}`, sin decodificar:
-/// dnf no escapa nombres y la gramatica es la unica que interpreta.
+/// The rest of the path of `/yum/{repository}/{rest}`, undecoded:
+/// dnf does not escape names and the grammar is the only one that interprets it.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -108,7 +108,7 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// Cualquier peticion de `/yum/{repositorio}/...`.
+/// Any request to `/yum/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     method: Method,
@@ -116,16 +116,16 @@ pub async fn handle(
     mut headers: HeaderMap,
     request: axum::extract::Request<Body>,
 ) -> Result<Response, Failure> {
-    // dnf admite la credencial en el userinfo de la URL, igual que apt:
-    // aqui tambien se normaliza `Basic` a `Bearer`.
+    // dnf accepts the credential in the URL userinfo, just like apt:
+    // `Basic` is also normalized to `Bearer` here.
     normalize_authorization(&mut headers);
     let context = the_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
     let (repository_key, rest) = the_split(&uri)?;
     let repository =
         the_repository_in(&state, &context, &repository_key, &[RepositoryFormat::Rpm]).await?;
-    // El modo decide la gramatica: un proxy no reconstruye el repodata
-    // ajeno, y un repositorio alojado no sirve el layout de un upstream.
+    // The mode decides the grammar: a proxy does not rebuild foreign repodata,
+    // and a hosted repository does not serve an upstream's layout.
     if repository.mode == RepositoryMode::Proxy {
         return proxy(
             &state,
@@ -215,8 +215,8 @@ pub async fn handle(
         }
         (Route::Primary { checksum }, true, _) => {
             let (gz, _, _) = primary_bytes(&state, &context, &repository).await?;
-            // El nombre es el digest de lo que se sirve: si no
-            // coincide, ese fichero no existe en este repositorio.
+            // The name is the digest of what is served: if it does not
+            // match, that file does not exist in this repository.
             if checksum != &hex_of(sha2::Sha256::digest(&gz).as_slice()) {
                 return Err(RawApiError::NotFound.into());
             }
@@ -267,7 +267,7 @@ fn head_of(method: &Method) -> bool {
     method == Method::HEAD
 }
 
-/// El permiso de lectura primero y luego el documento ya producido.
+/// The read permission first and then the already-produced document.
 #[allow(clippy::too_many_arguments)]
 async fn serve(
     state: &AppState,
@@ -293,13 +293,13 @@ async fn serve(
 // Proxy
 // ---------------------------------------------------------------------------
 
-/// La rama **proxy**: el repositorio no guarda lo que se publica en el,
-/// lo trae de su upstream y lo sirve tal cual.
+/// The **proxy** branch: the repository does not store what is published in it,
+/// it fetches it from its upstream and serves it as is.
 ///
-/// Un proxy no reconstruye el repodata ajeno: el `repomd.xml` que se
-/// sirve es el del upstream, con la firma del upstream y con la clave del
-/// upstream. Reconstruirlo produciria un documento que la firma que lo
-/// cubre no firma.
+/// A proxy does not rebuild foreign repodata: the `repomd.xml` that is
+/// served is the upstream's, with the upstream's signature and the upstream's
+/// key. Rebuilding it would produce a document that the signature
+/// covering it does not sign.
 async fn proxy(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -321,10 +321,10 @@ async fn proxy(
             the_decision(state, context, crate::actions::download_asset(), repository)?;
             let upstream = the_upstream(repository)?;
             let Some(armor) = upstream.gpg_key_armor else {
-                // La clave del hub no sirve aqui: haria fallar la
-                // verificacion de la firma del upstream con un error que
-                // no dice nada. Sin la clave del upstream no hay nada que
-                // servir, y se dice por que.
+                // The hub's key is no use here: it would make the verification of the
+                // upstream's signature fail with an error that
+                // says nothing. Without the upstream's key there is nothing to
+                // serve, and it says why.
                 return Err(Failure::plain(
                     StatusCode::NOT_FOUND,
                     "the upstream key is not configured",
@@ -377,10 +377,10 @@ async fn proxy(
     }
 }
 
-/// El upstream que declara la configuracion del repositorio.
+/// The upstream declared by the repository's configuration.
 ///
-/// Una configuracion que no se entiende no degrada a "sin upstream": un
-/// proxy sin upstream no tiene nada que servir, y se dice claro.
+/// A configuration that is not understood does not degrade to "no upstream": a
+/// proxy without an upstream has nothing to serve, and this is said plainly.
 fn the_upstream(repository: &RepositoryDescriptor) -> Result<UpstreamConfig, Failure> {
     UpstreamConfig::of(&repository.config)
         .ok()
@@ -388,10 +388,10 @@ fn the_upstream(repository: &RepositoryDescriptor) -> Result<UpstreamConfig, Fai
         .ok_or_else(|| Failure::plain(StatusCode::BAD_GATEWAY, "the proxy is not configured"))
 }
 
-/// El tipo de contenido de una ruta del upstream.
+/// The content type of an upstream path.
 ///
-/// El cliente real mira el tipo: un `.gz` que se sirve como texto plano no
-/// es lo que `dnf` espera de un indice comprimido.
+/// The real client looks at the type: a `.gz` served as plain text is not
+/// what `dnf` expects of a compressed index.
 fn content_type_of(path: &str) -> &'static str {
     if path.ends_with(".rpm") {
         "application/x-rpm"
@@ -408,12 +408,12 @@ fn content_type_of(path: &str) -> &'static str {
     }
 }
 
-/// El contenido del upstream que se sirve tal cual, con su procedencia.
+/// The upstream content served as is, with its provenance.
 ///
-/// El checksum se comprueba **antes** de servir: un metadata que no
-/// cumple el que su nombre (o el `repomd` que lo declara) anuncia no se
-/// sirve, porque un cliente que lo recibiera veria un metadata corrupto
-/// como si fuera bueno.
+/// The checksum is verified **before** serving: a metadata file that does not
+/// meet what its name (or the `repomd` that declares it) announces is not
+/// served, because a client that received it would see a corrupt metadata file
+/// as if it were good.
 async fn proxy_asset(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -425,8 +425,8 @@ async fn proxy_asset(
 ) -> Result<Response, Failure> {
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     let upstream = the_upstream(repository)?;
-    // Una ruta fuera de los scopes del upstream no existe para este
-    // proxy: no se pregunta y no se sirve.
+    // A path outside the upstream's scopes does not exist for this
+    // proxy: it is not asked for and not served.
     let url = upstream.target(asset_path).ok_or(RawApiError::NotFound)?;
     let expected =
         the_expected_checksum(state, context, repository, asset_path, correlation).await?;
@@ -440,9 +440,9 @@ async fn proxy_asset(
         correlation,
     )
     .await?;
-    // La compuerta de confianza: un proxy tambien es un repositorio, y su
-    // canal decide si ese digest puede servirse. Sin esta pregunta, un
-    // proxy en el canal trusted serviria contenido sin concesion.
+    // The trust gate: a proxy is also a repository, and its
+    // channel decides whether that digest may be served. Without this question, a
+    // proxy on the trusted channel would serve content without a grant.
     crate::trust::admit(
         state,
         context.account().as_str(),
@@ -479,16 +479,16 @@ async fn proxy_asset(
     Ok(response)
 }
 
-/// El checksum que los bytes de una ruta tienen que cumplir.
+/// The checksum the bytes of a path must meet.
 ///
-/// `None` es "esta ruta no es metadata": no hay nada que comprobar. El
-/// nombre de un metadata de `createrepo` es su propio SHA256, y ese
-/// nombre es una promesa: un proxy que sirve unos bytes que no la
-/// cumplen esta sirviendo metadata corrupto como si fuera bueno.
+/// `None` means "this path is not metadata": there is nothing to check. The
+/// name of a `createrepo` metadata file is its own SHA256, and that
+/// name is a promise: a proxy that serves bytes that do not
+/// meet it is serving corrupt metadata as if it were good.
 ///
-/// Los metadata cuyo nombre no se verifica solos solo se sirven si el
-/// `repomd.xml` que el servicio tiene cacheado los declara. Metadata que
-/// nadie ha declarado no se sirve, y ni se pregunta al upstream por ella.
+/// Metadata whose name does not verify itself is only served if the
+/// `repomd.xml` the service has cached declares it. Metadata that
+/// nobody has declared is not served, and the upstream is not even asked for it.
 async fn the_expected_checksum(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -496,8 +496,8 @@ async fn the_expected_checksum(
     asset_path: &str,
     correlation: &str,
 ) -> Result<Option<String>, Failure> {
-    // El `repomd` y su firma se sirven tal cual: los verifica el cliente,
-    // con la clave del upstream.
+    // The `repomd` and its signature are served as is: the client verifies them,
+    // with the upstream's key.
     if asset_path == "repodata/repomd.xml" || asset_path == "repodata/repomd.xml.asc" {
         return Ok(None);
     }
@@ -517,12 +517,12 @@ async fn the_expected_checksum(
     }
 }
 
-/// El `repomd.xml` que el servicio tiene, con lo que declara.
+/// The `repomd.xml` the service has, with what it declares.
 ///
-/// El documento es de un upstream: se lee del almacen de contenido, por
-/// el digest que el catalogo tiene para esa ruta. Si el servicio no lo
-/// tiene todavia se trae: el cliente lo pide primero, y sin el no hay
-/// metadata que se pueda declarar.
+/// The document comes from an upstream: it is read from the content store, by
+/// the digest the catalog has for that path. If the service does not
+/// have it yet, it is fetched: the client requests it first, and without it there is no
+/// metadata that can be declared.
 async fn the_cached_repomd(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1075,19 +1075,19 @@ fn gunzip_bytes(bytes: &[u8]) -> Result<Vec<u8>, Failure> {
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
-/// Un registro de indice guardado junto a su binario: la ficha
-/// `<package>` y el momento de su publicacion.
+/// An index record stored next to its binary: the `<package>`
+/// record and the moment of its publication.
 struct StoredRecord {
     updated_at: chrono::DateTime<chrono::Utc>,
     body: String,
 }
 
-/// Los registros de indice del repositorio, en el orden de ruta que
-/// mantiene el catalogo: la lista nunca reescribe nada, solo lee fichas
-/// inmutables ya publicadas.
+/// The index records of the repository, in the path order that
+/// the catalog maintains: the list never rewrites anything, it only reads immutable
+/// records already published.
 async fn records(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1122,10 +1122,10 @@ async fn records(
     Ok(out)
 }
 
-/// El `primary.xml` y su gzip, del estado actual. La suma del gz es el
-/// nombre con el que se sirve: dos lecturas del mismo estado dan el
-/// mismo documento, la misma suma y la misma ruta. La revision sale
-/// del ultimo momento publicado, no del reloj.
+/// The `primary.xml` and its gzip, of the current state. The gz's sum is the
+/// name under which it is served: two reads of the same state give the
+/// same document, the same sum and the same path. The revision comes
+/// from the last published moment, not from the clock.
 async fn primary_bytes(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1151,8 +1151,8 @@ async fn primary_bytes(
     Ok((gz, document, moment))
 }
 
-/// El documento `repomd.xml` del repositorio: fija la suma exacta del
-/// gz que se sirve, y su revision es la del estado.
+/// The `repomd.xml` document of the repository: it fixes the exact sum of the
+/// gz that is served, and its revision is that of the state.
 async fn repomd_bytes(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1173,8 +1173,8 @@ async fn repomd_bytes(
     Ok(yum::repomd_document(moment, &[entry]).into_bytes())
 }
 
-/// Los bytes de un `.rpm`, verificados contra su asset y la compuerta
-/// de confianza del repositorio.
+/// The bytes of an `.rpm`, verified against its asset and the repository's
+/// trust gate.
 async fn read_rpm(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1250,13 +1250,13 @@ fn record_read(
 }
 
 // ---------------------------------------------------------------------------
-// Escritura
+// Writes
 // ---------------------------------------------------------------------------
 
-/// Subir un `.rpm`: el header dicta la ruta, y la ruta dicta los dos
-/// assets. Primero se conmutan los bytes, luego se publica el binario y
-/// por ultimo su ficha: interrumpida a la mitad, la ficha no existe y
-/// el paquete queda invisible, nunca mentiroso.
+/// Upload an `.rpm`: the header dictates the path, and the path dictates the two
+/// assets. First the bytes are swapped in, then the binary is published and
+/// lastly its record: interrupted halfway, the record does not exist and
+/// the package stays invisible, never lying.
 async fn upload(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1288,7 +1288,7 @@ async fn upload(
     let (_, writer) = the_catalog(state)?;
     let record_path = yum::record_path_for(asset_path);
 
-    // 1. Los bytes del .rpm, conmutados antes del catalogo.
+    // 1. The .rpm bytes, swapped in before the catalog.
     let (rpm_digest, rpm_size) = write_the_content(
         state,
         context.account().as_str(),
@@ -1299,7 +1299,7 @@ async fn upload(
     .await?;
     let record = yum::package_record(&metadata, asset_path, rpm_size, &rpm_digest.value);
     let record_bytes = record.into_bytes();
-    // 2. Los bytes de la ficha.
+    // 2. The record bytes.
     let (record_digest, record_size) = write_the_content(
         state,
         context.account().as_str(),
@@ -1313,9 +1313,9 @@ async fn upload(
     let existing_record =
         the_current_asset(state, context, &repository.repo_key, &record_path).await?;
 
-    // La version es para siempre: identica es el eco o la reanudacion
-    // de una publicacion interrumpida, distinta es un no con
-    // explicacion.
+    // The version is forever: an identical one is the echo or the resumption
+    // of an interrupted publication, a different one is a no with an
+    // explanation.
     let rpm_already = existing_rpm
         .as_ref()
         .map(|asset| asset.digest == rpm_digest)
