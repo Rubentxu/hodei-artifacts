@@ -117,6 +117,12 @@ const SHARED_SCHEMA_JSON: &str = r#"{
           "resourceTypes": ["Artifacts::Repository"]
         }
       },
+      "ManageRepositoryAdmission": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
       "ReadCapsule": {
         "appliesTo": {
           "principalTypes": ["Iam::User"],

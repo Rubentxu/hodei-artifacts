@@ -51,8 +51,9 @@ use hodei_catalog::{
     RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog_storage::DgraphCatalogStore;
+use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
-use hodei_hub::blob::FileBlobStore;
+use hodei_hub::blob::{BlobError, BlobWriteSession, FileBlobStore, ReadPolicy};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
@@ -170,6 +171,9 @@ async fn report(
         "fail" => ok("fail", "complete"),
         "partial" => ok("pass", "partial"),
         "unknown" => ok("maybe", "complete"),
+        "weird" => ok("pass", "bogus"),
+        "gone" => StatusCode::NOT_FOUND.into_response(),
+        "moved" => (StatusCode::FOUND, [(header::LOCATION, "/report/pass")]).into_response(),
         "down" => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         "hung" => {
             tokio::time::sleep(Duration::from_secs(10)).await;
@@ -210,8 +214,59 @@ permit(principal == Iam::User::"hrn:hodei:iam::{account}:User/alice",
        action in [Artifacts::Action::"UploadAsset", Artifacts::Action::"DownloadAsset",
                   Artifacts::Action::"CreateRepository"],
        resource);
+// alice reaches the administrative API (migration import).
+permit(principal == Iam::User::"hrn:hodei:iam::{account}:User/alice",
+       action == Admin::Action::"AccessAdminApi", resource);
+// manager may create repositories AND declare admission.
+permit(principal == Iam::User::"hrn:hodei:iam::{account}:User/manager",
+       action in [Artifacts::Action::"CreateRepository",
+                  Artifacts::Action::"ManageRepositoryAdmission"],
+       resource);
 "#
     )
+}
+
+/// A content store whose integrity check always finds the bytes corrupted.
+struct Tampering(FileBlobStore);
+
+#[async_trait]
+impl hodei_hub::blob::BlobStore for Tampering {
+    async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError> {
+        self.0.put(bytes).await
+    }
+    async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError> {
+        self.0.get(digest).await
+    }
+    async fn exists(&self, digest: &ContentDigest) -> Result<bool, BlobError> {
+        self.0.exists(digest).await
+    }
+    async fn begin(&self) -> Result<Box<dyn BlobWriteSession>, BlobError> {
+        self.0.begin().await
+    }
+    async fn get_with(
+        &self,
+        digest: &ContentDigest,
+        policy: ReadPolicy,
+    ) -> Result<Vec<u8>, BlobError> {
+        self.0.get_with(digest, policy).await
+    }
+    async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError> {
+        self.0.length(digest).await
+    }
+    async fn read_range(
+        &self,
+        digest: &ContentDigest,
+        offset: u64,
+        length: u64,
+    ) -> Result<Vec<u8>, BlobError> {
+        self.0.read_range(digest, offset, length).await
+    }
+    async fn verify(&self, digest: &ContentDigest) -> Result<(), BlobError> {
+        Err(BlobError::Corrupted {
+            expected: digest.clone(),
+            found: ContentDigest::of_bytes(b"tampered"),
+        })
+    }
 }
 
 struct Vertical {
@@ -224,11 +279,17 @@ struct Vertical {
 }
 
 async fn mount(account: &str) -> Option<Vertical> {
+    mount_with(account, false).await
+}
+
+/// `tamper`: the content store says every blob fails its integrity check.
+async fn mount_with(account: &str, tamper: bool) -> Option<Vertical> {
     let store = open_store().await?;
     let (provider, port) = start_provider().await;
     let tmp = tempfile::tempdir().expect("temp dir");
     let mut config = AppConfig::default();
     config.security.raw_api_enabled = true;
+    config.security.admin_api_enabled = true;
     config.graph = config_from_env();
     config.content.cas_path = tmp
         .path()
@@ -254,8 +315,12 @@ async fn mount(account: &str) -> Option<Vertical> {
     .expect("bootstrap must succeed");
     let reader: Arc<dyn CatalogReader> = store.clone();
     let writer: Arc<dyn CatalogWriter> = store.clone();
-    let content: Arc<dyn hodei_hub::blob::BlobStore> =
-        Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the CAS"));
+    let file = FileBlobStore::new(tmp.path().join("cas")).expect("the CAS");
+    let content: Arc<dyn hodei_hub::blob::BlobStore> = if tamper {
+        Arc::new(Tampering(file))
+    } else {
+        Arc::new(file)
+    };
     let state = state
         .with_catalog(reader, writer)
         .with_content_store(content)
@@ -406,14 +471,20 @@ async fn whatever_cannot_be_known_fails_closed_publishes_nothing_and_is_bounded(
         return;
     };
     let alice = format!("alice@{account}");
-    let cases: [(&str, &str, usize); 7] = [
-        ("down", "not give a report", 2),
-        ("partial", "partial", 1),
-        ("unknown", "UNKNOWN", 1),
-        ("hung", "not give a report", 2),
-        ("adversary", "out of schema", 1),
-        ("otherdigest", "does not speak about this digest", 1),
-        ("huge", "not usable", 1),
+    const UNAVAILABLE: &str = "the provider evidence is unavailable";
+    let cases: [(&str, &str, usize); 10] = [
+        // Transient: retried up to the budget (2 attempts).
+        ("down", UNAVAILABLE, 2),
+        ("hung", UNAVAILABLE, 2),
+        // Deterministic: asked once, never repeated.
+        ("gone", UNAVAILABLE, 1),
+        ("moved", UNAVAILABLE, 1),
+        ("huge", UNAVAILABLE, 1),
+        ("partial", "the provider coverage is incomplete", 1),
+        ("weird", "the provider coverage is incomplete", 1),
+        ("unknown", "the scan verdict is unknown", 1),
+        ("adversary", "the provider report was rejected", 1),
+        ("otherdigest", "the provider report was rejected", 1),
     ];
     for (mode, reason, calls) in cases {
         let repo = format!("r-{mode}");
@@ -423,6 +494,17 @@ async fn whatever_cannot_be_known_fails_closed_publishes_nothing_and_is_bounded(
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{mode}: {body}");
         assert!(body.contains("admission pending"), "{mode}: {body}");
         assert!(body.contains(reason), "{mode}: {body}");
+        // Generic to the client: no serde text, no provider value, no address.
+        for leak in [
+            "unknown field",
+            "schema",
+            "outcome",
+            "127.0.0.1",
+            "egress",
+            "scanner",
+        ] {
+            assert!(!body.contains(leak), "{mode} leaks {leak:?}: {body}");
+        }
         assert!(headers.get(header::RETRY_AFTER).is_some(), "{mode}");
         assert!(
             started.elapsed() < Duration::from_secs(5),
@@ -461,7 +543,14 @@ async fn a_provider_outside_the_egress_allow_list_is_never_contacted() {
     .await;
     let (status, _, body) = put(&v, "elsewhere", &alice).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert!(body.contains("egress denied"), "{body}");
+    assert!(
+        body.contains("the provider evidence is unavailable"),
+        "{body}"
+    );
+    assert!(
+        !body.contains("egress") && !body.contains("127.0.0.1"),
+        "{body}"
+    );
     assert_eq!(other.hits("pass"), 0, "the destination was never visited");
     assert_eq!(get(&v, "elsewhere", &alice).await.0, StatusCode::NOT_FOUND);
 }
@@ -503,41 +592,274 @@ async fn a_repository_without_the_declaration_keeps_the_normal_path() {
 }
 
 #[tokio::test]
-async fn declaring_admission_is_only_accepted_where_it_gates_and_when_it_can_be_read() {
+async fn declaring_admission_needs_its_own_action_a_readable_declaration_and_an_allowed_provider() {
+    let account = format!("h{}a", &nonce()[8..]);
+    let Some(v) = mount(&account).await else {
+        return;
+    };
+    let (alice, manager) = (format!("alice@{account}"), format!("manager@{account}"));
+    let create = |token: String,
+                  name: &'static str,
+                  format: &'static str,
+                  mode: &'static str,
+                  admission: Value| {
+        let app = v.app.clone();
+        async move {
+            let mut settings = json!({});
+            if !admission.is_null() {
+                settings["admission"] = admission;
+            }
+            let body = json!({"name": name, "format": format, "mode": mode, "settings": settings});
+            send(
+                &app,
+                Method::POST,
+                "/api/v1/catalog/repositories",
+                &token,
+                serde_json::to_vec(&body).unwrap(),
+            )
+            .await
+            .0
+        }
+    };
+    let allowed = format!("http://127.0.0.1:{}/report/pass", v.port);
+    let valid = json!({"required": ["integrity", "scan"],
+        "provider": {"url": allowed, "id": "scanner", "version": "1"}});
+
+    // CreateRepository alone never declares admission; without it, nothing is created.
+    assert_eq!(
+        create(alice.clone(), "by-alice", "raw", "hosted", valid.clone()).await,
+        StatusCode::FORBIDDEN
+    );
+    assert!(v.store.repository(&account, "by-alice").await.is_err());
+    // ... and keeps working for a repository without the declaration.
+    assert_eq!(
+        create(alice.clone(), "plain", "raw", "hosted", Value::Null).await,
+        StatusCode::CREATED
+    );
+    // The action plus a readable declaration and an allowed provider: created.
+    assert_eq!(
+        create(manager.clone(), "ok-raw", "raw", "hosted", valid.clone()).await,
+        StatusCode::CREATED
+    );
+    // A provider outside the administrator's egress allow-list is refused at creation.
+    let elsewhere = json!({"required": ["scan"],
+        "provider": {"url": "http://127.0.0.1:1/report/pass", "id": "s", "version": "1"}});
+    assert_eq!(
+        create(manager.clone(), "outside", "raw", "hosted", elsewhere).await,
+        StatusCode::BAD_REQUEST
+    );
+    // Only where it gates; and only if it can be read (also: nothing required is a misdeclaration).
+    assert_eq!(
+        create(manager.clone(), "npm-gated", "npm", "hosted", valid.clone()).await,
+        StatusCode::BAD_REQUEST
+    );
+    for (name, broken) in [
+        ("b1", json!({"required": "scan"})),
+        ("b2", json!({"required": []})),
+        ("b3", json!({})),
+    ] {
+        assert_eq!(
+            create(manager.clone(), name, "raw", "hosted", broken).await,
+            StatusCode::BAD_REQUEST,
+            "{name}"
+        );
+    }
+    assert_eq!(
+        v.provider.hits("pass"),
+        0,
+        "declaring never calls the provider"
+    );
+}
+
+#[tokio::test]
+async fn an_unusable_declaration_fails_closed_at_publication() {
     let account = format!("h{}a", &nonce()[8..]);
     let Some(v) = mount(&account).await else {
         return;
     };
     let alice = format!("alice@{account}");
-    let create =
-        |name: &'static str, format: &'static str, mode: &'static str, admission: Value| {
-            let app = v.app.clone();
-            let alice = alice.clone();
-            async move {
-                let body = json!({"name": name, "format": format, "mode": mode,
-                "settings": {"admission": admission}});
-                send(
-                    &app,
-                    Method::POST,
-                    "/api/v1/catalog/repositories",
-                    &alice,
-                    serde_json::to_vec(&body).unwrap(),
-                )
-                .await
-                .0
-            }
-        };
-    let valid = json!({"required": ["integrity"]});
+    // Seeded straight into the catalog (the creation API would refuse them).
+    seed(
+        &v.store,
+        &account,
+        "empty",
+        json!({"admission": {"required": []}}),
+    )
+    .await;
+    seed(
+        &v.store,
+        &account,
+        "no-provider",
+        json!({"admission": {"required": ["scan"]}}),
+    )
+    .await;
+    seed(&v.store, &account, "scalar", json!({"admission": "yes"})).await;
+    for repo in ["empty", "no-provider", "scalar"] {
+        let (status, headers, body) = put(&v, repo, &alice).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{repo}: {body}");
+        assert!(headers.get(header::RETRY_AFTER).is_some(), "{repo}");
+        assert_eq!(
+            get(&v, repo, &alice).await.0,
+            StatusCode::NOT_FOUND,
+            "{repo}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn proven_tampering_is_a_422_and_publishes_nothing() {
+    let account = format!("h{}a", &nonce()[8..]);
+    let Some(v) = mount_with(&account, true).await else {
+        return;
+    };
+    let alice = format!("alice@{account}");
+    seed(
+        &v.store,
+        &account,
+        "integrity-only",
+        json!({"admission": {"required": ["integrity"]}}),
+    )
+    .await;
+    let (status, headers, body) = put(&v, "integrity-only", &alice).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    assert!(body.contains("admission denied"), "{body}");
+    assert!(headers.get(header::RETRY_AFTER).is_none());
     assert_eq!(
-        create("ok-raw", "raw", "hosted", valid.clone()).await,
-        StatusCode::CREATED
+        get(&v, "integrity-only", &alice).await.0,
+        StatusCode::NOT_FOUND
     );
+}
+
+/// A fake Nexus origin with one raw asset (`raw-hosted/tools/hello.bin`).
+async fn start_origin() -> u16 {
+    use sha2::Digest as _;
+    let sha256: String = sha2::Sha256::digest(BODY)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let item = json!({"repository": "raw-hosted", "format": "raw", "name": "tools/hello.bin",
+        "assets": [{"repository": "raw-hosted", "format": "raw", "path": "tools/hello.bin",
+            "downloadUrl": format!("http://127.0.0.1:{port}/repository/raw-hosted/tools/hello.bin"),
+            "checksum": {"sha256": sha256}, "size": BODY.len()}]});
+    let app = axum::Router::new()
+        .route(
+            "/service/rest/v1/repositories",
+            axum::routing::get(|| async {
+                axum::Json(json!([{"name": "raw-hosted", "format": "raw", "type": "hosted"}]))
+            }),
+        )
+        .route(
+            "/service/rest/v1/search",
+            axum::routing::get(move || {
+                let item = item.clone();
+                async move { axum::Json(json!({"items": [item]})) }
+            }),
+        )
+        .route(
+            "/repository/raw-hosted/tools/hello.bin",
+            axum::routing::get(|| async { BODY }),
+        );
+    tokio::spawn(async move { axum::serve(listener, app).await.ok() });
+    port
+}
+
+#[tokio::test]
+async fn migration_import_refuses_a_destination_that_declares_admission_and_publishes_nothing() {
+    let account = format!("h{}a", &nonce()[8..]);
+    let Some(v) = mount(&account).await else {
+        return;
+    };
+    let alice = format!("alice@{account}");
+    let origin = start_origin().await;
+    seed_gated(
+        &v,
+        &account,
+        "raw-hosted",
+        "pass",
+        json!(["integrity", "scan"]),
+    )
+    .await;
+    let import = |destinations: Value, dry_run: bool| {
+        let app = v.app.clone();
+        let alice = alice.clone();
+        async move {
+            let body = json!({"source": {"kind": "nexus", "base_url": format!("http://127.0.0.1:{origin}")},
+                "destinations": destinations, "dry_run": dry_run});
+            send(
+                &app,
+                Method::POST,
+                "/api/v1/migrations/import",
+                &alice,
+                serde_json::to_vec(&body).unwrap(),
+            )
+            .await
+        }
+    };
+    let get_asset = |repo: &'static str| {
+        let app = v.app.clone();
+        let alice = alice.clone();
+        async move {
+            send(
+                &app,
+                Method::GET,
+                &format!("/repository/{repo}/tools/hello.bin"),
+                &alice,
+                Vec::new(),
+            )
+            .await
+            .0
+        }
+    };
+    // Into the gated repository: refused (dry run too), nothing published.
+    for dry_run in [true, false] {
+        let (status, _, body) = import(json!(null), dry_run).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_IMPLEMENTED,
+            "{}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    assert_eq!(get_asset("raw-hosted").await, StatusCode::NOT_FOUND);
+    assert_eq!(v.provider.hits("pass"), 0);
+    // Control: the very same import into a same-named repository WITHOUT the
+    // declaration works (another account, so the name is free).
+    let control = format!("h{}c", &nonce()[8..]);
+    let Some(w) = mount(&control).await else {
+        return;
+    };
+    seed(&w.store, &control, "raw-hosted", json!({})).await;
+    let token = format!("alice@{control}");
+    let body =
+        json!({"source": {"kind": "nexus", "base_url": format!("http://127.0.0.1:{origin}")}});
+    let (status, _, answer) = send(
+        &w.app,
+        Method::POST,
+        "/api/v1/migrations/import",
+        &token,
+        serde_json::to_vec(&body).unwrap(),
+    )
+    .await;
     assert_eq!(
-        create("npm-gated", "npm", "hosted", valid.clone()).await,
-        StatusCode::BAD_REQUEST
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&answer)
     );
+    let (served, _, _) = send(
+        &w.app,
+        Method::GET,
+        "/repository/raw-hosted/tools/hello.bin",
+        &token,
+        Vec::new(),
+    )
+    .await;
     assert_eq!(
-        create("broken", "raw", "hosted", json!({"required": "scan"})).await,
-        StatusCode::BAD_REQUEST
+        served,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&answer)
     );
 }

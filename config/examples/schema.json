@@ -137,6 +137,16 @@
             "Artifacts::Repository"
           ]
         }
+      },
+      "ManageRepositoryAdmission": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
       }
     }
   },

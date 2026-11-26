@@ -35,6 +35,18 @@
 //!
 //! The verdict only decides; the catalog is not touched on a refusal, so a
 //! refused publication leaves no asset, no package version and no reference.
+//!
+//! # What this is not
+//!
+//! Admission is **self-declared** by whoever holds `ManageRepositoryAdmission`
+//! on the repository. It gates what is published *into* that repository; it is
+//! not a security boundary against its own owner (who chooses the requirements
+//! and the provider). It covers the hosted raw `PUT` only: other publication
+//! surfaces do not reach a repository that declares it (see
+//! [`is_declared`]), and migration import refuses such destinations.
+//!
+//! The client only sees generic reasons; provider messages, parse errors and
+//! egress details go to the log (`target = "hodei_artifacts::admission"`).
 
 use std::time::Duration;
 
@@ -73,11 +85,46 @@ pub enum Verdict {
     /// The Trust Gate allowed it: publish.
     Admitted,
     /// The evidence is there and the gate said no: nothing is published.
-    Quarantined(Vec<String>),
+    Quarantined(Why),
     /// Tampering is proven (integrity does not hold): nothing is published.
-    Denied(Vec<String>),
+    Denied(Why),
     /// It could not be known (provider down, partial, unreadable): fail closed.
-    Pending(Vec<String>),
+    Pending(Why),
+}
+
+/// Why a digest was not admitted: what the client may read, and what only
+/// the operator may (the log).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Why {
+    /// Fixed, generic reasons (gate requirement reasons and constant phrases).
+    pub public: Vec<String>,
+    /// Provider messages, parse errors, egress details: logged, never returned.
+    pub detail: Vec<String>,
+}
+
+impl Why {
+    fn of(reason: &str, detail: impl Into<String>) -> Self {
+        Self {
+            public: vec![reason.to_string()],
+            detail: vec![detail.into()],
+        }
+    }
+}
+
+/// A fact that kept the digest from being measured: a constant phrase for the
+/// client and the real cause for the log.
+struct Flag {
+    public: &'static str,
+    detail: String,
+}
+
+impl Flag {
+    fn new(public: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            public,
+            detail: detail.into(),
+        }
+    }
 }
 
 /// The budget of one evaluation.
@@ -155,6 +202,11 @@ impl AdmissionConfig {
                 .collect::<Result<Vec<_>, _>>()?,
             None => Vec::new(),
         };
+        if required.is_empty() {
+            // A declaration that requires nothing would admit everything: it is
+            // a misdeclaration, and a misdeclaration never opens the gate.
+            return Err("admission.required is empty".to_string());
+        }
         let policy_version = object
             .get("policy_version")
             .and_then(|version| version.as_str())
@@ -248,6 +300,14 @@ impl AdmissionConfig {
     }
 }
 
+/// Whether the repository declares admission at all (readable or not).
+///
+/// Publication surfaces that do not run the gate use this to refuse a
+/// destination that would otherwise look gated and not be.
+pub fn is_declared(repository: &RepositoryDescriptor) -> bool {
+    repository.config.config_settings.get("admission").is_some()
+}
+
 /// What a provider says. The schema is **closed**: any other field (an
 /// attempt to choose the outcome, to write canonical facts) refuses the whole
 /// report.
@@ -276,22 +336,42 @@ pub async fn gate(
     let config = match AdmissionConfig::of(repository) {
         Ok(None) => return Ok(()),
         Ok(Some(config)) => config,
-        Err(reason) => return refuse(Verdict::Pending(vec![reason])),
+        Err(reason) => {
+            return refuse(
+                repository,
+                digest,
+                Verdict::Pending(Why::of("the admission declaration is not usable", reason)),
+            );
+        }
     };
-    refuse(evaluate_digest(state, account, repository, digest, &config).await)
+    let verdict = evaluate_digest(state, account, repository, digest, &config).await;
+    refuse(repository, digest, verdict)
 }
 
-/// `Ok` only for an admitted digest; every other verdict is a refusal.
-fn refuse(verdict: Verdict) -> Result<(), ResolutionError> {
-    let (state, reasons) = match verdict {
+/// `Ok` only for an admitted digest; every other verdict is a refusal. The
+/// client gets the generic reasons, the log gets the detail.
+fn refuse(
+    repository: &RepositoryDescriptor,
+    digest: &ContentDigest,
+    verdict: Verdict,
+) -> Result<(), ResolutionError> {
+    let (state, why) = match verdict {
         Verdict::Admitted => return Ok(()),
-        Verdict::Quarantined(reasons) => ("quarantine", reasons),
-        Verdict::Denied(reasons) => ("denied", reasons),
-        Verdict::Pending(reasons) => ("pending", reasons),
+        Verdict::Quarantined(why) => ("quarantine", why),
+        Verdict::Denied(why) => ("denied", why),
+        Verdict::Pending(why) => ("pending", why),
     };
+    tracing::warn!(
+        target: "hodei_artifacts::admission",
+        repository = %repository.repo_key,
+        digest = %digest,
+        state,
+        detail = ?why.detail,
+        "admission refused the publication"
+    );
     Err(ResolutionError::Admission(AdmissionRefusal {
         state,
-        reasons: reasons.join("; "),
+        reasons: why.public.join("; "),
     }))
 }
 
@@ -303,7 +383,7 @@ pub async fn evaluate_digest(
     digest: &ContentDigest,
     config: &AdmissionConfig,
 ) -> Verdict {
-    let mut flags: Vec<String> = Vec::new();
+    let mut flags: Vec<Flag> = Vec::new();
     let subject = crate::trust::hrn::artifact_hrn(
         repository.hrn.region(),
         account,
@@ -326,36 +406,48 @@ pub async fn evaluate_digest(
         match the_content_store(state) {
             Ok(store) => match store.verify(digest).await {
                 Ok(()) => evidence.push(record(&tenant, &subject, "integrity", true, now)),
-                Err(hodei_hub::blob::BlobError::Unavailable(_)) => {
-                    flags.push("the content store could not verify integrity".to_string());
+                Err(hodei_hub::blob::BlobError::Unavailable(error)) => {
+                    flags.push(Flag::new("the integrity check could not run", error));
                 }
-                Err(_) => {
-                    flags.push("the stored bytes do not verify against the digest".to_string());
+                Err(error) => {
+                    flags.push(Flag::new(
+                        "the stored bytes do not verify against the digest",
+                        error.to_string(),
+                    ));
                     evidence.push(record(&tenant, &subject, "integrity", false, now));
                 }
             },
-            Err(_) => flags.push("there is no content store to verify integrity".to_string()),
+            Err(_) => flags.push(Flag::new(
+                "the integrity check could not run",
+                "there is no content store",
+            )),
         }
     }
 
-    // 2. The provider's evidence, under budget.
-    let mut coverage = String::new();
+    // 2. The provider's evidence, under budget. Only an explicit `complete`
+    //    coverage counts: anything else (partial, unknown, made up) is UNKNOWN.
+    let mut coverage_complete = !config.needs_provider();
     if config.needs_provider() {
         match ask_provider(state, account, repository, digest, config).await {
             Ok(report) => {
-                coverage = report.coverage.clone();
-                match report.coverage.as_str() {
-                    "complete" => {}
-                    "partial" => flags.push("the coverage is partial: UNKNOWN is not PASS".into()),
-                    other => flags.push(format!("the coverage {other:?} is not a coverage")),
+                if report.coverage == "complete" {
+                    coverage_complete = true;
+                } else {
+                    flags.push(Flag::new(
+                        "the provider coverage is incomplete",
+                        format!("coverage {:?} is not `complete`", report.coverage),
+                    ));
                 }
                 match report.scan.as_deref() {
                     Some("pass") => evidence.push(record(&tenant, &subject, "scan", true, now)),
                     Some("fail") => evidence.push(record(&tenant, &subject, "scan", false, now)),
-                    _ => flags.push("the scan verdict is UNKNOWN, not PASS".to_string()),
+                    other => flags.push(Flag::new(
+                        "the scan verdict is unknown",
+                        format!("scan verdict {other:?}"),
+                    )),
                 }
             }
-            Err(reasons) => flags.extend(reasons),
+            Err(flag) => flags.push(flag),
         }
     }
 
@@ -367,28 +459,37 @@ pub async fn evaluate_digest(
         .assembled_at(now)
         .build();
     let decision = evaluate(&context, &config.policy());
-    let mut reasons: Vec<String> = decision
-        .requirements
-        .iter()
-        .filter(|requirement| !requirement.satisfied)
-        .map(|requirement| {
-            format!(
-                "{}:{}",
-                requirement.requirement,
-                requirement
-                    .reason
-                    .map(|reason| reason.as_str())
-                    .unwrap_or("UNSATISFIED")
-            )
-        })
-        .collect();
-    reasons.extend(flags);
-    translate(&decision, &capsule, &coverage, reasons)
+    let mut why = Why {
+        public: decision
+            .requirements
+            .iter()
+            .filter(|requirement| !requirement.satisfied)
+            .map(|requirement| {
+                format!(
+                    "{}:{}",
+                    requirement.requirement,
+                    requirement
+                        .reason
+                        .map(|reason| reason.as_str())
+                        .unwrap_or("UNSATISFIED")
+                )
+            })
+            .collect(),
+        detail: Vec::new(),
+    };
+    for flag in flags {
+        if !why.public.iter().any(|reason| reason == flag.public) {
+            why.public.push(flag.public.to_string());
+        }
+        why.detail.push(flag.detail);
+    }
+    translate(&decision, &capsule, coverage_complete, why)
 }
 
 /// The Trust Gate outcome as an admission verdict.
 ///
-/// - `Allow`/`Warn` -> admitted, unless coverage is partial (UNKNOWN is not PASS).
+/// - `Allow`/`Warn` -> admitted, unless the evidence did not come with an
+///   explicit `complete` coverage (UNKNOWN is not PASS).
 /// - `Deny` with proven tampering (integrity invalid) -> denied.
 /// - `Deny` with every unsatisfied requirement an absence -> pending.
 /// - any other `Deny` -> quarantined: the evidence is there and says no.
@@ -396,15 +497,15 @@ pub async fn evaluate_digest(
 fn translate(
     decision: &TrustDecision,
     capsule: &TrustCapsule,
-    coverage: &str,
-    reasons: Vec<String>,
+    coverage_complete: bool,
+    why: Why,
 ) -> Verdict {
     match decision.outcome {
         Outcome::Allow | Outcome::Warn => {
-            if coverage == "partial" {
-                Verdict::Pending(reasons)
-            } else {
+            if coverage_complete {
                 Verdict::Admitted
+            } else {
+                Verdict::Pending(why)
             }
         }
         Outcome::Deny => {
@@ -416,7 +517,7 @@ fn translate(
                     )
             });
             if tampered {
-                return Verdict::Denied(reasons);
+                return Verdict::Denied(why);
             }
             let unsatisfied: Vec<_> = decision
                 .requirements
@@ -428,32 +529,48 @@ fn translate(
                     .iter()
                     .all(|requirement| requirement.reason.is_some_and(|reason| reason.is_absence()))
             {
-                Verdict::Pending(reasons)
+                Verdict::Pending(why)
             } else {
-                Verdict::Quarantined(reasons)
+                Verdict::Quarantined(why)
             }
         }
-        Outcome::Indeterminate | Outcome::RequireApproval => Verdict::Pending(reasons),
+        Outcome::Indeterminate | Outcome::RequireApproval => Verdict::Pending(why),
+    }
+}
+
+/// Whether a failed provider call is worth repeating: network, timeout, 5xx
+/// and a busy egress. A deterministic answer (3xx, 4xx), a refused egress or
+/// an over-budget body would only repeat itself.
+fn is_transient(error: &FetchError) -> bool {
+    match error {
+        FetchError::Timeout
+        | FetchError::Unreachable
+        | FetchError::Truncated
+        | FetchError::Busy => true,
+        FetchError::Status(code) => *code >= 500,
+        _ => false,
     }
 }
 
 /// The only request to the provider, with all its limits. Transient failures
-/// are retried up to the budget; a refusal of egress or an out-of-schema
-/// report is final.
+/// are retried up to the budget with a small backoff; anything deterministic
+/// is final.
 async fn ask_provider(
     state: &AppState,
     account: &str,
     repository: &RepositoryDescriptor,
     digest: &ContentDigest,
     config: &AdmissionConfig,
-) -> Result<ProviderReport, Vec<String>> {
+) -> Result<ProviderReport, Flag> {
+    const UNAVAILABLE: &str = "the provider evidence is unavailable";
     let Some(provider) = &config.provider else {
-        return Err(vec!["the repository declares no provider".to_string()]);
+        return Err(Flag::new(
+            UNAVAILABLE,
+            "the repository declares no provider",
+        ));
     };
     let Some(plane) = state.proxy_plane.as_ref() else {
-        return Err(vec![
-            "the service has no egress to reach the provider".to_string(),
-        ]);
+        return Err(Flag::new(UNAVAILABLE, "the service has no egress"));
     };
     let request = serde_json::json!({
         "digest": digest.to_string(),
@@ -461,8 +578,12 @@ async fn ask_provider(
         "account": account,
     });
     let timeout = Duration::from_millis(config.budget.timeout_ms);
+    let who = format!("{}@{}", provider.id, provider.version);
     let mut last = String::new();
-    for _ in 0..config.budget.max_attempts {
+    for attempt in 0..config.budget.max_attempts {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(50 * u64::from(attempt))).await;
+        }
         match plane
             .fetcher
             .post_json(
@@ -475,34 +596,32 @@ async fn ask_provider(
         {
             Ok(bytes) => {
                 let report = serde_json::from_slice::<ProviderReport>(&bytes).map_err(|error| {
-                    vec![format!(
-                        "the provider report is out of schema ({error}): a provider cannot choose the outcome nor write canonical facts"
-                    )]
+                    Flag::new(
+                        "the provider report was rejected",
+                        format!("{who}: out of schema ({error})"),
+                    )
                 })?;
                 if report.digest != digest.to_string() {
-                    return Err(vec![
-                        "the provider report does not speak about this digest".to_string(),
-                    ]);
+                    return Err(Flag::new(
+                        "the provider report was rejected",
+                        format!("{who}: the report speaks about {:?}", report.digest),
+                    ));
                 }
                 return Ok(report);
             }
-            // Never retried: the destination is not allowed, or the body is over budget.
-            Err(error @ (FetchError::Egress(_) | FetchError::Offline | FetchError::TooLarge)) => {
-                return Err(vec![format!(
-                    "the provider {}@{} is not usable: {error}",
-                    provider.id, provider.version
-                )]);
+            Err(error) if !is_transient(&error) => {
+                return Err(Flag::new(UNAVAILABLE, format!("{who}: {error}")));
             }
-            Err(error) => {
-                last = error.to_string();
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
+            Err(error) => last = error.to_string(),
         }
     }
-    Err(vec![format!(
-        "the provider {}@{} did not give a report after {} attempts ({last})",
-        provider.id, provider.version, config.budget.max_attempts
-    )])
+    Err(Flag::new(
+        UNAVAILABLE,
+        format!(
+            "{who}: no report after {} attempts ({last})",
+            config.budget.max_attempts
+        ),
+    ))
 }
 
 /// A transient evidence record: it lives as long as the evaluation. This path
@@ -580,6 +699,8 @@ mod tests {
             serde_json::json!({"admission": "yes"}),
             serde_json::json!({"admission": {"required": "scan"}}),
             serde_json::json!({"admission": {"required": [1]}}),
+            serde_json::json!({"admission": {"required": []}}),
+            serde_json::json!({"admission": {}}),
             serde_json::json!({"admission": {"provider": {"url": "nope", "id": "a", "version": "1"}}}),
             serde_json::json!({"admission": {"provider": {"id": "a", "version": "1"}}}),
         ] {
@@ -652,7 +773,7 @@ mod tests {
                 .assembled_at(now)
                 .build();
             let decision = evaluate(&context, &config.policy());
-            translate(&decision, &capsule, "complete", vec![])
+            translate(&decision, &capsule, true, Why::default())
         };
         assert_eq!(verdict(Some(true), Some(true)), Verdict::Admitted);
         assert!(matches!(

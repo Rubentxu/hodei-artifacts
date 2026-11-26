@@ -734,6 +734,13 @@ impl ProxyFetcher {
         builder.build().map_err(|_| FetchError::Unreachable)
     }
 
+    /// Whether the egress policy would let the service go to `url` (without
+    /// resolving anything): the check a declaration of an external provider
+    /// passes **when it is made**, not only when it is used.
+    pub fn check_destination(&self, url: &Url) -> Result<(), EgressDenied> {
+        self.policy.check_url(url).map(|_| ())
+    }
+
     /// POSTs a JSON document to an administrator-allowed destination and reads
     /// the answer under a byte budget (the admission providers' wire).
     ///
