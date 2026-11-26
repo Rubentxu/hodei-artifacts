@@ -371,33 +371,132 @@ pub fn version_index(versions: &[String]) -> Value {
     })
 }
 
+/// Single registration leaf item for `(id, version)`.
+pub fn registration_item(id: &str, version: &str) -> Value {
+    json!({
+        "@id": format!("packages/{id}/{version}"),
+        "packageContent": format!("flatcontainer/{id}/{version}/{id}.nupkg"),
+        "catalogEntry": {
+            "id": id,
+            "version": version,
+            "packageStatus": "validated",
+        },
+    })
+}
+
+/// Composes a registration leaf document from pre-resolved per-version items.
+pub fn registration_document(id: &str, latest_version: &str, items: Vec<Value>) -> Value {
+    json!({
+        "@id": format!("packages/{id}/index.json"),
+        "@type": ["PackageRegistrationLeaf", "catalog:entry"],
+        "version": latest_version,
+        "votes": 0,
+        "packageStatus": "validated",
+        "items": items,
+    })
+}
+
 /// La hoja de registro de un paquete: los `items` por version con su
 /// direccion flatcontainer. El catalogo entero (registration index y
 /// leaf con dependencias completas) es alcance futuro; esta hoja es
 /// lo que el cliente necesita para resolver id y version.
 pub fn registration_leaf(id: &str, versions: &[String]) -> Value {
-    json!({
-        "@id": format!("packages/{id}/index.json"),
-        "@type": ["PackageRegistrationLeaf", "catalog:entry"],
-        "version": versions.last().cloned().unwrap_or_default(),
-        "votes": 0,
-        "packageStatus": "validated",
-        "items": versions
-            .iter()
-            .map(|version| {
-                json!({
-                    "@id": format!("packages/{id}/{version}"),
-                    "packageContent": format!(
-                        "flatcontainer/{id}/{version}/{id}.nupkg"
-                    ),
-                    "catalogEntry": {
-                        "id": id,
-                        "version": version,
-                        "packageStatus": "validated",
-                    },
-                })
-            })
-            .collect::<Vec<_>>(),
+    let items = versions
+        .iter()
+        .map(|version| registration_item(id, version))
+        .collect::<Vec<_>>();
+    let latest = versions.last().map(String::as_str).unwrap_or_default();
+    registration_document(id, latest, items)
+}
+
+/// Extracts a registration leaf item for `(id, version)` from an upstream
+/// registration document (supporting both flat `items` and paged `items[].items[]`),
+/// rewriting `@id` and `packageContent` to relative group paths so upstream
+/// origins are never leaked or mixed.
+pub fn extract_registration_item(doc: &Value, id: &str, version: &str) -> Option<Value> {
+    let target_version = normalize_version(version)?;
+    let items = doc.get("items")?.as_array()?;
+    for entry in items {
+        if let Some(found) = match_registration_entry(entry, id, &target_version) {
+            return Some(found);
+        }
+        if let Some(page_items) = entry.get("items").and_then(|v| v.as_array()) {
+            for sub in page_items {
+                if let Some(found) = match_registration_entry(sub, id, &target_version) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn match_registration_entry(entry: &Value, id: &str, target_version: &str) -> Option<Value> {
+    let catalog_entry = entry.get("catalogEntry")?;
+    let entry_version = catalog_entry.get("version")?.as_str()?;
+    if normalize_version(entry_version).as_deref() != Some(target_version) {
+        return None;
+    }
+    let mut cloned = entry.clone();
+    if let Some(obj) = cloned.as_object_mut() {
+        obj.insert(
+            "@id".to_string(),
+            Value::String(format!("packages/{id}/{target_version}")),
+        );
+        obj.insert(
+            "packageContent".to_string(),
+            Value::String(format!(
+                "flatcontainer/{id}/{target_version}/{id}.{target_version}.nupkg"
+            )),
+        );
+    }
+    Some(cloned)
+}
+
+/// Resource base URLs discovered from an upstream NuGet v3 service index.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServiceIndexResources {
+    /// Base URL for `PackageBaseAddress/3.0.0` (flat container).
+    pub flat_container: String,
+    /// Base URL for `RegistrationsBaseUrl`, if advertised.
+    pub registrations: Option<String>,
+}
+
+/// Extracts `PackageBaseAddress` and `RegistrationsBaseUrl` from a NuGet v3
+/// service index JSON document.
+pub fn service_index_resources(doc: &Value) -> Option<ServiceIndexResources> {
+    let resources = doc.get("resources")?.as_array()?;
+    let mut flat_container: Option<String> = None;
+    let mut registrations: Option<String> = None;
+    for resource in resources {
+        let Some(id_url) = resource.get("@id").and_then(Value::as_str) else {
+            continue;
+        };
+        let types: Vec<&str> = match resource.get("@type") {
+            Some(Value::String(s)) => vec![s.as_str()],
+            Some(Value::Array(arr)) => arr.iter().filter_map(Value::as_str).collect(),
+            _ => continue,
+        };
+        for ty in types {
+            if ty == "PackageBaseAddress/3.0.0"
+                || (flat_container.is_none() && ty.starts_with("PackageBaseAddress"))
+            {
+                flat_container = Some(id_url.to_string());
+            }
+            if ty.starts_with("RegistrationsBaseUrl") {
+                // Prefer plain JSON endpoints (without `-gz-`) when multiple exist.
+                let is_gz = id_url.contains("-gz-");
+                if registrations.is_none()
+                    || (!is_gz && registrations.as_ref().is_some_and(|u| u.contains("-gz-")))
+                {
+                    registrations = Some(id_url.to_string());
+                }
+            }
+        }
+    }
+    Some(ServiceIndexResources {
+        flat_container: flat_container?,
+        registrations,
     })
 }
 

@@ -581,8 +581,17 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     );
     assert_eq!(push_into_proxy.status, 405, "{}", text_of(&push_into_proxy));
 
-    // Un grupo de nuget todavia no ensambla listas entre sus miembros,
-    // y lo dice: no sirve rutas sueltas fingiendo ser un feed completo.
+    // A nuget group does not accept client writes (PUT to publish returns 405),
+    // and reading a missing package from an empty group returns 404.
+    let push_into_group = push_with_api_key(
+        port,
+        "nuget-group",
+        &token,
+        "Sample.Lib",
+        "1.0.0",
+        &nupkg("Sample.Lib", "1.0.0"),
+    );
+    assert_eq!(push_into_group.status, 405, "{}", text_of(&push_into_group));
     let group = call(
         port,
         "GET",
@@ -590,7 +599,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
         &token,
         None,
     );
-    assert_eq!(group.status, 405, "{}", text_of(&group));
+    assert_eq!(group.status, 404, "{}", text_of(&group));
 
     // Un repositorio de otro formato no es un feed, y no se sirve como
     // Raw por equivalencia: no existe para esta superficie.
