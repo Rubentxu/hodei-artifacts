@@ -321,6 +321,14 @@ hodei-graph-client = { path = "crates/hodei-graph-client" }
 # embebido se sustituyo por aserciones directas del contrato. Se
 # saltan a si mismos (exit 0) sin HODEI_GRAPH_IT_ENDPOINT.
 
+# HSP-319 S1: the graph-profile performance lab. A custom `main` (no libtest
+# harness) because it takes its own flags (--scales, --record, --compare).
+# Skips itself (exit 0) without HODEI_GRAPH_IT_ENDPOINT.
+[[test]]
+name = "hsp319_perf_lab_it"
+path = "tests/hsp319_perf_lab_it.rs"
+harness = false
+
 [[test]]
 name = "hsp314_p5_search_dgraph_it"
 path = "tests/hsp314_p5_search_dgraph_it.rs"

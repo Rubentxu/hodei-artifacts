@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "lab": "hsp319-graph-s1",
+  "recorded_at_utc": "2026-11-26T12:28:43.106967011+00:00",
+  "commit": "6aa0b03b71dcdc1c4c14f31390c1b9c36b4d7be2",
+  "dirty_tree": false,
+  "hardware": {
+    "cpu_model": "Intel(R) Xeon(R) CPU E5-2682 v4 @ 2.50GHz",
+    "logical_cores": 36,
+    "mem_total_kib": 98736480,
+    "kernel": "7.3.4-ogc8.1.fc45.x86_64"
+  },
+  "dgraph_image": "docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb",
+  "parameters": {
+    "driver": "closed-loop (coordinated omission is not corrected)",
+    "concurrency": 4,
+    "samples_per_read_and_search": 1000,
+    "payload_bytes": 1024,
+    "content_backend": "filesystem",
+    "profile": "graph (RUN_MODE=dgraph)",
+    "build": "debug (unoptimized service binary)",
+    "inject_delay_ms": 0
+  },
+  "scales": [
+    {
+      "assets": 1000,
+      "workloads": {
+        "publish": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 25.073,
+          "p95_ms": 64.379,
+          "p99_ms": 148.798,
+          "p99_note": null,
+          "throughput_rps": 126.007,
+          "wall_s": 7.936
+        },
+        "read": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 8.316,
+          "p95_ms": 9.543,
+          "p99_ms": 10.265,
+          "p99_note": null,
+          "throughput_rps": 471.155,
+          "wall_s": 2.122
+        },
+        "search_text": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 28.959,
+          "p95_ms": 32.464,
+          "p99_ms": 40.132,
+          "p99_note": null,
+          "throughput_rps": 135.921,
+          "wall_s": 7.357
+        },
+        "search_digest": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 13.925,
+          "p95_ms": 15.577,
+          "p99_ms": 17.554,
+          "p99_note": null,
+          "throughput_rps": 281.86,
+          "wall_s": 3.548
+        }
+      }
+    },
+    {
+      "assets": 10000,
+      "workloads": {
+        "publish": {
+          "samples": 10000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 24.639,
+          "p95_ms": 61.052,
+          "p99_ms": 153.909,
+          "p99_note": null,
+          "throughput_rps": 127.052,
+          "wall_s": 78.708
+        },
+        "read": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 8.624,
+          "p95_ms": 9.963,
+          "p99_ms": 10.801,
+          "p99_note": null,
+          "throughput_rps": 452.285,
+          "wall_s": 2.211
+        },
+        "search_text": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 193.368,
+          "p95_ms": 254.288,
+          "p99_ms": 304.302,
+          "p99_note": null,
+          "throughput_rps": 19.981,
+          "wall_s": 50.047
+        },
+        "search_digest": {
+          "samples": 1000,
+          "errors": 0,
+          "first_error": null,
+          "p50_ms": 15.196,
+          "p95_ms": 17.031,
+          "p99_ms": 29.3,
+          "p99_note": null,
+          "throughput_rps": 254.729,
+          "wall_s": 3.926
+        }
+      }
+    }
+  ],
+  "not_run": [
+    {
+      "assets": 10000000,
+      "reason": "not measured by S1; belongs to HSP-216 (S4)"
+    },
+    {
+      "assets": 100000000,
+      "reason": "not measured by S1; belongs to HSP-216 (S4)"
+    }
+  ]
+}
