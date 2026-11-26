@@ -164,7 +164,7 @@ impl RepositoryFormat {
     ///
     /// The formats that are declared but not served yet —helm— have no
     /// modality at all: a repository of one of them can be declared, and
-    /// it waits for its turn. Apt serves hosted and proxy (signed distro
+    /// it waits for its turn. Apt serves hosted, proxy and group (signed distro
     /// mirror snapshots); rpm serves hosted.
     pub fn serves_modes(&self) -> &'static [RepositoryMode] {
         match self {

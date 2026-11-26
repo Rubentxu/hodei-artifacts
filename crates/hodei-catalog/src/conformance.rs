@@ -147,6 +147,11 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Go, RepositoryMode::Proxy) => &["hsp121_go_e2e", "hsp121_go_client"],
         (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp232_go_group"],
         (RepositoryFormat::Apt, RepositoryMode::Hosted) => &["hsp122_apt_e2e", "hsp122_apt_client"],
+        // The signed mirror snapshots and the group over them are exercised
+        // by the real apt client against a real graph.
+        (RepositoryFormat::Apt, RepositoryMode::Proxy | RepositoryMode::Group) => {
+            &["hsp195_apt_dgraph_it"]
+        }
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
         (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
         (RepositoryFormat::Galaxy, RepositoryMode::Hosted) => &["hsp217_galaxy_client"],
