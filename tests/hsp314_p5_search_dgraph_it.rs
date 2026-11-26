@@ -310,13 +310,13 @@ async fn a_trusted_repository_larger_than_one_query_keeps_order_total_and_pages(
             &path,
         )
         .await;
-        grants.push(grant_of(
-            ACCOUNT,
-            TRUSTED,
-            &digest,
-            "dec-bulk",
-            Duration::hours(1),
-        ));
+        let mut grant = grant_of(ACCOUNT, TRUSTED, &digest, "dec-bulk", Duration::hours(1));
+        // The ledger lists grants by the time they were granted: the later
+        // the path, the earlier the grant, so the first group of digests
+        // holds the LAST paths and the groups only merge into the order of
+        // the path if the adapter merges them.
+        grant.granted_at = Utc::now() - Duration::seconds(index as i64);
+        grants.push(grant);
     }
     publish(&fixture.store, ACCOUNT, TRUSTED, "silent", "zz-silent.bin").await;
     fixture.trust.grant(&grants).await.expect("the grants");
