@@ -26,6 +26,8 @@ const KEYS = {
     ['console', session, 'repositories'] as const,
   capabilities: (session: string) =>
     ['console', session, 'capabilities'] as const,
+  accountUsage: (session: string) =>
+    ['console', session, 'account-usage'] as const,
   search: (session: string, params: SearchParams) =>
     ['console', session, 'search', params] as const,
   package: (session: string, repository: string, path: string) =>
@@ -115,6 +117,20 @@ export const useRepositories = () => {
 };
 
 /**
+ * The usage and quota limits of the authenticated principal's own account.
+ *
+ * Scoped by the active principal/session so switching accounts never leaks
+ * cached usage data from a previous principal.
+ */
+export const useAccountUsage = () => {
+  const session = useConsoleSessionGuard();
+  return useQuery({
+    queryKey: KEYS.accountUsage(session),
+    queryFn: ({ signal }) => api.accountUsage(signal),
+  });
+};
+
+/**
  * What can be created.
  *
  * It is asked once and kept: the answer is a fact of the deployment, and
@@ -187,11 +203,10 @@ export const usePromote = () => {
         api.promote(repository, path, digest, signal)
       ),
     onSuccess: (_data, _variables, context) => {
-      // The console's own queries for the active session, and not the
-      // whole application: a promotion does not change what the rest of
-      // the frontend asks for.
+      // Invalidate only the active principal's queries and keep the mutation
+      // pending until the refreshed trust state has been fetched.
       if (context && useAuthStore.getState().sessionEpoch === context.epoch) {
-        void client.invalidateQueries({
+        return client.invalidateQueries({
           queryKey: KEYS.root(context.session),
         });
       }
@@ -209,11 +224,10 @@ export const useRevoke = () => {
     mutationFn: (body: RevokeBody) =>
       runGuardedMutation(signal => api.revoke(body, signal)),
     onSuccess: (_data, _variables, context) => {
-      // The console's own queries for the active session, and not the
-      // whole application: a revocation does not change what the rest of
-      // the frontend asks for.
+      // Keep the mutation pending until the active session sees its refreshed
+      // trust state; never invalidate queries belonging to another principal.
       if (context && useAuthStore.getState().sessionEpoch === context.epoch) {
-        void client.invalidateQueries({
+        return client.invalidateQueries({
           queryKey: KEYS.root(context.session),
         });
       }
@@ -222,3 +236,15 @@ export const useRevoke = () => {
   useSessionMutationGuard(mutation.reset);
   return mutation;
 };
+
+/** A read-only investigation of an artefact. */
+export const useInvestigate = () =>
+  useMutation({
+    mutationFn: api.investigate,
+  });
+
+/** On-demand freshness check for an existing investigation report. */
+export const useInvestigateFreshness = () =>
+  useMutation({
+    mutationFn: api.investigateFreshness,
+  });

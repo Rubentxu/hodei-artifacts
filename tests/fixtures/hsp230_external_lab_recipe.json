@@ -1,0 +1,53 @@
+{
+  "task": "HSP-230",
+  "title": "External OCI Image and Helm OCI Chart Lab Recipe",
+  "opt_in_env": "HODEI_LAB_REAL=1",
+  "supported_profiles": {
+    "oci_proxy": {
+      "format": "oci",
+      "mode": "proxy",
+      "notes": "Supported for both OCI container images and Helm OCI charts."
+    },
+    "oci_group": {
+      "format": "oci",
+      "mode": "group",
+      "notes": "Supported for OCI container images and Helm OCI charts via RepositoryFormat::Oci group."
+    },
+    "helm_classic": {
+      "format": "helm",
+      "serves_modes": [],
+      "notes": "Classic Helm (index.yaml) is NOT announced because no adapter exists."
+    }
+  },
+  "pinned_artifacts": {
+    "oci_image": {
+      "registry": "registry.k8s.io",
+      "repository": "pause",
+      "tag": "3.9",
+      "digest": "sha256:7031c1b283388d2c2e09b57badb803c05ebed362dc88d84b480cc47f72a21097",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "expected_behaviors": {
+        "anonymous_token_auth": "none (public anonymous pull)",
+        "cdn_redirects": "307 cross-origin redirect to regional *.pkg.dev / S3 CDN",
+        "rate_limits": "subject to upstream registry / CDN rate limits"
+      }
+    },
+    "helm_oci_chart": {
+      "registry": "ghcr.io",
+      "repository": "stefanprodan/charts/podinfo",
+      "version": "6.7.0",
+      "manifest_digest": "sha256:104d101017e501c63b3aa71b20d5edd2ca6d5d58cbc57ff8163770110f92b9db",
+      "chart_tgz_sha256": "bd660969295320a5d5328f1b63a7c82a9853c1b7dbc61d0565a162c4f71f5a65",
+      "expected_behaviors": {
+        "anonymous_token_auth": "Bearer realm=https://ghcr.io/token,service=ghcr.io",
+        "cdn_redirects": "optional 302/307 to pkg-containers.githubusercontent.com",
+        "rate_limits": "GitHub Container Registry anonymous pull limits"
+      }
+    }
+  },
+  "clients": [
+    "skopeo",
+    "podman --storage-driver=vfs",
+    "helm"
+  ]
+}

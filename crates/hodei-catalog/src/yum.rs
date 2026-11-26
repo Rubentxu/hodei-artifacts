@@ -605,6 +605,205 @@ pub fn declared_checksum(repomd: &str, location: &str) -> Option<String> {
         .map(|entry| entry.checksum)
 }
 
+/// Routes served by the yum surface in `RepositoryMode::Group`.
+///
+/// A group exposes Hodei's own distribution key (`key.asc`), its
+/// aggregated and signed `repomd.xml` + `repomd.xml.asc`, the content-
+/// addressed `primary.xml.gz`, and `.rpm` package downloads resolved
+/// across its members (`pool/...` or `Packages/...`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupRoute {
+    /// Hodei's distribution public key in ASCII armor (`key.asc`).
+    Key,
+    /// Aggregated `repomd.xml`.
+    Repomd,
+    /// Detached OpenPGP signature over the aggregated `repomd.xml`.
+    RepomdSignature,
+    /// Content-addressed aggregated `primary.xml.gz`.
+    Primary {
+        /// Expected SHA-256 hex digest of the gzipped primary document.
+        checksum: String,
+    },
+    /// Package download path resolved from the winning group member.
+    Package {
+        /// Relative package path (`pool/...` or `Packages/...`).
+        path: String,
+    },
+}
+
+impl GroupRoute {
+    /// Parses a relative path under `/yum/{group}/...`.
+    pub fn parse(rest: &str) -> Result<Self, YumError> {
+        match Route::parse(rest) {
+            Ok(Route::Key) => return Ok(Self::Key),
+            Ok(Route::Repomd) => return Ok(Self::Repomd),
+            Ok(Route::RepomdSignature) => return Ok(Self::RepomdSignature),
+            Ok(Route::Primary { checksum }) => return Ok(Self::Primary { checksum }),
+            Ok(Route::Pool { path }) => return Ok(Self::Package { path }),
+            Err(_) => {}
+        }
+        if rest.starts_with("Packages/") && rest.ends_with(".rpm") && is_safe_upstream_path(rest) {
+            return Ok(Self::Package {
+                path: rest.to_string(),
+            });
+        }
+        Err(YumError::BadIdentity(rest.to_string()))
+    }
+}
+
+/// Primary metadata entry extracted from a `repomd.xml` document.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredPrimary {
+    /// Relative location (`href`) of the primary metadata file.
+    pub location: String,
+    /// Expected SHA-256 hex digest of the compressed file.
+    pub checksum: String,
+    /// Expected SHA-256 hex digest of the uncompressed XML, if declared.
+    pub open_checksum: Option<String>,
+    /// Unix timestamp declared on the primary entry, if any.
+    pub timestamp: Option<u64>,
+}
+
+/// Extracts the `<data type="primary">` entry from a `repomd.xml` document.
+pub fn declared_primary(repomd: &str) -> Option<DeclaredPrimary> {
+    let mut cursor = 0usize;
+    while let Some(offset) = repomd[cursor..].find("<data") {
+        let start = cursor + offset;
+        let head_end = repomd[start..].find('>')? + start + 1;
+        let end = repomd[start..].find("</data>")? + start;
+        cursor = end + "</data>".len();
+        let data_head = &repomd[start..head_end];
+        if attribute_of(data_head, "type").as_deref() != Some("primary") {
+            continue;
+        }
+        let inside = &repomd[head_end..end];
+        let (checksum_head, checksum) = element_of(inside, "checksum")?;
+        if attribute_of(&checksum_head, "type").as_deref() != Some("sha256")
+            || checksum.len() != SHA256_HEX_LENGTH
+            || !checksum.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            continue;
+        }
+        let location = tag_of(inside, "location")?;
+        let href = attribute_of(&location, "href")?;
+        let open_checksum = element_of(inside, "open-checksum").and_then(|(head, val)| {
+            if attribute_of(&head, "type").as_deref() == Some("sha256")
+                && val.len() == SHA256_HEX_LENGTH
+                && val.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                Some(val.to_lowercase())
+            } else {
+                None
+            }
+        });
+        let timestamp =
+            element_of(inside, "timestamp").and_then(|(_, val)| val.parse::<u64>().ok());
+        return Some(DeclaredPrimary {
+            location: href,
+            checksum: checksum.to_lowercase(),
+            open_checksum,
+            timestamp,
+        });
+    }
+    None
+}
+
+/// Canonical RPM NEVRA identity: Name, Epoch, Version, Release, Arch.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Nevra {
+    /// Package name.
+    pub name: String,
+    /// Package epoch (defaults to 0 when omitted in XML).
+    pub epoch: u32,
+    /// Upstream version string.
+    pub version: String,
+    /// Package release string.
+    pub release: String,
+    /// Target architecture (`x86_64`, `noarch`, etc.).
+    pub arch: String,
+}
+
+/// A `<package>` record extracted from `primary.xml` or a `.record` asset.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageEntry {
+    /// Parsed NEVRA identity.
+    pub nevra: Nevra,
+    /// Relative download path (`<location href="..."/>`).
+    pub location: String,
+    /// Complete `<package ...>...</package>` XML element.
+    pub xml: String,
+}
+
+/// Parses `<package ...>...</package>` blocks from a `primary.xml` document
+/// or a standalone `.record` fragment.
+pub fn parse_package_entries(primary_xml: &str) -> Result<Vec<PackageEntry>, YumError> {
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while let Some(offset) = primary_xml[cursor..].find("<package") {
+        let start = cursor + offset;
+        let after_open = &primary_xml[start + "<package".len()..];
+        let next_char = after_open.chars().next();
+        if !matches!(next_char, Some(' ') | Some('>')) {
+            cursor = start + "<package".len();
+            continue;
+        }
+        let Some(rel_end) = primary_xml[start..].find("</package>") else {
+            return Err(YumError::BadContainer(
+                "unterminated <package> element in primary metadata",
+            ));
+        };
+        let end = start + rel_end + "</package>".len();
+        let block = &primary_xml[start..end];
+        cursor = end;
+
+        let (_, name) = element_of(block, "name").ok_or(YumError::MissingField("NAME"))?;
+        let (_, arch) = element_of(block, "arch").ok_or(YumError::MissingField("ARCH"))?;
+        let version_tag = tag_of(block, "version").ok_or(YumError::MissingField("VERSION"))?;
+        let version = attribute_of(&version_tag, "ver").ok_or(YumError::MissingField("VERSION"))?;
+        let release = attribute_of(&version_tag, "rel").ok_or(YumError::MissingField("RELEASE"))?;
+        let epoch = attribute_of(&version_tag, "epoch")
+            .and_then(|e| e.parse::<u32>().ok())
+            .unwrap_or(0);
+        let location_tag = tag_of(block, "location").ok_or(YumError::MissingField("LOCATION"))?;
+        let location =
+            attribute_of(&location_tag, "href").ok_or(YumError::MissingField("LOCATION"))?;
+
+        let mut xml = block.to_string();
+        if !xml.ends_with('\n') {
+            xml.push('\n');
+        }
+        out.push(PackageEntry {
+            nevra: Nevra {
+                name,
+                epoch,
+                version,
+                release,
+                arch,
+            },
+            location,
+            xml,
+        });
+    }
+    Ok(out)
+}
+
+/// Merges package entries from group members in precedence order (index 0 wins).
+///
+/// NEVRA collisions are resolved deterministically by keeping the entry from
+/// the highest-precedence member, and the returned list is sorted by NEVRA
+/// so identical member states always produce byte-identical `primary.xml`.
+pub fn merge_package_entries(members: &[Vec<PackageEntry>]) -> Vec<PackageEntry> {
+    let mut selected = std::collections::BTreeMap::new();
+    for member_entries in members {
+        for entry in member_entries {
+            selected
+                .entry(entry.nevra.clone())
+                .or_insert_with(|| entry.clone());
+        }
+    }
+    selected.into_values().collect()
+}
+
 /// La cabecera de un elemento y su texto: `<checksum type="sha256">abc`.
 fn element_of(text: &str, name: &str) -> Option<(String, String)> {
     let open = format!("<{name}");
@@ -1031,5 +1230,68 @@ mod tests {
             declared_checksum(&document, "repodata/primary.xml.gz"),
             None
         );
+    }
+
+    #[test]
+    fn group_route_accepts_pool_and_packages_and_rejects_traversal() {
+        assert_eq!(GroupRoute::parse("key.asc"), Ok(GroupRoute::Key));
+        assert_eq!(
+            GroupRoute::parse("repodata/repomd.xml"),
+            Ok(GroupRoute::Repomd)
+        );
+        assert_eq!(
+            GroupRoute::parse("repodata/repomd.xml.asc"),
+            Ok(GroupRoute::RepomdSignature)
+        );
+        assert_eq!(
+            GroupRoute::parse("pool/hello-1.0-1.x86_64.rpm"),
+            Ok(GroupRoute::Package {
+                path: "pool/hello-1.0-1.x86_64.rpm".to_string()
+            })
+        );
+        assert_eq!(
+            GroupRoute::parse("Packages/hello-1.0-1.fc40.x86_64.rpm"),
+            Ok(GroupRoute::Package {
+                path: "Packages/hello-1.0-1.fc40.x86_64.rpm".to_string()
+            })
+        );
+        assert!(GroupRoute::parse("Packages/../etc/passwd.rpm").is_err());
+        assert!(GroupRoute::parse("repodata/other.xml").is_err());
+    }
+
+    #[test]
+    fn declared_primary_extracts_primary_entry_and_open_checksum() {
+        let sha = "ab".repeat(32);
+        let open_sha = "cd".repeat(32);
+        let entry = RepodataEntry {
+            kind: "primary",
+            location: &format!("repodata/{sha}-primary.xml.gz"),
+            checksum: &sha,
+            size: 123,
+            open_checksum: &open_sha,
+            open_size: 456,
+            timestamp: 1_700_000_000,
+        };
+        let document = repomd_document(1_700_000_000, &[entry]);
+        let primary = declared_primary(&document).expect("primary entry");
+        assert_eq!(primary.location, format!("repodata/{sha}-primary.xml.gz"));
+        assert_eq!(primary.checksum, sha);
+        assert_eq!(primary.open_checksum, Some(open_sha));
+        assert_eq!(primary.timestamp, Some(1_700_000_000));
+    }
+
+    #[test]
+    fn merge_package_entries_deduplicates_nevra_by_member_precedence() {
+        let first_xml = "<package type=\"rpm\">\n  <name>hello</name>\n  <arch>x86_64</arch>\n  <version ver=\"1.0\" rel=\"1\"/>\n  <checksum type=\"sha256\" pkgid=\"YES\">1111</checksum>\n  <location href=\"pool/hello-1.0-1.x86_64.rpm\"/>\n</package>\n";
+        let second_xml = "<package type=\"rpm\">\n  <name>hello</name>\n  <arch>x86_64</arch>\n  <version epoch=\"0\" ver=\"1.0\" rel=\"1\"/>\n  <checksum type=\"sha256\" pkgid=\"YES\">2222</checksum>\n  <location href=\"Packages/hello-1.0-1.x86_64.rpm\"/>\n</package>\n<package type=\"rpm\">\n  <name>alpha</name>\n  <arch>noarch</arch>\n  <version ver=\"2.0\" rel=\"1\"/>\n  <checksum type=\"sha256\" pkgid=\"YES\">3333</checksum>\n  <location href=\"Packages/alpha-2.0-1.noarch.rpm\"/>\n</package>\n";
+        let first = parse_package_entries(first_xml).expect("first entries");
+        let second = parse_package_entries(second_xml).expect("second entries");
+        let merged = merge_package_entries(&[first, second]);
+        assert_eq!(merged.len(), 2);
+        // Sorted by NEVRA: alpha comes before hello.
+        assert_eq!(merged[0].nevra.name, "alpha");
+        assert_eq!(merged[1].nevra.name, "hello");
+        // First member wins NEVRA collision (even when omitted epoch == epoch="0").
+        assert_eq!(merged[1].location, "pool/hello-1.0-1.x86_64.rpm");
     }
 }

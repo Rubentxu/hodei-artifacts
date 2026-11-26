@@ -57,6 +57,11 @@ pub struct Origin {
 }
 
 impl Origin {
+    /// The canonical origin string (`scheme://authority`).
+    pub fn as_str(&self) -> String {
+        format!("{}://{}", self.scheme, self.authority)
+    }
+
     /// The absolute URL of a path of the deployment.
     ///
     /// The path is a path: a query or a fragment inside it would be a
@@ -143,6 +148,11 @@ impl PublicUrl {
 
         Some(Origin { scheme, authority })
     }
+    /// The configured public base URL, if one was declared.
+    pub fn public_base_url(&self) -> Option<String> {
+        self.base.as_ref().map(Origin::as_str)
+    }
+
     /// Whether the peer of the request is a proxy the deployment trusts.
     fn the_proxy_is_trusted(&self, peer: Option<SocketAddr>) -> bool {
         let Some(peer) = peer else {

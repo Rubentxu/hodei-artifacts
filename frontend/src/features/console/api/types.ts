@@ -51,6 +51,7 @@ export interface FormatCapability {
 /** What can be created. */
 export interface Capabilities {
   formats: FormatCapability[];
+  public_base_url?: string;
 }
 
 /** An asset found by the search. */
@@ -186,6 +187,12 @@ export interface PromotionResult {
   decision_id: string;
   digest: string;
   granted: string[];
+  risk_version?: number;
+}
+
+/** The answer of a revocation. */
+export interface RevokeResult {
+  revoked: number;
 }
 
 /** The body of a creation of a repository. */
@@ -195,4 +202,121 @@ export interface CreateRepositoryBody {
   mode: string;
   region?: string;
   settings?: Record<string, unknown>;
+}
+
+/** The class of an investigation finding. */
+export type InvestigationFindingKind =
+  | 'verified_fact'
+  | 'evidence_backed_claim'
+  | 'inference'
+  | 'uncertainty'
+  | 'recommendation';
+
+/** The verification status of an investigation finding. */
+export type InvestigationVerificationStatus =
+  | 'verified'
+  | 'unverified'
+  | 'contradicted'
+  | 'unverifiable';
+
+/** A finding returned by an investigation report. */
+export interface InvestigationFinding {
+  kind: InvestigationFindingKind;
+  statement: string;
+  citations: string[];
+  status: InvestigationVerificationStatus;
+  basis: string;
+}
+
+/** How much of the available scope was included in the report. */
+export type InvestigationCoverage =
+  | 'complete'
+  | { partial: { omitted: number } };
+
+/** The kind of resource stamped in an investigation read-set. */
+export type InvestigationReadStampKind = 'evidence' | 'relation' | 'policy';
+
+/** A digest-verified stamp of a resource read during investigation. */
+export interface InvestigationReadStamp {
+  kind: InvestigationReadStampKind;
+  resource: string;
+  verified_by: string;
+}
+
+/** The manifest of sources and stamps read during investigation. */
+export interface InvestigationReadSet {
+  generations: Array<[string, number]>;
+  stamps: InvestigationReadStamp[];
+}
+
+/** The request body for `POST /api/v1/investigations`. */
+export interface InvestigationRequest {
+  subject: string;
+  question?: string;
+  max_evidence?: number;
+  max_relations?: number;
+  max_bytes?: number;
+}
+
+/** The versioned report returned by `POST /api/v1/investigations`. */
+export interface InvestigationReport {
+  schema_version: string;
+  subject: string;
+  findings: InvestigationFinding[];
+  coverage: InvestigationCoverage;
+  read_set: InvestigationReadSet;
+}
+
+/** The verdict of an on-demand investigation freshness check. */
+export type InvestigationFreshnessStatus = 'current' | 'stale' | 'unknown';
+
+/** How a referenced item changed when an investigation report is stale. */
+export type InvestigationChangeKind = 'added' | 'removed' | 'gone' | 'changed';
+
+/** A reference that moved since the investigation report was produced. */
+export interface InvestigationChangedReference {
+  source: string;
+  kind: InvestigationReadStampKind;
+  resource: string;
+  evidence: string;
+  what: InvestigationChangeKind;
+}
+
+/** The request body for `POST /api/v1/investigations/freshness`. */
+export interface FreshnessRequest {
+  subject: string;
+  read_set: InvestigationReadSet;
+}
+
+/** The response returned by `POST /api/v1/investigations/freshness`. */
+export interface FreshnessResponse {
+  status: InvestigationFreshnessStatus;
+  changed?: InvestigationChangedReference[];
+  reason?: string;
+}
+
+/**
+ * The quota limits declared by the deployment.
+ *
+ * Unconfigured limits are `null` rather than invented ceilings.
+ */
+export interface QuotaLimits {
+  max_stored_bytes_per_account: number | null;
+  max_concurrent_uploads_per_account: number | null;
+  retry_after_secs: number;
+}
+
+/**
+ * The usage and quota ledger of the caller's own account.
+ *
+ * A deployment without quotas returns `null` for unconfigured limits,
+ * and an account with no uploads yet returns zeros rather than a 404.
+ */
+export interface AccountUsage {
+  account: string;
+  stored_bytes: number;
+  in_flight_bytes: number;
+  active_uploads: number;
+  limits: QuotaLimits;
+  note: string;
 }

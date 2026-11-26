@@ -68,6 +68,9 @@ pub struct Capabilities {
     /// The formats that this release serves, and the modalities of each
     /// one.
     pub formats: Vec<FormatCapability>,
+    /// The canonical public base URL declared by the deployment, when configured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_base_url: Option<String>,
 }
 
 /// What a format admits.
@@ -108,5 +111,8 @@ pub async fn get_capabilities(
                 .collect(),
         })
         .collect();
-    Ok(Json(Capabilities { formats }))
+    Ok(Json(Capabilities {
+        formats,
+        public_base_url: state.public_url.public_base_url(),
+    }))
 }

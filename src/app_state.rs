@@ -224,6 +224,12 @@ pub struct AppState {
     /// La clave con la que el hub firma la metadata de los repositorios
     /// de sistema: el `Release.gpg` de apt y el `repomd.xml.asc` de yum.
     pub(crate) metadata_signer: Arc<dyn crate::openpgp::MetadataSigning>,
+    /// Atomic signed `repodata` snapshots for YUM/DNF group repositories.
+    pub(crate) yum_group_snapshots: Arc<
+        tokio::sync::RwLock<
+            std::collections::HashMap<(String, String), crate::handlers::yum::GroupSnapshotCache>,
+        >,
+    >,
     /// The largest content this service accepts, in bytes.
     ///
     /// A limit that is not written is a limit that is not enforced, and a
@@ -348,6 +354,9 @@ impl AppState {
                 crate::quota::QuotaLimits::default(),
             )),
             metadata_signer: Arc::new(crate::openpgp::bootstrap_signer()),
+            yum_group_snapshots: Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             max_body_size: 10 * 1024 * 1024,
             identity,
             admin_authenticator_configured: true,
@@ -421,6 +430,9 @@ impl AppState {
                 crate::quota::QuotaLimits::default(),
             )),
             metadata_signer: Arc::new(crate::openpgp::bootstrap_signer()),
+            yum_group_snapshots: Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
             max_body_size: 10 * 1024 * 1024,
             identity: Identity::system(),
             admin_authenticator_configured: false,

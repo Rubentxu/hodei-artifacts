@@ -23,6 +23,21 @@ la consola del catálogo. Por eso `/admin/registry` redirige al registro y nunca
 al catálogo. Las rutas de políticas también tienen un único destino: `/policies`
 es un alias histórico y no una segunda implementación.
 
+## Detalle e investigación de artefactos
+
+En `/console/packages/:repository/*`, la identidad del artefacto permanece visible
+mientras se consulta una de las pestañas **Overview**, **Evidence**, **Trust** o
+**Relationships**. La pestaña **Evidence** muestra las dimensiones expuestas por
+la Capsule y permite solicitar una investigación contextual de solo lectura.
+La investigación utiliza el subject HRN canónico entregado por el servicio y
+admite una pregunta opcional; no modifica la confianza ni promueve contenido.
+
+Los resultados separan hechos verificados, afirmaciones respaldadas por evidencia,
+inferencias, incertidumbres y recomendaciones, mostrando el estado, la base y
+las citas de cada hallazgo. Si la cobertura es parcial, la interfaz indica cuántos
+hechos se omitieron y advierte que el informe no es exhaustivo. Si la ruta de
+investigación no está disponible, informa del límite y no simula resultados.
+
 ## Navegación móvil y teclado
 
 El menú móvil se presenta como un `<dialog>` modal nativo. Al abrirse, el foco

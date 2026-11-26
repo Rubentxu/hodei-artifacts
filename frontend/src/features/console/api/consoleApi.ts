@@ -17,13 +17,20 @@ import axios, {
 } from 'axios';
 
 import { useAuthStore } from '@/shared/stores/auth.store';
+import { encodeAssetPath } from '../lib/packageReference';
 import type {
+  AccountUsage,
   Capabilities,
   CreateRepositoryBody,
+  FreshnessRequest,
+  FreshnessResponse,
+  InvestigationReport,
+  InvestigationRequest,
   PackageView,
   PromotionResult,
   RepositoryList,
   RepositorySummary,
+  RevokeResult,
   SearchPage,
 } from './types';
 
@@ -134,6 +141,19 @@ export const capabilities = async (
   return response.data;
 };
 
+/**
+ * The usage and quota limits of the authenticated principal's own account.
+ *
+ * There is no account parameter: the server derives the account from the
+ * verified credential in the Authorization header.
+ */
+export const accountUsage = async (
+  signal?: AbortSignal
+): Promise<AccountUsage> => {
+  const response = await client.get<AccountUsage>('/account/usage', { signal });
+  return response.data;
+};
+
 /** The creation of a repository of the catalog. */
 export const createRepository = async (
   body: CreateRepositoryBody,
@@ -163,7 +183,7 @@ export const packageDetail = async (
   signal?: AbortSignal
 ): Promise<PackageView> => {
   const response = await client.get<PackageView>(
-    `/packages/${encodeURIComponent(repository)}/${thePathOf(path)}`,
+    `/packages/${encodeURIComponent(repository)}/${encodeAssetPath(path)}`,
     { signal }
   );
   return response.data;
@@ -192,8 +212,42 @@ export const promote = async (
 export const revoke = async (
   body: RevokeBody,
   signal?: AbortSignal
-): Promise<unknown> => {
-  const response = await client.post('/promotions/revoke', body, { signal });
+): Promise<RevokeResult> => {
+  const response = await client.post<RevokeResult>('/promotions/revoke', body, {
+    signal,
+  });
+  return response.data;
+};
+
+/**
+ * A read-only investigation of an artefact.
+ *
+ * The subject is the canonical HRN provided by the service, and the
+ * question is optional and bounded. Nothing is written or promoted.
+ */
+export const investigate = async (
+  body: InvestigationRequest
+): Promise<InvestigationReport> => {
+  const response = await client.post<InvestigationReport>(
+    '/investigations',
+    body
+  );
+  return response.data;
+};
+
+/**
+ * On-demand freshness verification of an investigation report.
+ *
+ * Sends the report's original `subject` and `read_set` verbatim without
+ * mutating or reconstructing them. Nothing is written or invalidated.
+ */
+export const investigateFreshness = async (
+  body: FreshnessRequest
+): Promise<FreshnessResponse> => {
+  const response = await client.post<FreshnessResponse>(
+    '/investigations/freshness',
+    body
+  );
   return response.data;
 };
 
@@ -210,22 +264,8 @@ export const downloadAsset = async (
   signal?: AbortSignal
 ): Promise<Blob> => {
   const response = await content.get(
-    `/repository/${encodeURIComponent(repository)}/${thePathOf(path)}`,
+    `/repository/${encodeURIComponent(repository)}/${encodeAssetPath(path)}`,
     { responseType: 'blob', signal }
   );
   return response.data as Blob;
 };
-
-/**
- * The path of an asset, with its slashes.
- *
- * The route is a wildcard: the path names the content inside the
- * repository, and the slashes are part of that name. Each segment is
- * escaped on its own, so a segment cannot escape its own place.
- */
-const thePathOf = (path: string): string =>
-  path
-    .split('/')
-    .filter(segment => segment.length > 0)
-    .map(segment => encodeURIComponent(segment))
-    .join('/');

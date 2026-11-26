@@ -544,6 +544,30 @@ impl ProxyFetcher {
         user: &str,
         password: &Secret,
     ) -> Result<Opened, FetchError> {
+        let credential = TheCredential {
+            kind: TheCredentialKind::Basic { user, password },
+            origin: credential_origin,
+        };
+        self.open_token_request(upstream, url, Some(&credential))
+            .await
+    }
+
+    /// Opens a token endpoint request without Basic credentials for anonymous
+    /// bearer token exchange against a declared public registry realm.
+    pub async fn open_anonymous_token(
+        &self,
+        upstream: &UpstreamConfig,
+        url: Url,
+    ) -> Result<Opened, FetchError> {
+        self.open_token_request(upstream, url, None).await
+    }
+
+    async fn open_token_request(
+        &self,
+        upstream: &UpstreamConfig,
+        url: Url,
+        credential: Option<&TheCredential<'_>>,
+    ) -> Result<Opened, FetchError> {
         if self.offline {
             return Err(FetchError::Offline);
         }
@@ -557,10 +581,6 @@ impl ProxyFetcher {
             .max_bytes
             .map_or(self.limits.max_bytes, |own| own.min(self.limits.max_bytes));
         let upstream_origin = upstream.origin();
-        let credential = TheCredential {
-            kind: TheCredentialKind::Basic { user, password },
-            origin: credential_origin,
-        };
         let response = self
             .hop(
                 &upstream_origin,
@@ -568,7 +588,7 @@ impl ProxyFetcher {
                 deadline,
                 Some("application/json"),
                 None,
-                Some(&credential),
+                credential,
             )
             .await?;
         let status = response.status().as_u16();

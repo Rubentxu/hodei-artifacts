@@ -20,6 +20,8 @@
 //! declara antes de servirlo. Un proxy no reconstruye el repodata ajeno:
 //! lo que se firma es lo que se sirve.
 
+use std::collections::{HashMap, VecDeque};
+
 use axum::{
     body::Body,
     extract::{OriginalUri, State},
@@ -28,7 +30,7 @@ use axum::{
 };
 use hodei_catalog::{
     PackageCoordinates, RepositoryDescriptor, RepositoryFormat, RepositoryMode, UpstreamConfig,
-    yum::{self, Route, UpstreamRoute, YumError},
+    yum::{self, GroupRoute, PackageEntry, Route, UpstreamRoute, YumError},
 };
 use serde_json::json;
 use sha2::Digest as _;
@@ -126,6 +128,18 @@ pub async fn handle(
     // ajeno, y un repositorio alojado no sirve el layout de un upstream.
     if repository.mode == RepositoryMode::Proxy {
         return proxy(
+            &state,
+            &context,
+            &repository,
+            &rest,
+            &method,
+            &headers,
+            &correlation,
+        )
+        .await;
+    }
+    if repository.mode == RepositoryMode::Group {
+        return group(
             &state,
             &context,
             &repository,
@@ -542,6 +556,522 @@ async fn the_cached_repomd(
         .await
         .map_err(|error| the_blob_error(&error))?;
     Ok(String::from_utf8(bytes.to_vec()).ok())
+}
+
+// ---------------------------------------------------------------------------
+// Group
+// ---------------------------------------------------------------------------
+
+const MAX_RECENT_PRIMARIES: usize = 8;
+
+/// Atomic, signed `repodata` snapshot for a YUM/DNF group repository.
+#[derive(Clone)]
+struct GroupSnapshot {
+    config_version: u64,
+    member_keys: Vec<String>,
+    primary_sha: String,
+    primary_gz: Vec<u8>,
+    repomd_xml: Vec<u8>,
+    repomd_asc: Vec<u8>,
+}
+
+/// Per-group snapshot state stored on `AppState` so `repomd.xml`,
+/// `repomd.xml.asc`, and `{sha256}-primary.xml.gz` never mix generations.
+#[derive(Default)]
+pub(crate) struct GroupSnapshotCache {
+    current: Option<GroupSnapshot>,
+    recent_primaries: VecDeque<(String, Vec<u8>)>,
+}
+
+/// Handles `/yum/{group}/...` for `RepositoryMode::Group`.
+///
+/// A group aggregates admitted packages from its members in precedence order,
+/// generates a deterministic `primary.xml.gz` and `repomd.xml`, signs
+/// `repomd.xml.asc` with Hodei's own distribution key (`state.metadata_signer`),
+/// and serves `key.asc` from Hodei (never an upstream key).
+async fn group(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    rest: &str,
+    method: &Method,
+    headers: &HeaderMap,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let head = head_of(method);
+    if !head && method != Method::GET {
+        return Err(
+            RawApiError::MethodNotAllowed("a group repository does not accept uploads").into(),
+        );
+    }
+    let route = GroupRoute::parse(rest)?;
+    match route {
+        GroupRoute::Key => {
+            the_decision(state, context, crate::actions::download_asset(), repository)?;
+            let document = state.metadata_signer.key_asc().map_err(|error| {
+                Failure::plain(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &format!("the yum key document could not be produced: {error}"),
+                )
+            })?;
+            Ok(serve_system_bytes(
+                document.into_bytes(),
+                "application/pgp-keys",
+                headers,
+                head,
+                correlation,
+            )?)
+        }
+        GroupRoute::Repomd => {
+            the_decision(state, context, crate::actions::download_asset(), repository)?;
+            let snapshot =
+                build_and_publish_group_snapshot(state, context, repository, correlation).await?;
+            Ok(serve_system_bytes(
+                snapshot.repomd_xml,
+                "application/xml",
+                headers,
+                head,
+                correlation,
+            )?)
+        }
+        GroupRoute::RepomdSignature => {
+            the_decision(state, context, crate::actions::download_asset(), repository)?;
+            let snapshot = match cached_group_snapshot(state, context, repository).await? {
+                Some(snapshot) => snapshot,
+                None => {
+                    build_and_publish_group_snapshot(state, context, repository, correlation)
+                        .await?
+                }
+            };
+            Ok(serve_system_bytes(
+                snapshot.repomd_asc,
+                "application/pgp-signature",
+                headers,
+                head,
+                correlation,
+            )?)
+        }
+        GroupRoute::Primary { checksum } => {
+            the_decision(state, context, crate::actions::download_asset(), repository)?;
+            let gz = get_group_primary(state, context, repository, &checksum, correlation).await?;
+            Ok(serve_system_bytes(
+                gz,
+                "application/x-gzip",
+                headers,
+                head,
+                correlation,
+            )?)
+        }
+        GroupRoute::Package { path } => {
+            let outcome = read_rpm(state, context, repository, &path, head, correlation).await;
+            record_read(
+                state,
+                context,
+                &repository.repo_key,
+                &path,
+                &outcome,
+                correlation,
+            );
+            outcome
+        }
+    }
+}
+
+async fn cached_group_snapshot(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+) -> Result<Option<GroupSnapshot>, Failure> {
+    let account = context.account().as_str();
+    let leaves = match super::raw_group::the_leaves(state, context, repository).await {
+        Ok(leaves) => leaves,
+        Err(error) => {
+            invalidate_group_snapshot(state, account, &repository.repo_key).await;
+            return Err(error.into());
+        }
+    };
+    let member_keys: Vec<String> = leaves
+        .iter()
+        .map(|member| member.repo_key.clone())
+        .collect();
+    let cache = state.yum_group_snapshots.read().await;
+    Ok(cache
+        .get(&(account.to_string(), repository.repo_key.clone()))
+        .and_then(|entry| entry.current.as_ref())
+        .filter(|snapshot| {
+            snapshot.config_version == repository.config.version
+                && snapshot.member_keys == member_keys
+        })
+        .cloned())
+}
+
+async fn invalidate_group_snapshot(state: &AppState, account: &str, group_key: &str) {
+    let mut cache = state.yum_group_snapshots.write().await;
+    cache.remove(&(account.to_string(), group_key.to_string()));
+}
+
+async fn build_and_publish_group_snapshot(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    correlation: &str,
+) -> Result<GroupSnapshot, Failure> {
+    let account = context.account().as_str();
+    let leaves = match super::raw_group::the_leaves(state, context, repository).await {
+        Ok(leaves) => leaves,
+        Err(error) => {
+            invalidate_group_snapshot(state, account, &repository.repo_key).await;
+            return Err(error.into());
+        }
+    };
+    let member_keys: Vec<String> = leaves.iter().map(|m| m.repo_key.clone()).collect();
+    let mut member_entries = Vec::with_capacity(leaves.len());
+    let mut max_timestamp = repository.created_at.timestamp().max(0) as u64;
+
+    for member in &leaves {
+        let collected = match member.mode {
+            RepositoryMode::Hosted => collect_hosted_entries(state, context, member).await,
+            RepositoryMode::Proxy => {
+                collect_proxy_entries(state, context, member, correlation).await
+            }
+            RepositoryMode::Group => Err(Failure::Raw(RawApiError::Unavailable)),
+        };
+        match collected {
+            Ok((entries, member_ts)) => {
+                max_timestamp = max_timestamp.max(member_ts);
+                member_entries.push(entries);
+            }
+            Err(error) => {
+                // Fail closed on unavailable origin, trust rejection, or corrupt metadata:
+                // invalidate any previously cached snapshot so stale/partial state is never served.
+                invalidate_group_snapshot(state, account, &repository.repo_key).await;
+                return Err(error);
+            }
+        }
+    }
+
+    let merged = yum::merge_package_entries(&member_entries);
+    let bodies: Vec<&str> = merged.iter().map(|entry| entry.xml.as_str()).collect();
+    let document = yum::primary_document(&bodies).into_bytes();
+    let gz = gzip_bytes(&document)?;
+
+    let gz_sha = hex_of(&sha2::Sha256::digest(&gz));
+    let xml_sha = hex_of(&sha2::Sha256::digest(&document));
+    let entry = yum::RepodataEntry {
+        kind: "primary",
+        location: &yum::primary_location(&gz_sha),
+        checksum: &gz_sha,
+        size: gz.len() as u64,
+        open_checksum: &xml_sha,
+        open_size: document.len() as u64,
+        timestamp: max_timestamp,
+    };
+    let repomd_xml = yum::repomd_document(max_timestamp, &[entry]).into_bytes();
+    let repomd_asc = match state.metadata_signer.sign_detached(&repomd_xml) {
+        Ok(sig) => sig,
+        Err(error) => {
+            invalidate_group_snapshot(state, account, &repository.repo_key).await;
+            return Err(Failure::plain(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("the repomd could not be signed: {error}"),
+            ));
+        }
+    };
+
+    let snapshot = GroupSnapshot {
+        config_version: repository.config.version,
+        member_keys: member_keys.clone(),
+        primary_sha: gz_sha.clone(),
+        primary_gz: gz.clone(),
+        repomd_xml,
+        repomd_asc,
+    };
+
+    let mut cache = state.yum_group_snapshots.write().await;
+    let entry_cache = cache
+        .entry((account.to_string(), repository.repo_key.clone()))
+        .or_default();
+    if let Some(prev) = &entry_cache.current
+        && (prev.config_version != snapshot.config_version
+            || prev.member_keys != snapshot.member_keys)
+    {
+        entry_cache.recent_primaries.clear();
+    }
+    if !entry_cache
+        .recent_primaries
+        .iter()
+        .any(|(sha, _)| sha == &gz_sha)
+    {
+        if entry_cache.recent_primaries.len() >= MAX_RECENT_PRIMARIES {
+            entry_cache.recent_primaries.pop_front();
+        }
+        entry_cache.recent_primaries.push_back((gz_sha, gz));
+    }
+    entry_cache.current = Some(snapshot.clone());
+
+    Ok(snapshot)
+}
+
+async fn get_group_primary(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    checksum: &str,
+    correlation: &str,
+) -> Result<Vec<u8>, Failure> {
+    let account = context.account().as_str();
+    let leaves = match super::raw_group::the_leaves(state, context, repository).await {
+        Ok(leaves) => leaves,
+        Err(error) => {
+            invalidate_group_snapshot(state, account, &repository.repo_key).await;
+            return Err(error.into());
+        }
+    };
+    let member_keys: Vec<String> = leaves.iter().map(|m| m.repo_key.clone()).collect();
+    {
+        let cache = state.yum_group_snapshots.read().await;
+        if let Some(entry_cache) = cache.get(&(account.to_string(), repository.repo_key.clone()))
+            && let Some(current) = &entry_cache.current
+            && current.config_version == repository.config.version
+            && current.member_keys == member_keys
+        {
+            if current.primary_sha == checksum {
+                return Ok(current.primary_gz.clone());
+            }
+            if let Some((_, gz)) = entry_cache
+                .recent_primaries
+                .iter()
+                .find(|(sha, _)| sha == checksum)
+            {
+                return Ok(gz.clone());
+            }
+        }
+    }
+
+    let snapshot =
+        build_and_publish_group_snapshot(state, context, repository, correlation).await?;
+    if snapshot.primary_sha == checksum {
+        Ok(snapshot.primary_gz)
+    } else {
+        Err(RawApiError::NotFound.into())
+    }
+}
+
+async fn collect_hosted_entries(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+) -> Result<(Vec<PackageEntry>, u64), Failure> {
+    let account = context.account().as_str();
+    let (reader, _) = the_catalog(state)?;
+    let store = the_content_store(state)?;
+    let found = reader
+        .assets_under(account, &member.repo_key, "pool/")
+        .await
+        .map_err(|error| Failure::from(the_publication_error(&error)))?;
+
+    let mut rpm_assets = HashMap::new();
+    let mut record_assets = Vec::new();
+    for asset in found {
+        if asset.asset_path.ends_with(".record") {
+            record_assets.push(asset);
+        } else if asset.asset_path.ends_with(".rpm") {
+            rpm_assets.insert(asset.asset_path.clone(), asset);
+        }
+    }
+
+    let mut entries = Vec::new();
+    let mut max_ts = 0u64;
+    for record_asset in record_assets {
+        let Some(rpm_path) = record_asset.asset_path.strip_suffix(".record") else {
+            continue;
+        };
+        let Some(rpm_asset) = rpm_assets.get(rpm_path) else {
+            continue;
+        };
+        if crate::trust::admit(state, account, member, &rpm_asset.digest)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let bytes = store
+            .get(&record_asset.digest)
+            .await
+            .map_err(|error| the_blob_error(&error))?;
+        let body = String::from_utf8(bytes.to_vec()).map_err(|_| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "a stored index record is not valid text",
+            )
+        })?;
+        entries.extend(yum::parse_package_entries(&body)?);
+        max_ts = max_ts.max(record_asset.updated_at.timestamp().max(0) as u64);
+    }
+    Ok((entries, max_ts))
+}
+
+async fn collect_proxy_entries(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+    correlation: &str,
+) -> Result<(Vec<PackageEntry>, u64), Failure> {
+    let account = context.account().as_str();
+    let upstream = the_upstream(member)?;
+    let repomd_path = "repodata/repomd.xml";
+    let repomd_url = upstream.target(repomd_path).ok_or(RawApiError::NotFound)?;
+    let repomd_served = super::raw::the_proxy_asset_at(
+        state,
+        context,
+        member,
+        repomd_path,
+        Some(repomd_url),
+        Some("application/xml"),
+        correlation,
+    )
+    .await?;
+    crate::trust::admit(state, account, member, &repomd_served.asset.digest)
+        .await
+        .map_err(the_admission_error)?;
+
+    let store = the_content_store(state)?;
+    let repomd_bytes = store
+        .get(&repomd_served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    let upstream_key = upstream.gpg_key_armor.as_deref().ok_or_else(|| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream signing key is not configured",
+        )
+    })?;
+    let signature_path = "repodata/repomd.xml.asc";
+    let signature_url = upstream
+        .target(signature_path)
+        .ok_or(RawApiError::NotFound)?;
+    let signature_served = super::raw::the_proxy_asset_at(
+        state,
+        context,
+        member,
+        signature_path,
+        Some(signature_url),
+        Some("application/pgp-signature"),
+        correlation,
+    )
+    .await?;
+    crate::trust::admit(state, account, member, &signature_served.asset.digest)
+        .await
+        .map_err(the_admission_error)?;
+    let signature_bytes = store
+        .get(&signature_served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    crate::openpgp::MetadataSigner::verify_detached(&repomd_bytes, &signature_bytes, upstream_key)
+        .map_err(|_| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "the upstream repomd.xml signature is invalid",
+            )
+        })?;
+    let repomd_str = String::from_utf8(repomd_bytes.to_vec()).map_err(|_| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream repomd.xml is not valid UTF-8",
+        )
+    })?;
+
+    let primary = yum::declared_primary(&repomd_str).ok_or_else(|| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream repomd.xml lacks a primary metadata entry",
+        )
+    })?;
+    if let Some(name_sha) = yum::checksum_of_name(&primary.location)
+        && name_sha != primary.checksum
+    {
+        return Err(Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream primary metadata checksum conflicts with its filename",
+        ));
+    }
+
+    let primary_url = upstream
+        .target(&primary.location)
+        .ok_or(RawApiError::NotFound)?;
+    let primary_served = super::raw::the_proxy_asset_at(
+        state,
+        context,
+        member,
+        &primary.location,
+        Some(primary_url),
+        Some(content_type_of(&primary.location)),
+        correlation,
+    )
+    .await?;
+    crate::trust::admit(state, account, member, &primary_served.asset.digest)
+        .await
+        .map_err(the_admission_error)?;
+
+    let primary_bytes = store
+        .get(&primary_served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    if hex_of(sha2::Sha256::digest(&primary_bytes).as_slice()) != primary.checksum {
+        return Err(Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream primary metadata does not match the checksum it declares",
+        ));
+    }
+
+    let xml_bytes = if primary.location.ends_with(".gz") {
+        gunzip_bytes(&primary_bytes)?
+    } else {
+        primary_bytes.to_vec()
+    };
+    if let Some(open_sha) = &primary.open_checksum
+        && hex_of(sha2::Sha256::digest(&xml_bytes).as_slice()) != *open_sha
+    {
+        return Err(Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream primary metadata does not match the open-checksum it declares",
+        ));
+    }
+    let xml_str = String::from_utf8(xml_bytes).map_err(|_| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream primary metadata is not valid UTF-8",
+        )
+    })?;
+    let entries = yum::parse_package_entries(&xml_str)?;
+    let ts = primary
+        .timestamp
+        .unwrap_or_else(|| primary_served.asset.updated_at.timestamp().max(0) as u64);
+    Ok((entries, ts))
+}
+
+fn gzip_bytes(bytes: &[u8]) -> Result<Vec<u8>, Failure> {
+    use std::io::Write as _;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(bytes)
+        .map_err(|_| Failure::plain(StatusCode::INTERNAL_SERVER_ERROR, "the gzip failed"))?;
+    encoder
+        .finish()
+        .map_err(|_| Failure::plain(StatusCode::INTERNAL_SERVER_ERROR, "the gzip failed"))
+}
+
+fn gunzip_bytes(bytes: &[u8]) -> Result<Vec<u8>, Failure> {
+    use std::io::Read as _;
+    let mut decoder = flate2::read::GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).map_err(|_| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream primary metadata gzip could not be decoded",
+        )
+    })?;
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------
