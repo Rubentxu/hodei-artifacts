@@ -723,3 +723,15 @@ async fn the_real_user_authenticator_rejects_a_publisher_credential() {
         "a publisher credential is not a user credential"
     );
 }
+
+#[tokio::test]
+async fn a_configured_leeway_is_capped() {
+    let rig = rig_with(PublisherSettings {
+        leeway: Duration::from_secs(86_400),
+        ..PublisherSettings::default()
+    })
+    .await;
+    let mut expired = claims(&rig.issuer.url());
+    expired["exp"] = json!(now() - 3600);
+    denied(exchange(&rig, &sign(&expired)).await, "token_not_trusted");
+}
