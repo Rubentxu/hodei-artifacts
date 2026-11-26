@@ -150,11 +150,13 @@ export const createRepository = async (
 };
 
 /** A page of the search of the catalog. */
+
 export const search = async (
   params: SearchParams,
   signal?: AbortSignal
 ): Promise<SearchPage> => {
   const response = await client.get<SearchPage>('/search', { params, signal });
+
   return response.data;
 };
 
@@ -195,11 +197,9 @@ export const revoke = async (
   body: RevokeBody,
   signal?: AbortSignal
 ): Promise<RevokeResult> => {
-  const response = await client.post<RevokeResult>(
-    '/promotions/revoke',
-    body,
-    { signal }
-  );
+  const response = await client.post<RevokeResult>('/promotions/revoke', body, {
+    signal,
+  });
   return response.data;
 };
 

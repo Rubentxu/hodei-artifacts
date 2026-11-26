@@ -15,9 +15,8 @@
  * bytes from the content surface with the credential of the person, and
  * not from a link with the credential inside it.
  */
-
 import { useEffect, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Check,
@@ -35,17 +34,29 @@ import { Input } from '@/components/ui/Input';
 import { Spinner } from '@/components/ui/Spinner';
 
 import { failureOf, theReasonsOf } from '../api/errors';
+
 import { downloadAsset } from '../api/consoleApi';
-import type { TrustState } from '../api/types';
+import type { PackageView, TrustDimension, TrustState } from '../api/types';
 import { usePackage, usePromote, useRevoke } from '../hooks/useConsole';
 import {
   buildCanonicalReference,
   buildShareablePackageUrl,
   digestsMatch,
+  encodeAssetPath,
   formatDigest,
 } from '../lib/packageReference';
+
 import { ConfirmDialog } from './ConfirmDialog';
 import { FailureNotice } from './FailureNotice';
+
+type PackageTab = 'overview' | 'evidence' | 'trust' | 'relationships';
+
+const PACKAGE_TABS: ReadonlyArray<{ id: PackageTab; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'evidence', label: 'Evidence' },
+  { id: 'trust', label: 'Trust' },
+  { id: 'relationships', label: 'Relationships' },
+];
 
 /** The label of a trust state. */
 const TRUST_LABELS: Record<TrustState, string> = {
@@ -57,6 +68,73 @@ const TRUST_LABELS: Record<TrustState, string> = {
 const TRUST_VARIANT: Record<TrustState, 'warning' | 'success'> = {
   quarantined: 'warning',
   trusted: 'success',
+};
+
+/**
+ * Only explicitly verified/satisfied dimension states may render as green.
+ * Missing, unverified, indeterminate, or unknown states never appear as
+ * satisfactory.
+ */
+const SATISFACTORY_DIMENSION_STATES = new Set([
+  'verified',
+  'valid',
+  'satisfied',
+  'pass',
+  'passed',
+]);
+
+const FAILED_DIMENSION_STATES = new Set([
+  'failed',
+  'invalid',
+  'revoked',
+  'compromised',
+  'rejected',
+  'denied',
+  'error',
+]);
+
+const NON_PASSING_WARNING_STATES = new Set([
+  'missing',
+  'unverified',
+  'indeterminate',
+  'unknown',
+  'absent',
+  'pending',
+]);
+
+const dimensionBadgeVariant = (
+  state: string
+): 'success' | 'danger' | 'warning' | 'default' => {
+  const normalized = state.trim().toLowerCase();
+  if (SATISFACTORY_DIMENSION_STATES.has(normalized)) return 'success';
+  if (FAILED_DIMENSION_STATES.has(normalized)) return 'danger';
+  if (NON_PASSING_WARNING_STATES.has(normalized)) return 'warning';
+  return 'default';
+};
+
+const packageRouteOf = (
+  repository: string,
+  assetPath: string
+): string | null => {
+  const trimmedRepo = repository.trim();
+  const encodedPath = encodeAssetPath(assetPath.trim());
+  if (trimmedRepo.length === 0 || encodedPath.length === 0) {
+    return null;
+  }
+  return `/console/packages/${encodeURIComponent(trimmedRepo)}/${encodedPath}`;
+};
+
+/** Render an opaque evidence item without dropping or inventing fields. */
+const formatEvidenceItem = (item: unknown): string => {
+  if (typeof item === 'string') return item;
+  if (typeof item === 'number' || typeof item === 'boolean') {
+    return String(item);
+  }
+  try {
+    return JSON.stringify(item, null, 2);
+  } catch {
+    return String(item);
+  }
 };
 
 /** The bytes, in the unit that reads well. */
@@ -118,6 +196,7 @@ export const PackageDetailView = ({
   const detail = usePackage(repository, path);
   const promote = usePromote();
   const revoke = useRevoke();
+  const [activeTab, setActiveTab] = useState<PackageTab>('overview');
   const [promoting, setPromoting] = useState(false);
   const [revoking, setRevoking] = useState(false);
   const [reason, setReason] = useState('');
@@ -164,8 +243,8 @@ export const PackageDetailView = ({
   if (!asset) return null;
 
   const digest = formatDigest(asset.digest);
+
   const blobDigest = formatDigest(asset.blob.digest);
-  const publishedDigest = formatDigest(asset.published.digest);
   const hasDigestMismatch =
     pinnedDigest.trim().length > 0 && !digestsMatch(pinnedDigest, asset.digest);
   const canonicalReference = buildCanonicalReference(
@@ -345,19 +424,16 @@ export const PackageDetailView = ({
               Content changed: this path no longer matches the expected digest
             </p>
             <p className="text-amber-900">
-              Repository paths are mutable and can be updated to point to new
-              bytes. Verify the digest before trusting or downloading this
-              artifact.
+              Repository paths are mutable. Verify the digest before trusting or
+              downloading this artifact.
             </p>
             <dl className="mt-1 grid gap-1 text-xs">
-              <div className="flex flex-wrap gap-2">
-                <dt className="font-medium">Expected digest:</dt>
-                <dd className="break-all font-mono">{pinnedDigest.trim()}</dd>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <dt className="font-medium">Current digest:</dt>
-                <dd className="break-all font-mono">{digest}</dd>
-              </div>
+              <TheFact
+                label="Expected digest"
+                value={pinnedDigest.trim()}
+                mono
+              />
+              <TheFact label="Current digest" value={digest} mono />
             </dl>
           </div>
         </div>
@@ -410,147 +486,73 @@ export const PackageDetailView = ({
             )}
           </dl>
           <p className="mt-3 text-xs text-gray-500">
-            The repository path is a mutable coordinate; the digest identifies
-            the exact content bytes. Shareable links pin the expected digest and
-            never include credentials.
+            The path is mutable; the digest identifies the exact bytes.
+            Shareable links pin the digest and never include credentials.
           </p>
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Trust decision</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {asset.trust.decision ? (
-            <dl className="grid gap-3 md:grid-cols-3">
-              <TheFact
-                label="Decision ID"
-                value={asset.trust.decision.decision_id}
-                mono
-              />
-              <TheFact label="Granted by" value={asset.trust.decision.actor} />
-              <TheFact
-                label="Granted at"
-                value={theMoment(asset.trust.decision.granted_at)}
-              />
-            </dl>
-          ) : (
-            <p className="text-sm text-gray-500">
-              No active trust grant decision.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+      <div
+        role="tablist"
+        aria-label="Package detail sections"
+        className="flex gap-1 overflow-x-auto border-b border-gray-200"
+        onKeyDown={event => {
+          const currentIndex = PACKAGE_TABS.findIndex(
+            tab => tab.id === activeTab
+          );
+          const nextIndex =
+            event.key === 'ArrowRight'
+              ? (currentIndex + 1) % PACKAGE_TABS.length
+              : event.key === 'ArrowLeft'
+                ? (currentIndex - 1 + PACKAGE_TABS.length) % PACKAGE_TABS.length
+                : event.key === 'Home'
+                  ? 0
+                  : event.key === 'End'
+                    ? PACKAGE_TABS.length - 1
+                    : -1;
+          if (nextIndex >= 0) {
+            event.preventDefault();
+            const nextTab = PACKAGE_TABS[nextIndex];
+            setActiveTab(nextTab.id);
+            document.getElementById(`tab-${nextTab.id}`)?.focus();
+          }
+        }}
+      >
+        {PACKAGE_TABS.map(tab => {
+          const isSelected = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              id={`tab-${tab.id}`}
+              aria-selected={isSelected}
+              tabIndex={isSelected ? 0 : -1}
+              onClick={() => setActiveTab(tab.id)}
+              className={
+                isSelected
+                  ? 'shrink-0 border-b-2 border-blue-700 px-4 py-2 text-sm font-medium text-blue-700'
+                  : 'shrink-0 border-b-2 border-transparent px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900'
+              }
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Publication</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-3 md:grid-cols-2">
-            <TheFact
-              label="Published"
-              value={theMoment(asset.published.published_at)}
-            />
-            {(asset.published.package_name !== asset.package_name ||
-              asset.published.package_version !== asset.package_version) && (
-              <TheFact
-                label="Published package"
-                value={`${asset.published.package_name} ${asset.published.package_version}`}
-              />
-            )}
-            {publishedDigest !== digest && (
-              <TheFact label="Published digest" value={publishedDigest} mono />
-            )}
-            {asset.published.size_bytes !== asset.size_bytes && (
-              <TheFact
-                label="Published size"
-                value={theSize(asset.published.size_bytes)}
-              />
-            )}
-          </dl>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Trust profile</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <p className="text-sm text-gray-600">
-            The profile is the reading of the evidence, dimension by dimension.
-            A dimension without evidence is not satisfied, and it is not read as
-            a favourable one.
-          </p>
-          {asset.capsule.profile.dimensions.length === 0 ? (
-            <p className="text-sm text-gray-500">
-              There is no evidence about this content yet.
-            </p>
-          ) : (
-            <ul className="flex flex-col divide-y divide-gray-100">
-              {asset.capsule.profile.dimensions.map(dimension => (
-                <li
-                  key={dimension.name}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2"
-                >
-                  <span className="text-sm text-gray-800">
-                    {dimension.name}
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="text-xs text-gray-600">
-                      {dimension.state}
-                    </span>
-                    {dimension.reason && (
-                      <span className="text-xs text-gray-500">
-                        {dimension.reason}
-                      </span>
-                    )}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Lineage</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-3">
-          <TheFact
-            label="Subject"
-            value={
-              asset.lineage.subject
-                ? `${asset.lineage.subject.algorithm}:${asset.lineage.subject.value}`
-                : 'It does not hang from anything'
-            }
-            mono
-          />
-          {asset.lineage.referrers.length === 0 ? (
-            <p className="text-sm text-gray-500">
-              Nothing hangs from this manifest.
-            </p>
-          ) : (
-            <ul className="flex flex-col divide-y divide-gray-100">
-              {asset.lineage.referrers.map(referrer => (
-                <li
-                  key={referrer.asset_path}
-                  className="flex flex-wrap items-center justify-between gap-2 py-2"
-                >
-                  <span className="text-sm text-gray-800">
-                    {referrer.asset_path}
-                  </span>
-                  <span className="text-xs text-gray-500">
-                    {theSize(referrer.size_bytes)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <div
+        role="tabpanel"
+        id={`panel-${activeTab}`}
+        aria-labelledby={`tab-${activeTab}`}
+        tabIndex={0}
+        className="flex flex-col gap-6"
+      >
+        {activeTab === 'overview' && <OverviewTab asset={asset} />}
+        {activeTab === 'evidence' && <EvidenceTab asset={asset} />}
+        {activeTab === 'trust' && <TrustTab asset={asset} />}
+        {activeTab === 'relationships' && <RelationshipsTab asset={asset} />}
+      </div>
 
       <ConfirmDialog
         open={promoting}
@@ -655,7 +657,10 @@ export const PackageDetailView = ({
               const currentDecisionId = latest.isError
                 ? undefined
                 : latest.data?.trust.decision?.decision_id;
-              if (!currentDecisionId || currentDecisionId !== trimmedDecisionId) {
+              if (
+                !currentDecisionId ||
+                currentDecisionId !== trimmedDecisionId
+              ) {
                 setRevokeRefusal(
                   'The trust decision changed. Reopen the dialog before revoking.'
                 );
@@ -705,6 +710,7 @@ export const PackageDetailView = ({
               />
             )}
           </dl>
+
           <Input
             label="Reason"
             value={reason}
@@ -768,6 +774,310 @@ export const PackageDetailView = ({
         </div>
       </ConfirmDialog>
     </div>
+  );
+};
+
+const OverviewTab = ({ asset }: { asset: PackageView }) => (
+  <Card>
+    <CardHeader>
+      <CardTitle>Publication</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <dl className="grid gap-3 md:grid-cols-2">
+        <TheFact
+          label="Published"
+          value={theMoment(asset.published.published_at)}
+        />
+        {(asset.published.package_name !== asset.package_name ||
+          asset.published.package_version !== asset.package_version) && (
+          <TheFact
+            label="Published package"
+            value={`${asset.published.package_name} ${asset.published.package_version}`}
+          />
+        )}
+        {formatDigest(asset.published.digest) !==
+          formatDigest(asset.digest) && (
+          <TheFact
+            label="Published digest"
+            value={formatDigest(asset.published.digest)}
+            mono
+          />
+        )}
+        {asset.published.size_bytes !== asset.size_bytes && (
+          <TheFact
+            label="Published size"
+            value={theSize(asset.published.size_bytes)}
+          />
+        )}
+      </dl>
+    </CardContent>
+  </Card>
+);
+
+const EvidenceTab = ({ asset }: { asset: PackageView }) => {
+  const { capsule } = asset;
+  const { subject: hrn, dimensions } = capsule.profile;
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Capsule metadata</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <p className="text-sm text-gray-600">
+            Evidence reflects individual verification dimensions recorded in the
+            capsule. It is distinct from distribution trust, which requires an
+            explicit grant decision. Evidence items are opaque values; this API
+            exposes no package route for them, so related-artifact navigation is
+            available only for resolvable referrers in Relationships.
+          </p>
+          <dl className="grid gap-3 md:grid-cols-2">
+            <TheFact label="Capsule subject" value={capsule.subject} mono />
+            <TheFact label="Capsule version" value={capsule.version} />
+            <TheFact label="Content hash" value={capsule.content_hash} mono />
+            <TheFact
+              label="Profile subject"
+              value={`${hrn.partition}:${hrn.service}:${hrn.region ?? 'global'}:${hrn.account_id}:${hrn.resource_type}/${hrn.resource_id}`}
+              mono
+            />
+            {!hrn.region && (
+              <TheFact
+                label="Profile region"
+                value="Not exposed (global resource)"
+              />
+            )}
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Evidence dimensions</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {dimensions.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No evidence dimensions are exposed by the API for this content
+              yet.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-gray-100">
+              {dimensions.map(dimension => (
+                <DimensionRow key={dimension.name} dimension={dimension} />
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+};
+
+const DimensionRow = ({ dimension }: { dimension: TrustDimension }) => {
+  const variant = dimensionBadgeVariant(dimension.state);
+  const reasonText = dimension.reason?.trim();
+
+  return (
+    <li className="flex flex-col gap-2 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium text-gray-900">
+          {dimension.name}
+        </span>
+        <Badge variant={variant}>{dimension.state}</Badge>
+      </div>
+      <div className="text-xs text-gray-600">
+        <span className="font-medium text-gray-700">Reason: </span>
+        {reasonText && reasonText.length > 0 ? (
+          <span>{reasonText}</span>
+        ) : (
+          <span className="text-gray-500">Not provided by the API</span>
+        )}
+      </div>
+      <div className="text-xs text-gray-600">
+        <span className="font-medium text-gray-700">Evidence: </span>
+        {dimension.evidence.length === 0 ? (
+          <span className="text-gray-500">No evidence items exposed</span>
+        ) : (
+          <ul className="mt-1 space-y-1">
+            {dimension.evidence.map((item, index) => (
+              <li
+                key={`${dimension.name}-evidence-${index}`}
+                className="rounded bg-gray-50 p-2 font-mono text-xs text-gray-800"
+              >
+                <pre className="whitespace-pre-wrap break-all">
+                  {formatEvidenceItem(item)}
+                </pre>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </li>
+  );
+};
+
+const TrustTab = ({ asset }: { asset: PackageView }) => {
+  const { trust } = asset;
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Distribution trust</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <p className="text-sm text-gray-600">
+            Distribution trust governs whether this content is served on the
+            trusted channel for this repository. It comes from an explicit grant
+            decision, not from the absence of findings or individual evidence
+            dimensions.
+          </p>
+          <div className="flex items-center gap-3">
+            <span className="text-xs uppercase tracking-wide text-gray-500">
+              Channel status
+            </span>
+            <Badge variant={TRUST_VARIANT[trust.state]}>
+              {TRUST_LABELS[trust.state]}
+            </Badge>
+          </div>
+          <p className="text-sm text-gray-700">
+            {trust.state === 'trusted'
+              ? 'This content is granted and served on the trusted channel.'
+              : 'This content is quarantined and is not served on the trusted channel.'}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Grant decision</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {trust.decision === null ? (
+            <p className="text-sm text-gray-500">
+              No active grant decision is exposed (the content is not currently
+              granted).
+            </p>
+          ) : (
+            <dl className="grid gap-3 md:grid-cols-2">
+              <TheFact
+                label="Decision ID"
+                value={trust.decision.decision_id}
+                mono
+              />
+              <TheFact label="Actor" value={trust.decision.actor} mono />
+              <TheFact
+                label="Granted at"
+                value={theMoment(trust.decision.granted_at)}
+              />
+            </dl>
+          )}
+          <p className="text-xs text-gray-500">
+            Revocation history and policy evaluation traces are not exposed by
+            this endpoint.
+          </p>
+        </CardContent>
+      </Card>
+    </>
+  );
+};
+
+const RelationshipsTab = ({ asset }: { asset: PackageView }) => {
+  const { subject, referrers } = asset.lineage;
+
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Subject</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {subject === null ? (
+            <p className="text-sm text-gray-500">
+              No parent subject digest is exposed (this asset does not hang from
+              another manifest).
+            </p>
+          ) : (
+            <>
+              <TheFact
+                label="Subject digest"
+                value={formatDigest(subject)}
+                mono
+              />
+              <p className="text-xs text-gray-500">
+                Asset path is not exposed for the subject digest; cannot resolve
+                to a package route.
+              </p>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Referrers</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          {referrers.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No referrers are exposed for this manifest.
+            </p>
+          ) : (
+            <ul className="flex flex-col divide-y divide-gray-100">
+              {referrers.map(referrer => {
+                const route = packageRouteOf(
+                  asset.repository,
+                  referrer.asset_path
+                );
+                const referrerDigest = formatDigest(referrer.digest);
+                const subjectDigest = formatDigest(referrer.subject);
+
+                return (
+                  <li
+                    key={`${referrer.asset_path}-${referrerDigest}`}
+                    className="flex flex-col gap-2 py-3"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      {route ? (
+                        <Link
+                          to={route}
+                          className="text-sm font-medium text-blue-700 hover:underline"
+                        >
+                          {referrer.asset_path}
+                        </Link>
+                      ) : (
+                        <span className="text-sm font-medium text-gray-800">
+                          {referrer.asset_path ||
+                            'Unnamed referrer (asset path not exposed)'}
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-500">
+                        {theSize(referrer.size_bytes)}
+                      </span>
+                    </div>
+                    <dl className="grid gap-2 md:grid-cols-2">
+                      <TheFact label="Digest" value={referrerDigest} mono />
+                      <TheFact
+                        label="Subject digest"
+                        value={subjectDigest}
+                        mono
+                      />
+                    </dl>
+                    {!route && (
+                      <p className="text-xs text-gray-500">
+                        Package route is not resolvable from the exposed
+                        identity.
+                      </p>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </>
   );
 };
 

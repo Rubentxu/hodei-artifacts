@@ -23,6 +23,8 @@ import { PackageDetailView } from '../../components/PackageDetailView';
 
 /** The digest of the asset. */
 const theDigest = 'a'.repeat(64);
+const subjectDigest = 'c'.repeat(64);
+const referrerDigest = 'd'.repeat(64);
 
 /** The asset, as the API answers it. */
 const thePackage = {
@@ -82,22 +84,42 @@ describe('PackageDetailView', () => {
     vi.restoreAllMocks();
   });
 
-  it('says what the asset is', async () => {
+  it('says what the asset is in the Overview tab by default', async () => {
     render(
       <MemoryRouter>
         <PackageDetailView repository="libs" path="requests/2.32.3" />
       </MemoryRouter>
     );
 
-    expect(await screen.findByText(`sha256:${theDigest}`)).toBeInTheDocument();
+    expect(
+      (await screen.findAllByText(`sha256:${theDigest}`)).length
+    ).toBeGreaterThan(0);
     expect(screen.getAllByText('2.0 KiB').length).toBeGreaterThan(0);
     expect(screen.getAllByText('2.32.3').length).toBeGreaterThan(0);
     expect(
       screen.getByText('libs · requests/2.32.3/requests-2.32.3.tar.gz')
     ).toBeInTheDocument();
+
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(screen.getByRole('tab', { name: 'Evidence' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
+    expect(screen.getByRole('tab', { name: 'Trust' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
+    expect(screen.getByRole('tab', { name: 'Relationships' })).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
   });
 
-  it('says that nobody has granted the content', async () => {
+  it('distinguishes distribution trust from individual evidence statuses', async () => {
+    const user = userEvent.setup();
     render(
       <MemoryRouter>
         <PackageDetailView repository="libs" path="requests/2.32.3" />
@@ -105,19 +127,245 @@ describe('PackageDetailView', () => {
     );
 
     expect(await screen.findByText('Quarantined')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Evidence' }));
+    expect(screen.getByText('integrity')).toBeInTheDocument();
+    expect(screen.getByText('verified')).toBeInTheDocument();
+    expect(
+      screen.getByText(/distinct from distribution trust/i)
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/this API exposes no package route for them/i)
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Trust' }));
+    expect(
+      screen.getByText(
+        /explicit grant decision, not from the absence of findings/i
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/No active grant decision is exposed/i)
+    ).toBeInTheDocument();
   });
 
-  it('says what the evidence says, dimension by dimension', async () => {
+  it('never renders missing, unverified, or indeterminate evidence as green/satisfactory', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v1/packages/:repository/*', () =>
+        HttpResponse.json({
+          ...thePackage,
+          capsule: {
+            ...thePackage.capsule,
+            profile: {
+              ...thePackage.capsule.profile,
+              dimensions: [
+                {
+                  name: 'integrity',
+                  state: 'verified',
+                  reason: 'Digest matches stored blob',
+                  evidence: [{ kind: 'sha256', match: true }],
+                },
+                {
+                  name: 'signature_state',
+                  state: 'missing',
+                  evidence: [],
+                },
+                {
+                  name: 'provenance',
+                  state: 'unverified',
+                  reason: 'Issuer key not trusted',
+                  evidence: [],
+                },
+                {
+                  name: 'sbom',
+                  state: 'indeterminate',
+                  evidence: [],
+                },
+                {
+                  name: 'vulnerability_scan',
+                  state: 'failed',
+                  reason: 'Critical CVE detected',
+                  evidence: ['CVE-2026-0001'],
+                },
+                {
+                  name: 'custom_check',
+                  state: 'unknown_state',
+                  evidence: [],
+                },
+              ],
+            },
+          },
+        })
+      )
+    );
+
     render(
       <MemoryRouter>
         <PackageDetailView repository="libs" path="requests/2.32.3" />
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('integrity')).toBeInTheDocument();
-    expect(screen.getByText('verified')).toBeInTheDocument();
-    expect(screen.getByText('signature_state')).toBeInTheDocument();
-    expect(screen.getByText('missing')).toBeInTheDocument();
+    await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
+
+    const verifiedBadge = screen.getByText('verified');
+    expect(verifiedBadge).toHaveClass('bg-green-100');
+
+    for (const nonPassingState of [
+      'missing',
+      'unverified',
+      'indeterminate',
+      'failed',
+      'unknown_state',
+    ]) {
+      const badge = screen.getByText(nonPassingState);
+      expect(badge).not.toHaveClass('bg-green-100');
+    }
+
+    expect(screen.getByText('Digest matches stored blob')).toBeInTheDocument();
+    expect(screen.getByText('Issuer key not trusted')).toBeInTheDocument();
+    expect(screen.getByText('CVE-2026-0001')).toBeInTheDocument();
+    expect(
+      screen.getAllByText('Not provided by the API').length
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText('No evidence items exposed').length
+    ).toBeGreaterThan(0);
+  });
+
+  it('preserves identity and digest in Relationships and only links resolvable routes', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v1/packages/:repository/*', () =>
+        HttpResponse.json({
+          ...thePackage,
+          lineage: {
+            subject: { algorithm: 'sha256', value: subjectDigest },
+            referrers: [
+              {
+                asset_path: 'requests/2.32.3/requests-2.32.3.tar.gz.sig',
+                digest: { algorithm: 'sha256', value: referrerDigest },
+                size_bytes: 512,
+                subject: { algorithm: 'sha256', value: theDigest },
+              },
+              {
+                asset_path: '///',
+                digest: { algorithm: 'sha256', value: 'e'.repeat(64) },
+                size_bytes: 256,
+                subject: { algorithm: 'sha256', value: theDigest },
+              },
+            ],
+          },
+        })
+      )
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Relationships' }));
+
+    // Subject digest is preserved, but NOT rendered as a link because asset_path is absent.
+    expect(screen.getByText(`sha256:${subjectDigest}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Asset path is not exposed for the subject digest/i)
+    ).toBeInTheDocument();
+
+    // Resolvable referrer renders a clickable link to the package route.
+    const referrerLink = screen.getByRole('link', {
+      name: 'requests/2.32.3/requests-2.32.3.tar.gz.sig',
+    });
+    expect(referrerLink).toHaveAttribute(
+      'href',
+      '/console/packages/libs/requests/2.32.3/requests-2.32.3.tar.gz.sig'
+    );
+    expect(screen.getByText(`sha256:${referrerDigest}`)).toBeInTheDocument();
+
+    // Unresolvable referrer does NOT render a link, while preserving its digest.
+    expect(screen.queryByRole('link', { name: '///' })).not.toBeInTheDocument();
+    expect(screen.getByText(`sha256:${'e'.repeat(64)}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Package route is not resolvable/i)
+    ).toBeInTheDocument();
+  });
+
+  it('remains strictly read-only when inspecting all tabs', async () => {
+    const user = userEvent.setup();
+    const mutations: string[] = [];
+    server.use(
+      http.post('*', ({ request }) => {
+        mutations.push(`POST ${request.url}`);
+        return HttpResponse.json({});
+      }),
+      http.put('*', ({ request }) => {
+        mutations.push(`PUT ${request.url}`);
+        return HttpResponse.json({});
+      }),
+      http.patch('*', ({ request }) => {
+        mutations.push(`PATCH ${request.url}`);
+        return HttpResponse.json({});
+      }),
+      http.delete('*', ({ request }) => {
+        mutations.push(`DELETE ${request.url}`);
+        return HttpResponse.json({});
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await screen.findByRole('tab', { name: 'Overview' });
+    await user.click(screen.getByRole('tab', { name: 'Evidence' }));
+    await user.click(screen.getByRole('tab', { name: 'Trust' }));
+    await user.click(screen.getByRole('tab', { name: 'Relationships' }));
+    await user.click(screen.getByRole('tab', { name: 'Overview' }));
+    await user.click(screen.getByRole('button', { name: /Promote/ }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(mutations).toEqual([]);
+  });
+
+  it('does not revoke when the revocation dialog is cancelled', async () => {
+    const user = userEvent.setup();
+    const mutations: string[] = [];
+    server.use(
+      http.get('/api/v1/packages/:repository/*', () =>
+        HttpResponse.json({
+          ...thePackage,
+          trust: {
+            state: 'trusted',
+            decision: {
+              decision_id: 'decision-1',
+              actor: 'hrn:hodei:iam::acme:User/alice',
+              granted_at: '2026-11-17T00:00:00Z',
+            },
+          },
+        })
+      ),
+      http.post('*', ({ request }) => {
+        mutations.push(`POST ${request.url}`);
+        return HttpResponse.json({});
+      })
+    );
+
+    render(
+      <MemoryRouter>
+        <PackageDetailView repository="libs" path="requests/2.32.3" />
+      </MemoryRouter>
+    );
+
+    await user.click(await screen.findByRole('button', { name: /Revoke/ }));
+    const dialog = screen.getByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+
+    expect(mutations).toEqual([]);
   });
 
   it('asks before it promotes with repository, path, and digest, and refreshes state on grant', async () => {
@@ -297,6 +545,7 @@ describe('PackageDetailView', () => {
     );
 
     await user.click(await screen.findByRole('button', { name: /Revoke/ }));
+
     await user.type(screen.getByLabelText('Reason'), 'compromised key');
     await user.click(screen.getByRole('radio', { name: 'By digest' }));
     await user.click(screen.getByRole('button', { name: 'Revoke' }));
@@ -308,6 +557,13 @@ describe('PackageDetailView', () => {
         reason: 'compromised key',
       })
     );
+
+    // Also verify the granted decision details are visible in the Trust tab.
+    await user.click(screen.getByRole('tab', { name: 'Trust' }));
+    expect(screen.getByText('decision-1')).toBeInTheDocument();
+    expect(
+      screen.getByText('hrn:hodei:iam::acme:User/alice')
+    ).toBeInTheDocument();
   });
 
   it('prevents duplicate promotion submissions while the mutation is in flight', async () => {
