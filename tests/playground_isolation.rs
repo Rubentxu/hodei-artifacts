@@ -23,8 +23,12 @@ use hodei_authz::{
     PrincipalId,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 struct PlaygroundAuthenticator;
 
@@ -57,15 +61,11 @@ fn playground_admin_authorizer() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-async fn test_app(admin_enabled: bool) -> (Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn test_app(admin_enabled: bool) -> (Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = admin_enabled;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,

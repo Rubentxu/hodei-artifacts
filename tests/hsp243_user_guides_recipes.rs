@@ -1,7 +1,7 @@
 //! Executable recipes of HSP-243 (Maven 2, npm and PyPI) against the real service.
 //!
 //! The documentation checks of the same guides live in `hsp243_user_guides` and run
-//! in the default build; this suite boots the embedded engine, so it is legacy only.
+//! in the default build; this suite boots the application on the graph profile (a real Dgraph).
 
 mod guide_blocks;
 
@@ -25,6 +25,11 @@ use sha2::{Digest, Sha256, Sha512};
 use std::cell::RefCell;
 use std::sync::Arc;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 const ACCOUNT: &str = "acme";
 
@@ -84,13 +89,13 @@ fn cedar_authorizer() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-async fn real_app() -> (axum::Router, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("tempdir");
+async fn real_app() -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.raw_api_enabled = true;
     config.repository.durable = true;
-    config.rocksdb.path = tmp.path().join("db.rocksdb").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     config.content.cas_path = tmp.path().join("cas").to_string_lossy().into_owned();
 
     let state = bootstrap(

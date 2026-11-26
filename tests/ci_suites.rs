@@ -214,6 +214,9 @@ const INFRASTRUCTURE: &str = "infrastructure (boot and processes)";
 /// that need the embedded engine run in their own stage, with
 /// `--features legacy`, until HSP-314 F4 retires the engine.
 const LEGACY: &str = "legacy (embedded engine)";
+/// HSP-314 F4 S2b: the suites that boot the application on the graph profile
+/// against a real Dgraph run here, without `legacy`.
+const DGRAPH: &str = "integration (dgraph)";
 
 #[test]
 fn every_test_target_belongs_to_exactly_one_suite() {
@@ -404,17 +407,17 @@ fn the_suites_are_listed_in_the_pipeline() {
 #[test]
 fn the_pipeline_archives_the_conformity_report() {
     let stages = stages_in_pipeline();
-    // The conformity report is written by `raw_conformity_uat`, which needs
-    // the embedded engine and so runs in the legacy stage.
-    let legacy = stages.get(LEGACY).expect("the legacy suite");
+    // The conformity report is written by `raw_conformity_uat`, which boots
+    // the application on the graph profile and so runs in the dgraph stage.
+    let dgraph = stages.get(DGRAPH).expect("the dgraph suite");
 
     assert!(
-        legacy.contains("target/uat/raw-conformity.md"),
-        "the legacy stage must mention the conformity report"
+        dgraph.contains("target/uat/raw-conformity.md"),
+        "the dgraph stage must mention the conformity report"
     );
     assert!(
-        legacy.contains("archiveArtifacts"),
-        "the legacy stage must archive the conformity report"
+        dgraph.contains("archiveArtifacts"),
+        "the dgraph stage must archive the conformity report"
     );
 }
 
@@ -426,11 +429,12 @@ fn the_pipeline_archives_the_conformity_report() {
 #[test]
 fn the_pipeline_removes_the_previous_conformity_report() {
     let stages = stages_in_pipeline();
+    let dgraph = stages.get(DGRAPH).expect("the dgraph suite");
     let legacy = stages.get(LEGACY).expect("the legacy suite");
 
     assert!(
-        legacy.contains("rm -f target/uat/raw-conformity.md"),
-        "the legacy stage must remove the report of the previous run before running the suite"
+        dgraph.contains("rm -f target/uat/raw-conformity.md"),
+        "the dgraph stage must remove the report of the previous run before running the suite"
     );
     assert!(
         legacy.contains("--features legacy"),

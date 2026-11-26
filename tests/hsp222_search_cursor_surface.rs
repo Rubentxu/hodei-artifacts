@@ -38,6 +38,11 @@ use hodei_evidence::ContentDigest;
 use serde_json::json;
 use tower::ServiceExt;
 
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
+
 /// The account of the principal that searches.
 const ACCOUNT: &str = "acme";
 /// Another account, whose keys must never be paged by this one.
@@ -274,15 +279,11 @@ impl PrincipalAuthenticator for TestAuthenticator {
 }
 
 /// The application over the fake store.
-async fn app(serves_cursor: bool) -> (axum::Router, Arc<FakeSearcher>, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn app(serves_cursor: bool) -> (axum::Router, Arc<FakeSearcher>, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("schema.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
