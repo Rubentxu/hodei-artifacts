@@ -10,10 +10,10 @@
 //! y que el GC usa el backend elegido (la herramienta `hodei-recovery`,
 //! y su negativa sobre S3, se retiró en HSP-314 F4).
 //!
-//! El servidor S3 es el contenedor compartido de la serie HSP-116: si ya
-//! esta vivo se reutiliza, si no se levanta. Un cuarto contenedor por
-//! suite sería otro puñado de segundos de gracia por nada: el estado se
-//! separa por cubo, único por proceso.
+//! El servidor S3 es un RustFS propio de la suite: si ya esta vivo se
+//! reutiliza, si no se levanta. El estado se separa por cubo, único por
+//! proceso. El servicio corre sobre el perfil de grafo (un namespace de
+//! Dgraph por despliegue); el catalogo es del grafo y los bytes son del cubo.
 //!
 //! Las credenciales del SDK viajan **por el entorno del proceso hijo**,
 //! que es exactamente la cadena de proveedores que la configuración
@@ -44,9 +44,26 @@ fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El nombre del contenedor compartido; el mismo de la serie HSP-116.
+/// La imagen del servidor S3, fijada por digest: la misma de la conformidad
+/// de HSP-139.
+///
+/// Es RustFS y no LocalStack porque el barrido del GC del perfil de grafo es
+/// la pasada coordinada, y esta borra con `DeleteObject` condicionado por
+/// `If-Match`: LocalStack 4.14 contesta `501 NotImplemented` a ese
+/// encabezado y un servidor que no lo implementa no puede probar el
+/// barrido.
+const S3_IMAGE: &str =
+    "docker.io/rustfs/rustfs@sha256:0dff1515b3c52b5ce8c5df2263420c7f93ae1c5d07cca79e19e57cff86b84c85";
+
+/// El nombre del contenedor de esta suite. Es propio y no el de la serie
+/// HSP-139: la credencial del servidor es el centinela de esta prueba.
 fn container_name() -> String {
-    std::env::var("HSP116_S3_CONTAINER").unwrap_or_else(|_| "hodei-hsp116-localstack".to_string())
+    std::env::var("HSP138_S3_CONTAINER").unwrap_or_else(|_| "hodei-hsp138-rustfs".to_string())
+}
+
+/// El volumen con nombre donde RustFS guarda los objetos.
+fn volume_name() -> String {
+    format!("{}-data", container_name())
 }
 
 fn docker(args: &[&str]) -> Result<String, String> {
@@ -61,11 +78,12 @@ fn docker(args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// El endpoint S3 del contenedor compartido, levantandolo si hace falta.
+/// El endpoint S3 del contenedor de la suite, levantandolo si hace falta.
 ///
-/// La politica de reutilizacion es la de HSP-116: un contenedor que ya
-/// esta en marcha se respeta aunque aun no sirva --puede estar
-/// arrancando--, y solo se sustituye el que no vive.
+/// Un contenedor que ya esta en marcha se respeta aunque aun no sirva
+/// --puede estar arrancando--, y solo se sustituye el que no vive. La clave
+/// secreta del servidor es el centinela: es la que el servicio lleva en su
+/// entorno y la que se busca en su log.
 fn the_endpoint() -> String {
     let name = container_name();
     let running = docker(&["inspect", "-f", "{{.State.Running}}", &name])
@@ -73,31 +91,44 @@ fn the_endpoint() -> String {
         .unwrap_or(false);
     if !running {
         let _ = docker(&["rm", "-f", &name]);
+        let _ = docker(&["volume", "create", &volume_name()]);
         docker(&[
             "run",
             "-d",
             "--name",
             &name,
+            // root dentro del contenedor: el volumen lo creo docker como
+            // root y el usuario por defecto de la imagen no puede escribir.
+            "--user",
+            "root",
             "-p",
-            "127.0.0.1:0:4566",
-            "localstack/localstack:4.14",
+            "127.0.0.1::9000",
+            "-e",
+            "RUSTFS_ACCESS_KEY=test",
+            "-e",
+            &format!("RUSTFS_SECRET_KEY={SENTINEL}"),
+            "-v",
+            &format!("{}:/data", volume_name()),
+            S3_IMAGE,
+            "server",
+            "/data",
         ])
         .expect("el contenedor de pruebas se levanta");
     }
-    for _ in 0..150 {
+    for _ in 0..90 {
         if let Some(port) = a_healthy_port(&name) {
             return format!("http://127.0.0.1:{port}");
         }
         std::thread::sleep(Duration::from_secs(2));
     }
-    panic!("LocalStack no sirvio S3 a tiempo: el backend elegido no puede probarse");
+    panic!("RustFS no sirvio S3 a tiempo: el backend elegido no puede probarse");
 }
 
 fn a_healthy_port(name: &str) -> Option<String> {
     let port = docker(&[
         "inspect",
         "-f",
-        r#"{{(index (index .NetworkSettings.Ports "4566/tcp") 0).HostPort}}"#,
+        r#"{{(index (index .NetworkSettings.Ports "9000/tcp") 0).HostPort}}"#,
         name,
     ])
     .ok()?;
@@ -113,7 +144,7 @@ fn s3_is_alive(address: &str) -> bool {
         return false;
     };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(3)));
-    let request = format!("GET /_localstack/health HTTP/1.0\r\nHost: {address}\r\n\r\n");
+    let request = format!("GET /minio/health/live HTTP/1.0\r\nHost: {address}\r\n\r\n");
     use std::io::{Read, Write};
     if stream.write_all(request.as_bytes()).is_err() {
         return false;
@@ -122,8 +153,7 @@ fn s3_is_alive(address: &str) -> bool {
     if stream.read_to_string(&mut answer).is_err() {
         return false;
     }
-    let body: String = answer.chars().filter(|c| !c.is_whitespace()).collect();
-    body.contains(r#""s3":"available""#) || body.contains(r#""s3":"running""#)
+    answer.contains("200")
 }
 
 /// El cubo de este proceso: dos ejecuciones paralelas no se pisan.
@@ -132,7 +162,7 @@ fn the_bucket() -> String {
 }
 
 /// La credencia con la que el servicio de pruebas va al cubo. No es un
-/// secreto --es LocalStack-- pero su valor se busca en el log del
+/// secreto --es la del servidor de pruebas-- pero su valor se busca en el log del
 /// servicio como se buscara la clave real de un bucket policy: si el
 /// servicio escribe el valor que el SDK le dio, el log es una fuga.
 const SENTINEL: &str = "hsp138-sentinel-secret-not-for-logs";
@@ -144,7 +174,7 @@ async fn an_observing_client() -> Client {
     let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_config::Region::new("us-east-1"))
         .credentials_provider(aws_credential_types::Credentials::from_keys(
-            "test", "test", None,
+            "test", SENTINEL, None,
         ))
         .endpoint_url(the_endpoint())
         .load()
@@ -248,7 +278,7 @@ fn the_s3_environment(bucket: &str) -> Vec<(String, String)> {
         ("HODEI_CONTENT__BACKEND".to_string(), "s3".to_string()),
         ("HODEI_CONTENT__S3__BUCKET".to_string(), bucket.to_string()),
         // El endpoint se da con su esquema: la config tambien admite el
-        // bare host:port, y aqui interesa el caso literal de localstack.
+        // bare host:port, y aqui interesa el caso literal del servidor de pruebas.
         ("HODEI_CONTENT__S3__ENDPOINT".to_string(), the_endpoint()),
         (
             "HODEI_CONTENT__S3__REGION".to_string(),
@@ -401,7 +431,7 @@ fn the_health(port: u16) -> u16 {
 #[test]
 fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
     let tmp = tempfile::tempdir().expect("a temp dir");
-    let db = tmp.path().join("db");
+    let tenant = support::graph_profile::GraphTenant::create();
     let cas = tmp.path().join("cas");
     let policy = tmp.path().join("policies.cedar");
     let schema = tmp.path().join("schema.json");
@@ -410,11 +440,11 @@ fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
 
     let log = tmp.path().join("boot.log");
     let output_file = std::fs::File::create(&log).expect("the log is open");
-    let mut child = Command::new(support::BIN)
+    let mut command = Command::new(support::BIN);
+    command
         .env_remove("RUN_MODE")
         .env("HODEI_SERVER__HOST", "127.0.0.1")
         .env("HODEI_SERVER__PORT", support::free_port().to_string())
-        .env("HODEI_ROCKSDB__PATH", &db)
         .env("HODEI_CONTENT__CAS_PATH", &cas)
         .env("HODEI_REPOSITORY__DURABLE", "true")
         .env("HODEI_SECURITY__RAW_API_ENABLED", "true")
@@ -426,7 +456,13 @@ fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
         .env("HODEI_SECURITY__AUTH_ISSUER", support::ISSUER)
         .env("HODEI_SECURITY__AUTH_AUDIENCE", support::AUDIENCE)
         .env("HODEI_SECURITY__AUTHORIZATION_POLICY_PATH", &policy)
-        .env("HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH", &schema)
+        .env("HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH", &schema);
+    // The graph profile of this tenant: a live alpha, so the only thing
+    // that can stop the boot is the bucket.
+    for (name, value) in tenant.service_environment() {
+        command.env(name, value);
+    }
+    let mut child = command
         // El backend elegido, con un cubo que no puede existir: el
         // endpoint muerto contesta "conexion rechazada" y el preflight
         // lo traduce en error; el timeout de 10 s es el techo.
