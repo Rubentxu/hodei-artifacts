@@ -231,7 +231,7 @@ pub async fn get_package(
     let action = crate::actions::download_asset();
     let outcome = state
         .authorize_resource
-        .execute_canonical(context.clone(), action.clone(), &descriptor.hrn)
+        .execute_repository(context.clone(), action.clone(), &descriptor)
         .map_err(|_| PackageApiError::Internal)?;
     match outcome {
         AuthorizationOutcome::Permit => {}

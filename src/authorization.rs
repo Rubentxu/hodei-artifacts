@@ -576,6 +576,27 @@ impl AuthorizeResourceUseCase {
         Ok(self.execute(context, action, resource))
     }
 
+    /// Authorize `action` on a catalog repository with its trusted
+    /// [`ResourceScope`] (HSP-321). It is the single entry point that every
+    /// repository read, download, publication and listing decision uses, so
+    /// a tag-based policy (permit or forbid) sees the same attributes
+    /// everywhere. A scope that cannot be built is an `Indeterminate`
+    /// outcome (callers already fail closed on it), never a decision made
+    /// without the tags.
+    pub fn execute_repository(
+        &self,
+        context: VerifiedContext,
+        action: ActionId,
+        repository: &hodei_catalog::RepositoryDescriptor,
+    ) -> Result<AuthorizationOutcome, hodei_authz::ModelError> {
+        match repository_scope(&repository.account, &repository.config.config_settings) {
+            Ok(scope) => self.execute_canonical_scoped(context, action, &repository.hrn, scope),
+            Err(_) => Ok(AuthorizationOutcome::Indeterminate(
+                hodei_authz::IndeterminateReason::EvaluationError,
+            )),
+        }
+    }
+
     /// [`Self::execute_canonical`] for a resource whose trusted
     /// [`ResourceScope`] (namespace and tags) travels with the request, so a
     /// policy can read `resource.namespace` and `resource.tags` (HSP-321).

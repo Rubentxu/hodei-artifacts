@@ -323,7 +323,12 @@ pub async fn create_repository(
 
 /// Gate every write of repository tags behind `ManageRepositoryTags`.
 ///
-/// It is a no-op when the settings declare no tags. Invalid tags are a bad
+/// It is a no-op only when the settings carry no `tags` key at all: an empty
+/// `tags: []` is still a tag write and needs the action. The decision
+/// evaluates the **proposed** tags as `resource.tags` of the repository being
+/// created (plus the account namespace), so a policy can limit which tags a
+/// principal may assign. The repository does not exist yet, which is why
+/// `CreateRepository` itself keeps using the unscoped resource. Invalid tags are a bad
 /// request; a denial or an undecidable outcome is a 403 (fail closed). Any
 /// future endpoint that changes the tags of an existing repository must call
 /// this same gate with the new configuration.
@@ -381,14 +386,9 @@ fn the_permitted(
     let action = crate::actions::read_repository();
     let mut permitted = Vec::with_capacity(repositories.len());
     for repository in repositories {
-        let scope = crate::authorization::repository_scope(
-            &repository.account,
-            &repository.config.config_settings,
-        )
-        .map_err(|_| CatalogRepositoryError::Internal)?;
         let outcome = state
             .authorize_resource
-            .execute_canonical_scoped(context.clone(), action.clone(), &repository.hrn, scope)
+            .execute_repository(context.clone(), action.clone(), &repository)
             .map_err(|_| CatalogRepositoryError::Internal)?;
         match outcome {
             AuthorizationOutcome::Permit => permitted.push(repository),

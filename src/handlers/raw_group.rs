@@ -149,10 +149,10 @@ fn can_read(
 ) -> Result<bool, RawApiError> {
     state
         .authorize_resource
-        .execute_canonical(
+        .execute_repository(
             context.clone(),
             crate::actions::download_asset(),
-            &repository.hrn,
+            repository,
         )
         .map(|outcome| outcome.allows_access())
         .map_err(|_| RawApiError::Internal)

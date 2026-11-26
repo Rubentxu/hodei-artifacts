@@ -144,6 +144,16 @@ permit(principal == Iam::User::"hrn:hodei:iam::{a}:User/erin",
 permit(principal == Iam::User::"hrn:hodei:iam::{a}:User/frank",
        action in [Artifacts::Action::"UploadAsset", Artifacts::Action::"DownloadAsset"],
        resource);
+// gina reads the repository by the tag too (control for erin's failure).
+permit(principal == Iam::User::"hrn:hodei:iam::{a}:User/gina",
+       action == Artifacts::Action::"DownloadAsset",
+       resource) when {{ resource.tags.contains("prod") }};
+// zoe has a general grant; a forbid by tag cuts it (tag-based forbid).
+permit(principal == Iam::User::"hrn:hodei:iam::{a}:User/zoe",
+       action in [Artifacts::Action::"UploadAsset", Artifacts::Action::"DownloadAsset"],
+       resource);
+forbid(principal, action, resource)
+       when {{ resource has tags && resource.tags.contains("frozen") }};
 // creator may create repositories and nothing else; it holds NO tag grant.
 permit(principal == Iam::User::"hrn:hodei:iam::{a}:User/creator",
        action == Artifacts::Action::"CreateRepository", resource);
@@ -167,6 +177,7 @@ async fn mount(account_a: &str, account_b: &str) -> Option<Vertical> {
     let tmp = tempfile::tempdir().expect("temp dir");
     let mut config = AppConfig::default();
     config.security.raw_api_enabled = true;
+    config.security.oci_api_enabled = true;
     config.graph = config_from_env();
     config.content.cas_path = tmp
         .path()
@@ -200,6 +211,16 @@ async fn mount(account_a: &str, account_b: &str) -> Option<Vertical> {
 }
 
 async fn seed(store: &DgraphCatalogStore, account: &str, key: &str, settings: Value) {
+    seed_as(store, account, key, settings, RepositoryFormat::Raw).await;
+}
+
+async fn seed_as(
+    store: &DgraphCatalogStore,
+    account: &str,
+    key: &str,
+    settings: Value,
+    format: RepositoryFormat,
+) {
     let mut config = RepositoryConfig::new(DigestScope::Global);
     config.config_settings = settings;
     store
@@ -209,7 +230,7 @@ async fn seed(store: &DgraphCatalogStore, account: &str, key: &str, settings: Va
                 hrn: repository_hrn("hodei", "artifacts", "eu", account, key),
                 account: account.to_string(),
                 repo_key: key.to_string(),
-                format: RepositoryFormat::Raw,
+                format,
                 mode: RepositoryMode::Hosted,
                 config,
                 created_at: Utc::now(),
@@ -293,7 +314,7 @@ async fn a_tag_in_the_policy_admits_publish_and_download_and_nothing_else() {
     let Some(v) = mount(&a, &b).await else { return };
     seed(&v.store, &a, "tagged", json!({"tags": ["prod", "eu"]})).await;
     seed(&v.store, &a, "plain", json!({})).await;
-    seed(&v.store, &b, "tagged", json!({})).await; // same key, no tag
+    seed(&v.store, &b, "tagged", json!({"tags": ["prod"]})).await; // same key, same tag
     let alice = format!("alice@{a}");
 
     // Allowed tag: publish and download succeed end to end.
@@ -308,14 +329,31 @@ async fn a_tag_in_the_policy_admits_publish_and_download_and_nothing_else() {
     assert_eq!(put(&v.app, "plain", &alice).await, StatusCode::FORBIDDEN);
     assert_eq!(get(&v.app, "plain", &alice).await.0, StatusCode::FORBIDDEN);
 
-    // Another account with the identical grant does not inherit the tag of
-    // the same-named repository of the first account.
-    let mallory = format!("mallory@{b}");
-    assert_eq!(put(&v.app, "tagged", &mallory).await, StatusCode::FORBIDDEN);
-    assert_eq!(
-        get(&v.app, "tagged", &mallory).await.0,
-        StatusCode::FORBIDDEN
+    // Account isolation: account B holds a same-named repository with the
+    // SAME tag. The grant of A's alice does not serve B's principals, and
+    // B's own grant does not serve A's.
+    let (mallory, bob, alice_in_b) = (
+        format!("mallory@{b}"),
+        format!("bob@{b}"),
+        format!("alice@{b}"),
     );
+    assert!(
+        put(&v.app, "tagged", &mallory).await.is_success(),
+        "B's own grant works in B"
+    );
+    assert_eq!(get(&v.app, "tagged", &mallory).await.1, b"payload");
+    assert_eq!(
+        get(&v.app, "tagged", &bob).await.0,
+        StatusCode::FORBIDDEN,
+        "no grant in B"
+    );
+    assert_eq!(
+        get(&v.app, "tagged", &alice_in_b).await.0,
+        StatusCode::FORBIDDEN,
+        "A's alice grant is bound to A's principal, not to the name"
+    );
+    // A's alice still reads A's repository, never B's content.
+    assert_eq!(get(&v.app, "tagged", &alice).await.0, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -332,10 +370,19 @@ async fn an_undecidable_outcome_is_a_denial_never_a_permit() {
 
     // A policy that errors while evaluating (Indeterminate) denies.
     let erin = format!("erin@{a}");
-    let status = get(&v.app, "tagged", &erin).await.0;
-    assert!(
-        !status.is_success(),
-        "indeterminate must not permit: {status}"
+    // Control: gina, on the very same repository, is admitted by its tag, so
+    // the repository and its scope are sound and the failure is the
+    // evaluation error of erin's policy (a missing attribute).
+    let gina = format!("gina@{a}");
+    assert_eq!(
+        get(&v.app, "tagged", &gina).await.0,
+        StatusCode::NOT_FOUND,
+        "admitted, asset absent"
+    );
+    // 500, not 403: an evaluation error is Indeterminate, distinct from a Deny.
+    assert_eq!(
+        get(&v.app, "tagged", &erin).await.0,
+        StatusCode::INTERNAL_SERVER_ERROR
     );
 
     // frank is unconditionally permitted by policy: a scope that cannot be
@@ -398,5 +445,68 @@ async fn declaring_tags_needs_manage_repository_tags_and_create_alone_never_esca
     assert_eq!(
         create(&v.app, &manager, "bad", Some(json!({"tags": ["NOT OK"]}))).await,
         StatusCode::BAD_REQUEST
+    );
+}
+
+#[tokio::test]
+async fn a_forbid_by_tag_cuts_every_wired_decision_point() {
+    let (a, b) = (
+        format!("h{}a", &nonce()[8..]),
+        format!("h{}b", &nonce()[8..]),
+    );
+    let Some(v) = mount(&a, &b).await else { return };
+    seed(&v.store, &a, "frozen-raw", json!({"tags": ["frozen"]})).await;
+    seed(&v.store, &a, "open-raw", json!({"tags": ["prod"]})).await;
+    seed_as(
+        &v.store,
+        &a,
+        "frozen-oci",
+        json!({"tags": ["frozen"]}),
+        RepositoryFormat::Oci,
+    )
+    .await;
+    seed_as(&v.store, &a, "open-oci", json!({}), RepositoryFormat::Oci).await;
+    let zoe = format!("zoe@{a}");
+
+    // raw publish and download.
+    assert_eq!(put(&v.app, "frozen-raw", &zoe).await, StatusCode::FORBIDDEN);
+    assert_eq!(
+        get(&v.app, "frozen-raw", &zoe).await.0,
+        StatusCode::FORBIDDEN
+    );
+    assert!(put(&v.app, "open-raw", &zoe).await.is_success());
+    assert_eq!(get(&v.app, "open-raw", &zoe).await.0, StatusCode::OK);
+
+    // OCI pull path (tag list): decision before any content lookup.
+    let oci = |repo: &str| format!("/v2/{repo}/tags/list");
+    let frozen = send(&v.app, Method::GET, &oci("frozen-oci"), &zoe, Vec::new())
+        .await
+        .0;
+    assert_eq!(frozen, StatusCode::FORBIDDEN, "OCI must see the tags");
+    let open = send(&v.app, Method::GET, &oci("open-oci"), &zoe, Vec::new())
+        .await
+        .0;
+    assert_eq!(open, StatusCode::OK);
+
+    // The package view: the decision precedes the asset lookup (absent asset
+    // is 404 when admitted, 403 when the tag forbids).
+    let package = |repo: &str| format!("/api/v1/packages/{repo}/none.bin");
+    assert_eq!(
+        send(
+            &v.app,
+            Method::GET,
+            &package("frozen-raw"),
+            &zoe,
+            Vec::new()
+        )
+        .await
+        .0,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(&v.app, Method::GET, &package("open-raw"), &zoe, Vec::new())
+            .await
+            .0,
+        StatusCode::NOT_FOUND
     );
 }

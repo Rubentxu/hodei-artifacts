@@ -205,7 +205,7 @@ pub fn the_decision(
 ) -> Result<(), OciFailure> {
     let outcome = state
         .authorize_resource
-        .execute_canonical(context.clone(), action, &repository.hrn)
+        .execute_repository(context.clone(), action, repository)
         .map_err(|_| OciFailure::unavailable("the authorization engine is not available"))?;
     if !outcome.allows_access() {
         return Err(OciFailure::denied(
