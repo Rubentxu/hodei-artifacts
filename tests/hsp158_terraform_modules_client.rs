@@ -1,23 +1,23 @@
-//! El registry de módulos privado de HSP-158 contra el cliente real
+//! The private module registry of HSP-158 against the real client
 //! (`terraform`).
 //!
-//! El `terraform` 1.10 del entorno resuelve un módulo privado de verdad:
-//! escribe una configuración cuya fuente es
-//! `127.0.0.1:PORT/hodei/demo/local`, declara el registry en su config de
-//! CLI (`host` + `services`, el `ForceHostServices` del disco: el cliente
-//! pide el discovery siempre por https y un hub sin TLS declara el
-//! servicio así), lleva su credencial como `credentials` del host, y el
-//! `init` real pasa por discovery → versiones → download → go-getter, que
-//! baja el tarball con la credencial de `netrc` y verifica el
-//! `?checksum=sha256:` de la URL contra los bytes que llega. Hace falta
-//! `terraform` 1.10.x (en `TF_CLI` o en el `PATH`): sin él, la suite
-//! **falla** diciendo que falta. Cada ejecución usa su propio `HOME`, su
-//! config de CLI y su `NETRC`: nada se lee ni se escribe fuera del
-//! directorio del despliegue.
+//! The environment's `terraform` 1.10 resolves a real private module:
+//! it writes a configuration whose source is
+//! `127.0.0.1:PORT/hodei/demo/local`, declares the registry in its CLI
+//! config (`host` + `services`, the on-disk `ForceHostServices`: the client
+//! always requests discovery over https and a hub without TLS declares the
+//! service this way), carries its credential as the host's `credentials`, and the
+//! real `init` goes through discovery → versions → download → go-getter, which
+//! downloads the tarball with the `netrc` credential and verifies the URL's
+//! `?checksum=sha256:` against the bytes it receives. It requires
+//! `terraform` 1.10.x (in `TF_CLI` or on the `PATH`): without it, the suite
+//! **fails** saying it is missing. Each run uses its own `HOME`, its
+//! CLI config and its `NETRC`: nothing is read or written outside the
+//! deployment directory.
 //!
-//! El dialecto es el que fija el cliente (`internal/registry/client.go`,
-//! `terraform-svchost/disco` y `go-getter` v1.7 de terraform 1.10.1); el
-//! mapa del wire queda registrado en FMT-04 de `uat/UAT-FORMATS.md` y en
+//! The dialect is the one the client fixes (`internal/registry/client.go`,
+//! `terraform-svchost/disco` and `go-getter` v1.7 of terraform 1.10.1); the
+//! wire map is recorded in FMT-04 of `uat/UAT-FORMATS.md` and in
 //! `target/uat/hsp158/evidencia.md`.
 
 mod support;
@@ -30,10 +30,10 @@ use flate2::write::GzEncoder;
 use sha2::Digest as _;
 use support::{Deployment, FIRST_ACCOUNT, SECOND_ACCOUNT};
 
-/// Exige el `terraform` 1.10.x del entorno y devuelve la ruta **real** del
-/// ejecutable. El shim de asdf resuelve la version desde el directorio de
-/// trabajo, y el despliegue no la tiene: se resuelve una vez, desde la
-/// carpeta del repo, y el cliente corre con el binario absoluto.
+/// Requires the environment's `terraform` 1.10.x and returns the **real** path of the
+/// executable. The asdf shim resolves the version from the working
+/// directory, and the deployment does not have it: it is resolved once, from the
+/// repo folder, and the client runs with the absolute binary.
 fn require_terraform() -> String {
     let binary = std::env::var("TF_CLI").unwrap_or_else(|_| "terraform".to_string());
     let version = Command::new(&binary)
@@ -56,40 +56,40 @@ fn require_terraform() -> String {
     resolved.unwrap_or(binary)
 }
 
-/// El resultado de una ejecución del cliente.
+/// The result of a client run.
 struct Run {
-    /// Si el cliente terminó bien.
+    /// Whether the client finished successfully.
     ok: bool,
-    /// Lo que dijo, por stdout y por stderr.
+    /// What it said, on stdout and stderr.
     output: String,
 }
 
 impl Run {
-    /// El texto si terminó bien, y un fallo con todo el resto si no.
+    /// The text if it finished successfully, and a failure with everything else if not.
     fn expect(&self, what: &str) -> String {
         assert!(self.ok, "{what} failed:\n{}", self.output);
         self.output.clone()
     }
 }
 
-/// Un `terraform` aislado: su directorio de configuración, su config de
-/// CLI y su `NETRC`.
+/// An isolated `terraform`: its configuration directory, its CLI
+/// config and its `NETRC`.
 struct Client {
-    /// La ruta del ejecutable.
+    /// The path of the executable.
     binary: String,
-    /// El directorio del despliegue.
+    /// The deployment directory.
     root: PathBuf,
-    /// El directorio de trabajo de esta configuración.
+    /// The working directory of this configuration.
     work: PathBuf,
-    /// El host y puerto del hub, tal y como la fuente lo nombra.
+    /// The host and port of the hub, as the source names it.
     host: String,
 }
 
 impl Client {
-    /// Un cliente limpio para una cuenta. La config de CLI declara el
-    /// servicio `modules.v1` del host (el discovery por https no es
-    /// alcanzable en un hub http) y la credencial del host; el `NETRC`
-    /// lleva la credencial que go-getter manda al bajar el artefacto.
+    /// A clean client for an account. The CLI config declares the
+    /// host's `modules.v1` service (discovery over https is not
+    /// reachable on an http hub) and the host's credential; the `NETRC`
+    /// carries the credential that go-getter sends when downloading the artifact.
     fn new(root: &Path, name: &str, port: u16, token: &str, the_galaxy_terraform: String) -> Self {
         let work = root.join(format!("tf-{name}"));
         std::fs::create_dir_all(&work).expect("the work directory");
@@ -98,8 +98,8 @@ impl Client {
             "host \"{host}\" {{\n  services = {{\n    \"modules.v1\" = \"http://{host}/terraform/modules-hosted/v1/modules/\"\n  }}\n}}\n\ncredentials \"{host}\" {{\n  token = \"{token}\"\n}}\n"
         );
         std::fs::write(work.join("terraform.rc"), &config).expect("the CLI config");
-        // go-getter busca la entrada de netrc por , que lleva el
-        // puerto: la entrada nombra al host con su puerto.
+        // go-getter looks up the netrc entry by , which carries the
+        // port: the entry names the host with its port.
         let netrc = format!("machine 127.0.0.1:{port} login hodei password {token}\n");
         std::fs::write(work.join("netrc"), &netrc).expect("the netrc");
         Self {
@@ -110,8 +110,8 @@ impl Client {
         }
     }
 
-    /// Escribe la configuración del módulo privado que este cliente
-    /// resuelve, con su restricción de versión.
+    /// Writes the configuration of the private module that this client
+    /// resolves, with its version constraint.
     fn write_config(&self, version: Option<&str>) -> PathBuf {
         let constraint = version
             .map(|version| format!("  version = \"{version}\"\n"))
@@ -124,7 +124,7 @@ impl Client {
         self.work.clone()
     }
 
-    /// Ejecuta el `terraform` con su entorno aislado.
+    /// Runs `terraform` with its isolated environment.
     fn run(&self, args: &[&str]) -> Run {
         let output = Command::new(&self.binary)
             .args(args)
@@ -144,18 +144,18 @@ impl Client {
         }
     }
 
-    /// `init`: la resolución real contra la superficie.
+    /// `init`: the real resolution against the surface.
     fn init(&self) -> Run {
         self.run(&["init", "-input=false", "-no-color"])
     }
 
-    /// El módulo instalado por este cliente: el directorio que el
-    /// instalador nombra con la clave del bloque .
+    /// The module installed by this client: the directory that the
+    /// installer names with the key of the block .
     fn installed(&self) -> PathBuf {
         self.work.join(".terraform").join("modules").join("demo")
     }
 
-    /// El manifiesto que el instalador escribe.
+    /// The manifest that the installer writes.
     fn manifest(&self) -> String {
         std::fs::read_to_string(
             self.work
@@ -167,18 +167,18 @@ impl Client {
     }
 }
 
-/// El sha256 de unos bytes, como lo verifica el protocolo.
+/// The sha256 of some bytes, as the protocol verifies it.
 fn sha256_of(bytes: &[u8]) -> String {
     format!("{:x}", sha2::Sha256::digest(bytes))
 }
 
-/// Un miembro ustar escrito como el formato lo lee: cabecera, contenido y
-/// el relleno que redondea el registro.
+/// A ustar member written as the format reads it: header, content and
+/// the padding that rounds up the record.
 fn the_member_bytes(name: &str, content: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0u8; 512];
     bytes[..name.len()].copy_from_slice(name.as_bytes());
-    // El modo va en la cabecera, y go-getter lo respeta al extraer: un
-    // modo 0000 es un fichero que el cliente no puede leer.
+    // The mode goes in the header, and go-getter respects it on extraction: a
+    // mode 0000 is a file the client cannot read.
     bytes[100..108].copy_from_slice(b"0000644\0");
     let size = format!("{:011o}", content.len());
     bytes[124..124 + size.len()].copy_from_slice(size.as_bytes());
@@ -195,8 +195,8 @@ fn the_member_bytes(name: &str, content: &[u8]) -> Vec<u8> {
     member
 }
 
-/// El tarball de un módulo: los ficheros en la raíz del archivo, como el
-/// registry los guarda y go-getter los descomprime.
+/// The tarball of a module: the files at the archive root, as the
+/// registry stores them and go-getter decompresses them.
 fn the_module_tarball(root: &Path, name: &str, content: &str) -> Vec<u8> {
     let mut tar = Vec::new();
     tar.extend_from_slice(&the_member_bytes(
@@ -217,9 +217,9 @@ fn the_module_tarball(root: &Path, name: &str, content: &str) -> Vec<u8> {
     bytes
 }
 
-/// Una publicación hecha a mano sobre el socket: la superficie de
-/// publicación la define el hub (el CLI no sabe publicar módulos).
-/// Devuelve el estado y el cuerpo de la respuesta.
+/// A publication made by hand over the socket: the publication
+/// surface is defined by the hub (the CLI cannot publish modules).
+/// Returns the status and the body of the response.
 #[allow(clippy::too_many_arguments)]
 fn publish_module(
     port: u16,
@@ -258,9 +258,9 @@ fn publish_module(
     (status, body)
 }
 
-/// Una petición GET hecha a mano sobre el socket, con sus cabeceras y el
-/// cuerpo **en bytes**: la que registra el wire del protocolo para la
-/// evidencia, y la que compara el tarball servido con el publicado.
+/// A GET request made by hand over the socket, with its headers and the
+/// body **in bytes**: the one that records the protocol wire for the
+/// evidence, and the one that compares the served tarball with the published one.
 fn socket_get(port: u16, path: &str, authorization: Option<&str>) -> (u16, String, Vec<u8>) {
     let mut request =
         format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n");
@@ -287,17 +287,17 @@ fn socket_get(port: u16, path: &str, authorization: Option<&str>) -> (u16, Strin
     (status, headers, answer[split + 4..].to_vec())
 }
 
-/// El seeder del catálogo: cada suite lo trae porque el arnés reinicia el
-/// binario de la suite para sembrar antes de arrancar el servicio.
+/// The catalog seeder: each suite brings it because the harness restarts the
+/// suite binary to seed before starting the service.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// AC1 + AC2: el flujo completo del primer módulo privado, con el cliente
-/// real: publicación versionada e inmutable, `init` autenticado que
-/// resuelve por versión y verifica el checksum del tarball, mutación
-/// incompatible rechazada y resolución de otra cuenta denegada.
+/// AC1 + AC2: the complete flow of the first private module, with the real
+/// client: versioned and immutable publication, authenticated `init` that
+/// resolves by version and verifies the tarball checksum, incompatible
+/// mutation rejected and resolution from another account denied.
 #[test]
 fn the_terraform_client_inits_a_private_module() {
     require_terraform();
@@ -312,8 +312,8 @@ fn the_terraform_client_inits_a_private_module() {
     let v1 = the_module_tarball(&root, "module-v1", "# version one");
     let v1_digest = sha256_of(&v1);
 
-    // AC2: la publicación es un recibo con el sha256 que el hub calculó
-    // al commit; el mismo que luego declara la descarga.
+    // AC2: the publication is a receipt with the sha256 that the hub computed
+    // at commit; the same one that the download later declares.
     let (status, receipt) = publish_module(port, "modules-hosted", &token, "1.0.0", &v1, None);
     assert_eq!(
         status, 201,
@@ -330,9 +330,9 @@ fn the_terraform_client_inits_a_private_module() {
         "the receipt names the size"
     );
 
-    // AC1: el `init` real. El cliente pide versiones con su credencial,
-    // resuelve la restricción, sigue el `X-Terraform-Get` y go-getter baja
-    // el tarball con la credencial de netrc verificando `?checksum=`.
+    // AC1: the real `init`. The client requests versions with its credential,
+    // resolves the constraint, follows the `X-Terraform-Get` and go-getter downloads
+    // the tarball with the netrc credential verifying `?checksum=`.
     let author = Client::new(&root, "author", port, &token, the_binary.clone());
     author.write_config(Some("1.0.0"));
     author.init().expect("the init of the private module");
@@ -347,15 +347,15 @@ fn the_terraform_client_inits_a_private_module() {
         "the manifest records the resolved version: {manifest}"
     );
 
-    // AC1: la versión es INMUTABLE. Repetir la publicación —con los mismos
-    // bytes— es un rechazo, no un eco.
+    // AC1: the version is IMMUTABLE. Repeating the publication -- with the same
+    // bytes -- is a rejection, not an echo.
     let (status, again) = publish_module(port, "modules-hosted", &token, "1.0.0", &v1, None);
     assert_eq!(
         status, 409,
         "the republish of the same version is rejected: {again}"
     );
-    // AC2: la mutación incompatible — misma versión, otro contenido — es
-    // otro rechazo.
+    // AC2: the incompatible mutation -- same version, other content -- is
+    // another rejection.
     let tampered = the_module_tarball(&root, "module-v1-tampered", "# version one, changed");
     let (status, mutated) =
         publish_module(port, "modules-hosted", &token, "1.0.0", &tampered, None);
@@ -364,8 +364,8 @@ fn the_terraform_client_inits_a_private_module() {
         "the same version with other content is rejected: {mutated}"
     );
 
-    // AC2: lo publicado es el recibo. El tarball servido es byte a byte el
-    // que entró, y la descarga declara el checksum del recibo.
+    // AC2: what is published is the receipt. The served tarball is byte for byte the
+    // one that went in, and the download declares the receipt's checksum.
     let (_, headers, _body) = socket_get(
         port,
         "/terraform/modules-hosted/v1/modules/hodei/demo/local/1.0.0/download",
@@ -400,8 +400,8 @@ fn the_terraform_client_inits_a_private_module() {
         "the bytes served are the bytes published"
     );
 
-    // AC1: el scoping es por cuenta. Otro principal no resuelve el módulo:
-    // el repositorio vive en otra cuenta, y su init no encuentra nada.
+    // AC1: scoping is per account. Another principal does not resolve the module:
+    // the repository lives in another account, and its init finds nothing.
     let other = support::token(SECOND_ACCOUNT, "bob");
     let stranger = Client::new(&root, "stranger", port, &other, the_binary.clone());
     stranger.write_config(Some("1.0.0"));
@@ -426,8 +426,8 @@ fn the_terraform_client_inits_a_private_module() {
         "the repository of another account does not exist for the stranger"
     );
 
-    // AC2: el índice de versiones. La segunda versión entra y la
-    // resolución por versión la alcanza.
+    // AC2: the version index. The second version gets in and the
+    // version resolution reaches it.
     let v2 = the_module_tarball(&root, "module-v2", "# version two");
     let (status, receipt2) = publish_module(port, "modules-hosted", &token, "2.0.0", &v2, None);
     assert_eq!(status, 201, "the second version publishes: {receipt2}");
@@ -454,10 +454,10 @@ fn the_terraform_client_inits_a_private_module() {
     pinned.init().expect("the init of the second version");
     assert!(pinned.installed().join("main.tf").is_file());
 
-    // AC4: el discovery del host nombra al único registry de la cuenta, y
-    // solo modules.v1: AC3 no implementado, nada se anuncia. Es el
-    // documento que el cliente pide por https en un despliegue con TLS y
-    // por la config de CLI en este.
+    // AC4: the host's discovery names the account's only registry, and
+    // only modules.v1: AC3 not implemented, nothing is announced. It is the
+    // document the client requests over https in a deployment with TLS and
+    // through the CLI config in this one.
     let (status, _, document) = socket_get(
         port,
         "/.well-known/terraform.json",
@@ -478,9 +478,9 @@ fn the_terraform_client_inits_a_private_module() {
         "AC3: the provider registry is not announced because it is not implemented"
     );
 
-    // AC4: el modo offline. Con el hub parado, el init de una caché
-    // templada no necesita red (el instalador reutiliza lo instalado) y
-    // una resolución que no tiene caché falla, sin caer a nada.
+    // AC4: offline mode. With the hub stopped, the init of a warm
+    // cache needs no network (the installer reuses what is installed) and
+    // a resolution that has no cache fails, without falling back to anything.
     support::stop(&mut service);
     let warm = author.init();
     assert!(
@@ -497,14 +497,14 @@ fn the_terraform_client_inits_a_private_module() {
         missing.output
     );
 
-    // La evidencia del digest que el cliente verificó, para el informe.
+    // The evidence of the digest that the client verified, for the report.
     println!("HSP-158 module v1 sha256: {v1_digest}");
 }
 
-/// AC4: la superficie de service discovery del hub y el resto del wire
-/// que el cliente real no alcanza sobre http (el discovery va siempre por
-/// https): el documento que nombra al registry de la cuenta, y el límite
-/// de otra cuenta.
+/// AC4: the hub's service discovery surface and the rest of the wire
+/// that the real client does not reach over http (discovery always goes over
+/// https): the document that names the account's registry, and the boundary
+/// of another account.
 #[test]
 fn the_discovery_names_the_module_registry_of_the_account() {
     let deployment = Deployment::new();
@@ -516,8 +516,8 @@ fn the_discovery_names_the_module_registry_of_the_account() {
     let port = service.port;
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Dos registries de la misma cuenta: el discovery no puede elegir
-    // solo, y lo dice.
+    // Two registries in the same account: discovery cannot choose
+    // on its own, and says so.
     let (status, _, body) = socket_get(
         port,
         "/.well-known/terraform.json",
@@ -530,7 +530,7 @@ fn the_discovery_names_the_module_registry_of_the_account() {
         String::from_utf8_lossy(&body)
     );
 
-    // Una cuenta sin registries: no hay nada que anunciar.
+    // An account without registries: there is nothing to announce.
     let other = support::token(SECOND_ACCOUNT, "bob");
     let (status, _, body) = socket_get(
         port,
@@ -544,10 +544,10 @@ fn the_discovery_names_the_module_registry_of_the_account() {
         String::from_utf8_lossy(&body)
     );
 
-    // Sin credencial no hay discovery: el documento nombra repositorios de
-    // una cuenta, y una cuenta se verifica, no se declara. La credencial
-    // del discovery es la del registry (Bearer); el Basic del netrc es el
-    // del artefacto, y aquí no vale.
+    // Without a credential there is no discovery: the document names repositories of
+    // an account, and an account is verified, not declared. The discovery
+    // credential is the registry's (Bearer); the netrc Basic is
+    // the artifact's, and does not work here.
     let (status, _, _) = socket_get(port, "/.well-known/terraform.json", None);
     assert_eq!(status, 401, "the discovery needs a credential");
     let (status, _, _) = socket_get(
@@ -561,7 +561,7 @@ fn the_discovery_names_the_module_registry_of_the_account() {
     );
 }
 
-/// El base64 de unos bytes, como lo escribe el cliente que manda Basic.
+/// The base64 of some bytes, as written by the client that sends Basic.
 fn base64_of(value: &str) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(value)

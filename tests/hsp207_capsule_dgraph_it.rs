@@ -1,39 +1,39 @@
-//! HSP-207: la lectura de la capsula de release sobre la autoridad de
-//! grafo — lo que la capsula firmada afirma, el grafo lo repite byte a
-//! byte; cada lectura esta acotada por la clave del manifiesto y una
-//! capsula distractor no se alcanza; la revocacion es un estado visible
-//! junto al historial, nunca un silencio que reescriba lo firmado.
+//! HSP-207: reading the release capsule over the graph authority
+//! -- what the signed capsule asserts, the graph repeats byte for
+//! byte; each read is bounded by the manifest key and a distractor
+//! capsule is not reached; revocation is a visible state alongside the
+//! history, never a silence that rewrites what was signed.
 //!
-//! Va gateado en HODEI_GRAPH_IT_ENDPOINT como todo IT de la pila, y
-//! SERIALIZADO: el alpha es compartido con otros workers (HSP-192 GC,
-//! HSP-201 OCI), asi que las aserciones son SIEMPRE de membrecia sobre
-//! claves propias del tenant `hsp207-*` de esta ejecucion — nunca censos
-//! globales. El formato de la capsula (manifiestos, recibos, firma,
-//! absence explicita) es el contrato offline de HSP-126: este IT no lo
-//! reescribe, lo usa como oracle de paridad export <-> grafo.
+//! It is gated on HODEI_GRAPH_IT_ENDPOINT like every IT of the stack, and
+//! SERIALIZED: the alpha is shared with other workers (HSP-192 GC,
+//! HSP-201 OCI), so the assertions are ALWAYS membership checks over the
+//! tenant's own keys `hsp207-*` of this run -- never global
+//! censuses. The capsule format (manifests, receipts, signature,
+//! explicit absence) is HSP-126's offline contract: this IT does not
+//! rewrite it, it uses it as the export <-> graph parity oracle.
 //!
-//! Lo que prueba, contra el motor real:
+//! What it tests, against the real engine:
 //!
-//! - **Paridad AC1**: tras `ingest`, `read_capsule` devuelve los bytes
-//!   exactos del layout (el manifiesto de imagen que la firma firma, el
-//!   `release.json`, el estado de confianza, la armadura), el mismo
-//!   digest de release, los mismos paths con sus recibos y su decision
-//!   historica, las mismas ausencias con su motivo — y la firma detached
-//!   sigue verificando sobre los bytes que el grafo guarda.
-//! - **Frontera AC2**: una capsula distractor (otro digest de imagen,
-//!   otra cuenta y repositorio, porque el alpha es compartido) se ingiere igual; leer la primera
-//!   responde exactamente sus paths, y el path del distractor no aparece
-//!   jamas en su respuesta. Las consultas del modulo son `eq` exacto
-//!   acotado — la prueba de forma vive en las unidades.
-//! - **Revocacion visible AC1+AC2**: revocada la decision en el libro de
-//!   confianza tras el export, la capsula del grafo conserva intacta la
-//!   decision firmada y `read_capsule_with_trust` la reporta `Revoked`;
-//!   re-promover con otra decision la reporta `Superseded` con la
-//!   decision vigente nombrada. La historia no se reescribe; la verdad
-//!   de hoy se lee al lado.
-//! - **Inmutabilidad**: reingerir los mismos bytes es un replay que no
-//!   duplica; un layout que no verifica no toca el grafo; una clave sin
-//!   capsula se rechaza, no se responde vacia.
+//! - **AC1 parity**: after `ingest`, `read_capsule` returns the exact bytes
+//!   of the layout (the image manifest that the signature signs, the
+//!   `release.json`, the trust state, the armor), the same release
+//!   digest, the same paths with their receipts and their historical
+//!   decision, the same absences with their reason -- and the detached signature
+//!   still verifies over the bytes the graph stores.
+//! - **AC2 boundary**: a distractor capsule (another image digest,
+//!   another account and repository, because the alpha is shared) is ingested the same; reading the first
+//!   answers exactly its paths, and the distractor's path never
+//!   appears in its response. The module's queries are bounded exact
+//!   `eq` -- the proof of shape lives in the units.
+//! - **Visible revocation AC1+AC2**: once the decision is revoked in the trust
+//!   ledger after the export, the graph's capsule keeps the signed
+//!   decision intact and `read_capsule_with_trust` reports it `Revoked`;
+//!   re-promoting with another decision reports it `Superseded` with the
+//!   current decision named. History is not rewritten; today's truth
+//!   is read alongside.
+//! - **Immutability**: re-ingesting the same bytes is a replay that does not
+//!   duplicate; a layout that does not verify does not touch the graph; a key without a
+//!   capsule is rejected, not answered empty.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -72,14 +72,14 @@ const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 
 include!("support/hsp219_concurrent_open.rs");
 
-/// Un registro con su catalogo y su almacen, en un directorio propio.
+/// A registry with its catalog and its store, in its own directory.
 ///
-/// HSP-314 F4: el catalogo y el libro de recibos son los del grafo (antes
-/// eran el motor embebido, que es efimero por prueba). El alpha es
-/// compartido y persistente, asi que cada `Site` lleva su PROPIA cuenta y
-/// su PROPIO repositorio: nada de una instancia toca las filas de otra, ni
-/// las de una corrida anterior. El libro de decisiones sigue siendo el
-/// espejo en memoria (`MirrorLedger`): el de confianza vive en otra slice.
+/// HSP-314 F4: the catalog and the receipt ledger are the graph's (they used to
+/// be the embedded engine, which is ephemeral per test). The alpha is
+/// shared and persistent, so each `Site` carries its OWN account and
+/// its OWN repository: nothing of one instance touches another's rows, nor
+/// those of a previous run. The decision ledger is still the
+/// in-memory mirror (`MirrorLedger`): the trust one lives in another slice.
 struct Site {
     tmp: tempfile::TempDir,
     store: DgraphCatalogStore,
@@ -150,7 +150,7 @@ impl Site {
             .expect("the proxy is created");
     }
 
-    /// Lo que hace una resolucion de proxy: guardar y publicar.
+    /// What a proxy resolution does: store and publish.
     async fn resolve(&self, path: &str, content: &[u8]) -> ContentDigest {
         let digest = ContentDigest::of_bytes(content);
         self.blobs().put(content).await.expect("the blob is stored");
@@ -179,7 +179,7 @@ impl Site {
         digest
     }
 
-    /// El recibo firmado que confirma una resolucion.
+    /// The signed receipt that confirms a resolution.
     async fn receipt(&self, path: &str, digest: &ContentDigest, size_bytes: u64) {
         self.ledger
             .record(&ProvenanceReceipt {
@@ -246,9 +246,9 @@ async fn import_into(
         &site.account,
         &site.repository,
         directory,
-        // El destino es otro `Site` (otra cuenta: el alpha es compartido y
-        // cada sitio lleva la suya), asi que la importacion cruza duenos y
-        // lo declara de forma explicita, como pide el contrato de HSP-126.
+        // The destination is another `Site` (another account: the alpha is shared and
+        // each site carries its own), so the import crosses owners and
+        // declares it explicitly, as HSP-126's contract requires.
         Mapping {
             allow: true,
             overwrite: false,
@@ -276,9 +276,9 @@ fn blob_hex(digest: &str) -> &str {
     digest.strip_prefix("sha256:").expect("a sha256 digest")
 }
 
-/// El digest del manifiesto de imagen announced por el indice, como lo
-/// lee el propio indice (el orden del oraculo HSP-126: el manifest de la
-/// capsula es el announced).
+/// The digest of the image manifest announced by the index, as the index
+/// itself reads it (the order of the HSP-126 oracle: the capsule's
+/// manifest is the announced one).
 fn index_image_digest(layout: &Path) -> String {
     read_json(&layout.join("index.json"))["manifests"][0]["digest"]
         .as_str()
@@ -286,12 +286,12 @@ fn index_image_digest(layout: &Path) -> String {
         .to_string()
 }
 
-/// Los bytes exactos del blob que el indice anuncia para un digest.
+/// The exact bytes of the blob the index announces for a digest.
 fn layout_blob(layout: &Path, digest: &str) -> Vec<u8> {
     std::fs::read(layout.join(LAYOUT_BLOBS).join(blob_hex(digest))).expect("the layout blob")
 }
 
-/// El digest SHA-256 en la forma del layout: `sha256:` + hex minuscula.
+/// The SHA-256 digest in the layout's form: `sha256:` + lowercase hex.
 fn digest_of(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     use std::fmt::Write as _;
@@ -302,10 +302,10 @@ fn digest_of(bytes: &[u8]) -> String {
     digest
 }
 
-/// El espejo de concesiones que la lectura con confianza consulta: el
-/// libro de decisiones del grafo vive en otra slice; aqui lo que se
-/// prueba es el overlay — la capsula conserva su historial y el ledger
-/// responde del presente.
+/// The grants mirror that the trust-aware read consults: the
+/// graph's decision ledger lives in another slice; what is tested here
+/// is the overlay -- the capsule keeps its history and the ledger
+/// answers for the present.
 struct MirrorLedger {
     grants: tokio::sync::Mutex<Vec<TrustGrant>>,
 }
@@ -484,8 +484,8 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     panic!("Dgraph did not open after 3 attempts: {last}");
 }
 
-/// El tenant de esta ejecucion: `hsp207-` + nanos + contador, como en
-/// los ITs vecinos. Nada de una prueba toca el espacio de claves de otra.
+/// This run's tenant: `hsp207-` + nanos + counter, as in
+/// the neighboring ITs. Nothing in one test touches another's key space.
 fn run_tenant(tag: &str) -> Tenant {
     static RUN: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
@@ -500,7 +500,7 @@ fn run_tenant(tag: &str) -> Tenant {
     Tenant::new(&name).expect("the run tenant is valid")
 }
 
-/// El directorio de evidencia: `target/uat/hsp207/`.
+/// The evidence directory: `target/uat/hsp207/`.
 fn the_evidence_dir() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
@@ -522,9 +522,9 @@ fn record_evidence(test: &str, line: &str) {
     }
 }
 
-/// Cuantos nodos hay bajo una clave exacta del grafo, para cualquier
-/// predicado propio de esta slice: la comprobacion es de MEMBRECIA de
-/// claves propias — nunca un censo global sobre el alpha compartido.
+/// How many nodes there are under an exact graph key, for any
+/// predicate of this slice: the check is a MEMBERSHIP check of the
+/// own keys -- never a global census over the shared alpha.
 async fn copies_of(client: &GraphClient, predicate: &str, key: &str) -> usize {
     let query = format!(
         "{{ q(func: eq({predicate}, {key})) {{ uid }} }}",
@@ -542,9 +542,9 @@ async fn copies_of(client: &GraphClient, predicate: &str, key: &str) -> usize {
         .expect("the answer has the block")
 }
 
-/// El paquete del escenario central: una ruta con decision (`tools/a.bin`),
-/// una confirmada sin decision (`tools/b.bin`) y una retenida (`tools/c.bin`)
-/// — la absence explicita forma parte del contrato.
+/// The central scenario's package: a path with a decision (`tools/a.bin`),
+/// one confirmed without a decision (`tools/b.bin`) and one withheld (`tools/c.bin`)
+/// -- explicit absence is part of the contract.
 async fn capsule_site(
     client: Arc<GraphClient>,
     decided: &mut ContentDigest,
@@ -556,7 +556,7 @@ async fn capsule_site(
     *decided = a.clone();
     let b = site.resolve("tools/b.bin", b"tool b").await;
     site.receipt("tools/b.bin", &b, 6).await;
-    // c.bin no tiene recibo: se retiene y la capsula lo dice.
+    // c.bin has no receipt: it is withheld and the capsule says so.
     site.resolve("tools/c.bin", b"tool c").await;
 
     let signer = scratch_signer("capsule");
@@ -584,8 +584,8 @@ async fn capsule_site(
     (site, directory, signer)
 }
 
-/// Concede el digest con la decision nombrada, para el overlay de
-/// vigencia que lee `read_capsule_with_trust`.
+/// Grants the digest with the named decision, for the validity
+/// overlay that `read_capsule_with_trust` reads.
 async fn seed_grant(ledger: &MirrorLedger, site: &Site, digest: &ContentDigest, decision_id: &str) {
     ledger
         .grant(&[TrustGrant {
@@ -608,9 +608,9 @@ async fn seed_grant(ledger: &MirrorLedger, site: &Site, digest: &ContentDigest, 
         .expect("the mirror grant lands");
 }
 
-/// AC1: la lectura del grafo es el layout, byte a byte, con la firma
-/// viva. AC2: acotada por la clave del manifiesto, con el distractor
-/// presente e inalcanzable desde la otra capsula.
+/// AC1: reading from the graph is the layout, byte for byte, with the
+/// signature alive. AC2: bounded by the manifest key, with the distractor
+/// present and unreachable from the other capsule.
 #[tokio::test]
 async fn the_graph_reads_the_capsule_the_layout_signed() {
     let Some(client) = fresh_client().await else {
@@ -626,8 +626,8 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
         .await
         .expect("the capsule store opens on the validated schema");
 
-    // El digest que el modulo nombra es el que el indice anuncia y el
-    // que la firma firma: la misma clave en las dos puertas.
+    // The digest the module names is the one the index announces and the
+    // one the signature signs: the same key at both doors.
     let image_digest = index_image_digest(&layout);
     assert_eq!(
         image_digest,
@@ -641,7 +641,7 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     assert_eq!(ingest.image_digest, image_digest);
     assert!(!ingest.replayed, "a first ingest writes");
 
-    // Membrecia propia: ESTA capsula una vez, ESTE path una vez.
+    // Own membership: THIS capsule once, THIS path once.
     assert_eq!(
         copies_of(
             &client,
@@ -663,7 +663,7 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
         "the decided path row is one"
     );
 
-    // AC1 — paridad byte a byte con el layout offline.
+    // AC1 -- byte-for-byte parity with the offline layout.
     let graph = store
         .read_capsule(&image_digest)
         .await
@@ -692,13 +692,13 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     );
     assert_eq!(graph.exported_at, verified.capsule.exported_at);
     assert_eq!(graph.signer, verified.signer);
-    // La firma detached verifica sobre los bytes que el grafo guarda:
-    // la capsula del grafo es la capsula firmada, no una traduccion.
+    // The detached signature verifies over the bytes the graph stores:
+    // the graph's capsule is the signed capsule, not a translation.
     graph
         .verify_signature(&signer)
         .expect("the signature holds over the graph's bytes");
 
-    // El historial y la ausencia explicita, intactos.
+    // The history and the explicit absence, intact.
     let a = graph
         .assets
         .iter()
@@ -727,9 +727,9 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
         "the absence explains itself"
     );
 
-    // AC2 — el distractor: otra capsula firmada, mismo tenant y mismo
-    // repositorio. Se ingiere bajo su propia clave; leer la primera
-    // jamas alcanza su path.
+    // AC2 -- the distractor: another signed capsule, same tenant and same
+    // repository. It is ingested under its own key; reading the first
+    // never reaches its path.
     let other_site = Site::new(client.clone()).await;
     other_site.create_proxy("central").await;
     let d = other_site.resolve("tools/z.bin", b"tool z").await;
@@ -766,8 +766,8 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
         .collect();
     assert!(!withheld_paths.contains(&"tools/z.bin"));
 
-    // La clave del distractor esta viva y ES la suya: la frontera es de
-    // membrecia — cada capsula responde de su clave, nada se fusiona.
+    // The distractor's key is alive and IS its own: the boundary is one of
+    // membership -- each capsule answers for its key, nothing is merged.
     let second = store
         .read_capsule(&other_digest)
         .await
@@ -777,10 +777,10 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     assert!(second.withheld.is_empty());
     assert_ne!(second.image_digest, first.image_digest);
 
-    // El contrato offline de HSP-126 sigue vivo con el grafo delante:
-    // el MISMO paquete exportado se importa intacto en otro destino.
-    // Leer la capsula en el grafo no cambia como se ve un paquete ya
-    // exportado — la paridad export <-> grafo es additive.
+    // HSP-126's offline contract is still alive with the graph in front:
+    // the SAME exported package is imported intact into another destination.
+    // Reading the capsule in the graph does not change how an already
+    // exported package looks -- export <-> graph parity is additive.
     let target = Site::new(client.clone()).await;
     target.create_proxy("central").await;
     let report = import_into(&target, &directory)
@@ -801,8 +801,8 @@ async fn the_graph_reads_the_capsule_the_layout_signed() {
     );
 }
 
-/// AC1 + AC2 — la revocacion no se esconde y no reescribe: la capsula
-/// conserva su decision firmada; el ledger dice donde esta hoy.
+/// AC1 + AC2 -- revocation does not hide and does not rewrite: the capsule
+/// keeps its signed decision; the ledger says where it stands today.
 #[tokio::test]
 async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
     let Some(client) = fresh_client().await else {
@@ -827,7 +827,7 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
     seed_grant(&ledger, &site, &decided, DEC_ID).await;
     let now = Utc::now();
 
-    // Hoy la decision vigente ES la de la capsula: Active.
+    // Today the current decision IS the capsule's: Active.
     let live = store
         .read_capsule_with_trust(&image_digest, &ledger, now)
         .await
@@ -838,8 +838,8 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
         "the grant backs the digest"
     );
 
-    // Se revoca tras el export. La capsula NO se reescribe: el byte
-    // del release sigue siendo el byte firmado.
+    // It is revoked after the export. The capsule is NOT rewritten: the
+    // release's byte is still the signed byte.
     ledger
         .revoke_decision(
             &site.account,
@@ -860,7 +860,7 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
         Some(&DecisionState::Revoked),
         "the revocation is never hidden"
     );
-    // El historial intacto: la decision sigue nombrada, con su actor.
+    // The history intact: the decision is still named, with its actor.
     let a = after
         .assets
         .iter()
@@ -879,14 +879,14 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
     after
         .verify_signature(&signer)
         .expect("the signature still holds");
-    // Sin decision historica, sin estado que revocar: NoDecision.
+    // Without a historical decision, no state to revoke: NoDecision.
     assert_eq!(
         after.decision_state_of("tools/b.bin"),
         Some(&DecisionState::NoDecision)
     );
 
-    // Re-promocion con OTRA decision: la capsula conserva la suya y el
-    // estado nombra la vigente — Superseded, jamas la decision antigua.
+    // Re-promotion with ANOTHER decision: the capsule keeps its own and the
+    // state names the current one -- Superseded, never the old decision.
     seed_grant(&ledger, &site, &decided, DEC_ID_2).await;
     let superseded = store
         .read_capsule_with_trust(&image_digest, &ledger, now + Duration::hours(1))
@@ -919,8 +919,8 @@ async fn a_revocation_is_visible_beside_the_record_it_never_rewrites_it() {
     );
 }
 
-/// Inmutabilidad del registro: el replay no duplica; un layout que no
-/// verifica no toca el grafo; una clave sin capsula se rechaza.
+/// Registry immutability: the replay does not duplicate; a layout that does not
+/// verify does not touch the graph; a key without a capsule is rejected.
 #[tokio::test]
 async fn a_signed_capsule_is_never_rewritten_in_the_graph() {
     let Some(client) = fresh_client().await else {
@@ -940,8 +940,8 @@ async fn a_signed_capsule_is_never_rewritten_in_the_graph() {
         .await
         .expect("the first ingest writes");
 
-    // El mismo layout otra vez: replay. Ni la capsula ni sus filas
-    // duplican (membrecia exacta por clave propia, nunca censo).
+    // The same layout again: replay. Neither the capsule nor its rows
+    // duplicate (exact membership by own key, never a census).
     let replay = store
         .ingest(&layout, &signer)
         .await
@@ -979,9 +979,9 @@ async fn a_signed_capsule_is_never_rewritten_in_the_graph() {
         "the absence row is one"
     );
 
-    // Un layout cuya capsula de imagen no es lo que el indice anuncia
-    // no entra: el gate offline del ingest lo caza ANTES de escribir y
-    // el grafo queda intacto.
+    // A layout whose image capsule is not what the index announces
+    // does not enter: the ingest's offline gate catches it BEFORE writing and
+    // the graph stays intact.
     let forged = directory.join("oci-forged");
     copy_layout_dir(&layout, &forged).expect("the layout is copied");
     let capsule_blob = forged.join(LAYOUT_BLOBS).join(blob_hex(&image_digest));
@@ -1019,8 +1019,8 @@ async fn a_signed_capsule_is_never_rewritten_in_the_graph() {
         .verify_signature(&signer)
         .expect("the stored signature still holds");
 
-    // Y una clave inexistente se responde como Refused, no como vacio:
-    // leer algo que no se ingirio es un error, nunca una capsula muda.
+    // And a nonexistent key is answered as Refused, not as empty:
+    // reading something that was not ingested is an error, never a mute capsule.
     let error = store
         .read_capsule(&format!("sha256:{}", "f".repeat(64)))
         .await
@@ -1057,13 +1057,13 @@ fn copy_layout_dir(from: &Path, to: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-/// El manifest de la capsula es el announced por el indice; el de la
-/// firma no entra en la clave: esta prueba lo deja dicho para el lector.
+/// The capsule's manifest is the one announced by the index; the signature's
+/// does not enter the key: this test states that for the reader.
 #[test]
 fn a_layout_that_is_not_there_is_refused_not_invented() {
-    // La puerta de entrada del grafo es offline: un layout que no existe
-    // no produce una capsula vacia, produce Unsound. Nada de lo que el
-    // grafo guarda puede descansar en un layout que no se verifico.
+    // The graph's entry door is offline: a layout that does not exist
+    // does not produce an empty capsule, it produces Unsound. Nothing the
+    // graph stores can rest on a layout that was not verified.
     let error = capsule_image_digest(Path::new("/this/path/does/not/exist"))
         .expect_err("a missing layout is an error");
     assert!(

@@ -1,15 +1,15 @@
-//! Los repositorios virtuales (grupos) de HSP-108 / HAR-14, contra el wire.
+//! The virtual repositories (groups) of HSP-108 / HAR-14, against the wire.
 //!
-//! La superficie que ejercita es la del formato **raw**: los miembros del
-//! grupo son raw hosted y raw proxy, y el grupo resuelve en ellos en
-//! orden, que es lo que un grupo raw promete.
+//! The surface it exercises is that of the **raw** format: the members of the
+//! group are raw hosted and raw proxy, and the group resolves through them in
+//! order, which is what a raw group promises.
 //!
-//! El servicio es un proceso de verdad con catalogo, almacen de bytes y
-//! Cedar reales; el upstream es un servidor local que este fichero
-//! controla. Lo que se mide es lo que una persona ve: de que miembro sale
-//! cada respuesta (`x-hodei-resolved-from`), en que version de la
-//! configuracion del grupo (`x-hodei-group-version`) y que pasa cuando un
-//! miembro falla, no existe o no se puede leer.
+//! The service is a real process with a real catalog, byte store and
+//! Cedar; the upstream is a local server that this file
+//! controls. What is measured is what a person sees: which member serves
+//! each response (`x-hodei-resolved-from`), in which version of the
+//! group configuration (`x-hodei-group-version`) and what happens when a
+//! member fails, does not exist or cannot be read.
 
 mod support;
 
@@ -24,13 +24,13 @@ use support::{Curl, Deployment, FIRST_ACCOUNT};
 const HOSTED: &[u8] = b"content that was published in the hosted member";
 const UPSTREAM: &[u8] = b"content that lives upstream";
 
-/// Una peticion que llego al upstream.
+/// A request that reached the upstream.
 #[derive(Debug, Clone)]
 struct Seen {
     path: String,
 }
 
-/// Un documento que sirve el upstream.
+/// A document that the upstream serves.
 #[derive(Debug, Clone)]
 struct Doc {
     body: Vec<u8>,
@@ -38,7 +38,7 @@ struct Doc {
     last_modified: Option<String>,
 }
 
-/// El estado del upstream, que la prueba cambia mientras corre.
+/// The state of the upstream, which the test changes while it runs.
 struct World {
     docs: Mutex<HashMap<String, Doc>>,
     failing: AtomicBool,
@@ -172,13 +172,13 @@ fn serve(mut stream: TcpStream, world: &World) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// La configuracion `proxy` de un repositorio: el upstream y su cache.
+/// The `proxy` configuration of a repository: the upstream and its cache.
 fn proxy_of(upstream: &Upstream) -> serde_json::Value {
     serde_json::json!({
         "upstream": {
@@ -197,9 +197,9 @@ struct Lab {
 }
 
 impl Lab {
-    /// `hosted`: repositorios hosted; `proxies`: repositorios proxy;
-    /// `groups`: grupos con sus miembros, en el orden en que se crean (un
-    /// grupo interno antes que el que lo contiene).
+    /// `hosted`: hosted repositories; `proxies`: proxy repositories;
+    /// `groups`: groups with their members, in the order they are created (an
+    /// inner group before the one that contains it).
     fn new(
         hosted: &[&str],
         trusted: &[&str],
@@ -236,7 +236,7 @@ impl Lab {
         path
     }
 
-    /// Publica en un repositorio hosted y devuelve el codigo.
+    /// Publishes to a hosted repository and returns the status code.
     fn publish(&self, port: u16, repository: &str, path: &str, body: &[u8]) -> u16 {
         let alice = support::token(FIRST_ACCOUNT, "alice");
         let file = self.file("upload.bin", body);
@@ -254,7 +254,7 @@ impl Lab {
     }
 }
 
-/// Una respuesta: codigo, cuerpo y las cabeceras que dicen quien sirvio.
+/// A response: status code, body and the headers that say who served it.
 struct Reply {
     status: u16,
     body: Vec<u8>,
@@ -305,7 +305,7 @@ fn verb(lab: &Lab, port: u16, method: &str, repository: &str, path: &str) -> u16
 }
 
 // ---------------------------------------------------------------------------
-// Resolucion determinista y shadowing.
+// Deterministic resolution and shadowing.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -326,7 +326,7 @@ fn the_first_member_that_has_the_path_wins_and_the_headers_say_which() {
     let port = service.port;
     assert!((200..300).contains(&lab.publish(port, "hos-a", "pkg/lib.bin", HOSTED)));
 
-    // Colision hosted/remote: gana el hosted, y el upstream ni se entera.
+    // Hosted/remote collision: the hosted wins, and the upstream is not even aware.
     let first = get(&lab, port, "grp-hosted-first", "pkg/lib.bin");
     assert_eq!(first.status, 200);
     assert_eq!(first.body, HOSTED);
@@ -334,14 +334,14 @@ fn the_first_member_that_has_the_path_wins_and_the_headers_say_which() {
     let version = first.group_version.expect("the group version is reported");
     assert_eq!(lab.upstream.hits("pkg/lib.bin"), 0);
 
-    // El mismo contenido con el orden invertido: gana el remote.
+    // The same content with the order reversed: the remote wins.
     let second = get(&lab, port, "grp-proxy-first", "pkg/lib.bin");
     assert_eq!(second.status, 200);
     assert_eq!(second.body, UPSTREAM);
     assert_eq!(second.resolved_from.as_deref(), Some("pxy-a"));
     assert_eq!(second.cache.as_deref(), Some("miss"));
 
-    // Es determinista: repetirlo da lo mismo.
+    // It is deterministic: repeating it gives the same result.
     for _ in 0..3 {
         let again = get(&lab, port, "grp-hosted-first", "pkg/lib.bin");
         assert_eq!(again.body, HOSTED);
@@ -349,7 +349,7 @@ fn the_first_member_that_has_the_path_wins_and_the_headers_say_which() {
         assert_eq!(again.group_version, Some(version));
     }
 
-    // Lo que solo tiene el upstream baja por el proxy y queda en su cache.
+    // What only the upstream has comes down through the proxy and stays in its cache.
     let only = get(&lab, port, "grp-hosted-first", "pkg/only-up.bin");
     assert_eq!(only.status, 200);
     assert_eq!(only.resolved_from.as_deref(), Some("pxy-a"));
@@ -357,13 +357,13 @@ fn the_first_member_that_has_the_path_wins_and_the_headers_say_which() {
     let cached = get(&lab, port, "grp-hosted-first", "pkg/only-up.bin");
     assert_eq!(cached.cache.as_deref(), Some("hit"));
 
-    // Lo que no tiene nadie es un 404 limpio.
+    // What nobody has is a clean 404.
     assert_eq!(
         get(&lab, port, "grp-hosted-first", "pkg/none.bin").status,
         404
     );
 
-    // Las rutas directas siguen siendo las de siempre.
+    // The direct paths remain the usual ones.
     let direct = get(&lab, port, "hos-a", "pkg/lib.bin");
     assert_eq!(direct.body, HOSTED);
     assert_eq!(direct.resolved_from, None);
@@ -386,7 +386,7 @@ fn a_group_inside_a_group_resolves_to_the_leaf_that_has_the_path() {
 
     let leaf = get(&lab, port, "outer", "pkg/lib.bin");
     assert_eq!(leaf.body, HOSTED);
-    // El recibo nombra la hoja, no el grupo intermedio.
+    // The receipt names the leaf, not the intermediate group.
     assert_eq!(leaf.resolved_from.as_deref(), Some("hos-a"));
     let up = get(&lab, port, "outer", "pkg/up.bin");
     assert_eq!(up.body, UPSTREAM);
@@ -399,16 +399,16 @@ fn a_group_never_stores_content_of_its_own() {
     let lab = Lab::new(&["hos-a"], &[], &[], &[("grp", &["hos-a"])], None);
     let mut service = lab.start();
     let port = service.port;
-    // El router solo enruta PUT/GET/HEAD: un DELETE da 405 en cualquier
-    // repositorio, asi que solo el PUT dice algo del grupo.
+    // The router only routes PUT/GET/HEAD: a DELETE gives 405 on any
+    // repository, so only the PUT says something about the group.
     assert_eq!(verb(&lab, port, "PUT", "grp", "pkg/lib.bin"), 405);
-    // Y no se ha colado nada en el miembro.
+    // And nothing has slipped into the member.
     assert_eq!(get(&lab, port, "hos-a", "pkg/lib.bin").status, 404);
     support::stop(&mut service);
 }
 
 // ---------------------------------------------------------------------------
-// MISS no es ERROR.
+// MISS is not ERROR.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -424,15 +424,15 @@ fn a_miss_in_a_member_continues_but_an_error_stops_without_jumping() {
     let port = service.port;
     assert!((200..300).contains(&lab.publish(port, "hos-a", "pkg/lib.bin", HOSTED)));
 
-    // El upstream contesta 404: es un MISS y el grupo sigue con el hosted.
+    // The upstream answers 404: it is a MISS and the group continues with the hosted.
     let miss = get(&lab, port, "grp", "pkg/lib.bin");
     assert_eq!(miss.status, 200);
     assert_eq!(miss.body, HOSTED);
     assert_eq!(miss.resolved_from.as_deref(), Some("hos-a"));
     assert_eq!(lab.upstream.hits("pkg/lib.bin"), 1);
 
-    // El upstream cae: es un ERROR, el grupo se detiene y NO sirve el
-    // hosted aunque lo tenga -- seria contenido ambiguo.
+    // The upstream goes down: it is an ERROR, the group stops and does NOT serve the
+    // hosted one even if it has it -- it would be ambiguous content.
     lab.upstream.fail(true);
     let error = get(&lab, port, "grp", "pkg/lib.bin");
     assert!(
@@ -443,11 +443,11 @@ fn a_miss_in_a_member_continues_but_an_error_stops_without_jumping() {
     assert_ne!(error.body, HOSTED);
     assert_eq!(error.resolved_from, None);
 
-    // La ruta directa del miembro sano sigue sirviendo lo suyo.
+    // The direct path of the healthy member keeps serving its own.
     let direct = get(&lab, port, "hos-a", "pkg/lib.bin");
     assert_eq!(direct.body, HOSTED);
 
-    // Cuando el upstream vuelve, el grupo vuelve a resolver.
+    // When the upstream comes back, the group resolves again.
     lab.upstream.fail(false);
     let back = get(&lab, port, "grp", "pkg/lib.bin");
     assert_eq!(back.resolved_from.as_deref(), Some("hos-a"));
@@ -455,7 +455,7 @@ fn a_miss_in_a_member_continues_but_an_error_stops_without_jumping() {
 }
 
 // ---------------------------------------------------------------------------
-// Permisos: por miembro y por grupo, sin herencia.
+// Permissions: per member and per group, without inheritance.
 // ---------------------------------------------------------------------------
 
 fn policy(downloads: &[&str]) -> String {
@@ -473,7 +473,7 @@ fn policy(downloads: &[&str]) -> String {
 
 #[test]
 fn a_member_the_principal_cannot_read_is_skipped_and_its_direct_route_is_closed() {
-    // alice lee el grupo y el proxy, pero NO el hosted.
+    // alice reads the group and the proxy, but NOT the hosted.
     let lab = Lab::new(
         &["hos-a"],
         &[],
@@ -486,14 +486,14 @@ fn a_member_the_principal_cannot_read_is_skipped_and_its_direct_route_is_closed(
     let port = service.port;
     assert!((200..300).contains(&lab.publish(port, "hos-a", "pkg/lib.bin", HOSTED)));
 
-    // El hosted tiene la ruta pero alice no puede leerlo: se omite y
-    // resuelve el proxy. Nunca se le sirve lo que su permiso no cubre.
+    // The hosted has the path but alice cannot read it: it is skipped and
+    // the proxy resolves. She is never served what her permission does not cover.
     let through = get(&lab, port, "grp", "pkg/lib.bin");
     assert_eq!(through.status, 200);
     assert_eq!(through.body, UPSTREAM);
     assert_eq!(through.resolved_from.as_deref(), Some("pxy-a"));
 
-    // Y que pueda leer el grupo no le abre la ruta directa del miembro.
+    // And being able to read the group does not open the member's direct path.
     let direct = get(&lab, port, "hos-a", "pkg/lib.bin");
     assert!([403, 404].contains(&direct.status), "{}", direct.status);
     assert_ne!(direct.body, HOSTED);
@@ -502,7 +502,7 @@ fn a_member_the_principal_cannot_read_is_skipped_and_its_direct_route_is_closed(
 
 #[test]
 fn reading_a_member_does_not_open_the_group_endpoint() {
-    // alice lee los miembros pero no el endpoint virtual.
+    // alice reads the members but not the virtual endpoint.
     let lab = Lab::new(
         &["hos-a"],
         &[],
@@ -528,7 +528,7 @@ fn reading_a_member_does_not_open_the_group_endpoint() {
 }
 
 // ---------------------------------------------------------------------------
-// Confianza y reconfiguracion.
+// Trust and reconfiguration.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -545,8 +545,8 @@ fn a_trust_gate_that_hides_the_winner_does_not_make_the_group_jump_to_another_me
     let port = service.port;
     assert!((200..300).contains(&lab.publish(port, "hos-a", "pkg/lib.bin", HOSTED)));
 
-    // El hosted tiene la ruta y su compuerta de confianza la oculta: el
-    // grupo contesta 404 y NO baja la del upstream, que es otro contenido.
+    // The hosted has the path and its trust gate hides it: the
+    // group answers 404 and does NOT download the upstream one, which is other content.
     let hidden = get(&lab, port, "grp", "pkg/lib.bin");
     assert_eq!(hidden.status, 404);
     assert_ne!(hidden.body, UPSTREAM);

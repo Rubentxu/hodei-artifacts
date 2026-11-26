@@ -1,12 +1,12 @@
-//! Cargo sparse hosted de HSP-119, a nivel HTTP.
+//! Hosted sparse Cargo of HSP-119, at the HTTP level.
 //!
-//! Se prueba: la configuracion del indice, el camino sparse
-//! determinista, la publicacion `PUT api/v1/crates/new`, el download
-//! byte a byte, el ETag de lectura, la inmutabilidad de la version y la
-//! idempotencia de una republicacion identical.
+//! What is tested: the index configuration, the deterministic sparse
+//! path, the `PUT api/v1/crates/new` publication, the byte-for-byte
+//! download, the read ETag, the immutability of the version and the
+//! idempotence of an identical republication.
 //!
-//! El cliente real (`cargo`) esta fuera de alcance aqui: el protocolo
-//! sparse se habla contra el servicio igual que lo hablaria el cliente.
+//! The real client (`cargo`) is out of scope here: the sparse protocol
+//! is spoken against the service the same way the client would speak it.
 
 mod support;
 
@@ -22,7 +22,7 @@ fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El sha256 en hex minusculas: el mismo `cksum` que el cliente verifica.
+/// The sha256 in lowercase hex: the same `cksum` the client verifies.
 fn the_cksum(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -30,8 +30,8 @@ fn the_cksum(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// El cuerpo de una publicacion: cabecera JSON y fichero, cada uno con su
-/// longitud u32 little-endian.
+/// The body of a publication: JSON header and file, each with its
+/// u32 little-endian length.
 fn the_publish_body(header: &Value, file: &[u8]) -> Vec<u8> {
     let json = serde_json::to_vec(header).expect("the header is JSON");
     let mut body = Vec::new();
@@ -49,7 +49,7 @@ fn next(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{n}"))
 }
 
-/// Una peticion al servicio.
+/// A request to the service.
 fn call(
     port: u16,
     method: &str,
@@ -58,8 +58,8 @@ fn call(
     body: Option<&[u8]>,
     extra: &[(&str, &str)],
 ) -> Answer {
-    // Un `HEAD` se pide con `--head`: con `-X HEAD` el `curl` se queda
-    // esperando el cuerpo que un `HEAD` nunca manda.
+    // A `HEAD` is requested with `--head`: with `-X HEAD` `curl` hangs
+    // waiting for the body that a `HEAD` never sends.
     if method == "HEAD" {
         return Curl::describe(port, path, token).run();
     }
@@ -85,7 +85,7 @@ fn call(
     .run()
 }
 
-/// Publica un crate: cabecera y fichero por el camino del protocolo.
+/// Publishes a crate: header and file along the protocol path.
 fn publish(port: u16, repository: &str, token: &str, header: &Value, file: &[u8]) -> Answer {
     call(
         port,
@@ -97,7 +97,7 @@ fn publish(port: u16, repository: &str, token: &str, header: &Value, file: &[u8]
     )
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
@@ -121,7 +121,7 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // La configuracion del indice dice donde buscar la descarga y la API.
+    // The index configuration says where to look for the download and the API.
     let config = call(
         port,
         "GET",
@@ -150,7 +150,7 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     let file = b"not really a gzipped crate, but bytes".to_vec();
     let digest = the_cksum(&file);
 
-    // Publicar la version 0.1.0.
+    // Publish version 0.1.0.
     let published = publish(
         port,
         "cargo-hosted",
@@ -160,7 +160,7 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // El indice sparse: el camino determinista de un nombre de cuatro.
+    // The sparse index: the deterministic path of a four-character name.
     let index = call(
         port,
         "GET",
@@ -176,7 +176,7 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     assert_eq!(line["cksum"], json!(digest));
     assert_eq!(line["yanked"], json!(false));
 
-    // El download entrega los bytes exactos que se publicaron.
+    // The download delivers the exact bytes that were published.
     let download = call(
         port,
         "GET",
@@ -188,7 +188,7 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     assert_eq!(download.status, 200, "{}", text_of(&download));
     assert_eq!(download.body, file);
 
-    // Publicar la 0.2.0: el indice ordena las versiones por semver.
+    // Publish 0.2.0: the index orders the versions by semver.
     let second = b"a different blob for the next version".to_vec();
     let published = publish(
         port,
@@ -215,8 +215,8 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     assert_eq!(lines[0]["vers"], json!("0.1.0"));
     assert_eq!(lines[1]["vers"], json!("0.2.0"));
 
-    // Republicar los mismos bytes es el eco de una publicacion
-    // interrumpida: no es una reescritura.
+    // Republishing the same bytes is the echo of an interrupted
+    // publication: it is not a rewrite.
     let again = publish(
         port,
         "cargo-hosted",
@@ -235,8 +235,8 @@ fn a_crate_is_published_and_served_through_the_sparse_protocol() {
     );
     assert_eq!(String::from_utf8_lossy(&index.body).lines().count(), 2);
 
-    // Republicar la misma version con otros bytes es un conflicto: la
-    // version publicada es inmutable.
+    // Republishing the same version with other bytes is a conflict: the
+    // published version is immutable.
     let conflict = publish(
         port,
         "cargo-hosted",
@@ -275,7 +275,7 @@ fn the_index_serves_a_conditional_read_and_a_head() {
     );
     let etag = index.header("etag").expect("the index has an ETag");
 
-    // If-None-Match con el ETag vigente: un 304 sin cuerpo.
+    // If-None-Match with the current ETag: a 304 without a body.
     let not_modified = call(
         port,
         "GET",
@@ -286,7 +286,7 @@ fn the_index_serves_a_conditional_read_and_a_head() {
     );
     assert_eq!(not_modified.status, 304, "{}", text_of(&not_modified));
 
-    // HEAD: el mismo indice, sin el cuerpo, anunciando su tamano.
+    // HEAD: the same index, without the body, announcing its size.
     let head = call(
         port,
         "HEAD",
@@ -313,7 +313,7 @@ fn names_are_normalized_and_the_unknown_crate_is_not_found() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // Un nombre con mayusculas se normaliza a minusculas al publicar.
+    // A name with uppercase letters is normalized to lowercase on publish.
     let file = b"an uppercase crate publishes normalized".to_vec();
     let published = publish(
         port,
@@ -335,7 +335,7 @@ fn names_are_normalized_and_the_unknown_crate_is_not_found() {
     let line: Value = serde_json::from_slice(&index.body).expect("the line");
     assert_eq!(line["name"], json!("case-pkg"));
 
-    // Un crate que nadie publico no esta en el indice.
+    // A crate that nobody published is not in the index.
     let missing = call(
         port,
         "GET",
@@ -346,7 +346,7 @@ fn names_are_normalized_and_the_unknown_crate_is_not_found() {
     );
     assert_eq!(missing.status, 404, "{}", text_of(&missing));
 
-    // Una publicacion sin credencial se rechaza.
+    // A publication without a credential is rejected.
     let anonymous = publish(
         port,
         "cargo-hosted",

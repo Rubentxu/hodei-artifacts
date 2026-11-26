@@ -1,20 +1,20 @@
-//! Rebuild de proyecciones y reconciliación semántica del cutover (HSP-211).
+//! Projection rebuild and semantic reconciliation of the cutover (HSP-211).
 //!
-//! Sobre el import de HSP-210 y su fixture portable
-//! `tests/fixtures/hsp210-authorities` (31 filas, 13 tablas, 16 lotes), este
-//! IT ejercita el módulo `src/recovery/reconcile.rs`:
+//! On top of HSP-210's import and its portable fixture
+//! `tests/fixtures/hsp210-authorities` (31 rows, 13 tables, 16 batches), this
+//! IT exercises the `src/recovery/reconcile.rs` module:
 //!
-//! - AC1: origen (paquete) y destino (import limpio) equivalen por cuenta,
-//!   grants vigentes, tags, caminos, digests y cursores, y el gate entrega
-//!   el token de cutover. Cualquier divergencia — missing, content,
-//!   compensación de conteos, CAS sin el blob, cursor que miente — aborta
-//!   con `Blocked` nombrando la cuenta o fila culpable: DIVERGENCIA IMPIDE
-//!   CUTOVER, no es un warning.
-//! - AC2: el rebuild es idempotente — preparar dos veces el mismo estado
-//!   preserva la versión semántica y el fingerprint, e importar el destino
-//!   dos veces (kill/resume del contrato 210) deja la proyección intacta.
-//!   Missing/corrupt nunca escala a Verified: los estados corruptos abortan
-//!   el propio rebuild, y el tipo `CutoverToken` no es fabricable.
+//! - AC1: source (package) and destination (clean import) are equivalent per account,
+//!   current grants, tags, paths, digests and cursors, and the gate delivers
+//!   the cutover token. Any divergence -- missing, content,
+//!   count compensation, CAS without the blob, a lying cursor -- aborts
+//!   with `Blocked` naming the culprit account or row: DIVERGENCE PREVENTS
+//!   CUTOVER, it is not a warning.
+//! - AC2: the rebuild is idempotent -- preparing the same state twice
+//!   preserves the semantic version and the fingerprint, and importing the destination
+//!   twice (kill/resume of the 210 contract) leaves the projection intact.
+//!   Missing/corrupt never escalates to Verified: corrupt states abort
+//!   the rebuild itself, and the `CutoverToken` type is not fabricable.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -34,8 +34,8 @@ const PACKAGE: &str = concat!(
     "/tests/fixtures/hsp210-authorities"
 );
 
-/// Claves de las filas del fixture que llevan un digest de contenido;
-/// las mismas que declara `DIGEST_FIELDS` del import.
+/// Keys of the fixture rows that carry a content digest;
+/// the same ones declared by the import's `DIGEST_FIELDS`.
 const DIGEST_KEYS: [(&str, &str); 5] = [
     ("catalog_asset", "sha256"),
     ("catalog_reference", "sha256"),
@@ -55,8 +55,8 @@ fn options(batch_rows: usize) -> ImportOptions {
     }
 }
 
-/// El CAS de prueba: conoce exactamente los digests que el fixture
-/// referencia, leídos del propio paquete, salvo los que se retiren.
+/// The test CAS: knows exactly the digests the fixture
+/// references, read from the package itself, except those that are withdrawn.
 fn fixture_cas(withdrawn: &[&str]) -> SetReconciler {
     let manifest = read_import_manifest(&package_dir()).unwrap();
     let mut digests: BTreeSet<String> = BTreeSet::new();
@@ -80,7 +80,7 @@ fn fixture_cas(withdrawn: &[&str]) -> SetReconciler {
     SetReconciler::new(digests)
 }
 
-/// El oráculo: un destino con el fixture importado una vez, limpio.
+/// The oracle: a destination with the fixture imported once, clean.
 async fn imported_destination() -> Arc<MemorySink> {
     let dir = tempfile::tempdir().unwrap();
     let sink: Arc<MemorySink> = Arc::new(MemorySink::new());
@@ -95,7 +95,7 @@ async fn imported_destination() -> Arc<MemorySink> {
     .expect("the fixture imports cleanly");
     assert_eq!(report.created, 31);
     assert!(report.finished);
-    // El progreso del import no puede sobrevivir a la corrida.
+    // The import's progress cannot survive the run.
     assert!(!dir.path().join(".import-progress.json").exists());
     sink
 }
@@ -104,8 +104,8 @@ fn origin_state() -> hodei_artifacts_api::recovery::reconcile::ReconcileSubject 
     prepare(package_rows(&package_dir()).unwrap()).expect("the fixture is projectable")
 }
 
-/// AC1, caso feliz: paquete ↔ destino importado equivalen en todas las
-/// proyecciones y el gate emite el token con los fingerprints verificados.
+/// AC1, happy path: package ↔ imported destination are equivalent in all
+/// projections and the gate issues the token with the verified fingerprints.
 #[tokio::test]
 async fn the_gate_verifies_a_faithful_import() {
     let origin = origin_state();
@@ -137,8 +137,8 @@ async fn the_gate_verifies_a_faithful_import() {
     );
 }
 
-/// AC1 fail-closed: una fila de destino ausente (missing) produce Blocked
-/// nombrando la clave, y jamás un token.
+/// AC1 fail-closed: a missing destination row produces Blocked
+/// naming the key, and never a token.
 #[tokio::test]
 async fn missing_rows_block_the_cutover_naming_the_culprit() {
     let origin = origin_state();
@@ -166,16 +166,16 @@ async fn missing_rows_block_the_cutover_naming_the_culprit() {
     );
 }
 
-/// AC1 contra conteos aislados: mover una fila de una cuenta a otra deja el
-/// recuento total idéntico (31) pero las proyecciones divergen — el gate lo
-/// ve y aborta. El conteo global no compra un verde.
+/// AC1 against isolated counts: moving a row from one account to another leaves the
+/// total count identical (31) but the projections diverge -- the gate
+/// sees it and aborts. The global count does not buy a green.
 #[tokio::test]
 async fn compensating_counts_are_a_divergence_not_a_pass() {
     let origin = origin_state();
     let sink = imported_destination().await;
     let mut rows = sink.snapshot().await;
-    // latest se va de acme y aparece, con otro contenido, en globex:
-    // mismo total de filas, cuentas distintas.
+    // latest leaves acme and appears, with other content, in globex:
+    // same total of rows, different accounts.
     rows.remove("catalog_tag:acme|main|latest");
     let mut moved = Row::new();
     moved.insert(
@@ -213,8 +213,8 @@ async fn compensating_counts_are_a_divergence_not_a_pass() {
     }
 }
 
-/// AC1: un digest que el CAS no tiene es missing de contenido, no silencio.
-/// El gate nombra el digest y la fila que lo referencia.
+/// AC1: a digest that the CAS does not have is missing content, not silence.
+/// The gate names the digest and the row that references it.
 #[tokio::test]
 async fn a_digest_the_cas_lacks_blocks_the_cutover() {
     let origin = origin_state();
@@ -240,9 +240,9 @@ async fn a_digest_the_cas_lacks_blocks_the_cutover() {
     );
 }
 
-/// AC2: el rebuild es idempotente. Preparar dos veces el mismo estado da la
-/// misma versión y el mismo fingerprint; importar el destino una segunda
-/// vez (todo skipped) no mueve ni la proyección ni el resultado del gate.
+/// AC2: the rebuild is idempotent. Preparing the same state twice gives the
+/// same version and the same fingerprint; importing the destination a second
+/// time (all skipped) moves neither the projection nor the gate's result.
 #[tokio::test]
 async fn rebuilding_twice_preserves_version_and_results() {
     let origin = origin_state();
@@ -280,8 +280,8 @@ async fn rebuilding_twice_preserves_version_and_results() {
     );
 }
 
-/// AC2 (vocabulario): una fila obligatoria sin su campo clave es corruption
-/// y aborta el rebuild nombrando la fila; no existe camino desde ahí a
+/// AC2 (vocabulary): a required row without its key field is corruption
+/// and aborts the rebuild naming the row; there is no path from there to
 /// `Verified`.
 #[tokio::test]
 async fn a_corrupt_row_fails_the_rebuild_not_the_gate() {
@@ -299,9 +299,9 @@ async fn a_corrupt_row_fails_the_rebuild_not_the_gate() {
     );
 }
 
-/// AC2 (vocabulario): un cabezal que miente sobre su ledger es corrupto por
-/// definición; el rebuild aborta con el stream culpable antes de que el
-/// gate pueda decir nada.
+/// AC2 (vocabulary): a head that lies about its ledger is corrupt by
+/// definition; the rebuild aborts with the culprit stream before the
+/// gate can say anything.
 #[tokio::test]
 async fn a_lying_ledger_head_is_corruption() {
     let mut rows = package_rows(&package_dir()).unwrap();
@@ -317,9 +317,9 @@ async fn a_lying_ledger_head_is_corruption() {
     );
 }
 
-/// Los caminos se comparan por su clave lógica: un asset movido de
-/// repositorio cambia el haz de la cuenta y el agregado de caminos, y el
-/// gate lo ve aunque ningún recuento de tablas se mueva.
+/// Paths are compared by their logical key: an asset moved between
+/// repositories changes the account's bundle and the paths aggregate, and the
+/// gate sees it even if no table count moves.
 #[tokio::test]
 async fn paths_are_their_own_aggregate() {
     let origin = origin_state();
@@ -365,9 +365,9 @@ fn token_of(
     decision.token()
 }
 
-/// Garantía del sink del contrato: la proyección del destino usa las mismas
-/// identidades canónicas que el import; si el summary mintiera con una fila
-/// que el sink no devuelve, prepare_from_sink aborta como corrupto.
+/// Sink contract guarantee: the destination's projection uses the same
+/// canonical identities as the import; if the summary lied with a row
+/// that the sink does not return, prepare_from_sink aborts as corrupt.
 #[tokio::test]
 async fn prepare_from_sink_walks_the_same_identities_as_import() {
     let sink = imported_destination().await;

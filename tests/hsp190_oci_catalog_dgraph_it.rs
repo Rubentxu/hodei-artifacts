@@ -1,23 +1,23 @@
-//! El catálogo OCI sobre el motor Dgraph real: manifest, tags y referrers
-//! consistentes.
+//! The OCI catalog on the real Dgraph engine: manifest, tags and referrers
+//! consistent.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como todos los IT del stack. Lo que
-//! prueba, contra el motor de verdad (TLS + ACL) y el registro real:
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like all the stack's ITs. What it
+//! proves, against the real engine (TLS + ACL) and the real registry:
 //!
-//! - **AC1** el flujo OCI real (blobs → manifest por tag → pull →
-//!   referrers) sobre el catálogo Dgraph sirve el mismo digest que se
-//!   publicó: el digest del manifiesto es el de SUS bytes, siempre. Dos
-//!   escritores que mueven la misma etiqueta se serializan por la guarda
-//!   de la clave de la etiqueta: el commit que el grafo arbitra en último
-//!   lugar gana, y la fila es una, no dos;
-//! - **AC2** la reentrega del mismo push no duplica ni objetos ni
-//!   etiquetas, y un referrer no cruza la cuenta: el referrer de otra
-//!   cuenta no aparece en la lista de esta, y un manifest de otra cuenta
-//!   no valida nada aquí;
-//! - el gate de disponibilidad del blob **antes de servir**: un manifest
-//!   cuyos bytes ya no están en el CAS no se sirve, y un manifest que
-//!   nombra una capa que el repositorio no tiene no se publica;
-//! - las lecturas del estado publicado dicen lo que el contrato dice
+//! - **AC1** the real OCI flow (blobs → manifest by tag → pull →
+//!   referrers) over the Dgraph catalog serves the same digest that was
+//!   published: the manifest digest is that of ITS bytes, always. Two
+//!   writers moving the same tag are serialized by the guard
+//!   of the tag key: the commit that the graph arbitrates last
+//!   wins, and the row is one, not two;
+//! - **AC2** redelivery of the same push duplicates neither objects nor
+//!   tags, and a referrer does not cross the account: another
+//!   account's referrer does not appear in this one's list, and another account's
+//!   manifest validates nothing here;
+//! - the blob availability gate **before serving**: a manifest
+//!   whose bytes are no longer in the CAS is not served, and a manifest that
+//!   names a layer the repository does not have is not published;
+//! - the reads of the published state say what the contract says
 //!   (manifest, tags list, referrers list).
 
 use std::path::PathBuf;
@@ -50,8 +50,8 @@ use hodei_hub::blob::FileBlobStore;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// La ejecución: una por corrida, para que ninguna prueba se encuentre
-/// con lo que otra dejó.
+/// The run: one per execution, so that no test finds
+/// what another left behind.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -60,7 +60,7 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Una cuenta por prueba y por ejecución.
+/// One account per test and per run.
 fn account(tag: &str) -> String {
     format!("it190{}{}", tag, &nonce()[8..])
 }
@@ -96,18 +96,18 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     Some(Arc::new(client))
 }
 
-// El almacén Dgraph del catálogo: la apertura condicionada que comparten
-// las suites gated del stack (HSP-219). El flake probado vive aquí — este
-// binario y el de HSP-187 fallaban en el `open` al correr los dos en
-// paralelo con threads por defecto (2/8 observado; 5/8 replicado 21-11)—:
-// los `alter` del DDL concurrentes caen en la ventana de reindexado de
-// Dgraph y vuelven `errIndexingInProgress`. El helper serializa los opens
-// del proceso y reintenta lo transitorio. **Carril recomendado**: suites
-// que alter-ean el mismo tipo, de una en una; threads por defecto dentro
-// de cada binario.
+// The Dgraph catalog store: the conditional open shared by
+// the stack's gated suites (HSP-219). The flake proved lives here -- this
+// binary and HSP-187's failed at `open` when running both in
+// parallel with default threads (2/8 observed; 5/8 replicated 21-11)--:
+// concurrent DDL `alter`s fall in Dgraph's reindexing window
+// and return `errIndexingInProgress`. The helper serializes the process's
+// opens and retries the transient. **Recommended lane**: suites
+// that alter the same type, one at a time; default threads within
+// each binary.
 include!("support/hsp219_concurrent_open.rs");
 
-/// El directorio de la evidencia: `target/uat/hsp190/`.
+/// The evidence directory: `target/uat/hsp190/`.
 fn the_evidence_dir() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
@@ -116,7 +116,7 @@ fn the_evidence_dir() -> PathBuf {
     dir
 }
 
-/// Una línea de evidencia, con el momento.
+/// A line of evidence, with the timestamp.
 fn record_evidence(test: &str, line: &str) {
     let file = the_evidence_dir().join("evidencia.md");
     let entry = format!("- [{test}] {line}\n");
@@ -131,7 +131,7 @@ fn record_evidence(test: &str, line: &str) {
 }
 
 // ---------------------------------------------------------------------------
-// El vertical HTTP: el registro OCI real sobre el catálogo Dgraph.
+// The HTTP vertical: the real OCI registry over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
 struct ContractAuthenticator {
@@ -154,7 +154,7 @@ impl PrincipalAuthenticator for ContractAuthenticator {
     }
 }
 
-/// La Cedar bundle: solo `alice` de esta cuenta publica y descarga.
+/// The Cedar bundle: only `alice` of this account publishes and downloads.
 fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     let policy = format!(
         r#"permit(
@@ -178,7 +178,7 @@ fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// Un descriptor de repositorio OCI hosted.
+/// A hosted OCI repository descriptor.
 fn an_oci_descriptor(account: &str, repo_key: &str) -> RepositoryDescriptor {
     RepositoryDescriptor {
         hrn: repository_hrn("hodei", "artifacts", "eu", account, repo_key),
@@ -192,8 +192,8 @@ fn an_oci_descriptor(account: &str, repo_key: &str) -> RepositoryDescriptor {
     }
 }
 
-/// El vertical montado: el registro OCI con el catálogo Dgraph y el CAS de
-/// ficheros de verdad.
+/// The mounted vertical: the OCI registry with the Dgraph catalog and the real
+/// file CAS.
 struct Vertical {
     app: Router,
     reader: Arc<dyn CatalogReader>,
@@ -255,7 +255,7 @@ impl Vertical {
     }
 }
 
-/// La respuesta de una petición.
+/// The response to a request.
 struct Answer {
     status: StatusCode,
     headers: HeaderMap,
@@ -304,24 +304,24 @@ async fn send(
 }
 
 // ---------------------------------------------------------------------------
-// El contenido OCI determinista: los mismos inputs, los mismos digests.
+// Deterministic OCI content: the same inputs, the same digests.
 // ---------------------------------------------------------------------------
 
 const OCI_MANIFEST_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// El digest de unos bytes.
+/// The digest of some bytes.
 fn the_digest(bytes: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
-/// Un blob de capa determinista.
+/// A deterministic layer blob.
 fn a_layer(seed: u8) -> Vec<u8> {
     vec![seed; 64]
 }
 
-/// Un manifest determinista: config + capa, sin reloj ni azar. El mismo
-/// conjunto de bytes SIEMPRE produce el mismo digest de manifiesto.
+/// A deterministic manifest: config + layer, without clock or randomness. The same
+/// set of bytes ALWAYS produces the same manifest digest.
 fn a_manifest_bytes(
     config_digest: &str,
     config_size: u64,
@@ -347,7 +347,7 @@ fn a_manifest_bytes(
     serde_json::to_vec(&manifest).expect("the manifest serializes")
 }
 
-/// Un manifest referrer: el mismo cuerpo con un `subject` declarado.
+/// A referrer manifest: the same body with a declared `subject`.
 fn a_referrer_bytes(subject_digest: &str, layer_digest: &str, layer_size: u64) -> Vec<u8> {
     let manifest = serde_json::json!({
         "schemaVersion": 2,
@@ -374,7 +374,7 @@ fn a_referrer_bytes(subject_digest: &str, layer_digest: &str, layer_size: u64) -
     serde_json::to_vec(&manifest).expect("the referrer serializes")
 }
 
-/// Publica un blob por la vía monolítica: `POST .../blobs/uploads/?digest=`.
+/// Publishes a blob by the monolithic route: `POST .../blobs/uploads/?digest=`.
 async fn push_blob(vertical: &Vertical, repo: &str, bytes: &[u8]) -> Answer {
     let digest = the_digest(bytes);
     send(
@@ -389,13 +389,13 @@ async fn push_blob(vertical: &Vertical, repo: &str, bytes: &[u8]) -> Answer {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: push/pull/tag/referrers con digest reproducible sobre Dgraph.
+// AC1: push/pull/tag/referrers with a reproducible digest over Dgraph.
 // ---------------------------------------------------------------------------
 
-/// El flujo OCI real sobre el catálogo Dgraph: los blobs entran al CAS, el
-/// manifiesto entra por su etiqueta, y lo que se sirve es el digest de los
-/// bytes que se publicaron — por etiqueta y por digest. El referrer cuelga
-/// del subject y la lista lo descubre.
+/// The real OCI flow over the Dgraph catalog: the blobs enter the CAS, the
+/// manifest enters by its tag, and what is served is the digest of the
+/// bytes that were published -- by tag and by digest. The referrer hangs
+/// from the subject and the list discovers it.
 #[tokio::test]
 async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
     let Some(_) = config_from_env() else {
@@ -406,7 +406,7 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
     let repo = "images";
     let vertical = Vertical::mount(&account, repo).await;
 
-    // Los blobs primero: config y capa.
+    // The blobs first: config and layer.
     let config_bytes = b"the config of the image";
     let layer = a_layer(1);
     for blob in [config_bytes.as_slice(), layer.as_slice()] {
@@ -416,8 +416,8 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
     let config_digest = the_digest(config_bytes);
     let layer_digest = the_digest(&layer);
 
-    // El manifiesto: el digest que se ESPERA es el de los bytes que van
-    // al cable. El registro no inventa ninguno.
+    // The manifest: the EXPECTED digest is that of the bytes that go
+    // on the wire. The registry invents none.
     let manifest_bytes = a_manifest_bytes(
         &config_digest,
         config_bytes.len() as u64,
@@ -442,7 +442,7 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
         "the digest of the manifest is the digest of its bytes"
     );
 
-    // Pull por etiqueta: los mismos bytes, el mismo digest.
+    // Pull by tag: the same bytes, the same digest.
     let pulled_by_tag = send(
         &vertical.app,
         Method::GET,
@@ -459,7 +459,7 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
         Some(expected_digest.as_str())
     );
 
-    // Pull por digest: lo mismo.
+    // Pull by digest: the same.
     let pulled_by_digest = send(
         &vertical.app,
         Method::GET,
@@ -472,7 +472,7 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
     assert_eq!(pulled_by_digest.status, StatusCode::OK);
     assert_eq!(pulled_by_digest.body, manifest_bytes);
 
-    // La lista de etiquetas: la etiqueta que nació con el push.
+    // The tag list: the tag that was born with the push.
     let tags = send(
         &vertical.app,
         Method::GET,
@@ -494,7 +494,7 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
         "the tag list does not name v1: {listed}"
     );
 
-    // El referrer: un manifest cuyo subject es el manifiesto.
+    // The referrer: a manifest whose subject is the manifest.
     let referrer_bytes = a_referrer_bytes(&expected_digest, &layer_digest, layer.len() as u64);
     let empty_config = b"{}";
     let referrer_push = {
@@ -555,13 +555,13 @@ async fn the_oci_flow_serves_the_same_digest_tag_and_referrers_over_dgraph() {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: la etiqueta concurrente con CAS.
+// AC1: the concurrent tag with CAS.
 // ---------------------------------------------------------------------------
 
-/// Dos escritores que mueven la MISMA etiqueta: la guarda de la clave de la
-/// etiqueta los serializa, el commit que el grafo arbitra en último lugar
-/// gana, y el historial de referrers no se corrompe: la fila es una, y los
-/// referrers de cada manifest siguen donde estaban.
+/// Two writers that move the SAME tag: the tag-key guard
+/// serializes them, the commit that the graph arbitrates last
+/// wins, and the referrer history is not corrupted: the row is one, and the
+/// referrers of each manifest remain where they were.
 #[tokio::test]
 async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
     let Some(_) = config_from_env() else {
@@ -577,9 +577,9 @@ async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
         .await
         .expect("the repository");
 
-    // Dos manifests publicados: dos versiones a las que la etiqueta puede
-    // apuntar. Y un referrer colgado de la primera, que tiene que seguir
-    // ahí después de la pelea.
+    // Two published manifests: two versions the tag can
+    // point to. And a referrer hanging from the first, which has to stay
+    // there after the fight.
     let content_a = b"manifest-a";
     let content_b = b"manifest-b";
     let subject = ContentDigest::of_bytes(b"the-subject");
@@ -617,9 +617,9 @@ async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
         package_version: ContentDigest::of_bytes(content_b).value,
     };
 
-    // La pelea: dos escritores, la misma etiqueta, versiones distintas,
-    // al mismo tiempo. Dos rondas, para que el orden en el que el grafo
-    // arbitra se pruebe más de una vez.
+    // The fight: two writers, the same tag, different versions,
+    // at the same time. Two rounds, so that the order in which the graph
+    // arbitrates is tested more than once.
     for round in 0..2 {
         let (left, right) = tokio::join!(
             store.move_tag(&account, repo, "latest", coords_a.clone()),
@@ -631,8 +631,8 @@ async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
         );
     }
 
-    // La fila es UNA, y apunta a una de las dos versiones: el último
-    // commit gana, y no hay tercera versión inventada.
+    // The row is ONE, and points to one of the two versions: the last
+    // commit wins, and there is no invented third version.
     let tags = store.tags(&account, repo).await.expect("the tags");
     assert_eq!(tags.len(), 1, "one tag row, not one per writer: {tags:?}");
     assert_eq!(tags[0].tag_name, "latest");
@@ -644,8 +644,8 @@ async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
     let read = store.tag(&account, repo, "latest").await.expect("the tag");
     assert_eq!(read.coordinates, tags[0].coordinates);
 
-    // El historial de referrers no se movió: los dos manifests siguen
-    // colgados del subject.
+    // The referrer history did not move: both manifests are still
+    // hanging from the subject.
     let referrers: Vec<ReferrerRecord> = store
         .referrers(&account, repo, &subject)
         .await
@@ -669,12 +669,12 @@ async fn two_writers_moving_the_same_tag_keep_one_row_and_the_referrers() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la reentrega del mismo push y el cruce de tenant.
+// AC2: redelivery of the same push and the tenant crossing.
 // ---------------------------------------------------------------------------
 
-/// La reentrega del mismo push (mismos bytes, misma etiqueta) no duplica
-/// nada: el mismo manifiesto dos veces es un objeto, la etiqueta es una, y
-/// el referrer cuelga una vez.
+/// Redelivery of the same push (same bytes, same tag) duplicates
+/// nothing: the same manifest twice is one object, the tag is one, and
+/// the referrer hangs once.
 #[tokio::test]
 async fn a_replayed_push_keeps_one_manifest_one_tag_and_one_referrer() {
     let Some(_) = config_from_env() else {
@@ -701,8 +701,8 @@ async fn a_replayed_push_keeps_one_manifest_one_tag_and_one_referrer() {
     );
     let manifest_digest = the_digest(&manifest_bytes);
 
-    // El push, dos veces: la reentrega tras un timeout es la misma
-    // petición con los mismos bytes.
+    // The push, twice: redelivery after a timeout is the same
+    // request with the same bytes.
     for attempt in 1..=2 {
         let answer = send(
             &vertical.app,
@@ -725,8 +725,8 @@ async fn a_replayed_push_keeps_one_manifest_one_tag_and_one_referrer() {
         );
     }
 
-    // Un objeto, una etiqueta. Y la lectura lo dice: la ruta del asset
-    // lleva el hex del digest, sin el algoritmo.
+    // One object, one tag. And the read says so: the asset path
+    // carries the hex of the digest, without the algorithm.
     let manifest_hex = manifest_digest
         .strip_prefix("sha256:")
         .expect("the digest names its algorithm");
@@ -763,7 +763,7 @@ async fn a_replayed_push_keeps_one_manifest_one_tag_and_one_referrer() {
         "the tag is one, not one per delivery: {listed}"
     );
 
-    // Y el referrer publicado antes de la reentrega sigue siendo uno.
+    // And the referrer published before the redelivery is still one.
     let referrer_bytes = a_referrer_bytes(&manifest_digest, &layer_digest, layer.len() as u64);
     let answer = send(
         &vertical.app,
@@ -789,9 +789,9 @@ async fn a_replayed_push_keeps_one_manifest_one_tag_and_one_referrer() {
     );
 }
 
-/// Un referrer no cruza la cuenta: el manifest de otra cuenta no aparece en
-/// la lista de esta, ni valida nada en ella. Y el mismo subject en dos
-/// cuentas lleva dos listas que no se mezclan.
+/// A referrer does not cross the account: another account's manifest does not appear in
+/// this one's list, nor does it validate anything in it. And the same subject in two
+/// accounts carries two lists that do not get mixed.
 #[tokio::test]
 async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing_twice() {
     let Some(_) = config_from_env() else {
@@ -812,7 +812,7 @@ async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing
         .await
         .expect("the repository B");
 
-    // El subject vive en la cuenta A: un manifest, y su referrer.
+    // The subject lives in account A: a manifest, and its referrer.
     let manifest_a = b"the manifest of account A";
     let digest_a = ContentDigest::of_bytes(manifest_a);
     let subject = ContentDigest::of_bytes(b"the-shared-subject");
@@ -837,8 +837,8 @@ async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing
         .await
         .expect("the publish in A");
 
-    // La cuenta B publica SU manifest con el mismo subject: el protocolo
-    // acepta un referrer cuyo subject todavía no está, y B no ve A.
+    // Account B publishes ITS manifest with the same subject: the protocol
+    // accepts a referrer whose subject is not there yet, and B does not see A.
     let manifest_b = b"the manifest of account B";
     let digest_b = ContentDigest::of_bytes(manifest_b);
     let publication_b = Publication {
@@ -862,7 +862,7 @@ async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing
         .await
         .expect("the publish in B");
 
-    // Las dos listas: cada una la suya. La de A no nombra a B.
+    // The two lists: each its own. A's does not name B.
     let in_a: Vec<ReferrerRecord> = store
         .referrers(&account_a, repo, &subject)
         .await
@@ -886,15 +886,15 @@ async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing
         "the list of B only says B"
     );
 
-    // Y el manifest de A no valida nada en B: la lectura de B de la ruta
-    // del manifest de A dice que no está.
+    // And A's manifest validates nothing in B: B's read of the path
+    // of A's manifest says it is not there.
     let cross = store
         .asset(&account_b, repo, &format!("manifests/{}", digest_a.value))
         .await;
     assert!(cross.is_err(), "the manifest of A is not content of B");
 
-    // La reentrega del mismo publish en A (el mismo hecho) no añade una
-    // segunda fila: la lista de A sigue diciendo lo mismo.
+    // Redelivery of the same publish in A (the same fact) does not add a
+    // second row: A's list still says the same.
     store
         .publish(&account_a, publication_a)
         .await
@@ -913,12 +913,12 @@ async fn a_referrer_of_another_account_does_not_cross_and_a_retry_writes_nothing
 }
 
 // ---------------------------------------------------------------------------
-// AC3: el gate del blob antes de servir.
+// AC3: the blob gate before serving.
 // ---------------------------------------------------------------------------
 
-/// Un manifest cuya capa no está en el repositorio no se publica, y un
-/// manifest cuyos bytes ya no están en el CAS no se sirve: el gate va
-/// antes de servir, y el CAS externo es el que tiene los bytes.
+/// A manifest whose layer is not in the repository is not published, and a
+/// manifest whose bytes are no longer in the CAS is not served: the gate goes
+/// before serving, and the external CAS is the one that has the bytes.
 #[tokio::test]
 async fn a_manifest_without_its_blob_is_not_published_and_one_without_bytes_is_not_served() {
     let Some(_) = config_from_env() else {
@@ -929,8 +929,8 @@ async fn a_manifest_without_its_blob_is_not_published_and_one_without_bytes_is_n
     let repo = "images";
     let vertical = Vertical::mount(&account, repo).await;
 
-    // La capa NO se publica, y el manifest que la nombra cae: el gate de
-    // escritura comprueba el CAS de cada descriptor exigido.
+    // The layer is NOT published, and the manifest that names it falls: the
+    // write gate checks the CAS for each required descriptor.
     let config_bytes = b"the config of the gate";
     let answer = push_blob(&vertical, repo, config_bytes).await;
     assert_eq!(answer.status, StatusCode::CREATED);
@@ -958,7 +958,7 @@ async fn a_manifest_without_its_blob_is_not_published_and_one_without_bytes_is_n
         refused.body
     );
 
-    // El camino feliz: la capa se publica, el manifest entra.
+    // The happy path: the layer is published, the manifest gets in.
     let pushed_layer = push_blob(&vertical, repo, &layer).await;
     assert_eq!(pushed_layer.status, StatusCode::CREATED);
     let published = send(
@@ -977,9 +977,9 @@ async fn a_manifest_without_its_blob_is_not_published_and_one_without_bytes_is_n
         published.body
     );
 
-    // Los bytes del manifiesto desaparecen del CAS: el grafo sigue
-    // diciendo que la fila está, pero servir sin bytes es mentir. El gate
-    // antes de servir lo rechaza como MANIFEST_UNKNOWN.
+    // The manifest bytes disappear from the CAS: the graph still
+    // says the row is there, but serving without bytes is lying. The gate
+    // before serving rejects it as MANIFEST_UNKNOWN.
     let manifest_blob_digest = ContentDigest::of_bytes(&manifest_bytes);
     let path = vertical.content.the_path_of(&manifest_blob_digest);
     std::fs::remove_file(&path).expect("the manifest bytes are removed from the CAS");
@@ -999,7 +999,7 @@ async fn a_manifest_without_its_blob_is_not_published_and_one_without_bytes_is_n
         served.body
     );
 
-    // Y el blob sin bytes, lo mismo: BLOB_UNKNOWN, no bytes inventados.
+    // And the blob without bytes, the same: BLOB_UNKNOWN, no invented bytes.
     let blob = send(
         &vertical.app,
         Method::GET,
@@ -1041,10 +1041,10 @@ async fn a_manifest_without_its_blob_is_not_published_and_one_without_bytes_is_n
 }
 
 // ---------------------------------------------------------------------------
-// El cliente nativo: el registro real en un puerto real, hablado por oras.
+// The native client: the real registry on a real port, spoken to by oras.
 // ---------------------------------------------------------------------------
 
-/// Lo que devuelve un comando de cliente.
+/// What a client command returns.
 struct Outcome {
     status: i32,
     stdout: String,
@@ -1064,7 +1064,7 @@ impl Outcome {
     }
 }
 
-/// Un comando de cliente, ejecutado en una casa temporal.
+/// A client command, run in a temporary home.
 fn run_in(home: &std::path::Path, program: &str, args: &[&str]) -> Outcome {
     let output = std::process::Command::new(program)
         .args(args)
@@ -1080,7 +1080,7 @@ fn run_in(home: &std::path::Path, program: &str, args: &[&str]) -> Outcome {
     }
 }
 
-/// El mismo registro, en un puerto de verdad: el cliente nativo habla TCP.
+/// The same registry, on a real port: the native client speaks TCP.
 async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -1095,22 +1095,22 @@ async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     address
 }
 
-/// El `oras`, contra el registro con el catálogo Dgraph: push, pull,
-/// attach y discover. Los digests que el cliente comprueba son los que el
-/// catálogo guarda.
+/// `oras`, against the registry with the Dgraph catalog: push, pull,
+/// attach and discover. The digests that the client checks are those the
+/// catalog stores.
 ///
-/// El runtime es multi-hilo a propósito: el cliente nativo corre en un
-/// proceso aparte que bloquea al llamante, y el servidor de la prueba
-/// necesita su hilo para contestarle. Con un runtime de un solo hilo, los
-/// dos se esperan el uno al otro para siempre.
+/// The runtime is multi-threaded on purpose: the native client runs in a
+/// separate process that blocks the caller, and the test's server
+/// needs its thread to answer it. With a single-threaded runtime, the
+/// two wait for each other forever.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
     let Some(_) = config_from_env() else {
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
         return;
     };
-    // El cliente es el que la máquina tenga: sin él, la prueba lo dice y
-    // no finge.
+    // The client is whichever the machine has: without it, the test says so and
+    // does not pretend.
     let probe = run_in(&std::env::temp_dir(), "oras", &["version"]);
     if probe.status != 0 {
         record_evidence(
@@ -1130,8 +1130,8 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
     let home = tempfile::tempdir().expect("the client home");
     let reference = format!("{registry}:v1");
 
-    // La credencial viaja por la entrada estándar: la línea de comandos
-    // se ve en el ps de toda la máquina, y la entrada estándar no.
+    // The credential travels via standard input: the command line
+    // is visible in the machine-wide ps, and standard input is not.
     let mut login = std::process::Command::new("oras")
         .args([
             "login",
@@ -1165,7 +1165,7 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
     };
     assert_eq!(logged.status, 0, "oras login:\n{}", logged.said());
 
-    // Push: un fichero como capa, con un tipo de artefacto declarado.
+    // Push: a file as a layer, with a declared artifact type.
     std::fs::write(home.path().join("layer.bin"), b"the oras artifact bytes")
         .expect("the layer is written");
     let pushed = run_in(
@@ -1195,14 +1195,14 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
         pushed.said()
     );
 
-    // Pull: el mismo fichero, en el mismo estado.
+    // Pull: the same file, in the same state.
     let pulled = run_in(home.path(), "oras", &["pull", "--plain-http", &reference]);
     assert_eq!(pulled.status, 0, "oras pull:\n{}", pulled.said());
     let downloaded = std::fs::read(home.path().join("layer.bin")).expect("the pulled layer");
     assert_eq!(downloaded, b"the oras artifact bytes");
 
-    // Attach: un SBOM colgado del artefacto; discover lo descubre por la
-    // lista de referrers que el catálogo Dgraph sirve.
+    // Attach: an SBOM hung from the artifact; discover finds it through the
+    // referrers list that the Dgraph catalog serves.
     std::fs::write(home.path().join("sbom.json"), b"{\"components\":[]}")
         .expect("the sbom is written");
     let attached = run_in(
@@ -1230,8 +1230,8 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
         "oras discover:\n{}",
         discovered.said()
     );
-    // La lista de referrers nombra al manifest del SBOM, con su tipo de
-    // artefacto: es lo que el catálogo sirve por el subject.
+    // The referrers list names the SBOM manifest, with its artifact
+    // type: it is what the catalog serves by the subject.
     let discovered_json: serde_json::Value =
         serde_json::from_str(discovered.stdout.trim()).expect("the discover output");
     let manifests = discovered_json
@@ -1247,7 +1247,7 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
         Some("application/vnd.hodei.sbom.v1")
     );
 
-    // La etiqueta que el push creó es la que el catálogo dice.
+    // The tag that the push created is the one the catalog reports.
     let tags = vertical
         .reader
         .tag(&account, repo, "v1")
@@ -1271,14 +1271,14 @@ async fn the_oras_pushes_pulls_and_discovers_over_the_dgraph_catalog() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4: las lecturas dicen lo que el contrato del catálogo dice.
+// AC4: the reads say what the catalog contract says.
 // ---------------------------------------------------------------------------
 
-/// El estado OCI (manifest con subject, su referrer, su etiqueta) publicado
-/// en Dgraph se lee como el contrato dice: asset (digest, subject, tamaño),
-/// referrers list (exactamente el referrer publicado), tag y tags list.
-/// (HSP-314 F4: antes se comparaba con un segundo motor; los valores
-/// esperados salen ahora de lo que la prueba publicó.)
+/// The OCI state (manifest with subject, its referrer, its tag) published
+/// in Dgraph is read as the contract says: asset (digest, subject, size),
+/// referrers list (exactly the published referrer), tag and tags list.
+/// (HSP-314 F4: it used to be compared against a second engine; the expected
+/// values now come from what the test published.)
 #[tokio::test]
 async fn the_dgraph_oci_reads_match_the_contract_for_the_published_state() {
     let Some(_) = config_from_env() else {
@@ -1295,7 +1295,7 @@ async fn the_dgraph_oci_reads_match_the_contract_for_the_published_state() {
         .await
         .expect("the dgraph repository");
 
-    // El estado: manifest, su referrer, la etiqueta.
+    // The state: manifest, its referrer, the tag.
     let manifest = b"the same oci state in two engines";
     let manifest_digest = ContentDigest::of_bytes(manifest);
     let subject = ContentDigest::of_bytes(b"the parity subject");
@@ -1343,7 +1343,7 @@ async fn the_dgraph_oci_reads_match_the_contract_for_the_published_state() {
         .await
         .expect("dgraph referrer");
 
-    // El manifest: el digest, el subject y los bytes que se publicaron.
+    // The manifest: the digest, the subject and the bytes that were published.
     let dgraph_asset = dgraph
         .asset(
             &account,
@@ -1356,7 +1356,7 @@ async fn the_dgraph_oci_reads_match_the_contract_for_the_published_state() {
     assert_eq!(dgraph_asset.subject, Some(subject));
     assert_eq!(dgraph_asset.size_bytes, manifest.len() as u64);
 
-    // Los referrers del manifest: exactamente el referrer publicado.
+    // The manifest's referrers: exactly the published referrer.
     let dgraph_referrers: Vec<ReferrerRecord> = dgraph
         .referrers(&account, repo, &manifest_digest)
         .await
@@ -1367,7 +1367,7 @@ async fn the_dgraph_oci_reads_match_the_contract_for_the_published_state() {
         .collect();
     assert_eq!(dgraph_digests, vec![referrer_digest.value.clone()]);
 
-    // La etiqueta: movida al manifest, y la lista de etiquetas la nombra.
+    // The tag: moved to the manifest, and the tags list names it.
     let coords = PackageCoordinates {
         package_name: format!("manifests/{}", manifest_digest.value),
         package_version: manifest_digest.value.clone(),

@@ -1,14 +1,14 @@
-//! Helm por OCI de HSP-121 contra el cliente real (`helm`).
+//! HSP-121 Helm over OCI against the real client (`helm`).
 //!
-//! El chart se crea y se empaqueta localmente, se sube con `helm push`
-//! contra el hub OCI existente y se vuelve a bajar con `helm pull`: las
-//! dos rutas hablan la distribucion OCI estandar, sin superficie propia,
-//! y el `.tgz` que vuelve es byte a byte el que se marcho.
+//! The chart is created and packaged locally, pushed with `helm push`
+//! to the existing OCI hub and pulled back with `helm pull`: both
+//! paths speak standard OCI distribution, with no surface of their own,
+//! and the `.tgz` that comes back is byte for byte the one that left.
 //!
-//! Hace falta `helm` en el PATH: sin el, la suite **falla** diciendo que
-//! falta. La credencial va por stdin, nunca en argv, y cada ejecucion usa
-//! su propia `HOME` y su propio `DOCKER_CONFIG`: nada se lee ni se escribe
-//! fuera del directorio del despliegue.
+//! `helm` is required on the PATH: without it, the suite **fails** saying it
+//! is missing. The credential goes via stdin, never in argv, and each run uses
+//! its own `HOME` and its own `DOCKER_CONFIG`: nothing is read or written
+//! outside the deployment directory.
 
 mod support;
 
@@ -20,7 +20,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use support::Deployment;
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -38,13 +38,13 @@ fn require_helm() {
     );
 }
 
-/// El resultado de una ejecucion del cliente.
+/// The result of a client run.
 struct Run {
     ok: bool,
     output: String,
 }
 
-/// Un `helm` aislado: su casa, su config de registro, su cache.
+/// An isolated `helm`: its home, its registry config, its cache.
 struct Client {
     root: std::path::PathBuf,
 }
@@ -108,8 +108,8 @@ fn sha_of(path: &Path) -> String {
 fn a_chart_is_pushed_and_pulled_through_oci_with_the_bytes_preserved() {
     require_helm();
     let deployment = Deployment::new();
-    // El repositorio helm vive para el canal OCI: un chart por OCI es un
-    // artefacto OCI, y el hub es el mismo.
+    // The helm repository lives for the OCI channel: a chart over OCI is an
+    // OCI artifact, and the hub is the same.
     deployment.seed_helm(&[("demo-chart", Value::Null)]);
     let token = support::token(support::FIRST_ACCOUNT, "alice");
     let service = deployment.start(&[]);
@@ -118,7 +118,7 @@ fn a_chart_is_pushed_and_pulled_through_oci_with_the_bytes_preserved() {
     let client = Client::new(deployment.directory.path());
     let registry = format!("127.0.0.1:{port}");
 
-    // Un chart de verdad, creado y empaquetado por el propio helm.
+    // A real chart, created and packaged by helm itself.
     let created = client.run(&["create", "demo-chart"], None);
     assert!(created.ok, "helm create: {}", created.output);
     let packaged = client.run(&["package", "demo-chart", "--destination", "."], None);
@@ -130,7 +130,7 @@ fn a_chart_is_pushed_and_pulled_through_oci_with_the_bytes_preserved() {
         .join("demo-chart-0.1.0.tgz");
     assert!(tgz.exists(), "helm package wrote: {}", packaged.output);
 
-    // La sesion con el registro: la credencial por stdin.
+    // The registry session: the credential via stdin.
     let login = client.run(
         &[
             "registry",
@@ -145,8 +145,8 @@ fn a_chart_is_pushed_and_pulled_through_oci_with_the_bytes_preserved() {
     );
     assert!(login.ok, "helm registry login: {}", login.output);
 
-    // `helm push` sube el .tgz como capa de un artefacto OCI, con la
-    // etiqueta de la version del chart.
+    // `helm push` uploads the .tgz as a layer of an OCI artifact, with the
+    // chart version as tag.
     let pushed = client.run(
         &[
             "push",
@@ -158,9 +158,9 @@ fn a_chart_is_pushed_and_pulled_through_oci_with_the_bytes_preserved() {
     );
     assert!(pushed.ok, "helm push: {}", pushed.output);
 
-    // Y `helm pull` lo devuelve: el mismo nombre, la misma version, y
-    // los mismos bytes. La integridad no es un extra del canal: es lo
-    // que hace que un chart descargado sea el chart publicado.
+    // And `helm pull` returns it: the same name, the same version, and
+    // the same bytes. Integrity is not an extra of the channel: it is
+    // what makes a downloaded chart the published chart.
     std::fs::create_dir_all(deployment.directory.path().join("work/pull")).expect("the pull dir");
     let pulled = client.run(
         &[
@@ -188,7 +188,7 @@ fn a_chart_is_pushed_and_pulled_through_oci_with_the_bytes_preserved() {
         "el chart que vuelve no es byte a byte el que se marcho"
     );
 
-    // Por digest tambien se pide: es lo que firma un valor de `helm push`.
+    // It is also requested by digest: that is what a `helm push` value signs.
     let manifest = client.run(
         &[
             "pull",
@@ -228,8 +228,8 @@ fn a_helm_chart_does_not_live_where_it_was_not_published() {
     );
     assert!(login.ok, "helm registry login: {}", login.output);
 
-    // Nadie publico nada: pedir el chart es un error del registro, no un
-    // chart vacio.
+    // Nobody published anything: requesting the chart is a registry error, not an
+    // empty chart.
     let missing = client.run(
         &[
             "pull",
@@ -248,9 +248,9 @@ fn a_helm_chart_does_not_live_where_it_was_not_published() {
         missing.output
     );
 
-    // Y sin credencial tampoco hay canal: la distribucion pregunta antes
-    // de abrir la casa. Otra casa es otro cliente: aqui no hay sesion de
-    // login guardada.
+    // And without a credential there is no channel either: the distribution asks
+    // before opening the house. Another house is another client: here there is no
+    // saved login session.
     let anonymous_root = deployment.directory.path().join("anonymous");
     let anonymous = Client::new(&anonymous_root);
     let denied = anonymous.run(

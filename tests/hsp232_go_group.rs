@@ -1,42 +1,42 @@
-//! HSP-232: el grupo **go** ensambla la lista de versiones y resuelve una
-//! version desde **un** miembro.
+//! HSP-232: the **go** group assembles the version list and resolves a
+//! version from **one** member.
 //!
-//! Lo que se demuestra aqui, contra el **service de verdad**:
+//! What is demonstrated here, against the **real service**:
 //!
-//! - el listado del grupo es la **union** de las listas de sus miembros, una
-//!   entrada por version y en orden semver;
-//! - el `@latest` del grupo es el ultimo de esa union, no el del ultimo
-//!   miembro que responda;
-//! - los tres artefactos de una version (`.info`, `.mod` y `.zip`) salen
-//!   **del mismo miembro**: el primero, en el orden configurado, que la
-//!   tiene;
-//! - una version **divergente** --la misma version con contenido distinto en
-//!   dos miembros-- se **rechaza** con un error definido, no se elige en
-//!   silencio;
-//! - un caso **reservado** no se pide al upstream publico del grupo: los
-//!   miembros hosted son la fuente interna y no la toca;
-//! - un miembro de **ambito particionado** no se sirve: el grupo responde con
-//!   el diagnostico del ambito, no con bytes y no con un 404 que seria
-//!   mentir;
-//! - un miembro **caido** no detiene la resolucion: el grupo salta al
-//!   siguiente miembro, y el error sale solo si **nada** respondio;
-//! - la compuerta de confianza tambien se aplica en el camino **proxy**:
-//!   un proxy en el canal **trusted** no sirve lo que no tiene concesion;
-//! - el **HEAD** de una ruta proxy declara el tamano real del asset.
+//! - the group's listing is the **union** of its members' lists, one
+//!   entry per version and in semver order;
+//! - the group's `@latest` is the last of that union, not that of the last
+//!   member to respond;
+//! - the three artifacts of a version (`.info`, `.mod` and `.zip`) come
+//!   **from the same member**: the first, in the configured order, that
+//!   has it;
+//! - a **divergent** version --the same version with different content in
+//!   two members-- is **rejected** with a defined error, not chosen
+//!   silently;
+//! - a **reserved** case is not requested from the group's public upstream: the
+//!   hosted members are the internal source and it does not touch it;
+//! - a member with a **partitioned scope** is not served: the group answers with
+//!   the scope diagnostic, not with bytes and not with a 404, which would be
+//!   lying;
+//! - a **down** member does not stop resolution: the group skips to the
+//!   next member, and the error only comes out if **nothing** answered;
+//! - the trust gate is also applied on the **proxy** path:
+//!   a proxy on the **trusted** channel does not serve what has no grant;
+//! - the **HEAD** of a proxy path declares the real size of the asset.
 //!
-//! Y, con el cliente `go` **real**:
+//! And, with the **real** `go` client:
 //!
-//! - `go mod download` con `GOPROXY` apuntando **solo** a Hodei resuelve un
-//!   modulo **hosted** bajo el grupo, y el `go.sum` que produce es valido;
-//! - el mismo cliente resuelve un modulo **publico** servido por el miembro
-//!   **proxy** del grupo, y su `go.sum` tambien cuadra;
-//! - con el upstream **caido**, la version ya descargada se sigue sirviendo
-//!   desde la cache, y una version **nunca** descargada no se sirve: no se
-//!   inventa contenido.
+//! - `go mod download` with `GOPROXY` pointing **only** to Hodei resolves a
+//!   **hosted** module under the group, and the `go.sum` it produces is valid;
+//! - the same client resolves a **public** module served by the group's
+//!   **proxy** member, and its `go.sum` also adds up;
+//! - with the upstream **down**, the already downloaded version keeps being served
+//!   from the cache, and a version **never** downloaded is not served: no
+//!   content is invented.
 //!
-//! El trafico va por **TLS a traves de un puente local `socat`**: `go` solo
-//! manda credenciales (su `.netrc`) por https, y se niega a hacerlo por http
-//! llaneandolas por el camino.
+//! The traffic goes over **TLS through a local `socat` bridge**: `go` only
+//! sends credentials (its `.netrc`) over https, and refuses to do so over http,
+//! exposing them in plain along the way.
 
 mod support;
 
@@ -50,56 +50,56 @@ use serde_json::{Value, json};
 use support::lab::{Expectation, LabCase, Scope, describe_registry_lab, run_registry_lab_case};
 use support::{Answer, Curl, Deployment};
 
-/// El primer miembro del grupo: el hosted.
+/// The first member of the group: the hosted one.
 const INTERNAL: &str = "go-internal";
 
-/// El segundo miembro del grupo: el proxy.
+/// The second member of the group: the proxy.
 const CENTRAL: &str = "go-central";
 
-/// El grupo.
+/// The group.
 const GROUP: &str = "go-all";
 
-/// El grupo con el miembro **proxy primero**: la precedencia manda, y es el
-/// proxy caido el que se consulta antes que el hosted.
+/// The group with the **proxy member first**: precedence rules, and it is the
+/// down proxy that is consulted before the hosted one.
 const GROUP_FALLEN: &str = "go-fallen";
 
-/// Un proxy go en el canal **trusted**.
+/// A go proxy on the **trusted** channel.
 const TRUSTED_PROXY: &str = "go-trusted";
 
-/// El miembro del grupo con el **ambito del contenido particionado**.
+/// The group member with the **partitioned content scope**.
 const PARTITIONED: &str = "go-partitioned";
 
-/// El grupo con el miembro de ambito particionado.
+/// The group with the partitioned-scope member.
 const GROUP_SCOPE: &str = "go-scoped";
 
-/// El diagnostico del ambito: el mismo que dice la superficie cruda.
+/// The scope diagnostic: the same one that the raw surface states.
 const SCOPE_DIAGNOSTIC: &str =
     "this service serves the content of a repository only in the global scope";
 
-/// El modulo que el miembro hosted publica.
+/// The module that the hosted member publishes.
 const OWNED: &str = "example.com/hello";
 
-/// El modulo que el miembro proxy trae de su upstream.
+/// The module that the proxy member brings from its upstream.
 const PUBLIC: &str = "example.com/proxied";
 
-/// La version que el miembro hosted publica.
+/// The version that the hosted member publishes.
 const OWNED_VERSION: &str = "v1.0.0";
 
-/// La version que el upstream del miembro proxy trae del modulo publico.
+/// The version that the proxy member's upstream brings of the public module.
 const PUBLIC_VERSION: &str = "v1.3.0";
 
-/// La version que el upstream del miembro proxy trae del modulo del hosted.
+/// The version that the proxy member's upstream brings of the hosted's module.
 ///
-/// El modulo publico y el del hosted son el **mismo** modulo en versiones
-/// distintas: la union del grupo es de las listas de sus miembros, y el
-/// orden es semver, no de bytes.
+/// The public module and the hosted's are the **same** module in different
+/// versions: the group's union is of its members' lists, and the
+/// order is semver, not by bytes.
 const SHARED_VERSION: &str = "v1.2.0";
 
-/// Los casos que una ejecucion completa tiene que ejecutar.
+/// The cases that a complete run has to execute.
 ///
-/// Se declaran **antes** de correr: una ejecucion que solo llego a algunos
-/// dice cuales no corrieron, y un informe con un caso que no corrio nunca es
-/// verde.
+/// They are declared **before** running: a run that only reached some
+/// says which did not run, and a report with a case that did not run is never
+/// green.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1-the-list-of-a-group-is-the-union-of-the-lists-of-its-members",
@@ -151,7 +151,7 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -164,10 +164,10 @@ fn next(name: &str) -> std::path::PathBuf {
     Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{n}"))
 }
 
-/// El binario del cliente `go`.
+/// The `go` client binary.
 ///
-/// El SDK de Go no siempre esta en el PATH: se busca ahi, y si no esta, en
-/// la instalacion de linuxbrew que usa esta maquina.
+/// The Go SDK is not always on the PATH: it is looked for there, and if it is not, in
+/// the linuxbrew installation that this machine uses.
 fn the_go_binary() -> Option<std::path::PathBuf> {
     if let Ok(path) = std::env::var("HODEI_GO") {
         let path = std::path::PathBuf::from(path);
@@ -184,12 +184,12 @@ fn the_go_binary() -> Option<std::path::PathBuf> {
     None
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// Una peticion al servicio.
+/// A request to the service.
 fn call(port: u16, method: &str, path: &str, token: &str, body: Option<&[u8]>) -> Answer {
     let sent = body.map(|bytes| {
         let target = next("sent");
@@ -213,20 +213,20 @@ fn call(port: u16, method: &str, path: &str, token: &str, body: Option<&[u8]>) -
     .run()
 }
 
-/// El documento `.info` canonico de una version.
+/// The canonical `.info` document of a version.
 fn info_document(version: &str) -> Vec<u8> {
     json!({ "Version": version, "Time": "2026-11-17T12:00:00Z" })
         .to_string()
         .into_bytes()
 }
 
-/// Un `go.mod` que declara el modulo sin escapar.
+/// A `go.mod` that declares the module without escaping.
 fn go_mod(module: &str) -> Vec<u8> {
     format!("module {module}\n\ngo 1.22\n").into_bytes()
 }
 
-/// El zip de un modulo, como lo exige el protocolo: todo bajo el prefijo
-/// `{module}@{version}/`, con el mismo `go.mod` que sirve el `.mod`.
+/// The zip of a module, as the protocol requires: everything under the prefix
+/// `{module}@{version}/`, with the same `go.mod` that the `.mod` serves.
 fn module_zip(module: &str, version: &str, go_mod: &[u8]) -> Vec<u8> {
     use std::io::Write;
     let prefix = format!("{module}@{version}");
@@ -246,7 +246,7 @@ fn module_zip(module: &str, version: &str, go_mod: &[u8]) -> Vec<u8> {
     writer.finish().expect("the zip closes").into_inner()
 }
 
-/// Publica la version entera de un modulo en un repositorio hosted.
+/// Publishes the whole version of a module to a hosted repository.
 fn publish_version(
     port: u16,
     repository: &str,
@@ -276,7 +276,7 @@ fn publish_version(
     }
 }
 
-/// La configuracion `proxy` de un repositorio go: el upstream y su cache.
+/// The `proxy` configuration of a go repository: the upstream and its cache.
 fn proxy_of(upstream: &support::lab::Upstream) -> Value {
     json!({
         "upstream": {
@@ -289,7 +289,7 @@ fn proxy_of(upstream: &support::lab::Upstream) -> Value {
     })
 }
 
-/// Un puente TLS efimero: `https` en la puerta, el hub en el fondo.
+/// An ephemeral TLS bridge: `https` at the door, the hub in the back.
 struct Bridge {
     child: std::process::Child,
     port: u16,
@@ -303,7 +303,7 @@ impl Drop for Bridge {
     }
 }
 
-/// Un puerto libre: se toma, se suelta, y el puente lo ocupa justo despues.
+/// A free port: it is taken, released, and the bridge occupies it right after.
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .expect("an ephemeral port")
@@ -312,7 +312,7 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// Un certificado autofirmado para 127.0.0.1.
+/// A self-signed certificate for 127.0.0.1.
 fn self_signed(root: &Path) -> std::path::PathBuf {
     let pem = root.join("bridge.pem");
     let output = Command::new("openssl")
@@ -333,7 +333,7 @@ fn self_signed(root: &Path) -> std::path::PathBuf {
     pem
 }
 
-/// Levanta el puente y no devuelve hasta que escucha.
+/// Brings up the bridge and does not return until it listens.
 fn bridge(root: &Path, hub: u16) -> Bridge {
     std::fs::create_dir_all(root).expect("the bridge directory");
     let certificate = self_signed(root);
@@ -371,8 +371,8 @@ impl Bridge {
     }
 }
 
-/// La casa del cliente `go`: todo dentro del despliegue, y el HOME real
-/// intacto.
+/// The `go` client's home: everything inside the deployment, and the real HOME
+/// untouched.
 struct Client {
     root: std::path::PathBuf,
     work: std::path::PathBuf,
@@ -382,10 +382,10 @@ struct Client {
 }
 
 impl Client {
-    /// El cliente, con su `.netrc` y su cache propia.
+    /// The client, with its `.netrc` and its own cache.
     ///
-    /// Cada caso tiene su casa: dos clientes no comparten `go.mod`, porque
-    /// el segundo `go mod init` fallaria.
+    /// Each case has its own home: two clients do not share `go.mod`, because
+    /// the second `go mod init` would fail.
     fn new(deployment: &Deployment, tunnel: &Bridge, token: &str, name: &str) -> Self {
         let root = deployment.directory.path().join(name);
         std::fs::create_dir_all(&root).expect("the client home");
@@ -415,20 +415,20 @@ impl Client {
         }
     }
 
-    /// Corre el cliente `go` contra el hub.
+    /// Runs the `go` client against the hub.
     ///
-    /// La configuracion es **explicita** y cada parte tiene su motivo:
+    /// The configuration is **explicit** and each part has its reason:
     ///
-    /// - `GOPROXY` apunta **solo** al hub, sin `,direct`: el cliente no
-    ///   tiene por donde caerse a la red ni a un VCS.
-    /// - `GOSUMDB=off` y `GONOSUMDB=*`: el sumario publico no conoce estos
-    ///   modulos, y el cliente no tiene por que consultarlo. La integridad
-    ///   **no** se salta: el `go.sum` local es el que verifica, y el `.zip`
-    ///   se comprueba byte a byte contra lo publicado.
-    /// - `GOFLAGS=-mod=mod`: el modulo de prueba necesita escribir su
-    ///   `go.sum`, que es lo que esta prueba quiere medir.
-    /// - `GOPRIVATE` **no** se pone: haria que el cliente se saltara el
-    ///   proxy y saliera a la red, que es justo lo que esta prueba forbids.
+    /// - `GOPROXY` points **only** to the hub, without `,direct`: the client
+    ///   has no way to fall back to the network or to a VCS.
+    /// - `GOSUMDB=off` and `GONOSUMDB=*`: the public sum database does not know these
+    ///   modules, and the client has no reason to consult it. Integrity
+    ///   is **not** skipped: the local `go.sum` is what verifies, and the `.zip`
+    ///   is checked byte for byte against what was published.
+    /// - `GOFLAGS=-mod=mod`: the test module needs to write its
+    ///   `go.sum`, which is what this test wants to measure.
+    /// - `GOPRIVATE` is **not** set: it would make the client skip the
+    ///   proxy and go out to the network, which is exactly what this test forbids.
     fn run(&self, args: &[&str]) -> std::process::Output {
         Command::new(&self.binary)
             .current_dir(&self.work)
@@ -449,12 +449,12 @@ impl Client {
             .expect("go runs")
     }
 
-    /// El `go.sum` que el cliente escribio.
+    /// The `go.sum` that the client wrote.
     fn the_sum(&self) -> String {
         std::fs::read_to_string(self.work.join("go.sum")).unwrap_or_default()
     }
 
-    /// El `.ziphash` que el cliente escribio: la integridad de lo bajado.
+    /// The `.ziphash` that the client wrote: the integrity of what was downloaded.
     fn the_ziphash(&self, module: &str, version: &str) -> Option<String> {
         let path = self
             .root
@@ -467,7 +467,7 @@ impl Client {
     }
 }
 
-/// Corre un caso del laboratorio.
+/// Runs a lab case.
 fn a_case(
     id: &str,
     title: &str,
@@ -486,10 +486,10 @@ fn a_case(
     run_registry_lab_case(THE_CASES, id, title, scope, expectation, body);
 }
 
-/// El despliegue del laboratorio: un hosted, un proxy y el grupo.
+/// The lab deployment: a hosted, a proxy and the group.
 ///
-/// Todo se siembra **antes** de arrancar el servicio: la base de datos la
-/// tiene bloqueada el proceso que la abre.
+/// Everything is seeded **before** starting the service: the database is
+/// locked by the process that opens it.
 fn the_lab() -> (Deployment, support::lab::Upstream) {
     let upstream = support::lab::Upstream::start();
     let deployment = Deployment::new();
@@ -499,13 +499,13 @@ fn the_lab() -> (Deployment, support::lab::Upstream) {
     (deployment, upstream)
 }
 
-/// El entorno del servicio: el upstream del laboratorio es la unica red.
+/// The service's environment: the lab's upstream is the only network.
 fn the_environment(upstream: &support::lab::Upstream) -> Vec<(&'static str, String)> {
     let allowed = format!("127.0.0.1:{};private;http", upstream.port());
     vec![("HODEI_PROXY__ALLOWED_HOSTS", allowed)]
 }
 
-/// El listado del grupo, con el token de la primera cuenta.
+/// The group's listing, with the first account's token.
 fn the_list(port: u16, module: &str) -> Answer {
     let token = support::token(support::FIRST_ACCOUNT, "alice");
     call(
@@ -522,8 +522,8 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
     let (deployment, upstream) = the_lab();
     let token = support::token(support::FIRST_ACCOUNT, "alice");
 
-    // El upstream del miembro proxy trae un modulo publico, y una version
-    // mas del modulo del hosted: la union del grupo es de las dos listas.
+    // The proxy member's upstream brings a public module, and one more
+    // version of the hosted's module: the group's union is of both lists.
     upstream.put(
         &format!("{PUBLIC}/@v/list"),
         format!("{PUBLIC_VERSION}\n").as_bytes(),
@@ -574,7 +574,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
     );
     let port = service.port;
 
-    // El miembro hosted publica su modulo en dos versiones.
+    // The hosted member publishes its module in two versions.
     publish_version(
         port,
         INTERNAL,
@@ -592,7 +592,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
         &module_zip(OWNED, "v1.10.0", &go_mod(OWNED)),
     );
 
-    // ---- AC1: el listado es la union de las listas de los miembros.
+    // ---- AC1: the listing is the union of the members' lists.
     a_case(
         "ac1-the-list-of-a-group-is-the-union-of-the-lists-of-its-members",
         "el listado del grupo es la union de las listas de sus miembros, en orden semver",
@@ -613,8 +613,8 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
                 .map(str::trim)
                 .filter(|line| !line.is_empty())
                 .collect::<Vec<_>>();
-            // La union de las dos listas, en orden **semver**: `v1.10.0`
-            // va despues de `v1.2.0`, que es donde lo pone el protocolo.
+            // The union of the two lists, in **semver** order: `v1.10.0`
+            // goes after `v1.2.0`, which is where the protocol puts it.
             if versions != [OWNED_VERSION, SHARED_VERSION, "v1.10.0"] {
                 return LabCase::new(
                     "ac1-the-list-of-a-group-is-the-union-of-the-lists-of-its-members",
@@ -622,7 +622,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
                 )
                 .failed(format!("the list of the hosted module is {versions:?}"));
             }
-            // Y el modulo del upstream, que solo tiene el miembro proxy.
+            // And the upstream's module, which only the proxy member has.
             let answer = the_list(port, PUBLIC);
             if answer.status != 200 {
                 return LabCase::new(
@@ -647,7 +647,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
         },
     );
 
-    // ---- AC1: el latest del grupo es el ultimo de la union.
+    // ---- AC1: the group's latest is the last of the union.
     a_case(
         "ac1-the-latest-of-a-group-is-the-latest-of-the-union",
         "el latest del grupo es el ultimo de la union, no el del ultimo miembro",
@@ -684,7 +684,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
         },
     );
 
-    // ---- AC2: los tres artefactos de una version salen del mismo miembro.
+    // ---- AC2: the three artifacts of a version come from the same member.
     a_case(
         "ac2-the-three-artifacts-of-a-version-come-from-one-member",
         "el info, el mod y el zip de una version salen del mismo miembro",
@@ -708,9 +708,9 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
                 }
                 digests.push((extension, answer.body.clone()));
             }
-            // El `.mod` y el `.zip` los trae el mismo miembro: el `.mod`
-            // declara el modulo y el `.zip` lo lleva dentro, y el cliente
-            // `go` lo comprueba cuando descomprime.
+            // The `.mod` and the `.zip` come from the same member: the `.mod`
+            // declares the module and the `.zip` carries it inside, and the `go`
+            // client checks it when it unzips.
             let declared = digests
                 .iter()
                 .find(|(extension, _)| *extension == "mod")
@@ -725,7 +725,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
         },
     );
 
-    // ---- AC1: el cliente `go` real baja un modulo hosted bajo el grupo.
+    // ---- AC1: the real `go` client downloads a hosted module under the group.
     a_case(
         "ac1-the-real-go-client-downloads-a-hosted-module-under-the-group",
         "el cliente go real baja un modulo hosted bajo el grupo y su go.sum es valido",
@@ -761,8 +761,8 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
             );
             let output = client.run(&["mod", "download", OWNED]);
             check("go mod download", &output);
-            // El `go.sum` del cliente describe lo que Hodei sirvio: el
-            // `.ziphash` que el propio cliente escribio lo dice.
+            // The client's `go.sum` describes what Hodei served: the
+            // `.ziphash` that the client itself wrote says so.
             let sum = client.the_sum();
             if !sum.contains(OWNED) || !sum.contains("h1:") {
                 return LabCase::new(id, title).failed(format!("the go.sum is {sum:?}"));
@@ -775,7 +775,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
         },
     );
 
-    // ---- AC1: el cliente `go` real baja un modulo publico del proxy.
+    // ---- AC1: the real `go` client downloads a public module from the proxy.
     a_case(
         "ac1-the-real-go-client-downloads-a-public-module-under-the-group",
         "el cliente go real baja un modulo publico servido por el miembro proxy del grupo",
@@ -818,7 +818,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
         },
     );
 
-    // ---- AC3: sin upstream, la cache sirve lo descargado y nada mas.
+    // ---- AC3: without upstream, the cache serves what was downloaded and nothing else.
     a_case(
         "ac3-without-upstream-the-cache-serves-what-was-downloaded-and-no-more",
         "sin upstream, la cache sirve lo descargado y no inventa lo que no se descarg",
@@ -828,7 +828,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
             let id = "ac3-without-upstream-the-cache-serves-what-was-downloaded-and-no-more";
             let title =
                 "sin upstream, la cache sirve lo descargado y no inventa lo que no se descarg";
-            // Lo que ya se bajo del upstream se sirve desde la cache.
+            // What was already downloaded from the upstream is served from the cache.
             let before = the_list(port, PUBLIC);
             assert_eq!(before.status, 200, "{}", text_of(&before));
             upstream.disconnect();
@@ -837,7 +837,7 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
                 return LabCase::new(id, title)
                     .failed(format!("the cached module answered {}", text_of(&cached)));
             }
-            // Y una version que nunca se bajo no se sirve: no se inventa.
+            // And a version that was never downloaded is not served: it is not invented.
             let never = call(
                 port,
                 "GET",
@@ -854,19 +854,19 @@ fn the_group_of_go_assembles_the_versions_and_resolves_them_from_one_member() {
     );
 }
 
-/// La version divergente: la misma version con contenido distinto en dos
-/// miembros.
+/// The divergent version: the same version with different content in two
+/// members.
 ///
-/// El grupo **rechaza** con un error definido: el protocolo go no tiene
-/// forma de decir "hay dos", y servir uno cualquiera seria mentirle al
-/// cliente.
+/// The group **rejects** with a defined error: the go protocol has no
+/// way to say "there are two", and serving any one of them would be lying to the
+/// client.
 #[test]
 fn a_divergent_version_is_rejected_with_a_defined_error() {
     let upstream = support::lab::Upstream::start();
     let deployment = Deployment::new();
-    // Un segundo miembro hosted, con el mismo modulo y la misma version, pero
-    // con otro contenido. Se siembra **antes** de arrancar el servicio: la
-    // base de datos la tiene bloqueada el proceso que la abre.
+    // A second hosted member, with the same module and the same version, but
+    // with other content. It is seeded **before** starting the service: the
+    // database is locked by the process that opens it.
     deployment.seed_go(&[(INTERNAL, Value::Null), ("go-other", Value::Null)]);
     deployment.seed_go_proxies(&[(CENTRAL, proxy_of(&upstream))]);
     deployment.seed_go_group(GROUP, &[INTERNAL, "go-other", CENTRAL]);
@@ -880,8 +880,8 @@ fn a_divergent_version_is_rejected_with_a_defined_error() {
     );
     let port = service.port;
 
-    // Los dos miembros tienen la misma version con contenido distinto: el
-    // primero con el zip canonico, el segundo con otros bytes.
+    // Both members have the same version with different content: the
+    // first with the canonical zip, the second with other bytes.
     publish_version(
         port,
         INTERNAL,
@@ -932,17 +932,17 @@ fn a_divergent_version_is_rejected_with_a_defined_error() {
     );
 }
 
-/// Un caso reservado no se pide al upstream publico del grupo.
+/// A reserved case is not requested from the group's public upstream.
 #[test]
 fn a_reserved_namespace_never_falls_back_to_the_public_member() {
     let upstream = support::lab::Upstream::start();
     let deployment = Deployment::new();
     deployment.seed_go(&[(INTERNAL, Value::Null)]);
     deployment.seed_go_proxies(&[(CENTRAL, proxy_of(&upstream))]);
-    // El grupo reserva el namespace del modulo publico: el upstream del
-    // grupo no lo sirve nunca. La reserva se juzga por el **nombre** del
-    // namespace (aquí, el host del camino del modulo), que es lo que la
-    // política de namespaces sabe comparar.
+    // The group reserves the namespace of the public module: the group's
+    // upstream never serves it. The reservation is judged by the **name** of the
+    // namespace (here, the host of the module path), which is what the
+    // namespace policy knows how to compare.
     deployment.seed_groups_raw(&[serde_json::json!({
         "key": GROUP,
         "members": [INTERNAL, CENTRAL],
@@ -982,8 +982,8 @@ fn a_reserved_namespace_never_falls_back_to_the_public_member() {
                 return LabCase::new(id, title)
                     .failed("the reserved module was served from the public member");
             }
-            // Y tampoco por la ruta de una version: el caso reservado no
-            // hace fallback ni por el listado ni por el artefacto.
+            // And not by the path of a version either: the reserved case does
+            // not fall back either through the listing or through the artifact.
             let version = call(
                 port,
                 "GET",
@@ -1006,25 +1006,25 @@ fn a_reserved_namespace_never_falls_back_to_the_public_member() {
     );
 }
 
-/// Un miembro caido del grupo no detiene la resolucion.
+/// A down member of the group does not stop resolution.
 ///
-/// El grupo tiene el miembro **proxy primero**, y el servicio arranca **sin
-/// red**: el proxy no sale a la red y no tiene copia en cache del modulo que
-/// publica el hosted. Un miembro caido es un MISS: el grupo sigue con el
-/// siguiente miembro, y solo si **nada** respondio sale el error.
+/// The group has the **proxy member first**, and the service starts **without
+/// network**: the proxy does not go out to the network and has no cached copy of the module
+/// that the hosted publishes. A down member is a MISS: the group continues with the
+/// next member, and only if **nothing** answered does the error come out.
 #[test]
 fn a_fallen_member_of_the_group_does_not_stop_the_resolution() {
     let upstream = support::lab::Upstream::start();
     let deployment = Deployment::new();
     deployment.seed_go(&[(INTERNAL, Value::Null)]);
     deployment.seed_go_proxies(&[(CENTRAL, proxy_of(&upstream))]);
-    // El proxy va **primero**: la precedencia es la que decide, y es el
-    // miembro caido el que se consulta antes que el hosted.
+    // The proxy goes **first**: precedence decides, and it is the
+    // down member that is consulted before the hosted one.
     deployment.seed_go_group(GROUP_FALLEN, &[CENTRAL, INTERNAL]);
     let token = support::token(support::FIRST_ACCOUNT, "alice");
 
-    // El servicio arranca sin red: el proxy no sale a la red y no tiene
-    // copia en cache del modulo del hosted.
+    // The service starts without network: the proxy does not go out to the network and has no
+    // cached copy of the hosted's module.
     let environment = the_environment(&upstream);
     let mut environment: Vec<(&str, &str)> = environment
         .iter()
@@ -1034,9 +1034,9 @@ fn a_fallen_member_of_the_group_does_not_stop_the_resolution() {
     let service = deployment.start(&environment);
     let port = service.port;
 
-    // El miembro hosted publica su modulo **despues** de arrancar el
-    // servicio: asi el modulo no esta en la cache del proxy, y el caso
-    // mide que el grupo se sigue con el siguiente miembro.
+    // The hosted member publishes its module **after** starting the
+    // service: this way the module is not in the proxy's cache, and the case
+    // measures that the group continues with the next member.
     publish_version(
         port,
         INTERNAL,
@@ -1078,17 +1078,17 @@ fn a_fallen_member_of_the_group_does_not_stop_the_resolution() {
     );
 }
 
-/// Un proxy en el canal **trusted** no sirve lo que no tiene concesion.
+/// A proxy on the **trusted** channel does not serve what has no grant.
 ///
-/// El caso trae **dos** proxy al mismo upstream: uno en el canal abierto (el
-/// control) y otro en el canal de confianza. El control es lo que
-/// distingue "la compuerta funciona" de "el proxy esta roto".
+/// The case brings **two** proxies to the same upstream: one on the open channel (the
+/// control) and another on the trust channel. The control is what
+/// distinguishes "the gate works" from "the proxy is broken".
 #[test]
 fn a_trusted_proxy_does_not_serve_what_was_not_granted() {
     let upstream = support::lab::Upstream::start();
     let deployment = Deployment::new();
-    // Los dos proxy apuntan al mismo upstream: lo que los separa es el
-    // canal, y nada mas.
+    // Both proxies point to the same upstream: what separates them is the
+    // channel, and nothing else.
     deployment.seed_go_proxies_trusted(
         &[TRUSTED_PROXY],
         &[
@@ -1147,9 +1147,9 @@ fn a_trusted_proxy_does_not_serve_what_was_not_granted() {
                 return LabCase::new(id, title)
                     .failed("the trusted proxy served content that was not granted");
             }
-            // El control: el mismo upstream, el mismo contenido y el canal
-            // abierto **si** se sirve. Sin esto, el caso no distinguiria la
-            // compuerta de un proxy roto.
+            // The control: the same upstream, the same content and the open
+            // channel **is** served. Without this, the case would not distinguish the
+            // gate from a broken proxy.
             let open = call(
                 port,
                 "GET",
@@ -1169,11 +1169,11 @@ fn a_trusted_proxy_does_not_serve_what_was_not_granted() {
     );
 }
 
-/// El **HEAD** de una ruta proxy declara el tamano real del asset.
+/// The **HEAD** of a proxy path declares the real size of the asset.
 ///
-/// Sin cuerpo, un HEAD solo puede decir el tamano por cabecera: un
-/// `Content-Length` de cero describe un asset vacio, no un zip que si tiene
-/// tamano.
+/// Without a body, a HEAD can only state the size by header: a
+/// `Content-Length` of zero describes an empty asset, not a zip that does have
+/// a size.
 #[test]
 fn the_head_of_a_proxy_path_carries_the_content_length() {
     let upstream = support::lab::Upstream::start();
@@ -1222,7 +1222,7 @@ fn the_head_of_a_proxy_path_carries_the_content_length() {
             let id = "ac1-the-head-of-a-proxy-path-carries-the-content-length";
             let title = "el HEAD de una ruta proxy declara el tamano real del asset";
             let path = format!("/go/{GROUP}/{PUBLIC}/@v/{PUBLIC_VERSION}.zip");
-            // El GET dice el tamano de verdad: el cuerpo que se sirve.
+            // The GET states the real size: the body that is served.
             let body = call(port, "GET", &path, &token, None);
             if body.status != 200 {
                 return LabCase::new(id, title)
@@ -1248,27 +1248,27 @@ fn the_head_of_a_proxy_path_carries_the_content_length() {
     );
 }
 
-/// Un miembro de ambito particionado no se sirve: el grupo lo dice con el
-/// diagnostico del ambito.
+/// A partitioned-scope member is not served: the group says so with the
+/// scope diagnostic.
 ///
-/// Esta release solo sirve el **ambito global**. Un miembro cuyo contenido
-/// es de ambito particionado no se sirve, y se dice claro: un 404 seria
-/// mentir, porque el repositorio existe y lo que no se sirve es su
-/// contenido.
+/// This release only serves the **global scope**. A member whose content
+/// is of partitioned scope is not served, and that is said plainly: a 404 would be
+/// lying, because the repository exists and what is not served is its
+/// content.
 ///
-/// El caso trae el **control**: el mismo modulo, publicado por el miembro
-/// de ambito global, se sirve por el grupo sin el miembro particionado. Sin
-/// ese control, el caso no distinguiria "la politica de ambito" de "un grupo
-/// que no tiene nada que servir".
+/// The case brings the **control**: the same module, published by the
+/// global-scope member, is served by the group without the partitioned member. Without
+/// that control, the case would not distinguish "the scope policy" from "a group
+/// that has nothing to serve".
 #[test]
 fn a_member_with_a_partitioned_scope_is_not_served() {
     let deployment = Deployment::new();
     deployment.seed_go(&[(INTERNAL, Value::Null)]);
-    // El miembro de ambito particionado: su contenido no lo sirve esta
-    // release, y el sembrador lo declara como tal.
+    // The partitioned-scope member: its content is not served by this
+    // release, and the seeder declares it as such.
     deployment.seed_go_partitioned(&[(PARTITIONED, Value::Null)]);
-    // Dos grupos con el mismo miembro global: uno con el miembro
-    // particionado y otro sin el.
+    // Two groups with the same global member: one with the
+    // partitioned member and another without it.
     deployment.seed_go_group(GROUP, &[INTERNAL]);
     deployment.seed_go_group(GROUP_SCOPE, &[INTERNAL, PARTITIONED]);
     let token = support::token(support::FIRST_ACCOUNT, "alice");
@@ -1276,9 +1276,9 @@ fn a_member_with_a_partitioned_scope_is_not_served() {
     let service = deployment.start(&environment);
     let port = service.port;
 
-    // El miembro de ambito global publica su modulo: es lo que el grupo
-    // sirve, y lo que el grupo con el miembro particionado tiene que
-    // **declarar** que no sirve.
+    // The global-scope member publishes its module: it is what the group
+    // serves, and what the group with the partitioned member has to
+    // **declare** that it does not serve.
     publish_version(
         port,
         INTERNAL,
@@ -1296,8 +1296,8 @@ fn a_member_with_a_partitioned_scope_is_not_served() {
         || {
             let id = "ac2-a-member-with-a-partitioned-scope-is-not-served";
             let title = "un miembro de ambito particionado no se sirve: el grupo lo dice con el diagnostico del ambito";
-            // El control: el grupo sin el miembro particionado sirve el
-            // modulo, y el listado es el mismo que serviria el otro grupo.
+            // The control: the group without the partitioned member serves the
+            // module, and the listing is the same one the other group would serve.
             let control = the_list(port, OWNED);
             if control.status != 200 {
                 return LabCase::new(id, title).failed(format!(
@@ -1306,8 +1306,8 @@ fn a_member_with_a_partitioned_scope_is_not_served() {
                     text_of(&control)
                 ));
             }
-            // El listado del grupo con el miembro particionado: no se
-            // sirve, y el motivo es el ambito.
+            // The listing of the group with the partitioned member: it is not
+            // served, and the reason is the scope.
             let list = call(
                 port,
                 "GET",
@@ -1327,8 +1327,8 @@ fn a_member_with_a_partitioned_scope_is_not_served() {
                 return LabCase::new(id, title)
                     .failed(format!("the refusal does not say the scope: {body}"));
             }
-            // Y la resolucion de una version: el grupo no puede elegir un
-            // dueno que no se puede servir.
+            // And the resolution of a version: the group cannot choose an
+            // owner that cannot be served.
             let version = call(
                 port,
                 "GET",

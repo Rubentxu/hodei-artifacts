@@ -1,19 +1,19 @@
-//! El corte de consulta y adjuntos de OCI Distribution (HSP-102 / HAR-08),
-//! contra el wire.
+//! The query and attachments cut of OCI Distribution (HSP-102 / HAR-08),
+//! against the wire.
 //!
-//! El protocolo de la distribucion no es solo subir y bajar: tambien es
-//! **preguntar**. Que etiquetas tiene el repositorio, que cuelga de este
-//! manifiesto, y que imagenes multi-plataforma hay.
+//! The distribution protocol is not only upload and download: it is also
+//! **asking**. Which tags the repository has, what hangs from this
+//! manifest, and which multi-platform images there are.
 //!
-//! Y las pruebas van contra el wire, con un proceso de verdad, un catalogo
-//! real y un almacen de bytes real. El ultimo caso usa un cliente de
-//! verdad --`oras`, el cliente de los artefactos-- que cuelga un SBOM de
-//! un manifiesto y lo vuelve a encontrar: un protocolo que solo funciona
-//! con el cliente que escribio el servidor no es un protocolo.
+//! And the tests go against the wire, with a real process, a real catalog
+//! and a real byte store. The last case uses a real client
+//! --`oras`, the artifacts client-- that hangs an SBOM from
+//! a manifest and finds it again: a protocol that only works
+//! with the client that the server's author wrote is not a protocol.
 //!
-//! Los fixtures (blobs, manifiestos, etiquetas) se siembran en un proceso
-//! aparte, como el resto del catalogo, contra el namespace Dgraph del
-//! despliegue.
+//! The fixtures (blobs, manifests, tags) are seeded in a separate
+//! process, like the rest of the catalog, against the deployment's
+//! Dgraph namespace.
 
 mod support;
 
@@ -23,41 +23,41 @@ use std::process::Command;
 use hodei_catalog::CatalogReader;
 use support::{Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY, SECOND_ACCOUNT};
 
-/// El media type de un manifiesto de imagen OCI.
+/// The media type of an OCI image manifest.
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// El media type de un indice multi-plataforma OCI.
+/// The media type of an OCI multi-platform index.
 const OCI_INDEX: &str = "application/vnd.oci.image.index.v1+json";
 
-/// El media type de un manifiesto de artefacto OCI.
+/// The media type of an OCI artifact manifest.
 const OCI_ARTIFACT: &str = "application/vnd.oci.artifact.manifest.v1+json";
 
-/// El tipo de artefacto del SBOM que se cuelga.
+/// The artifact type of the SBOM that gets attached.
 const SBOM_TYPE: &str = "application/vnd.example.sbom.v1";
 
-/// El tipo de artefacto de la firma que se cuelga.
+/// The artifact type of the signature that gets attached.
 const SIGNATURE_TYPE: &str = "application/vnd.example.signature.v1";
 
-/// El localizador del tenant Dgraph, que el proceso hijo necesita.
+/// The locator of the Dgraph tenant, which the child process needs.
 const SEED_DB: &str = "HODEI_OCI_INDEX_SEED_DB";
 
-/// Los digests que el inspector tiene que mirar, que viajan con el.
+/// The digests that the inspector has to look at, which travel with it.
 const DIGESTS: &str = "HODEI_OCI_INDEX_DIGESTS";
 
-/// El contenido de una capa de ejemplo.
+/// The content of a sample layer.
 fn a_layer(seed: u8) -> Vec<u8> {
     (0u16..2048)
         .map(|value| ((value as u8).wrapping_add(seed)) % 251)
         .collect()
 }
 
-/// El contenido de la configuracion de la imagen.
+/// The content of the image's configuration.
 fn a_config(architecture: &str) -> Vec<u8> {
     format!(r#"{{"architecture":"{architecture}","os":"linux","rootfs":{{"type":"layers"}}}}"#)
         .into_bytes()
 }
 
-/// El manifiesto que referencia la configuracion y la capa.
+/// The manifest that references the configuration and the layer.
 fn a_manifest(config_digest: &str, layer_digest: &str, size: usize) -> Vec<u8> {
     serde_json::json!({
         "schemaVersion": 2,
@@ -77,10 +77,10 @@ fn a_manifest(config_digest: &str, layer_digest: &str, size: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-/// El indice multi-plataforma, con sus hijos.
+/// The multi-platform index, with its children.
 ///
-/// Los hijos llevan su plataforma, porque un indice sin plataforma no
-/// dice que imagen es la de cada arquitectura.
+/// The children carry their platform, because an index without a platform does not
+/// say which image is the one for each architecture.
 fn a_index(children: &[(&str, &str, &str)]) -> Vec<u8> {
     let manifests: Vec<serde_json::Value> = children
         .iter()
@@ -102,10 +102,10 @@ fn a_index(children: &[(&str, &str, &str)]) -> Vec<u8> {
     .into_bytes()
 }
 
-/// El manifiesto de artefacto, con su `subject`.
+/// The artifact manifest, with its `subject`.
 ///
-/// El `subject` es el manifiesto al que se cuelga: una firma o un SBOM
-/// que va al lado sin tocarlo.
+/// The `subject` is the manifest it is attached to: a signature or an SBOM
+/// that goes alongside without touching it.
 fn an_artifact(artifact_type: &str, blob: &str, subject: &str) -> Vec<u8> {
     serde_json::json!({
         "schemaVersion": 2,
@@ -126,17 +126,17 @@ fn an_artifact(artifact_type: &str, blob: &str, subject: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// El digest de un contenido, sin el prefijo del algoritmo.
+/// The digest of a content, without the algorithm prefix.
 fn the_digest(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// La ruta OCI de un recurso del repositorio de la primera cuenta.
+/// The OCI path of a resource of the first account's repository.
 fn the_oci_path(kind: &str, reference: &str) -> String {
     format!("/v2/{FIRST_REPOSITORY}/{kind}/{reference}")
 }
 
-/// Una peticion de la distribucion.
+/// A distribution request.
 fn call(
     port: u16,
     method: &str,
@@ -149,18 +149,18 @@ fn call(
     support::Curl::call(port, method, path, token, body, content_type, into).run()
 }
 
-/// Un despliegue con el catalogo sembrado.
+/// A deployment with the catalog seeded.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed();
     deployment
 }
 
-/// El caso del informe, antes de ejecutarlo.
+/// The report case, before executing it.
 ///
-/// Se anota dos veces: al principio, con lo que se espera, y al final,
-/// con lo que se ha medido. Si la prueba se muere entre medias, el
-/// informe se queda con la primera anotacion, que dice `FALLO`.
+/// It is recorded twice: at the start, with what is expected, and at the end,
+/// with what was measured. If the test dies in between, the
+/// report keeps the first record, which says `FALLO`.
 fn the_case(id: &str, given: &str, when: &str, command: &str) -> support::Case {
     support::Case {
         id: id.to_string(),
@@ -172,10 +172,10 @@ fn the_case(id: &str, given: &str, when: &str, command: &str) -> support::Case {
     }
 }
 
-/// Publica un blob y devuelve su digest.
+/// Publishes a blob and returns its digest.
 ///
-/// El blob es lo que el manifiesto nombra: sin el, el manifiesto no se
-/// puede descargar.
+/// The blob is what the manifest names: without it, the manifest
+/// cannot be downloaded.
 fn publish_blob(deployment: &Deployment, port: u16, token: &str, content: &[u8]) -> String {
     let digest = the_digest(content);
     let file = deployment.directory.path().join("blob.bin");
@@ -198,7 +198,7 @@ fn publish_blob(deployment: &Deployment, port: u16, token: &str, content: &[u8])
     digest
 }
 
-/// Publica un manifiesto y devuelve la respuesta.
+/// Publishes a manifest and returns the response.
 fn publish_manifest(
     deployment: &Deployment,
     port: u16,
@@ -220,11 +220,11 @@ fn publish_manifest(
     )
 }
 
-/// Una peticion que deja el cuerpo de la respuesta en un fichero, y lo
-/// devuelve como texto.
+/// A request that leaves the response body in a file, and
+/// returns it as text.
 ///
-/// El cuerpo de un error es lo que dice el error: sin el, una prueba
-/// solo puede afirmar el codigo y no **que** error fue.
+/// The body of an error is what the error says: without it, a test
+/// can only assert the code and not **which** error it was.
 fn call_with_body(
     deployment: &Deployment,
     port: u16,
@@ -240,7 +240,7 @@ fn call_with_body(
     (answer, text)
 }
 
-/// Un `GET` que deja el cuerpo en un fichero, y lo devuelve parseado.
+/// A `GET` that leaves the body in a file, and returns it parsed.
 fn get_json(
     port: u16,
     path: &str,
@@ -253,25 +253,25 @@ fn get_json(
     (answer, json)
 }
 
-/// El seeder del catalogo (repositorios por cuenta).
+/// The catalog seeder (repositories per account).
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El indice multi-plataforma.
+// The multi-platform index.
 // ---------------------------------------------------------------------------
 
-/// Un indice multi-plataforma se publica y se sirve byte a byte.
+/// A multi-platform index is published and served byte for byte.
 ///
-/// El indice es lo que dice que hay una imagen para cada plataforma, y
-/// lo que el cliente de contenedores lee para saber cual tiene que
-/// bajar. Sus hijos son manifiestos, y tienen que estar.
+/// The index is what says that there is an image for each platform, and
+/// what the container client reads to know which one it has to
+/// download. Its children are manifests, and they have to be there.
 ///
-/// Y los bytes que vuelven son **los que se publicaron**: un manifiesto
-/// reescrito es un manifiesto con otro digest, y el no-go del protocolo
-/// es justo ese.
+/// And the bytes that come back are **those that were published**: a rewritten
+/// manifest is a manifest with another digest, and the protocol's no-go
+/// is exactly that.
 #[test]
 fn the_multi_platform_index_is_published_and_served_byte_by_byte() {
     let mut case = the_case(
@@ -286,7 +286,7 @@ fn the_multi_platform_index_is_published_and_served_byte_by_byte() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Las dos imagenes, con su configuracion y su capa.
+    // The two images, with their configuration and their layer.
     let mut children: Vec<(String, String, String)> = Vec::new();
     for (architecture, seed) in [("amd64", 31u8), ("arm64", 41u8)] {
         let config = a_config(architecture);
@@ -316,7 +316,7 @@ fn the_multi_platform_index_is_published_and_served_byte_by_byte() {
         ));
     }
 
-    // Y el indice que los nombra.
+    // And the index that names them.
     let borrowed: Vec<(&str, &str, &str)> = children
         .iter()
         .map(|(digest, os, architecture)| (digest.as_str(), os.as_str(), architecture.as_str()))
@@ -343,7 +343,7 @@ fn the_multi_platform_index_is_published_and_served_byte_by_byte() {
         "the answer does not name the digest of the index"
     );
 
-    // Por etiqueta y por digest, los bytes son los mismos.
+    // By tag and by digest, the bytes are the same.
     for reference in ["multi".to_string(), format!("sha256:{index_digest}")] {
         let into = deployment.directory.path().join("served.json");
         let answer = support::Curl::with_header(
@@ -372,8 +372,8 @@ fn the_multi_platform_index_is_published_and_served_byte_by_byte() {
         );
     }
 
-    // Y los hijos que nombra son los que se publicaron, con su digest y
-    // su media type.
+    // And the children it names are those that were published, with their digest and
+    // their media type.
     let served: serde_json::Value = serde_json::from_slice(&index).expect("the index is JSON");
     let described = served
         .get("manifests")
@@ -418,10 +418,10 @@ fn the_multi_platform_index_is_published_and_served_byte_by_byte() {
     support::stop(&mut service);
 }
 
-/// Un indice que nombra un manifiesto que no esta no se publica.
+/// An index that names a manifest that is not there is not published.
 ///
-/// Un indice con un hijo que no se puede descargar es un indice roto,
-/// y el protocolo lo dice: el error es `MANIFEST_BLOB_UNKNOWN`.
+/// An index with a child that cannot be downloaded is a broken index,
+/// and the protocol says so: the error is `MANIFEST_BLOB_UNKNOWN`.
 #[test]
 fn an_index_whose_child_is_missing_is_refused() {
     let mut case = the_case(
@@ -473,14 +473,14 @@ fn an_index_whose_child_is_missing_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
-// El `subject`: lo que cuelga de un manifiesto.
+// The `subject`: what hangs from a manifest.
 // ---------------------------------------------------------------------------
 
-/// Un manifiesto con un `subject` que todavia no esta se acepta.
+/// A manifest with a `subject` that is not there yet is accepted.
 ///
-/// El protocolo lo dice explicitly: un registro tiene que aceptar el
-/// manifiesto con un `subject` que no existe todavia, porque un cliente
-/// puede subir el referrer **antes** que el sujeto.
+/// The protocol says so explicitly: a registry has to accept the
+/// manifest with a `subject` that does not exist yet, because a client
+/// may upload the referrer **before** the subject.
 #[test]
 fn a_subject_that_is_not_there_yet_is_accepted() {
     let mut case = the_case(
@@ -531,14 +531,14 @@ fn a_subject_that_is_not_there_yet_is_accepted() {
     support::stop(&mut service);
 }
 
-/// Un manifiesto con la configuracion **vacia** se publica sin que
-/// ese blob este en el almacen.
+/// A manifest with the **empty** configuration is published without
+/// that blob being in the store.
 ///
-/// El descriptor vacio dice "esta imagen no tiene configuracion", y un
-/// cliente puede mandarlo en linea --con su `data`-- sin subirlo nunca.
-/// Un registro que lo exigiera en el almacen rechazaria un manifiesto
-/// que el protocolo dice que es valido, y el cliente real que lo hace
-/// (`oras`) dejaria de poder adjuntar nada.
+/// The empty descriptor says "this image has no configuration", and a
+/// client may send it inline --with its `data`-- without ever uploading it.
+/// A registry that required it in the store would reject a manifest
+/// that the protocol says is valid, and the real client that does it
+/// (`oras`) would no longer be able to attach anything.
 #[test]
 fn a_manifest_with_the_empty_config_is_published_without_it() {
     let mut case = the_case(
@@ -553,8 +553,8 @@ fn a_manifest_with_the_empty_config_is_published_without_it() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // La capa si esta en el almacen: es lo que el manifiesto nombra de
-    // verdad.
+    // The layer is in the store: it is what the manifest really
+    // names.
     let layer = a_layer(111);
     let layer_digest = publish_blob(&deployment, service.port, &token, &layer);
 
@@ -600,10 +600,10 @@ fn a_manifest_with_the_empty_config_is_published_without_it() {
     support::stop(&mut service);
 }
 
-/// Un referrer que nombra un blob que no esta no se publica.
+/// A referrer that names a blob that is not there is not published.
 ///
-/// El `subject` no se exige, pero lo que el manifiesto **trae** si: un
-/// referrer cuyo SBOM no se puede descargar no es un referrer.
+/// The `subject` is not required, but what the manifest **carries** is: a
+/// referrer whose SBOM cannot be downloaded is not a referrer.
 #[test]
 fn a_referrer_that_names_a_missing_blob_is_refused() {
     let mut case = the_case(
@@ -646,14 +646,14 @@ fn a_referrer_that_names_a_missing_blob_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
-// La lista de etiquetas.
+// The tag list.
 // ---------------------------------------------------------------------------
 
-/// La lista de etiquetas es lexical, y pagina.
+/// The tag list is lexical, and paginates.
 ///
-/// El protocolo define el orden como alfanumerico **sin distinguir
-/// mayusculas**, y pagina con `n` y `last`. El `Link` dice si hay mas, y
-/// con `n = 0` el protocolo dice que no lo hay.
+/// The protocol defines the order as alphanumeric **case-insensitive**,
+/// and paginates with `n` and `last`. The `Link` says whether there is more, and
+/// with `n = 0` the protocol says there is none.
 #[test]
 fn the_list_of_tags_is_lexical_and_pages() {
     let mut case = the_case(
@@ -668,7 +668,7 @@ fn the_list_of_tags_is_lexical_and_pages() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Cuatro imagenes, con cuatro etiquetas.
+    // Four images, with four tags.
     for (tag, seed) in [("v1", 51u8), ("v2", 52), ("Beta", 53), ("alpha", 54)] {
         let config = a_config("amd64");
         let layer = a_layer(seed);
@@ -693,7 +693,7 @@ fn the_list_of_tags_is_lexical_and_pages() {
 
     let into = deployment.directory.path().join("tags.json");
 
-    // La lista entera, en orden lexicografico.
+    // The whole list, in lexicographic order.
     let (answer, body) = get_json(service.port, &the_oci_path("tags", "list"), &token, &into);
     assert_eq!(answer.status, 200, "the list of tags is not served");
     assert_eq!(
@@ -713,8 +713,8 @@ fn the_list_of_tags_is_lexical_and_pages() {
         "the tags are not in lexical order"
     );
 
-    // Una pagina de dos: la primera pagina y el `Link` que dice que hay
-    // mas.
+    // A page of two: the first page and the `Link` that says there is
+    // more.
     let (answer, body) = get_json(
         service.port,
         &format!("{}?n=2", the_oci_path("tags", "list")),
@@ -742,7 +742,7 @@ fn the_list_of_tags_is_lexical_and_pages() {
         "the link does not name the last tag of the page: {link}"
     );
 
-    // La segunda pagina, con el cursor.
+    // The second page, with the cursor.
     let (answer, body) = get_json(
         service.port,
         &format!("{}?n=2&last=Beta", the_oci_path("tags", "list")),
@@ -763,7 +763,7 @@ fn the_list_of_tags_is_lexical_and_pages() {
         "the cursor does not continue the list"
     );
 
-    // Y `n = 0` es una lista vacia, **sin** `Link`.
+    // And `n = 0` is an empty list, **without** `Link`.
     let (answer, body) = get_json(
         service.port,
         &format!("{}?n=0", the_oci_path("tags", "list")),
@@ -790,12 +790,12 @@ fn the_list_of_tags_is_lexical_and_pages() {
     support::stop(&mut service);
 }
 
-/// La etiqueta es mutable: dos publicaciones concurrentes no pierden
-/// entradas.
+/// The tag is mutable: two concurrent publications do not lose
+/// entries.
 ///
-/// La etiqueta acaba en una de las dos imagenes --la que se escribio
-/// ultimo--, pero **las dos** imagenes siguen publicadas con su digest,
-/// y la lista de etiquetas no ha perdido ninguna.
+/// The tag ends up on one of the two images --the one written
+/// last--, but **both** images remain published with their digest,
+/// and the tag list has not lost any.
 #[test]
 fn a_tag_moved_concurrently_keeps_both_manifests() {
     let mut case = the_case(
@@ -810,7 +810,7 @@ fn a_tag_moved_concurrently_keeps_both_manifests() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // La imagen que hay detras de la etiqueta.
+    // The image behind the tag.
     let config = a_config("amd64");
     let layer = a_layer(61);
     let config_digest = publish_blob(&deployment, service.port, &token, &config);
@@ -827,7 +827,7 @@ fn a_tag_moved_concurrently_keeps_both_manifests() {
     );
     assert_eq!(answer.status, 201, "the first image was not published");
 
-    // Dos imagenes mas, que se pelean por la etiqueta.
+    // Two more images, which fight over the tag.
     let mut others = Vec::new();
     for seed in [71u8, 72u8] {
         let config = a_config("arm64");
@@ -875,8 +875,8 @@ fn a_tag_moved_concurrently_keeps_both_manifests() {
         assert_eq!(*status, 201, "one of the concurrent publications failed");
     }
 
-    // La etiqueta apunta a una de las dos, y la lista no ha perdido la
-    // etiqueta.
+    // The tag points to one of the two, and the list has not lost the
+    // tag.
     let into = deployment.directory.path().join("tags.json");
     let (answer, body) = get_json(service.port, &the_oci_path("tags", "list"), &token, &into);
     assert_eq!(answer.status, 200, "the list of tags is not served");
@@ -889,8 +889,8 @@ fn a_tag_moved_concurrently_keeps_both_manifests() {
         .collect();
     assert_eq!(tags, vec!["v1"], "the list of tags lost the tag");
 
-    // Y las tres imagenes siguen publicadas con su digest: la que
-    // estaba detras de la etiqueta no se ha movido de sitio.
+    // And the three images remain published with their digest: the one that
+    // was behind the tag has not moved from its place.
     let into = deployment.directory.path().join("served.json");
     for (digest, manifest) in
         std::iter::once((first_digest.clone(), first.clone())).chain(others.iter().cloned())
@@ -926,16 +926,16 @@ fn a_tag_moved_concurrently_keeps_both_manifests() {
 }
 
 // ---------------------------------------------------------------------------
-// Los referrers.
+// The referrers.
 // ---------------------------------------------------------------------------
 
-/// Los referrers de un manifiesto que no tiene referrers son una lista
-/// vacia, y **no** un 404.
+/// The referrers of a manifest that has no referrers are an empty
+/// list, and **not** a 404.
 ///
-/// El protocolo lo dice: un manifiesto sin referrers no es un error, y un
-/// cliente que busca la firma de un manifiesto tiene que poder
-/// distinguir "no hay firma" de "no hay manifiesto" sin que el registro
-/// le diga que no hay manifiesto.
+/// The protocol says so: a manifest without referrers is not an error, and a
+/// client looking for a manifest's signature has to be able to
+/// distinguish "there is no signature" from "there is no manifest" without the registry
+/// telling it that there is no manifest.
 #[test]
 fn the_referrers_of_a_manifest_that_has_none_are_an_empty_list() {
     let mut case = the_case(
@@ -991,7 +991,7 @@ fn the_referrers_of_a_manifest_that_has_none_are_an_empty_list() {
         "the list of referrers is not empty"
     );
 
-    // Y un subject que no existe tampoco es un 404.
+    // And a subject that does not exist is not a 404 either.
     let (answer, body) = get_json(
         service.port,
         &the_oci_path(
@@ -1023,10 +1023,10 @@ fn the_referrers_of_a_manifest_that_has_none_are_an_empty_list() {
     support::stop(&mut service);
 }
 
-/// Un digest que no es un digest es un error del cliente.
+/// A digest that is not a digest is a client error.
 ///
-/// El protocolo lo dice con un `400`: una peticion invalida no es una
-/// busqueda sin resultado.
+/// The protocol says so with a `400`: an invalid request is not a
+/// search without results.
 #[test]
 fn the_referrers_of_a_digest_that_is_not_a_digest_are_a_bad_request() {
     let mut case = the_case(
@@ -1068,11 +1068,11 @@ fn the_referrers_of_a_digest_that_is_not_a_digest_are_a_bad_request() {
     support::stop(&mut service);
 }
 
-/// Los referrers de otra cuenta no se ven.
+/// The referrers of another account are not seen.
 ///
-/// Un repositorio de otra cuenta no existe para esta, y su error es el
-/// mismo que el de un repositorio que no existe: un `403` o un `404`
-/// que lo distinga filtra la existencia de lo ajeno.
+/// A repository of another account does not exist for this one, and its error is the
+/// same as that of a repository that does not exist: a `403` or a `404`
+/// that distinguishes it leaks the existence of what belongs to someone else.
 #[test]
 fn the_referrers_of_another_account_are_not_visible() {
     let mut case = the_case(
@@ -1087,8 +1087,8 @@ fn the_referrers_of_another_account_are_not_visible() {
     let mut service = deployment.start(&[]);
     let other = support::token(SECOND_ACCOUNT, "bob");
 
-    // El repositorio que **solo** tiene la primera cuenta: el de la
-    // segunda cuenta es otro, con el mismo nombre y otro contenido.
+    // The repository that **only** the first account has: the second
+    // account's is another one, with the same name and other content.
     let (answer, body) = call_with_body(
         &deployment,
         service.port,
@@ -1121,15 +1121,15 @@ fn the_referrers_of_another_account_are_not_visible() {
 }
 
 // ---------------------------------------------------------------------------
-// El cliente de verdad: `oras`.
+// The real client: `oras`.
 // ---------------------------------------------------------------------------
 
-/// El `oras` cuelga un SBOM de un manifiesto y lo vuelve a encontrar.
+/// `oras` attaches an SBOM to a manifest and finds it again.
 ///
-/// El `oras` es el cliente de los artefactos: cuelga una firma o un SBOM
-/// de un manifiesto sin tocarlo, y lo vuelve a encontrar con
-/// `discover`. Y lo hace hablando el protocolo entero: el reto, el
-/// endpoint de token y la API de referrers.
+/// `oras` is the artifacts client: it attaches a signature or an SBOM
+/// to a manifest without touching it, and finds it again with
+/// `discover`. And it does so speaking the whole protocol: the challenge, the
+/// token endpoint and the referrers API.
 #[test]
 fn oras_attaches_an_artifact_and_discovers_it() {
     let mut case = the_case(
@@ -1144,7 +1144,7 @@ fn oras_attaches_an_artifact_and_discovers_it() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // El manifiesto al que se cuelga el SBOM.
+    // The manifest the SBOM is attached to.
     let config = a_config("amd64");
     let layer = a_layer(91);
     let config_digest = publish_blob(&deployment, service.port, &token, &config);
@@ -1166,7 +1166,7 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         deployment.the_log()
     );
 
-    // El SBOM que se cuelga.
+    // The SBOM that gets attached.
     let sbom = deployment.directory.path().join("sbom.json");
     std::fs::write(&sbom, br#"{"sbom":"spdx","packages":[]}"#).expect("the sbom is written");
 
@@ -1184,8 +1184,8 @@ fn oras_attaches_an_artifact_and_discovers_it() {
             "--password",
             &token,
             "--no-tty",
-            // El fichero esta en un directorio temporal, y su camino es
-            // absoluto: el `oras` lo comprueba, y aqui es a proposito.
+            // The file is in a temporary directory, and its path is
+            // absolute: `oras` checks it, and here it is on purpose.
             "--disable-path-validation",
         ])
         .arg(format!("127.0.0.1:{}/{FIRST_REPOSITORY}:v1", service.port))
@@ -1199,8 +1199,8 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         String::from_utf8_lossy(&attached.stderr)
     );
 
-    // Y el `discover` lo encuentra: el `oras` pregunta por la API de
-    // referrers, y la respuesta es lo que el registro tiene.
+    // And `discover` finds it: `oras` asks the referrers API,
+    // and the response is what the registry has.
     let discovered = Command::new(&oras)
         .args([
             "discover",
@@ -1244,7 +1244,7 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         "the SBOM is not in the discovery: {found}"
     );
 
-    // Y la API de referrers, preguntada sin cliente, dice lo mismo.
+    // And the referrers API, asked without a client, says the same.
     let into = deployment.directory.path().join("referrers.json");
     let (answer, body) = get_json(
         service.port,
@@ -1265,10 +1265,10 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         Some(SBOM_TYPE),
         "the referrer does not say what it is"
     );
-    // El `oras` empaca el adjunto como un **manifiesto de imagen** con
-    // un `artifactType`: es lo que dice el manifiesto, y el descriptor
-    // lo dice como es. Lo que dice **que** es un SBOM es el
-    // `artifactType`, que es justo lo que el filtro usa.
+    // `oras` packs the attachment as an **image manifest** with
+    // an `artifactType`: it is what the manifest says, and the descriptor
+    // says it as it is. What says **what** an SBOM is the
+    // `artifactType`, which is exactly what the filter uses.
     assert_eq!(
         manifests[0]
             .get("mediaType")
@@ -1276,8 +1276,8 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         Some(OCI_MANIFEST),
         "the referrer is not served with the media type of the manifest: {body}"
     );
-    // Y el manifiesto del referrer se sirve con sus bytes, que son los
-    // que el `oras` subio.
+    // And the referrer's manifest is served with its bytes, which are those
+    // that `oras` uploaded.
     let referrer_digest = manifests[0]
         .get("digest")
         .and_then(|value| value.as_str())
@@ -1321,8 +1321,8 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         "the descriptor does not say the size of the manifest it describes"
     );
 
-    // El filtro por tipo de artefacto: solo lo que es de ese tipo, y la
-    // cabecera que dice que se ha filtrado.
+    // The filter by artifact type: only what is of that type, and the
+    // header that says it was filtered.
     let (answer, body) = get_json(
         service.port,
         &format!(
@@ -1345,7 +1345,7 @@ fn oras_attaches_an_artifact_and_discovers_it() {
         "the filter did not leave the referrer"
     );
 
-    // Y un filtro que no casa con nada es una lista vacia, no un error.
+    // And a filter that matches nothing is an empty list, not an error.
     let (answer, body) = get_json(
         service.port,
         &format!(
@@ -1373,15 +1373,15 @@ fn oras_attaches_an_artifact_and_discovers_it() {
 }
 
 // ---------------------------------------------------------------------------
-// La confianza: un referrer no promueve nada.
+// Trust: a referrer promotes nothing.
 // ---------------------------------------------------------------------------
 
-/// Una firma colgada no promueve lo que cuelga.
+/// An attached signature does not promote what it hangs from.
 ///
-/// El referrer de una firma es un manifiesto mas: se publica, se lista y
-/// se sirve. Lo que **no** hace es promover el sujeto, porque promover
-/// es una decision del motor de confianza y la presencia de un fichero no
-/// es una decision.
+/// A signature's referrer is one more manifest: it is published, listed and
+/// served. What it does **not** do is promote the subject, because promoting
+/// is a decision of the trust engine and the presence of a file is
+/// not a decision.
 #[test]
 fn a_signature_referrer_does_not_promote_the_subject() {
     let mut case = the_case(
@@ -1396,7 +1396,7 @@ fn a_signature_referrer_does_not_promote_the_subject() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // El manifiesto.
+    // The manifest.
     let config = a_config("amd64");
     let layer = a_layer(101);
     let config_digest = publish_blob(&deployment, service.port, &token, &config);
@@ -1413,7 +1413,7 @@ fn a_signature_referrer_does_not_promote_the_subject() {
     );
     assert_eq!(answer.status, 201, "the image was not published");
 
-    // Y la firma, colgada de el.
+    // And the signature, hung from it.
     let signature = b"a signature that nobody has verified".to_vec();
     let signature_digest = publish_blob(&deployment, service.port, &token, &signature);
     let artifact = an_artifact(SIGNATURE_TYPE, &signature_digest, &manifest_digest);
@@ -1433,12 +1433,12 @@ fn a_signature_referrer_does_not_promote_the_subject() {
         deployment.the_log()
     );
 
-    // Y el servicio tiene que soltar la base para que otro proceso
-    // pueda leerla.
+    // And the service has to release the database so that another process
+    // can read it.
     support::stop(&mut service);
 
-    // El inspector es otro proceso, y no puede ver lo que esta prueba
-    // tiene en memoria: los digests viajan por el entorno.
+    // The inspector is another process, and cannot see what this test
+    // has in memory: the digests travel through the environment.
     let status = Command::new(std::env::current_exe().expect("the test binary"))
         .args([
             "--exact",
@@ -1466,18 +1466,18 @@ fn a_signature_referrer_does_not_promote_the_subject() {
 }
 
 // ---------------------------------------------------------------------------
-// Lo que el registro no deja pasar.
+// What the registry does not let through.
 // ---------------------------------------------------------------------------
 
-/// Un `subject` que no es un digest no se publica.
+/// A `subject` that is not a digest is not published.
 ///
-/// El digest del `subject` viaja al catalogo, y el catalogo lo relee con
-/// la regla de un digest: 64 hexadecimales. Si el push aceptara un
-/// digest a medio escribir, el manifiesto se publicaria con un 201 y
-/// quedaria **ilegible**: la lectura del asset falla como corrupta y el
-/// manifiesto no se podria volver a bajar ni por su digest ni por su
-/// etiqueta. Un 201 con un manifiesto que no se puede leer es peor que
-/// un 400.
+/// The `subject`'s digest travels to the catalog, and the catalog rereads it with
+/// the rule of a digest: 64 hexadecimal characters. If the push accepted a
+/// half-written digest, the manifest would be published with a 201 and
+/// would be left **unreadable**: the asset read fails as corrupt and the
+/// manifest could not be downloaded again either by its digest or by its
+/// tag. A 201 with a manifest that cannot be read is worse than
+/// a 400.
 #[test]
 fn a_subject_that_is_not_a_digest_is_refused() {
     let mut case = the_case(
@@ -1494,7 +1494,7 @@ fn a_subject_that_is_not_a_digest_is_refused() {
 
     let blob = b"the sbom".to_vec();
     let blob_digest = publish_blob(&deployment, service.port, &token, &blob);
-    // El `subject` es lo que esta mal: un digest a medio escribir.
+    // The `subject` is what is wrong: a half-written digest.
     let artifact = serde_json::json!({
         "schemaVersion": 2,
         "mediaType": OCI_ARTIFACT,
@@ -1535,8 +1535,8 @@ fn a_subject_that_is_not_a_digest_is_refused() {
         "the error is not the one of the protocol: {body}"
     );
 
-    // Y no queda publicado: un manifiesto que no se puede leer no puede
-    // quedar a medio publicar.
+    // And it is not left published: a manifest that cannot be read must not
+    // be left half-published.
     let digest = the_digest(&artifact);
     let (answer, _) = call_with_body(
         &deployment,
@@ -1563,14 +1563,14 @@ fn a_subject_that_is_not_a_digest_is_refused() {
     support::stop(&mut service);
 }
 
-/// Un descriptor que **dice** que es el vacio pero nombra otro
-/// contenido no es el vacio.
+/// A descriptor that **says** it is the empty one but names other
+/// content is not the empty one.
 ///
-/// El descriptor vacio son los dos bytes `{}`, y su digest es el de esos
-/// dos bytes. Un descriptor que dice "vacio" y nombra un digest que no
-/// es el de `{}` esta diciendo una cosa y otra: un registro que lo
-/// tomara por el vacio dejaria de exigir un contenido que el manifiesto
-/// nombra, y publicaria un manifiesto que no se puede descargar.
+/// The empty descriptor is the two bytes `{}`, and its digest is that of those
+/// two bytes. A descriptor that says "empty" and names a digest that
+/// is not that of `{}` is saying one thing and another: a registry that
+/// took it for the empty one would stop requiring a content that the manifest
+/// names, and would publish a manifest that cannot be downloaded.
 #[test]
 fn a_descriptor_that_only_says_empty_is_not_the_empty_one() {
     let mut case = the_case(
@@ -1629,12 +1629,12 @@ fn a_descriptor_that_only_says_empty_is_not_the_empty_one() {
     support::stop(&mut service);
 }
 
-/// Las etiquetas de otra cuenta no se ven.
+/// The tags of another account are not seen.
 ///
-/// La lista de etiquetas sale del catalogo, y el catalogo filtra por
-/// cuenta y por repositorio. Una regresion que quitara ese filtro no la
-/// detectaria ninguna otra prueba: la suite seguiria en verde y las
-/// etiquetas de otra cuenta serian visibles.
+/// The tag list comes from the catalog, and the catalog filters by
+/// account and by repository. A regression that removed that filter would not be
+/// detected by any other test: the suite would stay green and the
+/// tags of another account would be visible.
 #[test]
 fn the_tags_of_another_account_are_not_visible() {
     let mut case = the_case(
@@ -1677,13 +1677,13 @@ fn the_tags_of_another_account_are_not_visible() {
     support::stop(&mut service);
 }
 
-/// Un `n` que no es un numero es un 400, no un 405.
+/// An `n` that is not a number is a 400, not a 405.
 ///
-/// El parametro es un entero, y un entero que no lo es es una peticion
-/// mal escrita: el registro de referencia responde con un 400 y el
-/// codigo `PAGINATION_NUMBER_INVALID`, y un cliente que mire el codigo
-/// ve lo mismo que veria en cualquier otro registro. Un 405 diria que
-/// el registro no sabe atender la peticion, y si los sabe.
+/// The parameter is an integer, and an integer that is not one is a badly
+/// written request: the reference registry answers with a 400 and the
+/// code `PAGINATION_NUMBER_INVALID`, and a client that looks at the code
+/// sees the same as it would in any other registry. A 405 would say that
+/// the registry does not know how to handle the request, and it does.
 #[test]
 fn a_n_that_is_not_a_number_is_a_bad_request() {
     let mut case = the_case(
@@ -1727,10 +1727,10 @@ fn a_n_that_is_not_a_number_is_a_bad_request() {
     support::stop(&mut service);
 }
 
-/// El inspector del canal, en un proceso aparte.
+/// The channel inspector, in a separate process.
 ///
-/// Mira el catalogo desde otro proceso, con su propio cliente del
-/// namespace Dgraph del despliegue, como lo haria un operador.
+/// It looks at the catalog from another process, with its own client of the
+/// deployment's Dgraph namespace, as an operator would.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo de los tests del indice OCI"]
 async fn the_signed_manifest_is_still_in_quarantine() {
@@ -1744,9 +1744,9 @@ async fn the_signed_manifest_is_still_in_quarantine() {
         .expect("the locator names a graph tenant");
     let catalog = tenant.catalog_store().await;
 
-    // Lo que importa: **ninguna** de las dos referencias ha salido de la
-    // cuarentena. La firma es un referrer mas, y un referrer no promueve
-    // a nadie: ni al manifiesto que cuelga de el, ni a si mismo.
+    // What matters: **neither** of the two references has left
+    // quarantine. The signature is one more referrer, and a referrer does not promote
+    // anyone: neither the manifest it hangs from, nor itself.
     let digests = the_digests_of_the_test();
     assert!(
         !digests.is_empty(),
@@ -1772,10 +1772,10 @@ async fn the_signed_manifest_is_still_in_quarantine() {
     );
 }
 
-/// Los digests de los manifiestos que publica la prueba.
+/// The digests of the manifests that the test publishes.
 ///
-/// El inspector corre en otro proceso y no puede ver lo que la prueba
-/// ha hecho en memoria: los digests van por el entorno.
+/// The inspector runs in another process and cannot see what the test
+/// has done in memory: the digests go through the environment.
 fn the_digests_of_the_test() -> Vec<String> {
     std::env::var(DIGESTS)
         .ok()

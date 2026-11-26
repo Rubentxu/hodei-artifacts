@@ -1,21 +1,21 @@
-//! HSP-226: PyPI real: Simple API, wheel y sdist con pip aislado.
+//! HSP-226: real PyPI: Simple API, wheel and sdist with an isolated pip.
 //!
-//! Lo que se demuestra aqui, contra el **servicio de verdad**:
+//! What is demonstrated here, against the **real service**:
 //!
-//! - `pip download` resuelve una version fijada por el grupo de Hodei, y
-//!   el fichero que baja coincide por SHA256 con el que el indice declara;
-//! - el indice que se sirve es **nuestro**: conserva la identidad del
-//!   proyecto y sus enlaces apuntan a Hodei, no al upstream;
-//! - el grupo no mezcla el indice de un miembro con el fichero de otro;
-//! - lo que ya esta en la cache se resuelve con el upstream desconectado;
-//! - los estados `yanked` y `requires-python` se declaran, y una metadata
-//!   hostil no crea enlaces externos ni HTML sin escapar.
+//! - `pip download` resolves a version pinned by Hodei's group, and
+//!   the file it downloads matches by SHA256 the one the index declares;
+//! - the index that is served is **ours**: it keeps the project's identity
+//!   and its links point to Hodei, not to the upstream;
+//! - the group does not mix one member's index with another's file;
+//! - what is already in the cache resolves with the upstream disconnected;
+//! - the `yanked` and `requires-python` states are declared, and hostile
+//!   metadata creates neither external links nor unescaped HTML.
 //!
-//! Por defecto el camino **no usa la red**: el upstream es el del
-//! laboratorio y la distribucion es un fixture. El caso contra
-//! `pypi.org` es opt-in (`HODEI_LAB_REAL=1`), y sin el queda `NOT_RUN`, con
-//! lo que el informe no es verde: un caso que no se ejecuta no es un caso
-//! que pasa.
+//! By default the path **does not use the network**: the upstream is the lab's
+//! and the distribution is a fixture. The case against
+//! `pypi.org` is opt-in (`HODEI_LAB_REAL=1`), and without it it stays `NOT_RUN`, so
+//! the report is not green: a case that does not run is not a case
+//! that passes.
 
 mod support;
 
@@ -30,44 +30,44 @@ use support::lab::{
 };
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// El proyecto bajo prueba: las coordenadas son las del publico.
+/// The project under test: the coordinates are the public ones.
 const PROJECT: &str = "requests";
 
-/// La version del proyecto bajo prueba: **fijada**, siempre.
+/// The version of the project under test: **pinned**, always.
 const VERSION: &str = "2.32.3";
 
-/// El otro proyecto del grupo: el que vive en el hosted.
+/// The other project in the group: the one that lives in the hosted.
 const OTHER_PROJECT: &str = "labpkg";
 
-/// La version del otro proyecto.
+/// The version of the other project.
 const OTHER_VERSION: &str = "1.0";
 
-/// El repositorio **hosted** del grupo.
+/// The group's **hosted** repository.
 const HOSTED: &str = "pypi-hosted";
 
-/// El repositorio **proxy** del grupo: el que habla con el upstream.
+/// The group's **proxy** repository: the one that talks to the upstream.
 const PROXY: &str = "pypi-central";
 
-/// El segundo proxy del grupo: el mismo proyecto con **otros** bytes.
+/// The group's second proxy: the same project with **other** bytes.
 const MIRROR: &str = "pypi-mirror";
 
-/// El grupo bajo prueba.
+/// The group under test.
 const GROUP: &str = "pypi-all";
 
-/// El indice publico de PyPI.
+/// The public PyPI index.
 const REAL_UPSTREAM: &str = "https://pypi.org/simple/";
 
-/// Los hosts que el modo real deja salir: el indice y su CDN.
+/// The hosts that the real mode lets out: the index and its CDN.
 const REAL_HOSTS: &str = "pypi.org,files.pythonhosted.org";
 
-/// La frontera de las partes del cuerpo multipart.
+/// The boundary of the multipart body parts.
 const BOUNDARY: &str = "hodeipypiboundary";
 
-/// Los casos que una corrida completa tiene que ejecutar.
+/// The cases that a complete run has to execute.
 ///
-/// El informe los declara, asi que una corrida que solo llego a alguno
-/// dice cual le falto: los que no se ejecutan cuentan como `NOT_RUN`, y el
-/// informe nunca es verde.
+/// The report declares them, so a run that only reached some of them
+/// says which it missed: those that are not executed count as `NOT_RUN`, and the
+/// report is never green.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1-pip-download-resolves-the-pinned-version-through-the-group",
@@ -103,10 +103,10 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El titulo y el disclaimer del informe de esta suite.
+/// The title and the disclaimer of this suite's report.
 ///
-/// El disclaimer del laboratorio (HSP-223) dice que no se ha hablado con
-/// `pip`, y aqui si: el disclaimer es de la suite, no del modulo.
+/// The lab disclaimer (HSP-223) says that `pip` has not been spoken to,
+/// and here it has: the disclaimer belongs to the suite, not to the module.
 const THE_TITLE: &str = "Laboratorio de PyPI — informe";
 
 const THE_DISCLAIMER: &[&str] = &[
@@ -116,32 +116,32 @@ const THE_DISCLAIMER: &[&str] = &[
     "- **Ni el laboratorio.** Los casos de `scope: harness` miden el arnés —el recuento— y no el producto. Los dos recuentos van aparte.",
 ];
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El laboratorio.
+// The lab.
 // ---------------------------------------------------------------------------
 
-/// El laboratorio de PyPI: un despliegue, un upstream que cuenta, un
-/// segundo upstream con los mismos bytes cambiados y el grupo bajo prueba.
+/// The PyPI lab: a deployment, an upstream that counts, a
+/// second upstream with the same bytes changed and the group under test.
 struct Lab {
     deployment: Deployment,
-    /// El upstream local del proxy principal.
+    /// The local upstream of the main proxy.
     upstream: Upstream,
-    /// El upstream local del espejo: el mismo proyecto, otros bytes.
+    /// The local upstream of the mirror: the same project, other bytes.
     mirror: Upstream,
-    /// La URL del upstream del proxy principal.
+    /// The URL of the main proxy's upstream.
     upstream_url: String,
-    /// La URL del upstream del espejo.
+    /// The URL of the mirror's upstream.
     mirror_url: String,
 }
 
 impl Lab {
-    /// Un laboratorio con dos upstreams **locales** que cuentan.
+    /// A lab with two **local** upstreams that count.
     fn local() -> Self {
         let upstream = Upstream::start();
         let mirror = Upstream::start();
@@ -156,11 +156,11 @@ impl Lab {
         }
     }
 
-    /// Un laboratorio con el upstream **real**: el indice publico de PyPI.
+    /// A lab with the **real** upstream: the public PyPI index.
     ///
-    /// No hay contador local: a PyPI no se le puede contar. Lo que se mide
-    /// en el modo real es el SHA256 y el hecho de que la resolucion
-    /// funciona con la salida a PyPI **cerrada**.
+    /// There is no local counter: PyPI cannot be counted. What is measured
+    /// in real mode is the SHA256 and the fact that resolution
+    /// works with the exit to PyPI **closed**.
     fn real() -> Self {
         let upstream = Upstream::start();
         let mirror = Upstream::start();
@@ -168,13 +168,13 @@ impl Lab {
             deployment: Deployment::new(),
             upstream,
             mirror,
-            // El origen del indice publico: el proxy anade el `simple/`.
+            // The origin of the public index: the proxy adds the `simple/`.
             upstream_url: "https://pypi.org/".to_string(),
             mirror_url: "https://pypi.org/".to_string(),
         }
     }
 
-    /// Siembra el hosted, los dos proxies y el grupo.
+    /// Seeds the hosted, the two proxies and the group.
     fn seed(&self) {
         self.deployment.seed_repositories(&[
             serde_json::json!({ "key": HOSTED, "format": "pypi" }),
@@ -188,7 +188,7 @@ impl Lab {
         })]);
     }
 
-    /// Un proxy que habla con un upstream.
+    /// A proxy that talks to an upstream.
     fn the_proxy(&self, key: &str, id: &str, url: &str) -> Value {
         serde_json::json!({
             "key": key,
@@ -205,12 +205,12 @@ impl Lab {
         })
     }
 
-    /// Arranca el servicio con la salida que el caso necesita.
+    /// Starts the service with the egress that the case needs.
     fn start(&self, extra: &[(&str, &str)]) -> support::Service {
         self.deployment.start(extra)
     }
 
-    /// La salida que deja pasar al upstream local del laboratorio.
+    /// The egress that lets the lab's local upstream through.
     fn the_local_egress(&self) -> String {
         format!(
             "127.0.0.1:{};private;http,127.0.0.1:{};private;http",
@@ -221,19 +221,19 @@ impl Lab {
 }
 
 // ---------------------------------------------------------------------------
-// Los fixtures.
+// The fixtures.
 // ---------------------------------------------------------------------------
 
-/// El nombre del fichero de una distribucion, como lo escribe PyPI.
+/// The file name of a distribution, as PyPI writes it.
 fn the_file_name(project: &str, version: &str) -> String {
     format!("{project}-{version}-py3-none-any.whl")
 }
 
-/// La pagina de un proyecto en la Simple API, tal y como la declara el
-/// upstream.
+/// A project's page in the Simple API, exactly as the
+/// upstream declares it.
 ///
-/// Las URLs `url` apuntan al **upstream**: si el proxy no las reescribe, el
-/// cliente se ira alla y la prueba lo dira.
+/// The `url` URLs point to the **upstream**: if the proxy does not rewrite them, the
+/// client will go there and the test will say so.
 fn the_page(project: &str, packages: &str, files: &[(&str, &str)]) -> Vec<u8> {
     let mut entries = Vec::new();
     for (filename, sha256) in files {
@@ -253,7 +253,7 @@ fn the_page(project: &str, packages: &str, files: &[(&str, &str)]) -> Vec<u8> {
     .expect("the page is json")
 }
 
-/// El SHA256 de unos bytes, en hexadecimal.
+/// The SHA256 of some bytes, in hexadecimal.
 fn the_sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -261,7 +261,7 @@ fn the_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Una subida al hosted, como la manda `twine`.
+/// An upload to the hosted, as `twine` sends it.
 fn upload(dir: &Path, port: u16, repository: &str, token: &str, body: Vec<u8>) -> support::Answer {
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -280,7 +280,7 @@ fn upload(dir: &Path, port: u16, repository: &str, token: &str, body: Vec<u8>) -
     .run()
 }
 
-/// El cuerpo de una subida, como lo manda `twine`.
+/// The body of an upload, as `twine` sends it.
 fn the_upload(project: &str, version: &str, filename: &str, file: &[u8], sha256: &str) -> Vec<u8> {
     let mut body: Vec<u8> = Vec::new();
     for (field, value) in [
@@ -315,38 +315,38 @@ fn the_upload(project: &str, version: &str, filename: &str, file: &[u8], sha256:
 }
 
 // ---------------------------------------------------------------------------
-// El cliente pip.
+// The pip client.
 // ---------------------------------------------------------------------------
 
-/// La corrida de un cliente.
+/// The run of a client.
 struct Run {
     ok: bool,
     output: String,
     command: String,
 }
 
-/// Un cliente `pip` aislado: su HOME, su cache y su indice.
+/// An isolated `pip` client: its HOME, its cache and its index.
 ///
-/// El indice apunta al **grupo** de Hodei, de modo que el cliente no tiene
-/// un camino propio a PyPI: lo que descarga sale del grupo o no sale. La
-/// credencial viaja en la URL, que es como la lleva `pip`.
+/// The index points to Hodei's **group**, so the client has no
+/// path of its own to PyPI: what it downloads comes out of the group or not at all. The
+/// credential travels in the URL, which is how `pip` carries it.
 struct Pip {
-    /// El HOME del cliente: no es el de quien ejecuta la prueba.
+    /// The client's HOME: not that of whoever runs the test.
     home: LabHome,
-    /// El directorio del cliente.
+    /// The client's directory.
     root: PathBuf,
-    /// El indice al que habla el cliente.
+    /// The index the client talks to.
     index: String,
 }
 
 impl Pip {
-    /// Un cliente que habla con el grupo indicado.
+    /// A client that talks to the indicated group.
     fn new(root: &Path, name: &str, port: u16, group: &str, token: &str) -> Self {
         let home = LabHome::new();
         let directory = root.join(name);
         std::fs::create_dir_all(&directory).expect("the directory of the client");
-        // La credencial va en la password: la superficie de PyPI acepta la
-        // basica, cuya contrasena **es** la credencial de la plataforma.
+        // The credential goes in the password: the PyPI surface accepts
+        // basic auth, whose password **is** the platform credential.
         let index = format!("http://hodei:{token}@127.0.0.1:{port}/pypi/{group}/simple/");
         Self {
             home,
@@ -355,7 +355,7 @@ impl Pip {
         }
     }
 
-    /// Corre `pip` con el HOME aislado y sin configuracion de por medio.
+    /// Runs `pip` with the isolated HOME and without any configuration in between.
     fn run(&self, work: &Path, arguments: &[&str]) -> Run {
         let mut command = Command::new("pip");
         command
@@ -382,7 +382,7 @@ impl Pip {
     }
 }
 
-/// Una peticion al servicio, con su respuesta.
+/// A request to the service, with its response.
 fn call(
     dir: &Path,
     port: u16,
@@ -397,21 +397,21 @@ fn call(
     Curl::call_with_headers(port, method, path, token, body, headers, Some(&into)).run()
 }
 
-/// El JSON de una respuesta.
+/// The JSON of a response.
 fn json_of(answer: &support::Answer) -> Value {
     serde_json::from_slice(&answer.body).expect("the answer is json")
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &support::Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
 // ---------------------------------------------------------------------------
-// El resumen del laboratorio.
+// The lab summary.
 // ---------------------------------------------------------------------------
 
-/// El resumen de un caso, con el id y el titulo del caso.
+/// The summary of a case, with the case's id and title.
 fn a_case(
     id: &str,
     title: &str,
@@ -424,7 +424,7 @@ fn a_case(
 }
 
 // ---------------------------------------------------------------------------
-// AC1: pip resuelve por el grupo, y el SHA256 es el del origen.
+// AC1: pip resolves through the group, and the SHA256 is the origin's.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -460,7 +460,7 @@ fn ac1_pip_download_resolves_the_pinned_version_through_the_group() {
             let run = client.run(&work, &[&format!("{PROJECT}=={VERSION}")]);
             assert!(run.ok, "pip download failed:\n{}", run.output);
 
-            // Lo que baj�� es el fichero del upstream, byte a byte.
+            // What was downloaded is the upstream's file, byte for byte.
             let downloaded = work.join(&filename);
             let bytes = std::fs::read(&downloaded).expect("the downloaded file");
             assert_eq!(
@@ -513,7 +513,7 @@ fn ac1_the_index_keeps_the_identity_and_the_internal_links() {
             let token = support::token(FIRST_ACCOUNT, "alice");
             let dir = lab.deployment.directory.path();
 
-            // El indice en JSON: la identidad del proyecto y sus enlaces.
+            // The index in JSON: the project's identity and its links.
             let answer = call(
                 dir,
                 port,
@@ -550,7 +550,7 @@ fn ac1_the_index_keeps_the_identity_and_the_internal_links() {
                 "the index does not declare the hash of the file: {document}"
             );
 
-            // Y el indice en HTML: los mismos enlaces, escapados.
+            // And the index in HTML: the same links, escaped.
             let answer = call(
                 dir,
                 port,
@@ -600,8 +600,8 @@ fn ac1_the_real_pypi_serves_the_same_sha256() {
                 "pip download {PROJECT}=={VERSION} (registro: pypi.org)"
             ));
             if !real_mode_enabled() {
-                // Sin el opt-in el caso no se ejecuta, y un caso que no
-                // se ejecuta no es un caso verde.
+                // Without the opt-in the case is not executed, and a case that
+                // is not executed is not a green case.
                 return case.not_run(format!(
                     "the real mode is opt-in: set {REAL_MODE_VARIABLE}=1 to run it"
                 ));
@@ -624,7 +624,7 @@ fn ac1_the_real_pypi_serves_the_same_sha256() {
             let elapsed = started.elapsed();
             assert!(run.ok, "pip download failed:\n{}", run.output);
 
-            // El SHA256 que declara el publico, leido del indice publico.
+            // The SHA256 that the public index declares, read from the public index.
             let filename = filename_of_the_download(&work, PROJECT, VERSION);
             let declared = the_public_sha256(&filename);
             let downloaded = work.join(&filename);
@@ -651,7 +651,7 @@ fn ac1_the_real_pypi_serves_the_same_sha256() {
     );
 }
 
-/// El nombre del fichero que pip dejo en el directorio.
+/// The name of the file that pip left in the directory.
 fn filename_of_the_download(work: &Path, project: &str, version: &str) -> String {
     let mut found: Vec<String> = std::fs::read_dir(work)
         .expect("the download directory")
@@ -666,10 +666,10 @@ fn filename_of_the_download(work: &Path, project: &str, version: &str) -> String
         .unwrap_or_else(|| the_file_name(project, version))
 }
 
-/// El SHA256 que declara el indice publico de PyPI.
+/// The SHA256 that PyPI's public index declares.
 ///
-/// Se lee el JSON de `pypi.org` con `curl`: lo que declara el publico es
-/// la referencia, y el proxy no puede cambiarla.
+/// The JSON of `pypi.org` is read with `curl`: what the public declares is
+/// the reference, and the proxy cannot change it.
 fn the_public_sha256(filename: &str) -> String {
     let output = Command::new("curl")
         .args(["--silent", "--show-error", "--fail"])
@@ -697,7 +697,7 @@ fn the_public_sha256(filename: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: el grupo no mezcla, y lo cacheado se resuelve sin upstream.
+// AC2: the group does not mix, and what is cached resolves without upstream.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -711,7 +711,7 @@ fn ac2_the_group_does_not_mix_the_index_of_one_member_with_the_file_of_another()
             let lab = Lab::local();
             let filename = the_file_name(PROJECT, VERSION);
 
-            // El proxy principal: el upstream con **estos** bytes.
+            // The main proxy: the upstream with **these** bytes.
             let wheel = support::a_wheel(PROJECT, VERSION, Some(">=3.8"));
             let digest = the_sha256(&wheel);
             lab.upstream.put(
@@ -726,9 +726,9 @@ fn ac2_the_group_does_not_mix_the_index_of_one_member_with_the_file_of_another()
             lab.upstream
                 .put(&format!("packages/{filename}"), &wheel, None);
 
-            // El espejo: el mismo proyecto, **otros** bytes. Si el grupo
-            // mezclara el indice de uno con el fichero de otro, el
-            // SHA256 del indice no casaria con lo que se sirve.
+            // The mirror: the same project, **other** bytes. If the group
+            // mixed one member's index with another's file, the
+            // index's SHA256 would not match what is served.
             let other = support::a_wheel(PROJECT, VERSION, Some(">=3.8"));
             let other_digest = the_sha256(&other);
             lab.mirror.put(
@@ -750,8 +750,8 @@ fn ac2_the_group_does_not_mix_the_index_of_one_member_with_the_file_of_another()
             let token = support::token(FIRST_ACCOUNT, "alice");
             let dir = lab.deployment.directory.path();
 
-            // El miembro hosted publica su propio proyecto: el grupo es
-            // hosted **y** proxy, y cada miembro responde de lo suyo.
+            // The hosted member publishes its own project: the group is
+            // hosted **and** proxy, and each member answers for its own.
             let hosted_wheel = support::a_wheel(OTHER_PROJECT, OTHER_VERSION, Some(">=3.9"));
             let hosted_digest = the_sha256(&hosted_wheel);
             let hosted_file = the_file_name(OTHER_PROJECT, OTHER_VERSION);
@@ -797,7 +797,7 @@ fn ac2_the_group_does_not_mix_the_index_of_one_member_with_the_file_of_another()
                 "the group announced the file twice: {document}"
             );
 
-            // El indice declara un hash, y lo que se sirve es ese.
+            // The index declares a hash, and what is served is that one.
             let declared = files[0]["hashes"]["sha256"]
                 .as_str()
                 .expect("the declared hash")
@@ -817,8 +817,8 @@ fn ac2_the_group_does_not_mix_the_index_of_one_member_with_the_file_of_another()
                 the_sha256(&served.body)
             );
 
-            // Y el proyecto del hosted se sirve desde el hosted: el grupo
-            // une a los dos miembros sin mezclarlos.
+            // And the hosted's project is served from the hosted: the group
+            // joins the two members without mixing them.
             let answer = call(
                 dir,
                 port,
@@ -885,13 +885,13 @@ fn ac2_the_project_resolves_offline_from_the_cache() {
             let work = root.join("downloads");
             std::fs::create_dir_all(&work).expect("the download directory");
 
-            // La primera vez: el upstream contesta.
+            // The first time: the upstream answers.
             let first = client.run(&work, &[&format!("{PROJECT}=={VERSION}")]);
             assert!(first.ok, "the first download failed:\n{}", first.output);
             let asked = lab.upstream.total();
 
-            // Y luego el upstream se va: lo que ya esta en la cache se
-            // resuelve sin el.
+            // And then the upstream goes away: what is already in the cache
+            // resolves without it.
             lab.upstream.disconnect();
             let second = client.run(&work, &[&format!("{PROJECT}=={VERSION}")]);
             assert!(
@@ -925,7 +925,7 @@ fn ac2_the_project_resolves_offline_from_the_cache() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: los estados se declaran, y una metadata hostil no se escapa.
+// AC3: the states are declared, and hostile metadata does not escape.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -940,7 +940,7 @@ fn ac3_the_yanked_and_the_requires_python_are_declared() {
             let filename = the_file_name(PROJECT, VERSION);
             let wheel = support::a_wheel(PROJECT, VERSION, Some(">=3.8"));
             let digest = the_sha256(&wheel);
-            // El upstream declara la version como retirada, y con el motivo.
+            // The upstream declares the version as withdrawn, and with the reason.
             let page = json!({
                 "meta": { "api-version": "1.0" },
                 "name": PROJECT,
@@ -991,7 +991,7 @@ fn ac3_the_yanked_and_the_requires_python_are_declared() {
                 "the index does not declare the python it needs: {document}"
             );
 
-            // Y en HTML, el motivo va escapado.
+            // And in HTML, the reason is escaped.
             let answer = call(
                 dir,
                 port,
@@ -1036,8 +1036,8 @@ fn ac3_a_hostile_metadata_does_not_create_external_links_nor_unescaped_html() {
             let filename = the_file_name(PROJECT, VERSION);
             let wheel = support::a_wheel(PROJECT, VERSION, Some(">=3.8"));
             let digest = the_sha256(&wheel);
-            // El upstream publica un nombre que no es una distribucion, y
-            // un `requires-python` que quiere cerrar la etiqueta del HTML.
+            // The upstream publishes a name that is not a distribution, and
+            // a `requires-python` that tries to close the HTML tag.
             let hostile_name = "\"><script>alert(1)</script>-1.0-py3-none-any.whl";
             let hostile_python = "\"><script>alert(1)</script>";
             let page = json!({
@@ -1086,8 +1086,8 @@ fn ac3_a_hostile_metadata_does_not_create_external_links_nor_unescaped_html() {
                 !html.contains("<script>"),
                 "the upstream wrote HTML: {html}"
             );
-            // El valor hostil va escapado, que es lo unico que se puede
-            // hacer con el en un HTML.
+            // The hostile value is escaped, which is the only thing that can be
+            // done with it in HTML.
             assert!(
                 html.contains("&lt;script&gt;"),
                 "the hostile value was not escaped: {html}"
@@ -1096,8 +1096,8 @@ fn ac3_a_hostile_metadata_does_not_create_external_links_nor_unescaped_html() {
                 !html.contains("alert(1)</script>"),
                 "the hostile value closed the tag: {html}"
             );
-            // Y el nombre que no es una distribucion no se anuncia: un
-            // enlace que no se puede descargar es un enlace roto.
+            // And the name that is not a distribution is not announced: a
+            // link that cannot be downloaded is a broken link.
             assert!(
                 !html.contains("alert(1)</script>-1.0"),
                 "the upstream published a name that is not a distribution: {html}"
@@ -1111,8 +1111,8 @@ fn ac3_a_hostile_metadata_does_not_create_external_links_nor_unescaped_html() {
                 "the index points to the upstream: {html}"
             );
 
-            // El indice en JSON declara el valor tal cual, y solo el
-            // fichero que es una distribucion.
+            // The index in JSON declares the value as is, and only the
+            // file that is a distribution.
             let answer = call(
                 dir,
                 port,

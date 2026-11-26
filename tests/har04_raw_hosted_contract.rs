@@ -381,7 +381,7 @@ async fn the_head_describes_the_content_without_serving_it() {
     )
     .await;
     assert_eq!(described.status, StatusCode::OK);
-    // El HEAD dice cuanto tiene el contenido, y no trae ni un byte.
+    // The HEAD says how big the content is, and carries not a single byte.
     assert_eq!(
         described.header(header::CONTENT_LENGTH.as_str()),
         Some(CONTENT.len().to_string().as_str())
@@ -398,10 +398,10 @@ async fn the_head_of_a_range_says_the_length_of_the_range() {
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
 
-    // Un HEAD con un tramo dice lo que diria el GET con el mismo tramo:
-    // la longitud del tramo, y no la del contenido entero. Un HEAD que
-    // dice cien y un GET que devuelve diez son dos servidores que no se
-    // conocen.
+    // A HEAD with a range says what the GET would say with the same range:
+    // the length of the range, not that of the whole content. A HEAD that
+    // says a hundred and a GET that returns ten are two servers that do not
+    // know each other.
     let described = send(
         &contract.app,
         Method::HEAD,
@@ -527,8 +527,8 @@ async fn the_forms_of_a_range_are_served_as_they_are_written() {
     assert_eq!(several.status, StatusCode::OK);
     assert_eq!(several.body, CONTENT);
 
-    // Otra unidad: tampoco se entiende, y lo que no se entiende se
-    // ignora.
+    // Another unit: it is not understood either, and what is not understood is
+    // ignored.
     let other = send(
         &contract.app,
         Method::GET,
@@ -712,8 +712,8 @@ async fn a_conditional_write_that_holds_goes_on() {
 
 #[tokio::test]
 async fn a_conditional_write_with_a_star_on_an_empty_path_fails() {
-    // `*` quiere decir "el recurso que hay", y si no hay recurso no hay
-    // nada que comparar: la escritura no se hace.
+    // `*` means "the resource that exists", and if there is no resource there is
+    // nothing to compare: the write is not made.
     let contract = Contract::new().await;
 
     let answer = send(
@@ -832,14 +832,14 @@ async fn a_valid_path_is_preserved_as_it_was_written() {
 async fn an_encoded_path_is_the_name_that_it_encodes() {
     let contract = Contract::new().await;
 
-    // `%41` es `A`: el nombre que se guarda es el literal, y no hay dos
-    // nombres para lo mismo.
+    // `%41` is `A`: the name that is stored is the literal one, and there are no two
+    // names for the same thing.
     let published = publish(&contract.app, "informe%41final", CONTENT).await;
     assert_eq!(published.status, StatusCode::CREATED);
     assert_eq!(published.json()["path"], "informeAfinal");
 
-    // Y el contenido se sirve por cualquiera de las dos formas, porque
-    // son el mismo nombre.
+    // And the content is served by either form, because they are
+    // the same name.
     for path in ["informe%41final", "informeAfinal"] {
         let downloaded = send(
             &contract.app,
@@ -1073,8 +1073,8 @@ async fn without_the_permission_it_is_forbidden() {
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
 
-    // El principal es de la cuenta que tiene el repositorio, pero Cedar
-    // no le da permiso: la respuesta es 403.
+    // The principal belongs to the account that owns the repository, but Cedar
+    // does not grant permission: the response is 403.
     let answer = send(
         &contract.app,
         Method::GET,
@@ -1102,7 +1102,7 @@ async fn the_publication_also_needs_the_permission() {
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN);
 
-    // Y no se publico nada.
+    // And nothing was published.
     let downloaded = send(
         &contract.app,
         Method::GET,
@@ -1164,9 +1164,9 @@ async fn the_repository_of_another_account_does_not_exist_for_this_one() {
     let contract = Contract::new().await;
     publish(&contract.app, "file.bin", CONTENT).await;
 
-    // La cuenta ajena recibe un 404, no un 403: un 403 diria que el
-    // repositorio existe en algun sitio, y esa es la existencia que no
-    // se puede exponer.
+    // The foreign account gets a 404, not a 403: a 403 would say that the
+    // repository exists somewhere, and that is the existence that must not
+    // be exposed.
     let answer = send(
         &contract.app,
         Method::GET,
@@ -1209,8 +1209,8 @@ async fn a_repository_of_another_format_is_not_found() {
 
 #[tokio::test]
 async fn a_virtual_repository_that_cannot_work_is_refused_when_it_is_created() {
-    // Un proxy sin upstream no se crea: no se crea un repositorio que
-    // luego no va a funcionar.
+    // A proxy without an upstream is not created: a repository that
+    // would then not work is not created.
     let contract = Contract::without_repository().await;
     let outcome = contract
         .writer
@@ -1309,7 +1309,7 @@ async fn a_content_that_is_larger_than_the_limit_is_refused() {
     .await;
     assert_eq!(answer.status, StatusCode::PAYLOAD_TOO_LARGE);
 
-    // Y no se publico nada.
+    // And nothing was published.
     let downloaded = send(
         &contract.app,
         Method::GET,

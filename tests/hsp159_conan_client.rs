@@ -1,17 +1,17 @@
-//! Conan 2 hosted de HSP-159 contra el cliente real (`conan`).
+//! Hosted Conan 2 of HSP-159 against the real client (`conan`).
 //!
-//! El `conan` del venv publica un recipe con dos perfiles contra el
-//! servicio de verdad, lo sube con `conan upload`, lo lista desde el
-//! remote y lo resuelve con `conan install` en caches limpias: las
-//! revisiones (rrev/prev), el `package_id` y los checksums los hace el
-//! propio cliente, no este test. Hace falta `conan` 2.x: en el `CONAN_BIN`
-//! (el venv de la UAT) o en el `PATH`; sin él, la suite **falla**
-//! diciendo que falta. Cada ejecución usa su propio `CONAN_HOME`: nada se
-//! lee ni se escribe fuera del directorio del despliegue.
+//! The venv's `conan` publishes a recipe with two profiles against the
+//! real service, uploads it with `conan upload`, lists it from the
+//! remote and resolves it with `conan install` in clean caches: the
+//! revisions (rrev/prev), the `package_id` and the checksums are produced by the
+//! client itself, not by this test. It requires `conan` 2.x: in `CONAN_BIN`
+//! (the UAT venv) or on the `PATH`; without it, the suite **fails**
+//! saying it is missing. Each run uses its own `CONAN_HOME`: nothing is
+//! read or written outside the deployment directory.
 //!
-//! El remote de referencia del spike fue `conan_server` 1.66 detrás de un
-//! proxy de registro (`target/uat/hsp159/spike-ref/`); el dialecto
-//! observado ahí es el que este test demanda del servicio.
+//! The spike's reference remote was `conan_server` 1.66 behind a
+//! registry proxy (`target/uat/hsp159/spike-ref/`); the dialect
+//! observed there is what this test demands of the service.
 
 mod support;
 
@@ -21,7 +21,7 @@ use std::process::Command;
 use sha2::Digest as _;
 use support::{Deployment, FIRST_ACCOUNT, SECOND_ACCOUNT};
 
-/// Exige el `conan` 2.x del venv o del PATH, y devuelve su ruta.
+/// Requires `conan` 2.x from the venv or the PATH, and returns its path.
 fn the_conan_binary() -> String {
     if let Ok(path) = std::env::var("CONAN_BIN") {
         return path;
@@ -56,34 +56,34 @@ fn require_conan() -> String {
     binary
 }
 
-/// El resultado de una ejecución del cliente.
+/// The result of a client run.
 struct Run {
-    /// Si el cliente terminó bien.
+    /// Whether the client finished successfully.
     ok: bool,
-    /// Lo que dijo, por stdout y por stderr.
+    /// What it said, on stdout and stderr.
     output: String,
 }
 
 impl Run {
-    /// El texto si terminó bien, y un fallo con todo el resto si no.
+    /// The text if it finished successfully, and a failure with everything else if not.
     fn expect(&self, what: &str) -> String {
         assert!(self.ok, "{what} failed:\n{}", self.output);
         self.output.clone()
     }
 }
 
-/// Un `conan` aislado: su `CONAN_HOME`, su remote y su credencial.
+/// An isolated `conan`: its `CONAN_HOME`, its remote and its credential.
 struct Client {
-    /// La ruta del ejecutable.
+    /// The path of the executable.
     binary: String,
-    /// El directorio del despliegue.
+    /// The deployment directory.
     root: PathBuf,
-    /// El `CONAN_HOME` de esta cache.
+    /// The `CONAN_HOME` of this cache.
     home: PathBuf,
 }
 
 impl Client {
-    /// Una cache limpia con el remote de Hodei y su credencial.
+    /// A clean cache with Hodei's remote and its credential.
     fn new(root: &Path, name: &str, port: u16, repository: &str, token: &str) -> Self {
         let home = root.join(format!("conan-home-{name}"));
         std::fs::create_dir_all(&home).expect("the conan home");
@@ -95,15 +95,15 @@ impl Client {
         client.run(&["profile", "detect", "-f"]);
         let url = format!("http://127.0.0.1:{port}/conan/{repository}");
         client.run(&["remote", "add", "hodei", &url]);
-        // La credencial del remote es la credencial bearer del hub: el
-        // cliente la cambia por el token en el authenticate del dialecto.
+        // The remote's credential is the hub's bearer credential: the
+        // client exchanges it for the token in the dialect's authenticate.
         client
             .run(&["remote", "login", "hodei", "alice", "-p", token])
             .expect("the login");
         client
     }
 
-    /// Ejecuta el `conan` con su home aislado.
+    /// Runs `conan` with its isolated home.
     fn run(&self, args: &[&str]) -> Run {
         let output = Command::new(&self.binary)
             .args(args)
@@ -124,14 +124,14 @@ impl Client {
         }
     }
 
-    /// Los ficheros de package en la cache, con su flavor para identificar
-    /// el `package_id` al que sirven.
+    /// The package files in the cache, with their flavor to identify
+    /// the `package_id` they serve.
     ///
-    /// La cache guarda el `conan_package.tgz` en `{package}/d/` y los
-    /// ficheros servidos en `{package}/p/`, con `{package}` bajo `p/b/`
-    /// cuando el binario lo creó este cliente y bajo `p/` cuando lo bajó.
-    /// La relación entre los dos es la de directorios hermanos, y no
-    /// depende del nombre: un cliente no impone el suyo al otro.
+    /// The cache stores `conan_package.tgz` in `{package}/d/` and the
+    /// served files in `{package}/p/`, with `{package}` under `p/b/`
+    /// when the binary was created by this client and under `p/` when it downloaded it.
+    /// The relationship between the two is that of sibling directories, and it does not
+    /// depend on the name: one client does not impose its own on the other.
     fn package_files(&self) -> Vec<(String, String)> {
         let mut found = Vec::new();
         let packages = self.home.join("p");
@@ -141,9 +141,9 @@ impl Client {
     }
 }
 
-/// La búsqueda de los packages de una cache conan: cada directorio que
-/// tiene `d/conan_package.tgz` y `p/flavor.txt` es un binario con su
-/// contenido.
+/// The search for the packages of a conan cache: each directory that
+/// has `d/conan_package.tgz` and `p/flavor.txt` is a binary with its
+/// content.
 fn the_walk_for_packages(directory: &Path, found: &mut Vec<(String, String)>) {
     let Ok(entries) = std::fs::read_dir(directory) else {
         return;
@@ -166,14 +166,14 @@ fn the_walk_for_packages(directory: &Path, found: &mut Vec<(String, String)>) {
     }
 }
 
-/// El sha256 de un fichero, como lo verifican las dos caches.
+/// The sha256 of a file, as both caches verify it.
 fn sha256_of(path: &str) -> String {
     let bytes = std::fs::read(path).expect("the file");
     format!("{:x}", sha2::Sha256::digest(&bytes))
 }
 
-/// Los identificadores versionados que imprime `conan list`: los
-/// token hexadecimales del listado (rrev y prev).
+/// The versioned identifiers that `conan list` prints: the
+/// hexadecimal tokens of the listing (rrev and prev).
 fn the_revisions_of_output(text: &str) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for line in text.lines() {
@@ -195,8 +195,8 @@ fn the_revisions_of_output(text: &str) -> Vec<String> {
     found
 }
 
-/// El recipe con un `package_id` por flavor: el mismo recipe (misma rrev)
-/// produce dos binarios que no se mezclan.
+/// The recipe with one `package_id` per flavor: the same recipe (same rrev)
+/// produces two binaries that do not get mixed.
 fn the_recipe(root: &Path) -> PathBuf {
     let directory = root.join("recipes/hello");
     std::fs::create_dir_all(&directory).expect("the recipe directory");
@@ -237,8 +237,8 @@ fn the_profile(root: &Path, name: &str, flavor: &str) -> PathBuf {
     profile
 }
 
-/// El seeder del catalogo: cada suite lo trae porque el arnés reinicia
-/// el binario de la suite para sembrar antes de arrancar el servicio.
+/// The catalog seeder: each suite brings it because the harness restarts
+/// the suite binary to seed before starting the service.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -259,8 +259,8 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
     let flavor_one = the_profile(&root, "flavor1", "1");
     let flavor_two = the_profile(&root, "flavor2", "2");
 
-    // AC1: crear con DOS perfiles. El mismo recipe produce dos package_id
-    // con sus prev; la revision del recipe no cambia.
+    // AC1: create with TWO profiles. The same recipe produces two package_ids
+    // with their prevs; the recipe revision does not change.
     author
         .run(&[
             "create",
@@ -282,10 +282,10 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
         ])
         .expect("the create of flavor 2");
 
-    // AC2: la subida real contra el remote. Al subirla, el cliente
-    // empaqueta cada binario en la cache del autor: ahí quedan los
-    // digests ANTES de que nadie los baje, que es lo que la otra cache
-    // tiene que recibir byte a byte.
+    // AC2: the real upload against the remote. On upload, the client
+    // packages each binary in the author's cache: that is where the
+    // digests are left BEFORE anyone downloads them, which is what the other cache
+    // has to receive byte for byte.
     author
         .run(&[
             "upload",
@@ -313,9 +313,9 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
         .map(|(flavor, path)| (flavor.clone(), sha256_of(path)))
         .collect();
 
-    // AC2: el listing del remote es consistente y las revisiones se
-    // conservan: el remote dice las mismas revisiones que la cache local.
-    // El cliente solo lista revisiones cuando el patron las pide (`#*`).
+    // AC2: the remote's listing is consistent and the revisions are
+    // preserved: the remote reports the same revisions as the local cache.
+    // The client only lists revisions when the pattern asks for them (`#*`).
     let local = author
         .run(&["list", "hello/1.0.0@hodei/stable#*"])
         .expect("the local list");
@@ -340,9 +340,9 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
         remote, local
     );
 
-    // AC2/AC4: el digest es verificable y el scoping es por cuenta. Otro
-    // principal no ve lo que no le toca: su listing del mismo remote no
-    // encuentra nada, porque el repositorio vive en otra cuenta.
+    // AC2/AC4: the digest is verifiable and scoping is per account. Another
+    // principal does not see what is not theirs: their listing of the same remote
+    // finds nothing, because the repository lives in another account.
     let other = support::token(SECOND_ACCOUNT, "bob");
     let stranger = Client::new(&root, "stranger", port, "conan-hosted", &other);
     let stranger_list = stranger.run(&["list", "hello/*", "-r", "hodei"]);
@@ -357,9 +357,9 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
         stranger_list.output
     );
 
-    // AC1/AC3: resolver en una cache limpia, los DOS perfiles. Cada
-    // package_id recibe SUS bytes: el flavor que baja es el que el perfil
-    // pide, y el digest coincide con el que se subió.
+    // AC1/AC3: resolve in a clean cache, BOTH profiles. Each
+    // package_id receives ITS bytes: the flavor that is downloaded is the one the profile
+    // asks for, and the digest matches the one that was uploaded.
     let consumer = Client::new(&root, "consumer", port, "conan-hosted", &token);
     consumer
         .run(&[
@@ -396,8 +396,8 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
         );
     }
 
-    // AC3: offline. El remote muere: la cache caliente resuelve sin red y
-    // el binario que falta falla, sin caer a nada.
+    // AC3: offline. The remote dies: the warm cache resolves without network and
+    // the missing binary fails, without falling back to anything.
     support::stop(&mut service);
     let warm = consumer.run(&[
         "install",
@@ -412,8 +412,8 @@ fn the_conan_client_publishes_and_resolves_by_package_id() {
         "the offline install of a warm cache works with the remote dead: {}",
         warm.output
     );
-    // Falta un asset: la cache no tiene el binario de flavor 2 tras
-    // quitarlo, y el remote muerto no da alternativa: el install falla.
+    // An asset is missing: the cache does not have the flavor 2 binary after
+    // removing it, and the dead remote gives no alternative: the install fails.
     consumer
         .run(&["remove", "hello/1.0.0@hodei/stable:*", "-c"])
         .expect("the removal of the cached binaries");

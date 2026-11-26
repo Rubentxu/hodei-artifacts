@@ -1,20 +1,20 @@
-//! Import idempotente de autoridades persistentes (HSP-210 / HGS-28).
+//! Idempotent import of persistent authorities (HSP-210 / HGS-28).
 //!
-//! El fixture `tests/fixtures/hsp210-authorities` es un paquete del formato
-//! portable que produce la herramienta de export (HSP-179): 31 filas en 13
-//! tablas semanticas (cuentas, policies, catalogo, tags, grants,
-//! decisiones, evidencia, outbox y ledger con su cabezal), lotes con su
-//! SHA-256 y un manifiesto cuya fecha es la frontera de la fuente.
+//! The `tests/fixtures/hsp210-authorities` fixture is a package of the portable
+//! format produced by the export tool (HSP-179): 31 rows in 13
+//! semantic tables (accounts, policies, catalog, tags, grants,
+//! decisions, evidence, outbox and ledger with its head), batches with their
+//! SHA-256 and a manifest whose date is the source's boundary.
 //!
-//! - AC1: el fixture se importa **dos veces** sobre el mismo destino, con
-//!   un kill simulado a mitad de lote y su resume. El fingerprint de
-//!   autoridades es el mismo que el de una corrida limpia, y el numero de
-//!   filas no cambia en ninguna de las pasadas: ningun duplicado.
-//! - AC2: el historial de decisiones, el ledger (identidades compuestas
-//!   `stream,pos` y su cabezal) y los scopes sobreviven al import tal
-//!   cual; una fila divergente, una identidad repetida, un lote alterado,
-//!   un digest huerfano o un manifiesto que miente abortan con el culpable
-//!   nombrado, y el destino queda intacto o resumible — nunca silencioso.
+//! - AC1: the fixture is imported **twice** onto the same destination, with
+//!   a simulated kill mid-batch and its resume. The authorities'
+//!   fingerprint is the same as that of a clean run, and the number of
+//!   rows does not change in any of the passes: no duplicates.
+//! - AC2: the decision history, the ledger (composite identities
+//!   `stream,pos` and its head) and the scopes survive the import as
+//!   is; a divergent row, a repeated identity, a tampered batch,
+//!   an orphan digest or a manifest that lies abort with the culprit
+//!   named, and the destination is left intact or resumable -- never silent.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -36,7 +36,7 @@ const PACKAGE: &str = concat!(
     "/tests/fixtures/hsp210-authorities"
 );
 
-/// Claves de las filas del fixture que llevan un digest de contenido.
+/// Keys of the fixture rows that carry a content digest.
 const DIGEST_KEYS: [(&str, &str); 5] = [
     ("catalog_asset", "sha256"),
     ("catalog_reference", "sha256"),
@@ -49,8 +49,8 @@ fn package_dir() -> PathBuf {
     PathBuf::from(PACKAGE)
 }
 
-/// Copia el paquete de fixture a un directorio temporal para las variantes
-/// que lo alteran: el fixture en git no se toca jamas.
+/// Copies the fixture package to a temporary directory for the variants
+/// that alter it: the fixture in git is never touched.
 fn copy_package(target: &Path) -> PathBuf {
     let source = package_dir();
     std::fs::create_dir_all(target.join("batches")).unwrap();
@@ -83,8 +83,8 @@ fn options(resume: bool, overwrite: bool, batch_rows: usize) -> ImportOptions {
     }
 }
 
-/// El reconciliador que conoce exactamente los digests que el fixture
-/// referencia, leidos del propio paquete.
+/// The reconciler that knows exactly the digests the fixture
+/// references, read from the package itself.
 fn fixture_reconciler() -> Arc<dyn DigestReconciler> {
     let manifest: ImportManifest =
         serde_json::from_slice(&std::fs::read(package_dir().join(IMPORT_MANIFEST_FILE)).unwrap())
@@ -111,7 +111,7 @@ async fn fingerprint_of(sink: &MemorySink) -> String {
     sink.state_summary().await.unwrap().fingerprint()
 }
 
-/// El oraculo del AC1: una corrida limpia del fixture de principio a fin.
+/// AC1's oracle: a clean run of the fixture from start to finish.
 async fn clean_reference() -> (Arc<MemorySink>, String) {
     let dir = tempfile::tempdir().unwrap();
     let sink = Arc::new(MemorySink::new());
@@ -134,7 +134,7 @@ async fn clean_reference() -> (Arc<MemorySink>, String) {
 
 #[tokio::test]
 async fn importing_the_fixture_twice_changes_nothing() {
-    // AC1, parte 1: segunda pasada completa sobre el mismo destino.
+    // AC1, part 1: second full pass over the same destination.
     let (sink, fingerprint) = clean_reference().await;
     let dir = tempfile::tempdir().unwrap();
     let second = import_export(
@@ -165,9 +165,9 @@ async fn importing_the_fixture_twice_changes_nothing() {
     );
 }
 
-/// El sink que "muere" tras N escrituras: simula el kill a mitad de lote.
-/// El estado de las escrituras anteriores sobrevive, como sobreviviria en
-/// el disco tras un corte real.
+/// The sink that "dies" after N writes: simulates the kill mid-batch.
+/// The state of earlier writes survives, as it would survive on
+/// disk after a real cut.
 struct CrashSink {
     inner: Arc<MemorySink>,
     budget: AtomicUsize,
@@ -202,12 +202,12 @@ impl RowSink for CrashSink {
 
 #[tokio::test]
 async fn a_kill_midway_resumes_to_the_same_fingerprint_without_duplicates() {
-    // AC1, parte 2: kill a mitad de lote y resume. batch_rows=1 hace que
-    // cada escritura sea inmediata: el corte cae dentro de un lote, no
-    // entre lotes. Presupuesto 5: iam_account (2) + iam_policy (2) + la
-    // primera fila del primer lote de catalog_repository. El marcador de
-    // progreso solo registra lotes **terminados**: el corte deja un lote a
-    // medias y su re-aplicacion por identidad es lo que se prueba.
+    // AC1, part 2: kill mid-batch and resume. batch_rows=1 makes
+    // each write immediate: the cut falls inside a batch, not
+    // between batches. Budget 5: iam_account (2) + iam_policy (2) + the
+    // first row of the first catalog_repository batch. The progress marker
+    // only records **finished** batches: the cut leaves a half-done batch
+    // and its re-application by identity is what is tested.
     let dir = tempfile::tempdir().unwrap();
     let progress = dir.path().join(".import-progress.json");
     let sink = Arc::new(MemorySink::new());
@@ -236,7 +236,7 @@ async fn a_kill_midway_resumes_to_the_same_fingerprint_without_duplicates() {
     );
     assert!(progress.exists(), "the run left a resumable marker");
 
-    // Reintentar sin `resume` aborta: hay una corrida a medias.
+    // Retrying without `resume` aborts: there is a half-done run.
     let blind = import_export(
         &package_dir(),
         sink.clone(),
@@ -248,9 +248,9 @@ async fn a_kill_midway_resumes_to_the_same_fingerprint_without_duplicates() {
     .expect_err("an unfinished import must not be silently restarted");
     assert!(blind.to_string().contains("resume"), "{blind}");
 
-    // Resume: los lotes del progreso se verifican contra su hash y contra
-    // el destino; el lote a medias se re-aplica por identidad (la fila
-    // presente se salta, la que faltaba se crea); el resto fluye.
+    // Resume: the progress batches are verified against their hash and against
+    // the destination; the half-done batch is re-applied by identity (the present
+    // row is skipped, the missing one is created); the rest flows.
     let second = import_export(
         &package_dir(),
         sink.clone(),
@@ -271,7 +271,7 @@ async fn a_kill_midway_resumes_to_the_same_fingerprint_without_duplicates() {
     );
     assert_eq!(sink.len().await, 31, "the kill added no duplicate");
 
-    // Y una tercera pasada completa: misma identidad, mismo fingerprint.
+    // And a third full pass: same identity, same fingerprint.
     let third = import_export(
         &package_dir(),
         sink.clone(),
@@ -287,9 +287,9 @@ async fn a_kill_midway_resumes_to_the_same_fingerprint_without_duplicates() {
 
 #[tokio::test]
 async fn decisions_ledger_and_scopes_survive_the_import() {
-    // AC2, mitad conservacion: el historial de decisiones, el ledger con
-    // sus identidades compuestas `stream,pos`, su cabezal y los scopes
-    // viajan byte a byte, sin reescribir claves.
+    // AC2, conservation half: the decision history, the ledger with
+    // its composite identities `stream,pos`, its head and the scopes
+    // travel byte for byte, without rewriting keys.
     let (sink, _) = clean_reference().await;
     let rows = sink.snapshot().await;
 
@@ -331,15 +331,15 @@ async fn decisions_ledger_and_scopes_survive_the_import() {
         let id = format!("event_ledger_head:{stream}");
         assert!(rows.contains_key(&id), "head of {stream} lost");
     }
-    // Las cuentas conservan su scope de tenant.
+    // The accounts keep their tenant scope.
     assert_eq!(
         rows.get("iam_account:acme")
             .and_then(|r| r.get("scope"))
             .and_then(Value::as_str),
         Some("tenant/acme")
     );
-    // La clave canonica de una identidad compuesta con separadores sigue
-    // siendo la que viajaba en el export.
+    // The canonical key of a composite identity with separators is still
+    // the one that traveled in the export.
     let asset = rows
         .get("catalog_asset:acme|main|widget-1.0.0.bin")
         .expect("pipe-separated composite key preserved");
@@ -351,10 +351,10 @@ async fn decisions_ledger_and_scopes_survive_the_import() {
 
 #[tokio::test]
 async fn a_divergent_row_aborts_and_names_the_culprit() {
-    // AC2, mitad fail-closed: la misma identidad canonica con otro
-    // contenido no se empata en silencio.
+    // AC2, fail-closed half: the same canonical identity with other
+    // content is not matched silently.
     let (sink, reference) = clean_reference().await;
-    // Corromper una decision: misma clave, distinto resultado.
+    // Corrupting a decision: same key, different result.
     let mut corrupt = sink
         .snapshot()
         .await
@@ -388,7 +388,7 @@ async fn a_divergent_row_aborts_and_names_the_culprit() {
         }
         other => panic!("expected a typed Conflict, got {other:?}"),
     }
-    // El abort es explicito y el destino conserva su fila divergente.
+    // The abort is explicit and the destination keeps its divergent row.
     let still = sink
         .lookup("trust_decision:d-0002")
         .await
@@ -399,8 +399,8 @@ async fn a_divergent_row_aborts_and_names_the_culprit() {
 
 #[tokio::test]
 async fn an_authorized_overwrite_repairs_keeping_the_identity() {
-    // La reparacion explicita conserva la clave canonica y converge al
-    // fingerprint de la corrida limpia.
+    // The explicit repair keeps the canonical key and converges to the
+    // clean run's fingerprint.
     let (sink, reference) = clean_reference().await;
     let mut corrupt = sink
         .snapshot()
@@ -438,8 +438,8 @@ async fn an_authorized_overwrite_repairs_keeping_the_identity() {
     );
 }
 
-/// Construye un paquete minimo y autoconsistente para las variantes de
-/// filas invalidas: los hashes y los bordes se calculan de verdad.
+/// Builds a minimal, self-consistent package for the invalid-row
+/// variants: the hashes and the edges are really computed.
 fn write_package(dir: &Path, tables: &[(&str, &[Vec<Row>])]) -> PathBuf {
     let mut manifest_tables = Vec::new();
     let mut frontier_tables = BTreeMap::new();
@@ -527,10 +527,10 @@ fn simple_row(table: &str, key: &str, value: i64) -> Row {
 
 #[tokio::test]
 async fn invalid_rows_abort_before_touching_the_destination() {
-    // El paquete se rechaza entero antes de la primera escritura: un
-    // destino que ya tiene autoridades no se "prueba" con filas invalidas.
+    // The package is rejected whole before the first write: a
+    // destination that already has authorities is not "tested" with invalid rows.
 
-    // 1. Fila sin id: la identidad no se inventa.
+    // 1. Row without id: the identity is not invented.
     let dir = tempfile::tempdir().unwrap();
     let mut no_id = simple_row("catalog_tag", "t1", 1);
     no_id.remove("id");
@@ -573,7 +573,7 @@ async fn invalid_rows_abort_before_touching_the_destination() {
         "{error:?}"
     );
 
-    // 3. Identidad canonica repetida entre lotes.
+    // 3. Repeated canonical identity between batches.
     let dir = tempfile::tempdir().unwrap();
     let package = write_package(
         dir.path(),
@@ -606,7 +606,7 @@ async fn invalid_rows_abort_before_touching_the_destination() {
         "{error:?}"
     );
 
-    // 4. Lote alterado en disco: el hash del manifiesto no miente.
+    // 4. Batch tampered on disk: the manifest's hash does not lie.
     let dir = tempfile::tempdir().unwrap();
     let package = copy_package(dir.path());
     let target = package.join("batches/trust_grant-000001.json");
@@ -632,7 +632,7 @@ async fn invalid_rows_abort_before_touching_the_destination() {
         "manifest-first: nothing applied from a broken package"
     );
 
-    // 5. Digest de contenido que el CAS no tiene.
+    // 5. Content digest that the CAS does not have.
     let dir = tempfile::tempdir().unwrap();
     let mut asset = simple_row("catalog_asset", "bin", 1);
     asset.insert(
@@ -666,14 +666,14 @@ async fn invalid_rows_abort_before_touching_the_destination() {
 
 #[tokio::test]
 async fn a_manifest_that_lies_is_refused() {
-    // El contrato del paquete se comprueba contra si mismo antes de nada.
+    // The package's contract is checked against itself before anything else.
     let dir = tempfile::tempdir().unwrap();
     let package = copy_package(dir.path());
     let manifest_path = package.join(IMPORT_MANIFEST_FILE);
     let mut manifest: ImportManifest =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
 
-    // Formato futuro.
+    // Future format.
     manifest.format = IMPORT_FORMAT + 1;
     std::fs::write(
         &manifest_path,
@@ -684,7 +684,7 @@ async fn a_manifest_that_lies_is_refused() {
         read_import_manifest(&package).expect_err("a future format is refused with both numbers");
     assert!(error.to_string().contains("format"), "{error}");
 
-    // Autodigest alterado.
+    // Tampered self-digest.
     let mut manifest: ImportManifest =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest.format = IMPORT_FORMAT;
@@ -697,7 +697,7 @@ async fn a_manifest_that_lies_is_refused() {
     let error = read_import_manifest(&package).expect_err("a broken self-digest is refused");
     assert!(error.to_string().contains("content digest"), "{error}");
 
-    // La frontera miente: promete una fila mas.
+    // The boundary lies: it promises one more row.
     let mut manifest: ImportManifest =
         serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
     manifest.content_sha256 = manifest.content_digest();
@@ -710,7 +710,7 @@ async fn a_manifest_that_lies_is_refused() {
     let error = read_import_manifest(&package).expect_err("a lying frontier is refused");
     assert!(error.to_string().contains("frontier"), "{error}");
 
-    // Politica de blobs inesperada: el contrato exige referenced-by-digest.
+    // Unexpected blob policy: the contract requires referenced-by-digest.
     let dir = tempfile::tempdir().unwrap();
     let package = write_package(
         dir.path(),
@@ -744,8 +744,8 @@ async fn a_manifest_that_lies_is_refused() {
 
 #[tokio::test]
 async fn the_reconciler_cannot_be_forgotten() {
-    // Sin reconciliador y sin renuncia explicita, el import aborta antes
-    // de escribir: el contrato de doc-20 no se cumple a ciegas.
+    // Without a reconciler and without an explicit waiver, the import aborts before
+    // writing: doc-20's contract is not met blindly.
     let sink = Arc::new(MemorySink::new());
     let dir = tempfile::tempdir().unwrap();
     let error = import_export(
@@ -766,8 +766,8 @@ async fn the_reconciler_cannot_be_forgotten() {
 
 #[tokio::test]
 async fn resuming_a_different_package_is_refused() {
-    // El progreso grabado pertenece a un contenido; reanudarlo contra otro
-    // paquete seria aplicar lotes ajenos.
+    // The recorded progress belongs to one content; resuming it against another
+    // package would be applying someone else's batches.
     let dir = tempfile::tempdir().unwrap();
     let progress = dir.path().join(".import-progress.json");
     let sink = Arc::new(MemorySink::new());
@@ -807,7 +807,7 @@ async fn resuming_a_different_package_is_refused() {
 
 #[tokio::test]
 async fn canonical_identity_and_digest_helpers_hold_their_contract() {
-    // Helpers que el resto del modulo fija como contrato.
+    // Helpers that the rest of the module pins as a contract.
     let row = simple_row("catalog_asset", "acme|main|x", 1);
     assert_eq!(
         canonicalize_id("catalog_asset", &row).unwrap(),
@@ -816,7 +816,7 @@ async fn canonical_identity_and_digest_helpers_hold_their_contract() {
     let mut with_extra = row.clone();
     with_extra.insert("size_bytes".to_string(), Value::Number(10.into()));
     assert_ne!(canonical_digest(&row), canonical_digest(&with_extra));
-    // El fixture es integral leible por su propio manifiesto.
+    // The fixture is fully readable by its own manifest.
     let manifest = read_import_manifest(&package_dir()).expect("the fixture is sound");
     for (_table, batch) in manifest.all_batches() {
         let rows = read_batch(&package_dir(), batch).expect("batch readable");

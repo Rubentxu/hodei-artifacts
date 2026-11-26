@@ -1,18 +1,18 @@
-//! El corte push de OCI Distribution (HSP-101 / HAR-07), contra el wire.
+//! The OCI Distribution push cut (HSP-101 / HAR-07), against the wire.
 //!
-//! El protocolo de push se prueba como se usa: un proceso **de verdad**,
-//! un catalogo real, un almacen de bytes real y `curl` de verdad, sobre
-//! los endpoints `/v2` de la distribucion OCI.
+//! The push protocol is tested the way it is used: a **real** process,
+//! a real catalog, a real byte store and a real `curl`, over
+//! the `/v2` endpoints of the OCI distribution.
 //!
-//! Y los dos ultimos casos no usan `curl`: usan un **cliente real** --
-//! `skopeo` y `podman`, los dos clientes que el ecosistema de contenedores
-//! usa de verdad-- que hacen push y pull sin que nadie les diga como. Un
-//! protocolo que solo funciona con el cliente que escribio el servidor no
-//! es un protocolo.
+//! And the last two cases do not use `curl`: they use a **real client** --
+//! `skopeo` and `podman`, the two clients the container ecosystem
+//! really uses -- which push and pull without anyone telling them how. A
+//! protocol that only works with the client that wrote the server
+//! is not a protocol.
 //!
-//! Los fixtures (blobs, manifest, tag) se siembran en un **proceso
-//! aparte**, como el resto del catalogo, contra el namespace Dgraph del
-//! despliegue (el perfil de grafo, el de produccion).
+//! The fixtures (blobs, manifest, tag) are seeded in a **separate
+//! process**, like the rest of the catalog, against the deployment's Dgraph
+//! namespace (the graph profile, the production one).
 
 mod support;
 
@@ -24,25 +24,25 @@ use base64::Engine;
 use hodei_catalog::CatalogReader;
 use support::{Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY, SECOND_ACCOUNT};
 
-/// El media type de un manifiesto OCI.
+/// The media type of an OCI manifest.
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// El localizador del tenant del grafo, que el proceso hijo necesita.
+/// The graph tenant locator, which the child process needs.
 const SEED_DB: &str = "HODEI_OCI_PUSH_SEED_DB";
 
-/// El contenido de una capa de ejemplo.
+/// The content of a sample layer.
 fn a_layer(seed: u8) -> Vec<u8> {
     (0u16..2048)
         .map(|value| ((value as u8).wrapping_add(seed)) % 251)
         .collect()
 }
 
-/// El contenido de la configuracion de la imagen.
+/// The content of the image configuration.
 fn a_config() -> Vec<u8> {
     br#"{"architecture":"amd64","os":"linux","rootfs":{"type":"layers"}}"#.to_vec()
 }
 
-/// El manifiesto que referencia la configuracion y la capa.
+/// The manifest that references the configuration and the layer.
 fn a_manifest(config_digest: &str, layer_digest: &str) -> Vec<u8> {
     serde_json::json!({
         "schemaVersion": 2,
@@ -62,22 +62,22 @@ fn a_manifest(config_digest: &str, layer_digest: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// El digest de un contenido, sin el prefijo del algoritmo.
+/// The digest of a content, without the algorithm prefix.
 fn the_digest(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// La ruta OCI de un recurso del repositorio de la primera cuenta.
+/// The OCI path of a resource in the first account's repository.
 fn the_oci_path(kind: &str, reference: &str) -> String {
     format!("/v2/{FIRST_REPOSITORY}/{kind}/{reference}")
 }
 
-/// La ruta del inicio de una subida.
+/// The path that starts an upload.
 fn the_upload_start() -> String {
     format!("/v2/{FIRST_REPOSITORY}/blobs/uploads/")
 }
 
-/// Una peticion de la distribucion.
+/// A distribution request.
 fn call(
     port: u16,
     method: &str,
@@ -90,25 +90,25 @@ fn call(
     support::Curl::call(port, method, path, token, body, content_type, into).run()
 }
 
-/// El `Location` de una respuesta de subida.
+/// The `Location` of an upload response.
 fn the_location(answer: &support::Answer) -> String {
     answer
         .header("location")
         .expect("the answer has no Location")
 }
 
-/// Un despliegue con el catalogo sembrado.
+/// A deployment with the catalog seeded.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed();
     deployment
 }
 
-/// El caso del informe, antes de ejecutarlo.
+/// The report case, before running it.
 ///
-/// Se anota dos veces: al principio, con lo que se espera, y al final,
-/// con lo que se ha medido. Si la prueba se muere entre medias, el
-/// informe se queda con la primera anotacion, que dice `FALLO`.
+/// It is recorded twice: at the start, with what is expected, and at the end,
+/// with what was measured. If the test dies in between, the
+/// report is left with the first entry, which says `FAIL`.
 fn the_case(id: &str, given: &str, when: &str, command: &str) -> support::Case {
     support::Case {
         id: id.to_string(),
@@ -120,21 +120,21 @@ fn the_case(id: &str, given: &str, when: &str, command: &str) -> support::Case {
     }
 }
 
-/// El seeder del catalogo (repositorios por cuenta).
+/// The catalog seeder (repositories per account).
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// La sesion de subida: POST, PATCH, GET, PUT y DELETE.
+// The upload session: POST, PATCH, GET, PUT and DELETE.
 // ---------------------------------------------------------------------------
 
-/// La sesion se abre con las cabeceras que el protocolo dice.
+/// The session opens with the headers the protocol states.
 ///
-/// `POST /v2/<name>/blobs/uploads/` responde `202 Accepted` con el
-/// `Location` de la sesion, el `Range` de lo que hay (nada) y el
-/// identificador de la sesion.
+/// `POST /v2/<name>/blobs/uploads/` answers `202 Accepted` with the
+/// session's `Location`, the `Range` of what is there (nothing) and the
+/// session identifier.
 #[test]
 fn the_upload_session_opens_with_the_headers_the_protocol_says() {
     let mut case = the_case(
@@ -193,10 +193,10 @@ fn the_upload_session_opens_with_the_headers_the_protocol_says() {
     support::stop(&mut service);
 }
 
-/// El trozo se anade y el `Range` dice cuanto hay.
+/// The chunk is appended and the `Range` says how much there is.
 ///
-/// El `Range` del protocolo es `0-<ultimo byte recibido>`, y un cliente
-/// que lo lee sabe por donde seguir.
+/// The protocol's `Range` is `0-<last byte received>`, and a client
+/// that reads it knows where to continue.
 #[test]
 fn the_chunk_is_appended_and_the_range_says_how_much_there_is() {
     let mut case = the_case(
@@ -259,11 +259,11 @@ fn the_chunk_is_appended_and_the_range_says_how_much_there_is() {
     support::stop(&mut service);
 }
 
-/// El estado de la sesion se pregunta con un `GET`.
+/// The session state is queried with a `GET`.
 ///
-/// El protocolo lo dice: un `GET` de la sesion responde `204` con el
-/// `Range` de lo que hay, y es lo que un cliente usa para recuperar el
-/// offset cuando un trozo no encaja.
+/// The protocol says so: a session `GET` answers `204` with the
+/// `Range` of what is there, and it is what a client uses to recover the
+/// offset when a chunk does not fit.
 #[test]
 fn the_status_of_the_session_says_how_much_there_is() {
     let mut case = the_case(
@@ -322,10 +322,10 @@ fn the_status_of_the_session_says_how_much_there_is() {
     support::stop(&mut service);
 }
 
-/// El blob se publica cuando la sesion se cierra, y se sirve exacto.
+/// The blob is published when the session closes, and is served exactly.
 ///
-/// El `PUT` con el digest es el commit: lo que sale son los bytes que
-/// entraron, y el digest que se dice es el de esos bytes.
+/// The `PUT` with the digest is the commit: what comes out are the bytes that
+/// went in, and the digest that is stated is that of those bytes.
 #[test]
 fn the_blob_is_published_when_the_session_closes() {
     let mut case = the_case(
@@ -391,7 +391,7 @@ fn the_blob_is_published_when_the_session_closes() {
         "the location of the published blob is not the one of the protocol"
     );
 
-    // Y ahora el blob se sirve, y son los bytes que entraron.
+    // And now the blob is served, and it is the bytes that went in.
     let into = deployment.directory.path().join("served.bin");
     let answer = support::Curl::download(
         service.port,
@@ -420,11 +420,11 @@ fn the_blob_is_published_when_the_session_closes() {
     support::stop(&mut service);
 }
 
-/// Un digest que no cuadra no publica nada.
+/// A digest that does not match publishes nothing.
 ///
-/// El `PUT` con un digest que no es el del contenido es un error del
-/// cliente, y lo que se responde es un error: ni el blob, ni una
-/// referencia visible.
+/// A `PUT` with a digest that is not the content's is a client
+/// error, and what is answered is an error: neither the blob, nor a
+/// visible reference.
 #[test]
 fn a_digest_that_does_not_match_publishes_nothing() {
     let mut case = the_case(
@@ -462,7 +462,7 @@ fn a_digest_that_does_not_match_publishes_nothing() {
         None,
     );
 
-    // El digest que se declara es el de OTRO contenido.
+    // The declared digest is that of OTHER content.
     let wrong = the_digest(b"other content");
     let into = deployment.directory.path().join("error.bin");
     let answer = call(
@@ -486,8 +486,8 @@ fn a_digest_that_does_not_match_publishes_nothing() {
         "the error does not speak OCI: {body}"
     );
 
-    // Y el blob no existe: ni el del contenido real ni el del digest
-    // declarado.
+    // And the blob does not exist: neither the real content's nor the declared
+    // digest's.
     for probed in [the_digest(&content), wrong.clone()] {
         let into = deployment.directory.path().join("probed.bin");
         let answer = support::Curl::download(
@@ -510,11 +510,11 @@ fn a_digest_that_does_not_match_publishes_nothing() {
     support::stop(&mut service);
 }
 
-/// La subida se puede cancelar, y lo cancelado no se publica.
+/// The upload can be cancelled, and what is cancelled is not published.
 ///
-/// El `DELETE` cierra la sesion, y lo que se habia escrito se queda sin
-/// publicar: el cliente recibe un error explicito cuando vuelve a
-/// preguntar por la sesion.
+/// The `DELETE` closes the session, and what had been written is left
+/// unpublished: the client receives an explicit error when it asks
+/// about the session again.
 #[test]
 fn the_upload_can_be_cancelled_and_nothing_is_published() {
     let mut case = the_case(
@@ -561,7 +561,7 @@ fn the_upload_can_be_cancelled_and_nothing_is_published() {
         deployment.the_log()
     );
 
-    // La sesion ya no existe, y el cierre dice que no.
+    // The session no longer exists, and the close says no.
     let into = deployment.directory.path().join("error.bin");
     let answer = call(
         service.port,
@@ -579,7 +579,7 @@ fn the_upload_can_be_cancelled_and_nothing_is_published() {
         "the error does not speak OCI: {body}"
     );
 
-    // Y el blob no esta.
+    // And the blob is not there.
     let into = deployment.directory.path().join("probed.bin");
     let answer = support::Curl::download(
         service.port,
@@ -597,11 +597,11 @@ fn the_upload_can_be_cancelled_and_nothing_is_published() {
     support::stop(&mut service);
 }
 
-/// La subida monolitica publica el blob en una sola peticion.
+/// The monolithic upload publishes the blob in a single request.
 ///
-/// El protocolo la define como un `POST` con `?digest=` y el contenido
-/// entero, y el servidor comprueba que lo que ha llegado es lo que el
-/// cliente declaro.
+/// The protocol defines it as a `POST` with `?digest=` and the entire
+/// content, and the server checks that what arrived is what the
+/// client declared.
 #[test]
 fn the_monolithic_upload_publishes_the_blob_in_one_request() {
     let mut case = the_case(
@@ -665,14 +665,14 @@ fn the_monolithic_upload_publishes_the_blob_in_one_request() {
 }
 
 // ---------------------------------------------------------------------------
-// El manifiesto.
+// The manifest.
 // ---------------------------------------------------------------------------
 
-/// El manifiesto se publica con sus bytes exactos.
+/// The manifest is published with its exact bytes.
 ///
-/// El manifiesto es un blob mas: su digest es el de sus propios bytes, y
-/// lo que se guarda son los bytes que envio el cliente, sin reescribir
-/// ni un byte.
+/// The manifest is just another blob: its digest is that of its own bytes, and
+/// what is stored are the bytes the client sent, without rewriting
+/// a single byte.
 #[test]
 fn the_manifest_is_published_with_its_exact_bytes() {
     let mut case = the_case(
@@ -687,7 +687,7 @@ fn the_manifest_is_published_with_its_exact_bytes() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Las dos piezas del manifiesto se publican primero como blobs.
+    // The manifest's two pieces are published first as blobs.
     let config = a_config();
     let layer = a_layer(1);
     for content in [&config, &layer] {
@@ -706,7 +706,7 @@ fn the_manifest_is_published_with_its_exact_bytes() {
         assert_eq!(answer.status, 201, "the piece was not published");
     }
 
-    // Y ahora el manifiesto, que los referencia.
+    // And now the manifest, which references them.
     let manifest = a_manifest(&the_digest(&config), &the_digest(&layer));
     let digest = the_digest(&manifest);
     let file = deployment.directory.path().join("manifest.json");
@@ -738,7 +738,7 @@ fn the_manifest_is_published_with_its_exact_bytes() {
         "the location of the manifest is not the one of the protocol"
     );
 
-    // Por digest y por etiqueta, los bytes son los mismos.
+    // By digest and by tag, the bytes are the same.
     for reference in [format!("sha256:{digest}"), "v1".to_string()] {
         let into = deployment.directory.path().join("served.json");
         let answer = support::Curl::with_header(
@@ -776,11 +776,11 @@ fn the_manifest_is_published_with_its_exact_bytes() {
     support::stop(&mut service);
 }
 
-/// Una etiqueta se **mueve** cuando el manifiesto que hay detras cambia.
+/// A tag **moves** when the manifest behind it changes.
 ///
-/// Una etiqueta es una referencia mutable, y la operacion normal es
-/// reetiquetar: lo que hay detras de la etiqueta anterior sigue
-/// publicado con su digest, y la etiqueta apunta a lo nuevo.
+/// A tag is a mutable reference, and the normal operation is
+/// retagging: what is behind the previous tag stays
+/// published with its digest, and the tag points to the new one.
 #[test]
 fn a_tag_moves_when_the_manifest_behind_it_changes() {
     let mut case = the_case(
@@ -795,7 +795,7 @@ fn a_tag_moves_when_the_manifest_behind_it_changes() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Dos manifiestos distintos, con la misma etiqueta.
+    // Two different manifests, with the same tag.
     let mut digests = Vec::new();
     for seed in [1u8, 2u8] {
         let layer = a_layer(seed);
@@ -837,7 +837,7 @@ fn a_tag_moves_when_the_manifest_behind_it_changes() {
         );
     }
 
-    // La etiqueta apunta al segundo, y el primero sigue publicado por su
+    // The tag points to the second, and the first is still published by its
     // digest.
     let into = deployment.directory.path().join("tagged.json");
     let answer = support::Curl::with_header(
@@ -878,11 +878,11 @@ fn a_tag_moves_when_the_manifest_behind_it_changes() {
     support::stop(&mut service);
 }
 
-/// Un manifiesto con un digest que no cuadra no se publica ni crea la
-/// etiqueta.
+/// A manifest with a digest that does not match is neither published nor creates the
+/// tag.
 ///
-/// La etiqueta es lo que un cliente ve, y una etiqueta que apunta a un
-/// manifiesto que no se publico es una etiqueta que miente.
+/// The tag is what a client sees, and a tag that points to a
+/// manifest that was not published is a tag that lies.
 #[test]
 fn a_manifest_with_a_wrong_digest_publishes_nothing_and_creates_no_tag() {
     let mut case = the_case(
@@ -924,7 +924,7 @@ fn a_manifest_with_a_wrong_digest_publishes_nothing_and_creates_no_tag() {
         "the error does not speak OCI: {body}"
     );
 
-    // La etiqueta no existe: no hay manifiesto que resolver.
+    // The tag does not exist: there is no manifest to resolve.
     let into = deployment.directory.path().join("probed.bin");
     let answer = support::Curl::with_header(
         service.port,
@@ -951,11 +951,11 @@ fn a_manifest_with_a_wrong_digest_publishes_nothing_and_creates_no_tag() {
     support::stop(&mut service);
 }
 
-/// Un manifiesto que exige un blob que no esta no se publica.
+/// A manifest that requires a blob that is not there is not published.
 ///
-/// Las referencias exigidas son la configuracion y las capas: un
-/// manifiesto que apunta a algo que el repositorio no tiene es un
-/// manifiesto que no se puede descargar.
+/// The required references are the configuration and the layers: a
+/// manifest that points to something the repository does not have is a
+/// manifest that cannot be downloaded.
 #[test]
 fn a_manifest_that_references_a_missing_blob_is_refused() {
     let mut case = the_case(
@@ -970,7 +970,7 @@ fn a_manifest_that_references_a_missing_blob_is_refused() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // La capa no se publica nunca.
+    // The layer is never published.
     let manifest = a_manifest(&the_digest(&a_config()), &the_digest(&a_layer(1)));
     let file = deployment.directory.path().join("manifest.json");
     std::fs::write(&file, &manifest).expect("the manifest is written");
@@ -997,7 +997,7 @@ fn a_manifest_that_references_a_missing_blob_is_refused() {
         "the error does not speak OCI: {body}"
     );
 
-    // Y la etiqueta no se creo.
+    // And the tag was not created.
     let into = deployment.directory.path().join("probed.bin");
     let answer = support::Curl::with_header(
         service.port,
@@ -1020,14 +1020,14 @@ fn a_manifest_that_references_a_missing_blob_is_refused() {
 }
 
 // ---------------------------------------------------------------------------
-// El aislamiento entre cuentas.
+// Isolation between accounts.
 // ---------------------------------------------------------------------------
 
-/// La sesion de otra cuenta no existe.
+/// Another account's session does not exist.
 ///
-/// El identificador de la sesion es opaco, pero la cuenta tambien es
-/// parte de su identidad: una sesion que existe en otra cuenta no es
-/// una sesion que se pueda usar desde esta.
+/// The session identifier is opaque, but the account is also
+/// part of its identity: a session that exists in another account is not
+/// a session that can be used from this one.
 #[test]
 fn the_session_of_another_account_does_not_exist() {
     let mut case = the_case(
@@ -1083,10 +1083,10 @@ fn the_session_of_another_account_does_not_exist() {
     support::stop(&mut service);
 }
 
-/// El blob se puede montar desde otro repositorio de la misma cuenta.
+/// The blob can be mounted from another repository of the same account.
 ///
-/// El montaje no copia bytes: el CAS es un arbol comun, y lo que se
-/// escribe es la referencia del repositorio destino.
+/// Mounting does not copy bytes: the CAS is a common tree, and what is
+/// written is the destination repository's reference.
 #[test]
 fn the_blob_can_be_mounted_from_another_repository_of_the_same_account() {
     let mut case = the_case(
@@ -1101,7 +1101,7 @@ fn the_blob_can_be_mounted_from_another_repository_of_the_same_account() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // El blob se publica en un repositorio.
+    // The blob is published in one repository.
     let content = a_layer(9);
     let digest = the_digest(&content);
     let file = deployment.directory.path().join("blob.bin");
@@ -1117,7 +1117,7 @@ fn the_blob_can_be_mounted_from_another_repository_of_the_same_account() {
     );
     assert_eq!(answer.status, 201, "the blob was not published");
 
-    // Y se monta en el otro.
+    // And it is mounted in the other.
     let answer = call(
         service.port,
         "POST",
@@ -1142,7 +1142,7 @@ fn the_blob_can_be_mounted_from_another_repository_of_the_same_account() {
         "the answer does not name the digest of what was mounted"
     );
 
-    // Y en el destino se sirve, con los mismos bytes.
+    // And at the destination it is served, with the same bytes.
     let into = deployment.directory.path().join("mounted.bin");
     let answer = support::Curl::download(
         service.port,
@@ -1165,12 +1165,12 @@ fn the_blob_can_be_mounted_from_another_repository_of_the_same_account() {
     support::stop(&mut service);
 }
 
-/// El montaje desde otra cuenta no monta nada.
+/// Mounting from another account mounts nothing.
 ///
-/// Un blob de otra cuenta no se copia a esta: el montaje no es posible
-/// y la peticion cae a una subida normal, que es lo que hace un registro
-/// que no monta. Y el `404` de la otra cuenta no se convierte en un
-/// `201` que diga que el blob existe.
+/// A blob from another account is not copied to this one: mounting is not possible
+/// and the request falls back to a normal upload, which is what a registry
+/// that does not mount does. And the other account's `404` does not turn into a
+/// `201` saying the blob exists.
 #[test]
 fn the_blob_cannot_be_mounted_from_another_account() {
     let mut case = the_case(
@@ -1186,7 +1186,7 @@ fn the_blob_cannot_be_mounted_from_another_account() {
     let first = support::token(FIRST_ACCOUNT, "alice");
     let second = support::token(SECOND_ACCOUNT, "bob");
 
-    // La otra cuenta publica su blob.
+    // The other account publishes its blob.
     let content = b"the bytes of another account".to_vec();
     let digest = the_digest(&content);
     let file = deployment.directory.path().join("secret.bin");
@@ -1202,9 +1202,9 @@ fn the_blob_cannot_be_mounted_from_another_account() {
     );
     assert_eq!(answer.status, 201, "the blob was not published");
 
-    // La primera cuenta intenta montarlo desde el repositorio de la
-    // otra. El repositorio de la otra no existe para la primera, asi que
-    // el montaje no es posible.
+    // The first account tries to mount it from the other's
+    // repository. The other's repository does not exist for the first, so
+    // mounting is not possible.
     let answer = call(
         service.port,
         "POST",
@@ -1228,7 +1228,7 @@ fn the_blob_cannot_be_mounted_from_another_account() {
         "the mount of another account was not a normal session"
     );
 
-    // Y la segunda cuenta no ve el blob de la primera.
+    // And the second account does not see the first's blob.
     let into = deployment.directory.path().join("probed.bin");
     let answer = support::Curl::download(
         service.port,
@@ -1252,15 +1252,15 @@ fn the_blob_cannot_be_mounted_from_another_account() {
     support::stop(&mut service);
 }
 
-/// Dos subidas a la vez no se mezclan.
+/// Two uploads at once do not get mixed.
 ///
-/// Cada sesion escribe en su propio staging, y un cliente que sube dos
-/// cosas a la vez --lo que hace un `podman` con varias capas-- no puede
-/// acabar con el contenido de la una en el sitio de la otra.
+/// Each session writes into its own staging, and a client that uploads two
+/// things at once -- which is what a `podman` with several layers does -- cannot
+/// end up with the content of one in the place of the other.
 ///
-/// Las dos subidas van **de verdad** a la vez, cada una en su hilo: una
-/// prueba que lasmezcla por turnos no dice nada de lo que pasa cuando
-/// el registro tiene dos sesiones vivas.
+/// The two uploads really go at the same time, each on its own thread: a
+/// test that mixes them in turns says nothing about what happens when
+/// the registry has two live sessions.
 #[test]
 fn two_concurrent_uploads_do_not_mix() {
     let mut case = the_case(
@@ -1284,7 +1284,7 @@ fn two_concurrent_uploads_do_not_mix() {
     let first_digest = the_digest(&first);
     let second_digest = the_digest(&second);
 
-    // Las dos sesiones se abren, se escriben y se cierran a la vez.
+    // The two sessions are opened, written and closed at once.
     let (first_done, second_done) = std::thread::scope(|scope| {
         let first = scope.spawn(|| a_full_upload(service.port, &token, &first_file, &first_digest));
         let second =
@@ -1300,8 +1300,8 @@ fn two_concurrent_uploads_do_not_mix() {
         deployment.the_log()
     );
 
-    // Y cada blob se sirve con su contenido: el de la una no ha acabado
-    // en el sitio de la otra.
+    // And each blob is served with its content: that of one has not ended up
+    // in the place of the other.
     for (content, digest) in [(&first, &first_digest), (&second, &second_digest)] {
         let into = deployment.directory.path().join("served.bin");
         let answer = support::Curl::download(
@@ -1331,10 +1331,10 @@ fn two_concurrent_uploads_do_not_mix() {
     support::stop(&mut service);
 }
 
-/// Una subida completa: abrir, escribir y cerrar.
+/// A complete upload: open, write and close.
 ///
-/// Vive fuera del test porque dos subidas van a la vez, cada una en su
-/// hilo, y el registro tiene que saber llevar dos sesiones vivas.
+/// It lives outside the test because two uploads go at once, each on its
+/// own thread, and the registry has to know how to carry two live sessions.
 fn a_full_upload(port: u16, token: &str, file: &Path, digest: &str) -> bool {
     let answer = call(port, "POST", &the_upload_start(), token, None, None, None);
     if answer.status != 202 {
@@ -1366,13 +1366,13 @@ fn a_full_upload(port: u16, token: &str, file: &Path, digest: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Los trozos que no encajan, el reinicio y la cuarentena.
+// Chunks that do not fit, restart and quarantine.
 // ---------------------------------------------------------------------------
 
-/// Un trozo que no encaja con el offset recibe un 416.
+/// A chunk that does not fit the offset receives a 416.
 ///
-/// El protocolo dice que los trozos van en orden, y que un cliente cuyo
-/// trozo no encaja recupera el offset con un `GET`.
+/// The protocol says chunks go in order, and that a client whose
+/// chunk does not fit recovers the offset with a `GET`.
 #[test]
 fn a_chunk_that_does_not_fit_the_offset_is_refused() {
     let mut case = the_case(
@@ -1402,7 +1402,7 @@ fn a_chunk_that_does_not_fit_the_offset_is_refused() {
     let file = deployment.directory.path().join("chunk.bin");
     std::fs::write(&file, &chunk).expect("the chunk is written");
 
-    // El primer trozo entra entero.
+    // The first chunk goes in whole.
     let answer = call(
         service.port,
         "PATCH",
@@ -1414,7 +1414,7 @@ fn a_chunk_that_does_not_fit_the_offset_is_refused() {
     );
     assert_eq!(answer.status, 202, "the first chunk was refused");
 
-    // Un segundo trozo que vuelve a empezar en 0 no encaja.
+    // A second chunk that starts again at 0 does not fit.
     let answer = support::Curl::call_with_headers(
         service.port,
         "PATCH",
@@ -1447,16 +1447,16 @@ fn a_chunk_that_does_not_fit_the_offset_is_refused() {
     support::stop(&mut service);
 }
 
-/// Un trozo que se reintenta no se duplica.
+/// A chunk that is retried is not duplicated.
 ///
-/// Un cliente cuyo `PATCH` se pierde lo vuelve a mandar, y el registro no
-/// puede duplicar los bytes: el segundo trozo con el rango que ya paso
-/// recibe el `416` que dice por donde seguir, el cliente recupera el
-/// offset con un `GET` y continua.
+/// A client whose `PATCH` is lost sends it again, and the registry cannot
+/// duplicate the bytes: the second chunk with the range that already passed
+/// receives the `416` that says where to continue, the client recovers the
+/// offset with a `GET` and continues.
 ///
-/// Y lo que se publica tiene el contenido **una vez**: un reintento que
-/// duplicase los bytes publicaria un blob que no es el que el cliente
-/// declaro, con un digest que el cliente no habia mandado.
+/// And what is published has the content **once**: a retry that
+/// duplicated the bytes would publish a blob that is not the one the client
+/// declared, with a digest the client had not sent.
 #[test]
 fn a_chunk_that_is_retried_does_not_duplicate_the_bytes() {
     let mut case = the_case(
@@ -1486,7 +1486,7 @@ fn a_chunk_that_is_retried_does_not_duplicate_the_bytes() {
     let file = deployment.directory.path().join("chunk.bin");
     std::fs::write(&file, &chunk).expect("the chunk is written");
 
-    // El primer trozo entra entero.
+    // The first chunk goes in whole.
     let answer = call(
         service.port,
         "PATCH",
@@ -1498,7 +1498,7 @@ fn a_chunk_that_is_retried_does_not_duplicate_the_bytes() {
     );
     assert_eq!(answer.status, 202, "the first chunk was refused");
 
-    // El cliente no sabe si llego, y lo vuelve a mandar.
+    // The client does not know whether it arrived, and sends it again.
     let answer = support::Curl::call_with_headers(
         service.port,
         "PATCH",
@@ -1524,8 +1524,8 @@ fn a_chunk_that_is_retried_does_not_duplicate_the_bytes() {
         "the error does not say where the upload is"
     );
 
-    // El cliente pregunta por donde va la subida, y lo que dice es la
-    // verdad: el trozo esta escrito una vez.
+    // The client asks how far the upload has got, and what it says is the
+    // truth: the chunk is written once.
     let answer = call(service.port, "GET", &location, &token, None, None, None);
     assert_eq!(answer.status, 204, "the session does not answer");
     assert_eq!(
@@ -1534,7 +1534,7 @@ fn a_chunk_that_is_retried_does_not_duplicate_the_bytes() {
         "the status does not say how much there is"
     );
 
-    // Y cierra: el blob que sale tiene el contenido una vez.
+    // And it closes: the blob that comes out has the content once.
     let digest = the_digest(&chunk);
     let answer = call(
         service.port,
@@ -1697,13 +1697,13 @@ fn the_client_finishes_the_upload(
     );
 }
 
-/// Un reinicio no pierde la subida: la sesion es durable (HSP-201).
+/// A restart does not lose the upload: the session is durable (HSP-201).
 ///
-/// En el perfil de grafo la sesion y su offset viven en el journal, y los
-/// bytes en el staging del CAS: un proceso que se cae a mitad de una subida
-/// no se lleva la sesion. El cliente pregunta por donde va, sigue desde ahi
-/// y la subida se publica con el digest de lo que mando, y el arranque no
-/// toca el staging de una sesion que sigue viva.
+/// In the graph profile the session and its offset live in the journal, and the
+/// bytes in the CAS staging: a process that dies in the middle of an upload
+/// does not take the session with it. The client asks how far it got, continues from there
+/// and the upload is published with the digest of what it sent, and startup does not
+/// touch the staging of a session that is still alive.
 #[test]
 fn a_restart_keeps_the_upload_and_it_completes() {
     let mut case = the_case(
@@ -1734,13 +1734,13 @@ fn a_restart_keeps_the_upload_and_it_completes() {
     support::stop(&mut service);
 }
 
-/// La limpieza del arranque no retira el staging de una sesion viva.
+/// Startup cleanup does not remove the staging of a live session.
 ///
-/// El journal tiene la sesion abierta durante `oci_upload_ttl_secs`, y el
-/// staging es donde escribe la reanudacion: la edad de la limpieza nunca es
-/// mas corta que ese TTL. Aqui el TTL es mayor que `staging_max_age_secs`
-/// (el arnes lo fija a una hora) y el staging tiene dos horas: sigue en pie,
-/// y la subida se completa.
+/// The journal holds the session open for `oci_upload_ttl_secs`, and the
+/// staging is where the resumption writes: the cleanup age is never
+/// shorter than that TTL. Here the TTL is greater than `staging_max_age_secs`
+/// (the harness sets it to an hour) and the staging is two hours old: it is still standing,
+/// and the upload completes.
 #[test]
 fn the_boot_cleanup_keeps_the_staging_of_a_live_session() {
     let mut case = the_case(
@@ -1772,11 +1772,11 @@ fn the_boot_cleanup_keeps_the_staging_of_a_live_session() {
     support::stop(&mut service);
 }
 
-/// Una subida que caduco no existe tras el reinicio, con el error explicito.
+/// An upload that expired does not exist after the restart, with the explicit error.
 ///
-/// El TTL es la promesa del protocolo: pasado el, el cliente recibe
-/// `BLOB_UPLOAD_UNKNOWN`, no un `204` con un `Range` que luego no se puede
-/// escribir. Y el staging que dejo, ya viejo, se limpia al arrancar.
+/// The TTL is the protocol's promise: once past it, the client receives
+/// `BLOB_UPLOAD_UNKNOWN`, not a `204` with a `Range` that then cannot be
+/// written. And the staging it left, already old, is cleaned at startup.
 #[test]
 fn an_upload_past_its_ttl_is_unknown_after_a_restart() {
     let mut case = the_case(
@@ -1849,11 +1849,11 @@ fn an_upload_past_its_ttl_is_unknown_after_a_restart() {
     support::stop(&mut service);
 }
 
-/// El artefacto admitido queda en cuarentena.
+/// The admitted artifact is left in quarantine.
 ///
-/// La admision escribe el canal en la referencia del catalogo, y lo
-/// escribe en cuarentena: un artefacto recien admitido no ha sido
-/// promovido por nadie, y el push no tiene ninguna ruta que lo promueva.
+/// Admission writes the channel into the catalog reference, and
+/// writes it as quarantine: a newly admitted artifact has not been
+/// promoted by anyone, and push has no path that promotes it.
 #[test]
 fn the_admitted_artifact_is_in_quarantine() {
     let mut case = the_case(
@@ -1883,8 +1883,8 @@ fn the_admitted_artifact_is_in_quarantine() {
     );
     assert_eq!(answer.status, 201, "the blob was not published");
 
-    // El servicio tiene que soltar la base para que otro proceso pueda
-    // leerla.
+    // The service has to release the database so that another process can
+    // read it.
     case.outcome = "el artefacto admitido queda en cuarentena".to_string();
     case.passed = true;
     support::record_oci_push(case);
@@ -1908,10 +1908,10 @@ fn the_admitted_artifact_is_in_quarantine() {
     );
 }
 
-/// El inspector del canal, en un proceso aparte.
+/// The channel inspector, in a separate process.
 ///
-/// La base de disco la tiene el servicio mientras esta vivo, asi que el
-/// que mira tiene que ser otro proceso.
+/// The disk database is held by the service while it is alive, so the
+/// one looking has to be another process.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo de los tests de push OCI"]
 async fn the_admitted_artifact_can_be_inspected() {
@@ -1924,7 +1924,7 @@ async fn the_admitted_artifact_can_be_inspected() {
         .expect("the locator names a graph tenant");
     let catalog = tenant.catalog_store().await;
 
-    // El asset del blob admitido, y el canal en que esta.
+    // The admitted blob's asset, and the channel it is in.
     let reference = catalog
         .reference(
             FIRST_ACCOUNT,
@@ -1941,14 +1941,14 @@ async fn the_admitted_artifact_can_be_inspected() {
 }
 
 // ---------------------------------------------------------------------------
-// La puerta de los clientes de Docker.
+// The Docker clients' door.
 // ---------------------------------------------------------------------------
 
-/// El ping dice como autenticarse.
+/// The ping says how to authenticate.
 ///
-/// Un cliente de Docker llega, pregunta y lee el `WWW-Authenticate`: sin
-/// el, no sabe donde esta el endpoint de token y no hay por donde
-/// empezar.
+/// A Docker client arrives, asks and reads the `WWW-Authenticate`: without
+/// it, it does not know where the token endpoint is and there is nowhere to
+/// start.
 #[test]
 fn the_ping_says_how_to_authenticate() {
     let mut case = the_case(
@@ -1997,10 +1997,10 @@ fn the_ping_says_how_to_authenticate() {
     support::stop(&mut service);
 }
 
-/// El endpoint de token devuelve la credencial verificada, y solo la.
+/// The token endpoint returns the verified credential, and only that.
 ///
-/// Sin credencial no hay token: lo que se responde es el mismo reto.
-/// Y una credencial que no verifica no compra un token.
+/// Without a credential there is no token: what is answered is the same challenge.
+/// And a credential that does not verify does not buy a token.
 #[test]
 fn the_token_endpoint_returns_the_verified_credential_and_nothing_else() {
     let mut case = the_case(
@@ -2015,11 +2015,11 @@ fn the_token_endpoint_returns_the_verified_credential_and_nothing_else() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Sin credencial: el mismo reto.
+    // Without a credential: the same challenge.
     let answer = call(service.port, "GET", "/token", "", None, None, None);
     assert_eq!(answer.status, 401, "the token endpoint gave a token away");
 
-    // Con una credencial que no verifica: tampoco.
+    // With a credential that does not verify: neither.
     let forged = "Basic YWxpY2U6bm90LWEtdG9rZW4=".to_string();
     let answer = support::Curl::call_with_headers(
         service.port,
@@ -2036,7 +2036,7 @@ fn the_token_endpoint_returns_the_verified_credential_and_nothing_else() {
         "a credential that does not verify got a token"
     );
 
-    // Con la credencial buena: el token, y es el mismo.
+    // With the good credential: the token, and it is the same.
     let basic = format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("alice:{token}"))
@@ -2066,7 +2066,7 @@ fn the_token_endpoint_returns_the_verified_credential_and_nothing_else() {
         "the token that came back is not the credential that was verified"
     );
 
-    // Y el token sirve para la superficie.
+    // And the token works for the surface.
     let answer = call(service.port, "GET", "/v2/", &token, None, None, None);
     assert_eq!(answer.status, 200, "the token does not open the surface");
 
@@ -2078,13 +2078,13 @@ fn the_token_endpoint_returns_the_verified_credential_and_nothing_else() {
 }
 
 // ---------------------------------------------------------------------------
-// Los clientes de verdad.
+// The real clients.
 // ---------------------------------------------------------------------------
 
-/// Un layout OCI con una imagen de una sola plataforma.
+/// An OCI layout with a single-platform image.
 ///
-/// El layout es lo que skopeo y podman leen: un `index.json` que
-/// nombra un manifiesto, y los blobs en `blobs/sha256/<digest>`.
+/// The layout is what skopeo and podman read: an `index.json` that
+/// names a manifest, and the blobs in `blobs/sha256/<digest>`.
 fn an_oci_layout(directory: &Path, layer: &[u8]) -> (String, String, String) {
     let blobs = directory.join("blobs").join("sha256");
     std::fs::create_dir_all(&blobs).expect("the blobs directory");
@@ -2121,17 +2121,17 @@ fn an_oci_layout(directory: &Path, layer: &[u8]) -> (String, String, String) {
     (config_digest, layer_digest, manifest_digest)
 }
 
-/// El manifiesto que el registro sirve para una etiqueta: los bytes y el
+/// The manifest the registry serves for a tag: the bytes and the
 /// digest.
 ///
-/// Lo que se compara es lo que hay: los bytes se descargan del registro y
-/// el digest se lee de su cabecera. Un cliente que los compare con lo que
-/// subio no esta comparando con su memoria, sino con lo que el registro
-/// tiene.
+/// What is compared is what is there: the bytes are downloaded from the registry and
+/// the digest is read from its header. A client that compares them with what it
+/// uploaded is not comparing with its memory, but with what the registry
+/// has.
 ///
-/// El `Accept` es el de "me vale lo que haya": el manifiesto declara su
-/// propio tipo, y lo que se comprueba es que el digest que el registro
-/// nombra sea el de los bytes que sirve.
+/// The `Accept` is the "whatever there is works for me" one: the manifest declares its
+/// own type, and what is checked is that the digest the registry
+/// names is that of the bytes it serves.
 fn the_manifest_of_the_tag(
     deployment: &Deployment,
     port: u16,
@@ -2162,7 +2162,7 @@ fn the_manifest_of_the_tag(
     (std::fs::read(&into).expect("the manifest is read"), digest)
 }
 
-/// El blob que el registro sirve por su digest.
+/// The blob the registry serves by its digest.
 fn the_blob_of(deployment: &Deployment, port: u16, token: &str, digest: &str) -> Vec<u8> {
     let into = deployment.directory.path().join("served.blob");
     let answer =
@@ -2176,11 +2176,11 @@ fn the_blob_of(deployment: &Deployment, port: u16, token: &str, digest: &str) ->
     std::fs::read(&into).expect("the blob is read")
 }
 
-/// El digest de la configuracion que un manifiesto nombra.
+/// The digest of the configuration a manifest names.
 ///
-/// El identificador de una imagen es el digest de su configuracion: es lo
-/// que el `podman` dice de la imagen que tiene, y lo que el manifiesto
-/// nombra como su configuracion.
+/// An image's identifier is the digest of its configuration: it is what
+/// `podman` says about the image it has, and what the manifest
+/// names as its configuration.
 fn the_config_digest_of(manifest: &[u8]) -> String {
     let manifest: serde_json::Value =
         serde_json::from_slice(manifest).expect("the manifest is JSON");
@@ -2193,7 +2193,7 @@ fn the_config_digest_of(manifest: &[u8]) -> String {
         .to_string()
 }
 
-/// El digest de la capa que un manifiesto nombra.
+/// The digest of the layer a manifest names.
 fn the_layer_digest_of(manifest: &[u8]) -> String {
     let manifest: serde_json::Value =
         serde_json::from_slice(manifest).expect("the manifest is JSON");
@@ -2207,12 +2207,12 @@ fn the_layer_digest_of(manifest: &[u8]) -> String {
         .to_string()
 }
 
-/// La capa que el pull devolvio.
+/// The layer the pull returned.
 ///
-/// El layout descargado nombra la capa en el manifiesto, y el digest es
-/// el del fichero. El fichero del layout se llama por su digest, asi que
-/// el digest se busca en el manifiesto y se lee el fichero con ese
-/// nombre.
+/// The downloaded layout names the layer in the manifest, and the digest is
+/// the file's. The layout file is named by its digest, so
+/// the digest is looked up in the manifest and the file with that
+/// name is read.
 fn the_layer_of_the_pulled_layout(pulled: &Path) -> (String, PathBuf) {
     let index: serde_json::Value = serde_json::from_slice(
         &std::fs::read(pulled.join("index.json")).expect("the index is read"),
@@ -2243,17 +2243,17 @@ fn the_layer_of_the_pulled_layout(pulled: &Path) -> (String, PathBuf) {
     (layer_digest, path)
 }
 
-/// El `skopeo` hace push y pull, y lo que vuelve son los bytes que hay.
+/// `skopeo` pushes and pulls, and what comes back are the bytes that are there.
 ///
-/// El cliente no recibe ninguna instruccion: el `skopeo` decide como
-/// hablar con el registro, y el registro tiene que hablar como el
-/// protocolo dice.
+/// The client receives no instruction: `skopeo` decides how to
+/// talk to the registry, and the registry has to talk the way the
+/// protocol says.
 ///
-/// Y la comparacion no es con el layout de origen: un cliente de verdad
-/// **reescribe** el manifiesto que sube --lo convierte al formato que el
-/// destino entiende--, asi que el digest de origen no es el digest que
-/// acaba en el registro. Lo que tiene que ser lo mismo son los bytes que
-/// el registro sirve y los que vuelven del pull.
+/// And the comparison is not with the source layout: a real client
+/// **rewrites** the manifest it uploads -- converting it to the format the
+/// destination understands --, so the source digest is not the digest that
+/// ends up in the registry. What has to be the same are the bytes the
+/// registry serves and those that come back from the pull.
 #[test]
 fn skopeo_pushes_and_pulls_the_same_bytes() {
     let mut case = the_case(
@@ -2293,9 +2293,9 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
         String::from_utf8_lossy(&pushed.stderr)
     );
 
-    // Lo que el registro sirve: los bytes del manifiesto y el digest que
-    // nombra de ellos. Si el digest no es el de los bytes, el registro se
-    // esta mintiendo a si mismo.
+    // What the registry serves: the manifest bytes and the digest it
+    // names for them. If the digest is not that of the bytes, the registry is
+    // lying to itself.
     let (served, served_digest) = the_manifest_of_the_tag(&deployment, service.port, &token, "v1");
     assert_eq!(
         the_digest(&served),
@@ -2303,7 +2303,7 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
         "the digest the registry names is not the digest of the bytes it serves"
     );
 
-    // Y el pull devuelve los mismos bytes.
+    // And the pull returns the same bytes.
     let pulled = deployment.directory.path().join("pulled");
     let pulled_answer = Command::new("skopeo")
         .args([
@@ -2326,7 +2326,7 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
         String::from_utf8_lossy(&pulled_answer.stderr)
     );
 
-    // El indice del layout descargado nombra el manifiesto del registro.
+    // The downloaded layout's index names the registry's manifest.
     let index: serde_json::Value = serde_json::from_slice(
         &std::fs::read(pulled.join("index.json")).expect("the index is read"),
     )
@@ -2342,7 +2342,7 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
         "the pulled index does not name the manifest that the registry serves"
     );
 
-    // Y los bytes del manifiesto son los mismos, byte a byte.
+    // And the manifest bytes are the same, byte for byte.
     let pulled_manifest = pulled
         .join("blobs")
         .join("sha256")
@@ -2353,7 +2353,7 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
         "the manifest that came back is not the manifest that was served"
     );
 
-    // La capa: la que el manifiesto nombra es la que el registro sirve.
+    // The layer: the one the manifest names is the one the registry serves.
     let layer_digest = the_layer_digest_of(&served);
     let served_layer = the_blob_of(
         &deployment,
@@ -2367,7 +2367,7 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
         "the registry does not serve the layer that the manifest names"
     );
 
-    // Y la capa que vuelve del pull es esa misma capa.
+    // And the layer that comes back from the pull is that same layer.
     let (pulled_layer_digest, layer_file) = the_layer_of_the_pulled_layout(&pulled);
     assert!(
         layer_file.exists(),
@@ -2392,11 +2392,11 @@ fn skopeo_pushes_and_pulls_the_same_bytes() {
     support::stop(&mut service);
 }
 
-/// El comando de `podman`, con su almacen propio.
+/// The `podman` command, with its own store.
 ///
-/// El almacen del usuario no se toca: el `podman` de la prueba usa un
-/// raiz y un runroot suyos, y el driver `vfs`, que es el que funciona
-/// donde no hay permisos de bloque.
+/// The user's store is not touched: the test's `podman` uses its own
+/// root and runroot, and the `vfs` driver, which is the one that works
+/// where there are no block permissions.
 fn podman(root: &Path, runroot: &Path) -> Command {
     let mut command = Command::new("podman");
     command
@@ -2407,11 +2407,11 @@ fn podman(root: &Path, runroot: &Path) -> Command {
     command
 }
 
-/// El `podman` hace push y pull contra el registro.
+/// `podman` pushes and pulls against the registry.
 ///
-/// El `podman` es el cliente mas cercano al usuario final, y el que
-/// habla el protocolo de Docker entero: el reto, el endpoint de token y
-/// la sesion de subida.
+/// `podman` is the client closest to the end user, and the one that
+/// speaks the whole Docker protocol: the challenge, the token endpoint and
+/// the upload session.
 #[test]
 fn podman_pushes_and_pulls_the_same_bytes() {
     let mut case = the_case(
@@ -2426,14 +2426,14 @@ fn podman_pushes_and_pulls_the_same_bytes() {
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // El `podman` habla con un almacen propio: el del usuario no se toca.
+    // `podman` talks to its own store: the user's is not touched.
     let root = deployment.directory.path().join("podman-root");
     let runroot = deployment.directory.path().join("podman-runroot");
     std::fs::create_dir_all(&root).expect("the podman root");
     std::fs::create_dir_all(&runroot).expect("the podman runroot");
 
-    // El fichero de credenciales del protocolo: el usuario es
-    // informativo y la contrasena es la credencial de la plataforma.
+    // The protocol's credentials file: the user is
+    // informational and the password is the platform's credential.
     let auth = deployment.directory.path().join("auth.json");
     let encoded = base64::engine::general_purpose::STANDARD.encode(format!("alice:{token}"));
     std::fs::write(
@@ -2445,8 +2445,8 @@ fn podman_pushes_and_pulls_the_same_bytes() {
     )
     .expect("the credentials are written");
 
-    // El contenido que se importa: un arbol minimo en un tar, que es lo
-    // que el `podman` sabe convertir en una imagen.
+    // The content that is imported: a minimal tree in a tar, which is what
+    // `podman` knows how to turn into an image.
     let tree = deployment.directory.path().join("rootfs");
     std::fs::create_dir_all(&tree).expect("the tree");
     std::fs::write(tree.join("hello.txt"), b"hodei\n").expect("the file");
@@ -2469,7 +2469,7 @@ fn podman_pushes_and_pulls_the_same_bytes() {
 
     let reference = format!("127.0.0.1:{}/{FIRST_REPOSITORY}:v1", service.port);
 
-    // El import: una imagen local, que es de donde sale lo que se sube.
+    // The import: a local image, which is where what gets pushed comes from.
     let imported = podman(&root, &runroot)
         .arg("import")
         .arg(&archive)
@@ -2483,8 +2483,8 @@ fn podman_pushes_and_pulls_the_same_bytes() {
         String::from_utf8_lossy(&imported.stderr)
     );
 
-    // El push: el `podman` sube lo que tiene, con el reto y el endpoint
-    // de token de por medio.
+    // The push: `podman` pushes what it has, with the challenge and the token
+    // endpoint in between.
     let pushed = podman(&root, &runroot)
         .arg("push")
         .args(["--tls-verify=false", "--authfile"])
@@ -2499,8 +2499,8 @@ fn podman_pushes_and_pulls_the_same_bytes() {
         String::from_utf8_lossy(&pushed.stderr)
     );
 
-    // El registro tiene el manifiesto, y el digest que nombra es el de
-    // los bytes que sirve.
+    // The registry has the manifest, and the digest it names is that of
+    // the bytes it serves.
     let (served, served_digest) = the_manifest_of_the_tag(&deployment, service.port, &token, "v1");
     assert_eq!(
         the_digest(&served),
@@ -2509,8 +2509,8 @@ fn podman_pushes_and_pulls_the_same_bytes() {
     );
     let config_digest = the_config_digest_of(&served);
 
-    // El pull: el `podman` se autentica solo, con el reto y el endpoint
-    // de token.
+    // The pull: `podman` authenticates by itself, with the challenge and the token
+    // endpoint.
     let pulled = podman(&root, &runroot)
         .arg("pull")
         .args(["--tls-verify=false", "--authfile"])
@@ -2525,8 +2525,8 @@ fn podman_pushes_and_pulls_the_same_bytes() {
         String::from_utf8_lossy(&pulled.stderr)
     );
 
-    // La imagen que vuelve es la misma: su identificador es el digest de
-    // la configuracion que el manifiesto nombra.
+    // The image that comes back is the same: its identifier is the digest of
+    // the configuration the manifest names.
     let inspected = podman(&root, &runroot)
         .args(["image", "inspect", "--format", "{{.Id}}"])
         .arg(&reference)
@@ -2547,7 +2547,7 @@ fn podman_pushes_and_pulls_the_same_bytes() {
         "the image that came back is not the image that was pushed"
     );
 
-    // Y la etiqueta nueva existe y apunta a la misma imagen.
+    // And the new tag exists and points to the same image.
     let retagged = format!("127.0.0.1:{}/{FIRST_REPOSITORY}:v2", service.port);
     let tagged = podman(&root, &runroot)
         .arg("tag")

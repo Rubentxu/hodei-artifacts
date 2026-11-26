@@ -1,5 +1,5 @@
-//! HSP-195: Debian APT sobre el motor Dgraph real, con el cliente `apt`
-//! de verdad y las firmas verificadas.
+//! HSP-195: Debian APT over the real Dgraph engine, with the real `apt` client
+//! and verified signatures.
 //!
 //! Gated on `HODEI_GRAPH_IT_ENDPOINT` like the spine ITs (TLS + ACL, the
 //! live h186 server). The apt vertical (`src/handlers/apt.rs` +

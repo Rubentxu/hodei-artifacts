@@ -1,25 +1,25 @@
-//! Ansible Galaxy hosted de HSP-217 contra el cliente real
+//! Hosted Ansible Galaxy of HSP-217 against the real client
 //! (`ansible-galaxy`).
 //!
-//! El `ansible-galaxy` del venv (`ansible-core` 2.19) construye una
-//! collection real, la publica con `collection publish` contra el
-//! servicio de verdad, la resuelve con `collection install` en un
-//! directorio limpio y la compara con `collection verify`: la identidad
-//! (`namespace.name`), la version y el sha256 que el cliente verifica al
-//! bajar son los del propio protocolo, no de este test. Hace falta
-//! `ansible-core` 2.19 con un Python que lo sostenga (el 3.15 del
-//! sistema rompe esta version): en el `GALAXY_BIN` (el venv de la UAT) o
-//! en el `PATH`; sin el, la suite **falla** diciendo que falta. Cada
-//! ejecucion usa su propio directorio de collections y su propio `HOME`:
-//! nada se lee ni se escribe fuera del directorio del despliegue.
+//! The venv's `ansible-galaxy` (`ansible-core` 2.19) builds a real
+//! collection, publishes it with `collection publish` against the
+//! real service, resolves it with `collection install` in a clean
+//! directory and compares it with `collection verify`: the identity
+//! (`namespace.name`), the version and the sha256 that the client verifies when
+//! downloading are those of the protocol itself, not of this test. It requires
+//! `ansible-core` 2.19 with a Python that supports it (the system's 3.15
+//! breaks this version): in `GALAXY_BIN` (the UAT venv) or
+//! on the `PATH`; without it, the suite **fails** saying it is missing. Each
+//! run uses its own collections directory and its own `HOME`:
+//! nothing is read or written outside the deployment directory.
 //!
-//! El dialecto v3 es el que fija el cliente (`ansible/galaxy/api.py`);
-//! el mapa del wire lo capturo el spike de HSP-168 contra
-//! galaxy.ansible.com y contra un fixture local (FMT-06 de
-//! `uat/UAT-FORMATS.md`), y este test demanda de la superficie esa misma
-//! forma: discovery `/api/`, documentos de collection y versiones
-//! paginados DRF, artefacto por `download_url` con su sha256, publish
-//! multipart con `Authorization: Token`.
+//! The v3 dialect is the one the client fixes (`ansible/galaxy/api.py`);
+//! the wire map was captured by the HSP-168 spike against
+//! galaxy.ansible.com and against a local fixture (FMT-06 of
+//! `uat/UAT-FORMATS.md`), and this test demands that same
+//! shape from the surface: `/api/` discovery, collection documents and versions
+//! paginated DRF-style, artifact by `download_url` with its sha256, multipart
+//! publish with `Authorization: Token`.
 
 mod support;
 
@@ -31,7 +31,7 @@ use flate2::write::GzEncoder;
 use sha2::Digest as _;
 use support::{Deployment, FIRST_ACCOUNT, SECOND_ACCOUNT};
 
-/// Exige el `ansible-galaxy` 2.19 del venv o del PATH, y devuelve su ruta.
+/// Requires `ansible-galaxy` 2.19 from the venv or the PATH, and returns its path.
 fn the_galaxy_binary() -> String {
     if let Ok(path) = std::env::var("GALAXY_BIN") {
         return path;
@@ -54,35 +54,35 @@ fn require_galaxy() -> String {
     binary
 }
 
-/// El resultado de una ejecucion del cliente.
+/// The result of a client run.
 struct Run {
-    /// Si el cliente termino bien.
+    /// Whether the client finished successfully.
     ok: bool,
-    /// Lo que dijo, por stdout y por stderr.
+    /// What it said, on stdout and stderr.
     output: String,
 }
 
 impl Run {
-    /// El texto si termino bien, y un fallo con todo el resto si no.
+    /// The text if it finished successfully, and a failure with everything else if not.
     fn expect(&self, what: &str) -> String {
         assert!(self.ok, "{what} failed:\n{}", self.output);
         self.output.clone()
     }
 }
 
-/// Un `ansible-galaxy` aislado: su directorio de collections y su `HOME`.
+/// An isolated `ansible-galaxy`: its collections directory and its `HOME`.
 struct Client {
-    /// La ruta del ejecutable.
+    /// The path of the executable.
     binary: String,
-    /// El directorio del despliegue.
+    /// The deployment directory.
     root: PathBuf,
-    /// El directorio de collections de esta cache.
+    /// The collections directory of this cache.
     collections: PathBuf,
 }
 
 impl Client {
-    /// Una cache limpia. El servidor y la credencial van en cada comando:
-    /// el dialecto no guarda el remote en una configuracion previa.
+    /// A clean cache. The server and the credential go in each command:
+    /// the dialect does not keep the remote in a prior configuration.
     fn new(root: &Path, name: &str) -> Self {
         let collections = root.join(format!("collections-{name}"));
         std::fs::create_dir_all(&collections).expect("the collections directory");
@@ -93,7 +93,7 @@ impl Client {
         }
     }
 
-    /// Ejecuta el `ansible-galaxy` con su entorno aislado.
+    /// Runs `ansible-galaxy` with its isolated environment.
     fn run(&self, args: &[&str]) -> Run {
         let output = Command::new(&self.binary)
             .args(args)
@@ -110,7 +110,7 @@ impl Client {
         }
     }
 
-    /// `collection build`: el artefacto que el propio cliente produce.
+    /// `collection build`: the artifact that the client itself produces.
     fn build(&self, source: &Path, dist: &Path) -> PathBuf {
         self.run(&[
             "collection",
@@ -125,7 +125,7 @@ impl Client {
         artifact
     }
 
-    /// `collection publish`: el upload real contra la superficie galaxy.
+    /// `collection publish`: the real upload against the galaxy surface.
     fn publish(&self, artifact: &Path, server: &str, token: &str) -> Run {
         self.run(&[
             "collection",
@@ -138,7 +138,7 @@ impl Client {
         ])
     }
 
-    /// `collection install`: la resolucion real contra la superficie.
+    /// `collection install`: the real resolution against the surface.
     fn install(&self, requirement: &str, server: &str, token: &str) -> Run {
         self.run(&[
             "collection",
@@ -153,8 +153,8 @@ impl Client {
         ])
     }
 
-    /// `collection verify`: la comparacion real de lo instalado contra el
-    /// artefacto servido.
+    /// `collection verify`: the real comparison of what is installed against the
+    /// served artifact.
     fn verify(&self, requirement: &str, server: &str, token: &str) -> Run {
         self.run(&[
             "collection",
@@ -169,7 +169,7 @@ impl Client {
         ])
     }
 
-    /// El directorio instalado de la collection de este cliente.
+    /// The installed directory of this client's collection.
     fn installed(&self) -> PathBuf {
         self.collections
             .join("ansible_collections")
@@ -178,7 +178,7 @@ impl Client {
     }
 }
 
-/// El codigo fuente de la collection que el cliente construye.
+/// The source code of the collection that the client builds.
 fn the_collection_source(root: &Path) -> PathBuf {
     let directory = root.join("collections/hodei-demo");
     std::fs::create_dir_all(&directory).expect("the source directory");
@@ -191,14 +191,14 @@ fn the_collection_source(root: &Path) -> PathBuf {
     directory
 }
 
-/// El sha256 de un fichero, como lo verifica el protocolo.
+/// The sha256 of a file, as the protocol verifies it.
 fn sha256_of(path: &Path) -> String {
     let bytes = std::fs::read(path).expect("the file");
     format!("{:x}", sha2::Sha256::digest(&bytes))
 }
 
-/// Un miembro ustar escrito como el formato lo lee: cabecera, contenido y
-/// el relleno que redondea el registro.
+/// A ustar member written as the format reads it: header, content and
+/// the padding that rounds up the record.
 fn the_member_bytes(name: &str, content: &[u8]) -> Vec<u8> {
     let mut bytes = vec![0u8; 512];
     bytes[..name.len()].copy_from_slice(name.as_bytes());
@@ -217,10 +217,10 @@ fn the_member_bytes(name: &str, content: &[u8]) -> Vec<u8> {
     member
 }
 
-/// Un artefacto que el cliente acepta subir pero que no es una
-/// collection legible: un gzip de un tar cuyo `MANIFEST.json` no es el
-/// documento que el formato declara. La corrupcion vive dentro del
-/// artefacto, no en el transporte.
+/// An artifact that the client agrees to upload but that is not a
+/// readable collection: a gzip of a tar whose `MANIFEST.json` is not the
+/// document that the format declares. The corruption lives inside the
+/// artifact, not in the transport.
 fn the_corrupted_artifact(root: &Path) -> PathBuf {
     let mut tar = Vec::new();
     tar.extend_from_slice(&the_member_bytes(
@@ -236,10 +236,10 @@ fn the_corrupted_artifact(root: &Path) -> PathBuf {
     artifact
 }
 
-/// Un publish contra la superficie, hecho a mano sobre el socket: los
-/// mismos bytes del artefacto con un `sha256` que **no** es el de esos
-/// bytes. El cliente real no puede decir esa mentira, y por eso este
-/// caso va por el socket.
+/// A publish against the surface, made by hand over the socket: the
+/// same artifact bytes with a `sha256` that is **not** that of those
+/// bytes. The real client cannot tell that lie, and that is why this
+/// case goes through the socket.
 fn the_doctored_publish(
     port: u16,
     repository: &str,
@@ -276,8 +276,8 @@ fn the_doctored_publish(
         .expect("the status line")
 }
 
-/// El seeder del catalogo: cada suite lo trae porque el arnes reinicia
-/// el binario de la suite para sembrar antes de arrancar el servicio.
+/// The catalog seeder: each suite brings it because the harness restarts
+/// the suite binary to seed before starting the service.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -297,23 +297,23 @@ fn the_galaxy_client_publishes_installs_and_verifies() {
     let author = Client::new(&root, "author");
     let artifact = author.build(&the_collection_source(&root), &root.join("dist"));
 
-    // AC2: el publish real contra la superficie. El cliente calcula su
-    // sha256, lo manda en el multipart y espera la tarea de import que
-    // la superficie responde.
+    // AC2: the real publish against the surface. The client computes its
+    // sha256, sends it in the multipart and waits for the import task that
+    // the surface responds with.
     author
         .publish(&artifact, &server, &token)
         .expect("the publish");
-    // La repeticion del mismo artefacto es un eco, no una reescritura:
-    // el mismo contenido en la misma version es un si.
+    // Repeating the same artifact is an echo, not a rewrite:
+    // the same content at the same version is a yes.
     author
         .publish(&artifact, &server, &token)
         .expect("the idempotent republish of the same artifact");
     let digest = sha256_of(&artifact);
 
-    // AC1/AC3: el install real en un directorio limpio. El cliente pide
-    // el discovery, el documento de la collection, las versiones
-    // paginadas, el documento de la version y el artefacto, y verifica
-    // el sha256 del artefacto contra el que el documento declara.
+    // AC1/AC3: the real install in a clean directory. The client requests
+    // the discovery, the collection document, the paginated
+    // versions, the version document and the artifact, and verifies
+    // the artifact's sha256 against the one the document declares.
     let consumer = Client::new(&root, "consumer");
     consumer
         .install("hodei.demo:1.0.0", &server, &token)
@@ -325,8 +325,8 @@ fn the_galaxy_client_publishes_installs_and_verifies() {
         consumer.installed().display()
     );
 
-    // AC3: verify real. Lo instalado y lo servido son lo mismo: la
-    // comparacion de los checksums del MANIFEST es un exito.
+    // AC3: real verify. What is installed and what is served are the same: the
+    // comparison of the MANIFEST's checksums is a success.
     let verified = consumer.verify("hodei.demo:1.0.0", &server, &token);
     assert!(
         verified.ok && verified.output.contains("Successfully verified"),
@@ -334,9 +334,9 @@ fn the_galaxy_client_publishes_installs_and_verifies() {
         verified.output
     );
 
-    // AC3: la corrupcion local no pasa el verify. Un fichero del
-    // instalado que ya no es el que el artefacto declaro es una
-    // instalacion que ya no es la que el hub sirvio.
+    // AC3: local corruption does not pass verify. A file of the
+    // installed collection that is no longer the one the artifact declared is an
+    // installation that is no longer the one the hub served.
     std::fs::write(consumer.installed().join("README.md"), "# corrupted\n")
         .expect("the corruption");
     let corrupted = consumer.verify("hodei.demo:1.0.0", &server, &token);
@@ -346,8 +346,8 @@ fn the_galaxy_client_publishes_installs_and_verifies() {
         corrupted.output
     );
 
-    // AC4: el scoping es por cuenta. Otro principal no ve la collection:
-    // el repositorio vive en otra cuenta, y su install no encuentra nada.
+    // AC4: scoping is per account. Another principal does not see the collection:
+    // the repository lives in another account, and their install finds nothing.
     let other = support::token(SECOND_ACCOUNT, "bob");
     let stranger = Client::new(&root, "stranger");
     let stranger_install = stranger.install("hodei.demo:1.0.0", &server, &other);
@@ -363,9 +363,9 @@ fn the_galaxy_client_publishes_installs_and_verifies() {
         stranger_publish.output
     );
 
-    // AC3: offline. El remote muere: la cache caliente del cliente
-    // resuelve sin red ("Nothing to do") y un requisito que no tiene
-    // falla, sin caer a nada.
+    // AC3: offline. The remote dies: the client's warm cache
+    // resolves without network ("Nothing to do") and a requirement it does not have
+    // fails, without falling back to anything.
     support::stop(&mut service);
     let warm = consumer.install("hodei.demo:1.0.0", &server, &token);
     assert!(
@@ -380,7 +380,7 @@ fn the_galaxy_client_publishes_installs_and_verifies() {
         missing.output
     );
 
-    // La evidencia del digest que el cliente verifico, para el informe.
+    // The evidence of the digest that the client verified, for the report.
     println!("HSP-217 artifact sha256: {digest}");
 }
 
@@ -397,9 +397,9 @@ fn the_hub_rejects_a_corrupted_artifact_and_a_lying_sha256() {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let author = Client::new(&root, "author");
 
-    // El artefacto corrupto entra por el cliente real: el cliente
-    // acepta subirlo (es un tarball) y la superficie lo rechaza antes de
-    // guardar nada, porque no es una collection legible.
+    // The corrupt artifact enters through the real client: the client
+    // agrees to upload it (it is a tarball) and the surface rejects it before
+    // storing anything, because it is not a readable collection.
     let corrupted = the_corrupted_artifact(&root);
     let rejected = author.publish(&corrupted, &server, &token);
     assert!(
@@ -413,10 +413,10 @@ fn the_hub_rejects_a_corrupted_artifact_and_a_lying_sha256() {
         rejected.output
     );
 
-    // El sha256 mentiroso no pasa el commit: los bytes que llegan tienen
-    // que ser los que el formulario declara. El cliente real no puede
-    // decir esta mentira, por lo que va por el socket con el formulario
-    // de su propio artefacto y un sha256 que no es el suyo.
+    // The lying sha256 does not pass the commit: the bytes that arrive have
+    // to be those the form declares. The real client cannot
+    // tell this lie, so it goes through the socket with the form
+    // of its own artifact and a sha256 that is not its own.
     let artifact = author.build(&the_collection_source(&root), &root.join("dist"));
     let bytes = std::fs::read(&artifact).expect("the artifact bytes");
     let digest = sha256_of(&artifact);
@@ -426,16 +426,16 @@ fn the_hub_rejects_a_corrupted_artifact_and_a_lying_sha256() {
         status, 400,
         "the publish whose sha256 does not match its bytes is rejected"
     );
-    // Un digest mal formado no es un digest: tampoco entra.
+    // A malformed digest is not a digest: it does not get in either.
     let malformed = the_doctored_publish(port, "galaxy-hosted", &token, &bytes, "short");
     assert_eq!(
         malformed, 400,
         "a publish whose sha256 is not a sha256 is rejected"
     );
 
-    // Lo rechazado no ocupo el sitio: el artefacto bueno se publica
-    // despues de los dos intentos, con su version libre, y el digest que
-    // el cliente declaro es el que la version sirve.
+    // What was rejected did not take the spot: the good artifact is published
+    // after the two attempts, with its version free, and the digest that
+    // the client declared is the one the version serves.
     author
         .publish(&artifact, &server, &token)
         .expect("the publish of the intact artifact after the rejections");

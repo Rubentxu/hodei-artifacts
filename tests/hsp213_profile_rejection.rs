@@ -1,23 +1,23 @@
-//! HSP-213: el binario productivo rechaza el perfil embebido.
+//! HSP-213: the production binary rejects the embedded profile.
 //!
-//! La mitad del corte que se observa con el **proceso real**, no con una
-//! unit que lo simula: un despliegue sin `[graph]` (el perfil antiguo de
-//! `HODEI_ROCKSDB__PATH`) muere con el mensaje de migracion: nombra la
-//! retirada, la autoridad externa y el retiro de las herramientas de
-//! operacion (HSP-314 F4). Y no crea nada local: la negativa es previa a
-//! tocar el almacen de contenido o cualquier path del perfil antiguo.
+//! The half of the cut that is observed with the **real process**, not with a
+//! unit that simulates it: a deployment without `[graph]` (the old
+//! `HODEI_ROCKSDB__PATH` profile) dies with the migration message: it names the
+//! retirement, the external authority and the retirement of the operations
+//! tools (HSP-314 F4). And it creates nothing locally: the refusal comes before
+//! touching the content store or any path of the old profile.
 //!
-//! Desde HSP-314 F4 el perfil de grafo es el unico: no hay variante del
-//! binario que pueda arrancar el perfil embebido, asi que este rechazo es
-//! el contrato permanente de un despliegue sin `[graph]`.
+//! Since HSP-314 F4 the graph profile is the only one: there is no binary
+//! variant that can start the embedded profile, so this rejection is
+//! the permanent contract of a deployment without `[graph]`.
 
 mod hsp213_profile_env;
 
 use hsp213_profile_env::{BIN, free_port, retired_profile_env};
 use std::process::{Command, Stdio};
 
-/// AC2: el binario productivo rechaza el perfil embebido con el mensaje de
-/// migracion y no toca el almacen local.
+/// AC2: the production binary rejects the embedded profile with the
+/// migration message and does not touch the local store.
 #[test]
 fn the_production_binary_refuses_the_embedded_profile_with_the_migration_message() {
     let tmp = tempfile::tempdir().expect("a temp dir");
@@ -36,8 +36,8 @@ fn the_production_binary_refuses_the_embedded_profile_with_the_migration_message
         "the production binary must refuse the embedded profile, not boot it"
     );
     let text = String::from_utf8_lossy(&output.stderr).into_owned();
-    // El mensaje nombra la retirada, el destino y el retiro de las
-    // herramientas: quien lea el log sabe exactamente a donde migrar.
+    // The message names the retirement, the destination and the retirement of
+    // the tools: whoever reads the log knows exactly where to migrate.
     for fragment in [
         "retired (HSP-213",
         "declare a [graph] section",

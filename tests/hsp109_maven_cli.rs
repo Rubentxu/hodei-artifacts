@@ -1,17 +1,17 @@
-//! Maven 2 hosted de HSP-109 contra el cliente real (`mvn`).
+//! HSP-109 hosted Maven 2 against the real client (`mvn`).
 //!
-//! El `mvn` publica (`deploy-file`) y resuelve (`dependency:get`) contra un
-//! servicio de verdad. Es la prueba de que el protocolo que hablamos es el
-//! que habla Maven: el orden de las peticiones, los checksums que sube, los
-//! `maven-metadata.xml` que manda y los que pide.
+//! `mvn` publishes (`deploy-file`) and resolves (`dependency:get`) against a
+//! real service. It proves that the protocol we speak is the one
+//! Maven speaks: the order of requests, the checksums it uploads, the
+//! `maven-metadata.xml` files it sends and the ones it requests.
 //!
-//! Hace falta `mvn` en el PATH: sin el, la suite **falla** diciendo que
-//! falta, y no pasa en silencio. Los plugins van fijados por version y el
-//! repositorio local del usuario se usa (y solo se borra el grupo de esta
-//! prueba), asi que no descarga nada que ya este en cache.
+//! `mvn` is required on the PATH: without it, the suite **fails** saying it
+//! is missing, and does not pass silently. Plugins are pinned by version and the
+//! user's local repository is used (and only this test's group is
+//! deleted), so it does not download anything that is already cached.
 //!
-//! La credencial va en un `settings.xml` temporal como cabecera
-//! `Authorization`, nunca en los argumentos del comando.
+//! The credential goes in a temporary `settings.xml` as an `Authorization`
+//! header, never in the command arguments.
 
 mod support;
 
@@ -26,14 +26,14 @@ const GET: &str = "org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get";
 const MIXED: &str = "mvn-mixed";
 const RELEASES: &str = "mvn-release";
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El grupo de la prueba en el repositorio local de Maven, que se borra al
-/// acabar para no dejar nada en la cache del usuario.
+/// The test's group in Maven's local repository, which is deleted at the
+/// end so as to leave nothing in the user's cache.
 struct LocalGroup(PathBuf);
 
 impl Drop for LocalGroup {
@@ -168,7 +168,7 @@ fn mvn_deploys_and_resolves_a_release_and_a_snapshot() {
     let jar = deployment.directory.path().join("lib.jar");
     std::fs::write(&jar, b"PK-release-bytes-for-the-maven-cli").expect("the jar");
 
-    // Release: deploy, y se resuelve de vuelta con los mismos bytes.
+    // Release: deploy, and resolve back with the same bytes.
     let deployed = maven.deploy(port, MIXED, "1.0", &jar);
     assert!(deployed.ok, "{}", deployed.output);
     maven.forget();
@@ -180,7 +180,7 @@ fn mvn_deploys_and_resolves_a_release_and_a_snapshot() {
     );
     assert!(maven.local("1.0", "lib-1.0.pom").exists());
 
-    // La release es inmutable: otro contenido con la misma version falla.
+    // The release is immutable: other content with the same version fails.
     std::fs::write(&jar, b"PK-another-content").expect("the jar");
     let again = maven.deploy(port, MIXED, "1.0", &jar);
     assert!(!again.ok, "a release must not be replaced");
@@ -190,8 +190,8 @@ fn mvn_deploys_and_resolves_a_release_and_a_snapshot() {
         again.output
     );
 
-    // Snapshot: se publica con timestamp (unique) y se resuelve por la
-    // metadata de la version.
+    // Snapshot: published with a timestamp (unique) and resolved through the
+    // version's metadata.
     std::fs::write(&jar, b"PK-snapshot-one").expect("the jar");
     let snapshot = maven.deploy(port, MIXED, "2.0-SNAPSHOT", &jar);
     assert!(snapshot.ok, "{}", snapshot.output);
@@ -211,7 +211,7 @@ fn mvn_deploys_and_resolves_a_release_and_a_snapshot() {
         b"PK-snapshot-two"
     );
 
-    // Un repositorio de releases no admite snapshots.
+    // A releases repository does not admit snapshots.
     let refused = maven.deploy(port, RELEASES, "3.0-SNAPSHOT", &jar);
     assert!(!refused.ok, "{}", refused.output);
 
@@ -230,13 +230,13 @@ fn mvn_is_refused_without_a_valid_credential_and_resolves_after_a_restart() {
     let jar = deployment.directory.path().join("lib.jar");
     std::fs::write(&jar, b"PK-persistent").expect("the jar");
 
-    // Una credencial que el servicio no acepta: 401.
+    // A credential the service does not accept: 401.
     let intruder = Maven::new(deployment.directory.path(), "not-a-token", &group);
     let refused = intruder.deploy(port, MIXED, "1.0", &jar);
     assert!(!refused.ok, "{}", refused.output);
     assert!(refused.output.contains("401"), "{}", refused.output);
 
-    // Una persona sin permiso en la politica: 403.
+    // A person without permission in the policy: 403.
     let carol = Maven::new(
         deployment.directory.path(),
         &support::token(FIRST_ACCOUNT, "carol"),
@@ -253,7 +253,7 @@ fn mvn_is_refused_without_a_valid_credential_and_resolves_after_a_restart() {
     );
     assert!(alice.deploy(port, MIXED, "1.0", &jar).ok);
 
-    // Reinicio: el contenido y los metadatos siguen ahi.
+    // Restart: the content and metadata are still there.
     support::kill(&mut service);
     let mut service = deployment.start_on(port, &[]);
     alice.forget();

@@ -1,17 +1,17 @@
-//! HSP-88: la consulta de investigación de solo lectura.
+//! HSP-88: the read-only investigation query.
 //!
-//! La investigación es una LECTURA: el cuerpo nombra el sujeto y, si se
-//! quiere, la pregunta, y la respuesta es el informe del investigador.
-//! Aquí se comprueba lo que el contrato promete:
+//! The investigation is a READ: the body names the subject and, if
+//! wanted, the question, and the response is the investigator's report.
+//! Here what the contract promises is checked:
 //!
-//! - la consulta autorizada devuelve un informe con sus citas y su
-//!   cobertura;
-//! - funciona sin modelo: los hallazgos son los de las herramientas y la
-//!   pregunta se declara sin responder;
-//! - lo que no está autorizado no llega a leer nada, y lo que no cabe en
-//!   el presupuesto se DECLARA omitido;
-//! - la superficie no escribe nada: no promueve, no cambia una política,
-//!   no aprueba una excepción y no escribe una decisión.
+//! - the authorized query returns a report with its citations and its
+//!   coverage;
+//! - it works without a model: the findings are those of the tools and the
+//!   question is declared unanswered;
+//! - what is not authorized does not get to read anything, and what does not fit in
+//!   the budget is DECLARED omitted;
+//! - the surface writes nothing: it does not promote, does not change a policy,
+//!   does not approve an exception and does not write a decision.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -49,10 +49,10 @@ use tower::ServiceExt;
 mod graph_profile;
 use graph_profile::Workdir;
 
-/// La cuenta de la prueba.
+/// The test's account.
 const ACCOUNT: &str = "acme";
 
-/// El sujeto de la investigación: el HRN canónico de un artefacto.
+/// The subject of the investigation: an artifact's canonical HRN.
 fn subject() -> Hrn {
     Hrn::with_region(
         "hodei".to_string(),
@@ -64,10 +64,10 @@ fn subject() -> Hrn {
     )
 }
 
-/// El tenant del grafo: el que dice la plantilla del despliegue.
+/// The graph's tenant: the one the deployment template states.
 ///
-/// La plantilla por defecto es `hrn:hodei:artifacts:{region}:{account}:artifact/{account}`,
-/// y el sujeto vive en `eu-west-1` y en la cuenta `acme`.
+/// The default template is `hrn:hodei:artifacts:{region}:{account}:artifact/{account}`,
+/// and the subject lives in `eu-west-1` and in the `acme` account.
 fn tenant() -> Hrn {
     Hrn::with_region(
         "hodei".to_string(),
@@ -79,7 +79,7 @@ fn tenant() -> Hrn {
     )
 }
 
-/// El contenido de la evidencia: texto de un tercero, y por tanto dato.
+/// The evidence content: third-party text, and therefore data.
 const EVIDENCE_TEXT: &str = "the sbom of the artefact declares the component lib-vuln";
 
 struct TestAuthenticator;
@@ -106,7 +106,7 @@ impl PrincipalAuthenticator for TestAuthenticator {
     }
 }
 
-/// El autorizador que concede la investigación.
+/// The authorizer that grants the investigation.
 fn cedar() -> Arc<dyn AuthorizerPort> {
     let policy = r#"permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
@@ -123,7 +123,7 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// El autorizador que concede otra cosa: el permiso de investigar no está.
+/// The authorizer that grants something else: the permission to investigate is not there.
 fn cedar_without_investigation() -> Arc<dyn AuthorizerPort> {
     let policy = r#"permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
@@ -140,10 +140,10 @@ fn cedar_without_investigation() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// La investigacion que cuenta las veces que la llaman.
+/// The investigation that counts how many times it is called.
 ///
-/// Sirve para probar lo que la puerta hace ANTES de leer: una peticion
-/// rechazada no llega aqui, y eso se ve en el contador.
+/// It serves to test what the gate does BEFORE reading: a rejected
+/// request does not get here, and that is seen in the counter.
 struct CountingInvestigation {
     calls: Arc<AtomicUsize>,
     scopes: Arc<std::sync::Mutex<Vec<hodei_investigator::scope::RetrievalScope>>>,
@@ -228,7 +228,7 @@ impl hodei_artifacts_api::investigation::InvestigationPort for CountingInvestiga
     }
 }
 
-/// La aplicacion con la superficie de investigacion montada.
+/// The application with the investigation surface mounted.
 async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
     investigation: Option<Arc<dyn hodei_artifacts_api::investigation::InvestigationPort>>,
@@ -293,12 +293,12 @@ async fn stores_of(tmp: &Workdir) -> Stores {
     }
 }
 
-/// El cuerpo de la peticion.
+/// The request body.
 fn body(subject: &str, extra: &str) -> String {
     format!("{{\"subject\":\"{subject}\"{extra}}}")
 }
 
-/// La peticion de la investigacion.
+/// The investigation request.
 fn request(token: Option<&str>, payload: &str) -> Request<Body> {
     let mut builder = Request::builder()
         .method("POST")
@@ -312,7 +312,7 @@ fn request(token: Option<&str>, payload: &str) -> Request<Body> {
         .expect("a request")
 }
 
-/// El cuerpo de la respuesta, como JSON.
+/// The response body, as JSON.
 async fn the_json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(
         &axum::body::to_bytes(response.into_body(), 1024 * 1024)
@@ -322,7 +322,7 @@ async fn the_json(response: axum::response::Response) -> serde_json::Value {
     .expect("the body is JSON")
 }
 
-/// La consulta autorizada devuelve el informe del investigador.
+/// The authorized query returns the investigator's report.
 #[tokio::test]
 async fn la_consulta_autorizada_devuelve_el_informe() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -353,14 +353,14 @@ async fn la_consulta_autorizada_devuelve_el_informe() {
     assert_eq!(body["subject"], subject().to_string());
     assert!(body["findings"].is_array());
     assert!(body["read_set"].is_object());
-    // El alcance de la consulta es el del sujeto y el de la cuenta
-    // verificada: el actor es la identidad que pregunta.
+    // The query's scope is that of the subject and of the verified
+    // account: the actor is the identity asking.
     let scope = investigation.the_scope();
     assert_eq!(scope.subject, subject());
     assert_eq!(scope.actor.account_id(), ACCOUNT);
 }
 
-/// Lo que no está autenticado no llega a leer nada.
+/// What is not authenticated does not get to read anything.
 #[tokio::test]
 async fn sin_credencial_no_se_consulta_nada() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -385,7 +385,7 @@ async fn sin_credencial_no_se_consulta_nada() {
     );
 }
 
-/// El sujeto de otra cuenta no está, y no se evalúa.
+/// The subject of another account is not there, and is not evaluated.
 #[tokio::test]
 async fn el_sujeto_de_otra_cuenta_no_esta() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -414,7 +414,7 @@ async fn el_sujeto_de_otra_cuenta_no_esta() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// El sujeto tiene que ser un artefacto: un repositorio no se investiga.
+/// The subject has to be an artifact: a repository is not investigated.
 #[tokio::test]
 async fn un_sujeto_que_no_es_un_artefacto_no_esta() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -443,7 +443,7 @@ async fn un_sujeto_que_no_es_un_artefacto_no_esta() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// El sujeto tiene que ser un HRN canonico.
+/// The subject has to be a canonical HRN.
 #[tokio::test]
 async fn un_sujeto_que_no_es_un_hrn_no_valida() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -464,7 +464,7 @@ async fn un_sujeto_que_no_es_un_hrn_no_valida() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// Sin permiso no se investiga.
+/// Without permission there is no investigation.
 #[tokio::test]
 async fn sin_permiso_no_se_investiga() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -485,7 +485,7 @@ async fn sin_permiso_no_se_investiga() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// La pregunta tiene un tamaño, y el tamaño es el del despliegue.
+/// The question has a size, and the size is the deployment's.
 #[tokio::test]
 async fn una_pregunta_mas_larga_que_el_limite_no_pasa() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -513,7 +513,7 @@ async fn una_pregunta_mas_larga_que_el_limite_no_pasa() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// La peticion ACOTA el presupuesto del despliegue, nunca lo amplía.
+/// The request NARROWS the deployment's budget, never widens it.
 #[tokio::test]
 async fn la_peticion_solo_acota_el_presupuesto() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -543,7 +543,7 @@ async fn la_peticion_solo_acota_el_presupuesto() {
     assert_eq!(scope.budget.max_relations, 7);
     assert_eq!(scope.budget.max_bytes, 11);
 
-    // Y lo que se pide de mas es el limite del despliegue.
+    // And what is requested beyond that is the deployment's limit.
     let investigation = Arc::new(CountingInvestigation::new());
     let (app, _tmp) = app_with(
         cedar(),
@@ -571,7 +571,7 @@ async fn la_peticion_solo_acota_el_presupuesto() {
     assert_eq!(scope.budget.max_bytes, 256 * 1024);
 }
 
-/// La superficie es una lectura: no tiene ningun otro metodo.
+/// The surface is a read: it has no other method.
 #[tokio::test]
 async fn la_superficie_no_tiene_otros_metodos() {
     let (app, _tmp) = app_with(cedar(), None, true).await;
@@ -593,7 +593,7 @@ async fn la_superficie_no_tiene_otros_metodos() {
     }
 }
 
-/// Un despliegue que no declara la superficie no la monta.
+/// A deployment that does not declare the surface does not mount it.
 #[tokio::test]
 async fn un_despliegue_que_no_declara_la_superficie_no_la_monta() {
     let (app, _tmp) = app_with(cedar(), None, false).await;
@@ -605,13 +605,13 @@ async fn un_despliegue_que_no_declara_la_superficie_no_la_monta() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
-/// El despliegue cablea la investigacion sobre sus almacenes.
+/// The deployment wires the investigation over its stores.
 ///
-/// En el perfil de grafo el almacen de contenido es obligatorio y la
-/// investigacion se cablea siempre: un despliegue sin almacen utilizable no
-/// llega a servir, de modo que la superficie nunca puede devolver un informe
-/// vacio que parece una respuesta. El arranque se niega, diciendo cual es el
-/// directorio que no se puede abrir.
+/// In the graph profile the content store is mandatory and the
+/// investigation is always wired: a deployment without a usable store does not
+/// get to serve, so the surface can never return an empty report
+/// that looks like an answer. Startup refuses, saying which
+/// directory cannot be opened.
 #[tokio::test]
 async fn un_despliegue_sin_almacen_de_contenido_no_arranca() {
     let tmp = Workdir::new();
@@ -643,11 +643,11 @@ async fn un_despliegue_sin_almacen_de_contenido_no_arranca() {
     );
 }
 
-/// La investigacion real: el informe cita la evidencia y declara la cobertura.
+/// The real investigation: the report cites the evidence and declares the coverage.
 ///
-/// aqui el mundo es real: hay una pieza de evidencia con su contenido en
-/// el CAS, y una relacion del grafo que la sostiene. El informe tiene que
-/// decir las dos cosas.
+/// here the world is real: there is a piece of evidence with its content in
+/// the CAS, and a graph relation that supports it. The report has to
+/// say both things.
 #[tokio::test]
 async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
     let tmp = Workdir::new();
@@ -680,7 +680,7 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
         blobs,
     } = stores_of(&tmp).await;
 
-    // La evidencia: su contenido en el CAS, con el digest que lo nombra.
+    // The evidence: its content in the CAS, with the digest that names it.
     let content = EVIDENCE_TEXT.as_bytes().to_vec();
     let digest = blobs.put(&content).await.expect("the content is stored");
     let record = EvidenceRecord::builder(EvidenceId::new("ev-hsp88-1"), tenant())
@@ -696,7 +696,7 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
         .build();
     evidence.put(record).await.expect("the evidence is stored");
 
-    // El grafo: la relacion que la evidencia sostiene.
+    // The graph: the relation the evidence supports.
     use hodei_evidence::ports::graph::GraphWriter;
     let now = chrono::Utc::now();
     let changes = hodei_evidence::domain::graph::GraphChangeSet::empty()
@@ -751,7 +751,7 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = the_json(response).await;
 
-    // El informe declara lo que se leyo, con el digest que lo verifica.
+    // The report declares what was read, with the digest that verifies it.
     let stamps = body["read_set"]["stamps"]
         .as_array()
         .expect("the read set has stamps");
@@ -766,13 +766,13 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
         "the manifest carries the digest, not the content"
     );
 
-    // La cobertura se declara: lo que no se leyo no se esconde.
+    // The coverage is declared: what was not read is not hidden.
     assert!(
         body["coverage"] == "complete" || body["coverage"]["partial"].is_object(),
         "the coverage is declared"
     );
 
-    // Y el informe no lleva ninguna decision: describe.
+    // And the report carries no decision: it describes.
     let report = body.as_object().expect("the report is an object");
     for key in report.keys() {
         assert!(
@@ -782,11 +782,11 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
     }
 }
 
-/// Lo que no cabe en el presupuesto se DECLARA omitido.
+/// What does not fit in the budget is DECLARED omitted.
 ///
-/// Con un presupuesto de cero piezas de evidencia, la evidencia no se lee
-/// y el informe lo dice: la cobertura es parcial y dice cuantas cosas se
-/// quedaron fuera.
+/// With a budget of zero pieces of evidence, the evidence is not read
+/// and the report says so: coverage is partial and says how many things
+/// were left out.
 #[tokio::test]
 async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
     let tmp = Workdir::new();
@@ -861,11 +861,11 @@ async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
     );
 }
 
-/// Sin modelo, la pregunta se declara sin responder.
+/// Without a model, the question is declared unanswered.
 ///
-/// El informe dice que la pregunta no tiene respuesta, y lo dice como una
-/// incertidumbre: una respuesta que finge haberla respondido es una
-/// fabricacion.
+/// The report says the question has no answer, and says it as an
+/// uncertainty: an answer that pretends to have answered it is a
+/// fabrication.
 #[tokio::test]
 async fn sin_modelo_la_pregunta_se_declara_sin_responder() {
     let tmp = Workdir::new();

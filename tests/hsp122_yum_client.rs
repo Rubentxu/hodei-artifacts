@@ -1,22 +1,22 @@
-//! El `dnf install` de HSP-122 contra el **cliente real**: un
-//! `quay.io/fedora/fedora:latest` en podman cuyo `.repo` apunta al hub.
+//! The `dnf install` of HSP-122 against the **real client**: a
+//! `quay.io/fedora/fedora:latest` in podman whose `.repo` points to the hub.
 //!
-//! La distro esta **fijada** en una imagen concreta, que es lo que pide
-//! el criterio de aceptacion: el `dnf` y el `rpm` de Fedora, con
-//! `repo_gpgcheck=1`. El flujo es el de cualquier sysadmin:
+//! The distro is **pinned** to a specific image, which is what the
+//! acceptance criterion asks for: Fedora's `dnf` and `rpm`, with
+//! `repo_gpgcheck=1`. The flow is that of any sysadmin:
 //!
-//! 1. dentro del contenedor se construye un `.rpm` real con
-//!    `rpmbuild` (los nuestros, sinteticos, no instalarian);
-//! 2. el hub lo publica por `PUT /yum/{repo}/pool/...`, cuya ruta
-//!    dicta el header del propio binario;
-//! 3. `dnf -y install hello-hodei` tiene que descargar el `repomd.xml`,
-//!    **verificar su firma** contra la `key.asc` del hub, bajar el
-//!    `primary.xml.gz`, comprobar el SHA256 del paquete contra el
-//!    indice e instalarlo;
-//! 4. con la clave de un tercero, la instalacion tiene que negarse.
+//! 1. inside the container a real `.rpm` is built with
+//!    `rpmbuild` (ours, synthetic, would not install);
+//! 2. the hub publishes it through `PUT /yum/{repo}/pool/...`, whose path
+//!    is dictated by the binary's own header;
+//! 3. `dnf -y install hello-hodei` has to download the `repomd.xml`,
+//!    **verify its signature** against the hub's `key.asc`, download the
+//!    `primary.xml.gz`, check the package's SHA256 against the
+//!    index and install it;
+//! 4. with a third party's key, the installation has to refuse.
 //!
-//! Sin podman o sin la imagen, la suite falla diciendo que falta, como
-//! las demas suites de cliente real.
+//! Without podman or without the image, the suite fails saying it is missing, like
+//! the other real-client suites.
 
 mod support;
 
@@ -62,8 +62,8 @@ fn require_podman() {
     );
 }
 
-/// Ejecuta un script dentro del contenedor con `work` montado en `/work`
-/// y red de host para alcanzar al hub en el 127.0.0.1.
+/// Runs a script inside the container with `work` mounted at `/work`
+/// and host networking to reach the hub at 127.0.0.1.
 fn container_run(work: &Path, script: &str) -> std::process::Output {
     let output = Command::new("podman")
         .arg("run")
@@ -113,9 +113,9 @@ fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// El spec del paquete real: `rpmbuild` lo exige bien formado. La ruta
-/// del `.repo` del hub se construye aqui con credenciales en la
-/// userinfo, que es como dnf espera la autenticacion basica.
+/// The spec of the real package: `rpmbuild` requires it well formed. The path
+/// of the hub's `.repo` is built here with credentials in the
+/// userinfo, which is how dnf expects basic authentication.
 const RPM_SPEC: &str = concat!(
     "Name: hello-hodei\n",
     "Version: 1.0.0\n",
@@ -165,7 +165,7 @@ fn the_real_dnf_client_installs_and_verifies_the_signed_metadata() {
     std::fs::write(work.join("hello.spec"), RPM_SPEC).expect("the spec");
     std::fs::write(work.join("greeting.txt"), "hola desde hodei\n").expect("the payload");
 
-    // 1. Un `.rpm` de verdad, construido por el rpm de la distro fijada.
+    // 1. A real `.rpm`, built by the rpm of the pinned distro.
     container_run(
         &work,
         concat!(
@@ -180,8 +180,8 @@ fn the_real_dnf_client_installs_and_verifies_the_signed_metadata() {
         .expect("the built rpm");
     assert!(!rpm.is_empty(), "rpmbuild produced a package");
 
-    // 2. Se publica por la superficie yum del hub: la ruta del pool es
-    //    la que dicta el header del binario construido fuera de aqui.
+    // 2. It is published through the hub's yum surface: the pool path is
+    //    the one dictated by the header of the binary built outside of here.
     let published = call(
         port,
         "PUT",
@@ -191,16 +191,16 @@ fn the_real_dnf_client_installs_and_verifies_the_signed_metadata() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // 3. La clave publica del hub, en armadura, para el gpgkey del repo.
+    // 3. The hub's public key, armored, for the repo's gpgkey.
     let key = call(port, "GET", "/yum/fedora-hosted/key.asc", &token, None);
     assert_eq!(key.status, 200, "{}", text_of(&key));
     std::fs::write(work.join("key.asc"), key.body.as_slice()).expect("the key");
 
-    // 4. El gestor real de la distro fijada. `dnf` (dnf5) instala el
-    //    paquete comprobando el sha256 del indice, y `microdnf`, el otro
-    //    cliente oficial de Fedora, es quien **aprieta** la firma del
-    //    repomd: dnf5 5.4.2 avisa "repomd.xml GPG signature verification
-    //    error" y continua, microdnf se niega. Ambos flujos se prueban.
+    // 4. The real manager of the pinned distro. `dnf` (dnf5) installs the
+    //    package checking the index's sha256, and `microdnf`, the other
+    //    official Fedora client, is the one that **enforces** the signature of the
+    //    repomd: dnf5 5.4.2 warns "repomd.xml GPG signature verification
+    //    error" and continues, microdnf refuses. Both flows are tested.
     let script = format!(
         concat!(
             "set -euo pipefail\n",
@@ -265,9 +265,9 @@ fn dnf_refuses_the_metadata_signed_by_a_stranger_key() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // Un tercero que no es el firmante del hub. Con su clave fijada en
-    // el repo, la metadata del hub no abre: microdnf —el cliente que
-    // aprieta `repo_gpgcheck`— tiene que negarse, no instalar a ciegas.
+    // A third party that is not the hub's signer. With its key pinned in
+    // the repo, the hub's metadata does not open: microdnf -- the client that
+    // enforces `repo_gpgcheck` -- has to refuse, not install blindly.
     let stranger =
         hodei_artifacts_api::openpgp::MetadataSigner::generate("Stranger <x@example.local>")
             .expect("a second key");

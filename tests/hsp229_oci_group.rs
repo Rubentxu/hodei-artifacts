@@ -1,66 +1,66 @@
-//! HSP-229: el grupo OCI resuelve la referencia entre sus miembros.
+//! HSP-229: the OCI group resolves the reference among its members.
 //!
-//! Lo que se demuestra aqui, contra el **service de verdad**:
+//! What is demonstrated here, against the **real service**:
 //!
-//! - la precedencia del grupo es la de su configuracion: gana el primer
-//!   miembro que tiene la referencia, y la respuesta dice de que miembro
-//!   salio (`x-hodei-resolved-from`) y en que version de la configuracion
-//!   se resolvio (`x-hodei-group-version`);
-//! - un manifiesto se sirve **entero** de un solo miembro, y sus blobs van
-//!   direccionados por su digest;
-//! - un MISS (un miembro sin la etiqueta) sigue al siguiente miembro, y un
-//!   ERROR (la confianza oculta el digest del ganador) **detiene** la
-//!   resolucion: el grupo no salta al siguiente;
-//! - el `HEAD` recorre exactamente la misma resolucion que el `GET`;
-//! - un miembro que el principal no puede leer se omite sin decir que
-//!   existe, y un repositorio de otra cuenta es `NAME_UNKNOWN`;
-//! - un grupo **no guarda nada**: la escritura contra el se rechaza con el
-//!   `UNSUPPORTED` del dialecto.
+//! - the group's precedence is that of its configuration: the first
+//!   member that has the reference wins, and the response says which member
+//!   it came from (`x-hodei-resolved-from`) and in which version of the configuration
+//!   it was resolved (`x-hodei-group-version`);
+//! - a manifest is served **whole** from a single member, and its blobs are
+//!   addressed by their digest;
+//! - a MISS (a member without the tag) moves on to the next member, and an
+//!   ERROR (trust hides the winner's digest) **stops** the
+//!   resolution: the group does not skip to the next one;
+//! - `HEAD` walks exactly the same resolution as `GET`;
+//! - a member that the principal cannot read is skipped without saying that it
+//!   exists, and a repository of another account is `NAME_UNKNOWN`;
+//! - a group **stores nothing**: a write against it is rejected with the
+//!   dialect's `UNSUPPORTED`.
 //!
-//! Y, con un miembro **proxy** delante --el incremento 2--:
+//! And, with a **proxy** member in front --increment 2--:
 //!
-//! - el proxy se consulta con el **nombre del miembro**, no con el del
-//!   grupo, y lo que baja se publica en el namespace del miembro;
-//! - un upstream **caido** detiene la resolucion: el grupo no salta al
-//!   siguiente miembro, porque un fallo transitorio no puede cambiar en
-//!   silencio lo que se descarga;
-//! - un upstream que responde `404` es un MISS, y el siguiente miembro gana;
-//! - la reserva de namespaces se juzga por el **nombre del repositorio**, y
-//!   un miembro proxy cuyo nombre cae en la reserva no se consulta;
-//! - un upstream que pide el token en un realm que no es el declarado no
-//!   recibe la credencial, ni dentro de un grupo;
-//! - un cliente OCI **real** (`skopeo`) saca la imagen del grupo.
+//! - the proxy is queried with the **member's name**, not the
+//!   group's, and what it downloads is published in the member's namespace;
+//! - a **down** upstream stops the resolution: the group does not skip to the
+//!   next member, because a transient failure cannot silently change
+//!   what is downloaded;
+//! - an upstream that answers `404` is a MISS, and the next member wins;
+//! - namespace reservation is judged by the **repository name**, and
+//!   a proxy member whose name falls in the reservation is not queried;
+//! - an upstream that asks for the token in a realm that is not the declared one does not
+//!   receive the credential, not even inside a group;
+//! - a **real** OCI client (`skopeo`) pulls the image from the group.
 //!
-//! Y, con el listado de etiquetas --el incremento 3--:
+//! And, with the tag listing --increment 3--:
 //!
-//! - el listado del grupo trae las etiquetas de los hosted **y** las del
-//!   upstream de su miembro proxy, que se pregunta con el nombre del
-//!   miembro;
-//! - una etiqueta que tienen dos miembros sale **una** vez, y el listado y
-//!   la resolucion cuentan la misma historia: lo que el listado dice se
-//!   descarga del miembro que gano;
-//! - un upstream **caido** no deja servir el listado a medias: el listado
-//!   entero es un error.
+//! - the group's listing brings the tags of the hosted ones **and** those of the
+//!   upstream of its proxy member, which is queried with the member's
+//!   name;
+//! - a tag that two members have comes out **once**, and the listing and
+//!   the resolution tell the same story: what the listing says is
+//!   downloaded from the member that won;
+//! - a **down** upstream does not let the listing be served halfway: the
+//!   whole listing is an error.
 //!
-//! Y, con el listado de un proxy **directo** --el incremento 4--:
+//! And, with the listing of a **direct** proxy --increment 4--:
 //!
-//! - el listado de un proxy directo trae las etiquetas de su **upstream**,
-//!   que se pregunta con el nombre del proxy;
-//! - el listado y la resolucion cuentan la misma historia: lo que el listado
-//!   dice se descarga del upstream;
-//! - un upstream **caido** no se sirve como una lista vacia: el listado
-//!   entero es un error;
-//! - un upstream cuyo **ambito** no cubre el listado hace un proxy que no
-//!   puede enumerar, y su listado es la lista vacia.
+//! - the listing of a direct proxy brings the tags of its **upstream**,
+//!   which is queried with the proxy's name;
+//! - the listing and the resolution tell the same story: what the listing
+//!   says is downloaded from the upstream;
+//! - a **down** upstream is not served as an empty list: the
+//!   whole listing is an error;
+//! - an upstream whose **scope** does not cover the listing makes a proxy that
+//!   cannot enumerate, and its listing is the empty list.
 //!
-//! Y, con el listado **honesto** --el incremento 5--:
+//! And, with the **honest** listing --increment 5--:
 //!
-//! - el listado solo anuncia las etiquetas que la resolucion acepta: un
-//!   nombre que la resolucion rechaza no se anuncia;
-//! - un miembro cuyo ambito no cubre el listado no aparece en el listado
-//!   del grupo, y la decision deja traza;
-//! - un upstream que **pagina** su lista no sirve un listado a medias: el
-//!   listado no se sirve.
+//! - the listing only announces the tags that the resolution accepts: a
+//!   name that the resolution rejects is not announced;
+//! - a member whose scope does not cover the listing does not appear in the group's
+//!   listing, and the decision leaves a trace;
+//! - an upstream that **paginates** its list does not serve a listing halfway: the
+//!   listing is not served.
 
 mod support;
 
@@ -77,26 +77,26 @@ use sha2::{Digest, Sha256};
 use support::lab::{Expectation, LabCase, Scope, describe_registry_lab, run_registry_lab_case};
 use support::{Curl, Deployment, FIRST_ACCOUNT, SECOND_REPOSITORY};
 
-/// El primer miembro del grupo.
+/// The first member of the group.
 const FIRST: &str = "oci-first";
 
-/// El segundo miembro del grupo.
+/// The second member of the group.
 const SECOND: &str = "oci-second";
 
-/// El grupo.
+/// The group.
 const GROUP: &str = "oci-group";
 
-/// La etiqueta que se pide.
+/// The tag that is requested.
 const TAG: &str = "v1";
 
-/// El tipo de medio del manifiesto de imagen.
+/// The media type of the image manifest.
 const MANIFEST_MEDIA_TYPE: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// Los casos que una ejecucion completa tiene que ejecutar.
+/// The cases that a complete run has to execute.
 ///
-/// Se declaran **antes** de correr: una ejecucion que solo llego a algunos
-/// dice cuales no corrieron, y un informe con un caso que no corrio nunca
-/// es verde.
+/// They are declared **before** running: a run that only reached some
+/// says which did not run, and a report with a case that never ran
+/// is green.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1-precedence-and-provenance",
@@ -208,20 +208,20 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El seeder del catálogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El digest de unos bytes.
+/// The digest of some bytes.
 fn the_digest(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 
-/// La configuracion de una imagen, con su capa.
+/// The configuration of an image, with its layer.
 fn the_image(layer: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let config = b"{\"architecture\":\"amd64\",\"os\":\"linux\"}".to_vec();
     let manifest = json!({
@@ -243,11 +243,11 @@ fn the_image(layer: &[u8]) -> (Vec<u8>, Vec<u8>) {
     (manifest, config)
 }
 
-/// El despliegue con el grupo y sus miembros sembrados.
+/// The deployment with the group and its members seeded.
 ///
-/// `trusted` son los miembros que se siembran en el canal **trusted**: su
-/// compuerta de confianza no deja pasar lo que no tiene concesion, y eso
-/// es lo que se mide.
+/// `trusted` are the members seeded on the **trusted** channel: their
+/// trust gate does not let through what has no grant, and that
+/// is what is measured.
 fn the_deployment(trusted: &[&str]) -> Deployment {
     let deployment = Deployment::new();
     let repositories: Vec<serde_json::Value> = [FIRST, SECOND]
@@ -269,15 +269,15 @@ fn the_deployment(trusted: &[&str]) -> Deployment {
     deployment
 }
 
-/// Publica una imagen en un repositorio OCI, por el protocolo.
+/// Publishes an image to an OCI repository, by the protocol.
 ///
-/// Los blobs primero y el manifiesto despues: es el orden del protocolo, y
-/// el manifiesto se publica con la etiqueta que lo nombra.
+/// The blobs first and the manifest after: it is the protocol's order, and
+/// the manifest is published with the tag that names it.
 fn publish(deployment: &Deployment, port: u16, repository: &str, layer: &[u8]) -> Vec<u8> {
     publish_as(deployment, port, repository, TAG, layer)
 }
 
-/// Publica una imagen en un repositorio OCI, con una etiqueta propia.
+/// Publishes an image to an OCI repository, with a tag of its own.
 fn publish_as(
     deployment: &Deployment,
     port: u16,
@@ -334,26 +334,26 @@ fn publish_as(
     manifest
 }
 
-/// La respuesta de una lectura OCI.
+/// The response of an OCI read.
 struct Reply {
-    /// El codigo de estado.
+    /// The status code.
     status: u16,
-    /// Los bytes del cuerpo.
+    /// The body bytes.
     body: Vec<u8>,
-    /// El digest que dice la respuesta.
+    /// The digest that the response states.
     content_digest: Option<String>,
-    /// Que miembro sirvio el contenido.
+    /// Which member served the content.
     resolved_from: Option<String>,
-    /// La version de la configuracion del grupo.
+    /// The version of the group's configuration.
     group_version: Option<String>,
 }
 
-/// Una lectura del grupo por la etiqueta.
+/// A read of the group by tag.
 fn the_manifest(deployment: &Deployment, port: u16, repository: &str) -> Reply {
     the_manifest_of(deployment, port, repository, TAG)
 }
 
-/// Una lectura del grupo por una etiqueta.
+/// A read of the group by a tag.
 fn the_manifest_of(deployment: &Deployment, port: u16, repository: &str, tag: &str) -> Reply {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let into = deployment.directory.path().join("answer.bin");
@@ -374,11 +374,11 @@ fn the_manifest_of(deployment: &Deployment, port: u16, repository: &str, tag: &s
     }
 }
 
-/// La lista de etiquetas de un repositorio: el estado, los nombres y el
-/// cuerpo crudo.
+/// The tag list of a repository: the status, the names and the
+/// raw body.
 ///
-/// El cuerpo crudo importa: un listado que se sirve a medias se reconoceria
-/// por lo que **dice**, no por lo que deja de decir.
+/// The raw body matters: a listing served halfway would be recognized
+/// by what it **says**, not by what it leaves unsaid.
 fn the_tags(deployment: &Deployment, port: u16, repository: &str) -> (u16, Vec<String>, String) {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let into = deployment.directory.path().join("tags-list.json");
@@ -401,7 +401,7 @@ fn the_tags(deployment: &Deployment, port: u16, repository: &str) -> (u16, Vec<S
     (answer.status, tags, body)
 }
 
-/// Una lectura de un blob por su digest.
+/// A read of a blob by its digest.
 fn the_blob(deployment: &Deployment, port: u16, repository: &str, digest: &str) -> Reply {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let into = deployment.directory.path().join("blob-answer.bin");
@@ -422,17 +422,17 @@ fn the_blob(deployment: &Deployment, port: u16, repository: &str, digest: &str) 
     }
 }
 
-/// La respuesta de un `HEAD` del grupo por la etiqueta.
+/// The response of a `HEAD` of the group by tag.
 fn the_head(port: u16, repository: &str) -> support::Answer {
     let token = support::token(FIRST_ACCOUNT, "alice");
     Curl::describe(port, &format!("/v2/{repository}/manifests/{TAG}"), &token).run()
 }
 
-/// Corre un caso del laboratorio.
+/// Runs a lab case.
 ///
-/// El caso se **inscribe antes de correr**, con `NOT_RUN`, y se reemplaza
-/// cuando acaba: un caso que se muere a mitad deja un `NOT_RUN` en el
-/// informe y no un `PASS` que nadie midio.
+/// The case is **registered before running**, as `NOT_RUN`, and is replaced
+/// when it finishes: a case that dies midway leaves a `NOT_RUN` in the
+/// report and not a `PASS` that nobody measured.
 fn a_case(
     id: &str,
     title: &str,
@@ -440,9 +440,9 @@ fn a_case(
     expectation: Expectation,
     body: impl FnOnce() -> LabCase,
 ) {
-    // El informe se describe antes de que corra ningun caso: el titulo y
-    // el descargo son de la suite, y un caso que se inscribe antes de que
-    // la suite se describa escribiria un informe que no es de esta suite.
+    // The report is described before any case runs: the title and
+    // the disclaimer belong to the suite, and a case registered before
+    // the suite is described would write a report that is not this suite's.
     describe_registry_lab(
         "Laboratorio del grupo OCI — informe",
         &[
@@ -455,7 +455,7 @@ fn a_case(
 }
 
 // ---------------------------------------------------------------------------
-// AC1: la precedencia, la integridad y la procedencia.
+// AC1: precedence, integrity and provenance.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -479,8 +479,8 @@ fn ac1_the_first_member_with_the_tag_wins_and_the_provenance_is_said() {
                 "los dos miembros publican imagenes distintas"
             );
 
-            // Los dos miembros tienen la misma etiqueta y distinto digest:
-            // gana el primero en el orden configurado.
+            // Both members have the same tag and a different digest:
+            // the first in the configured order wins.
             let answer = the_manifest(&deployment, port, GROUP);
             assert_eq!(
                 answer.status,
@@ -507,22 +507,22 @@ fn ac1_the_first_member_with_the_tag_wins_and_the_provenance_is_said() {
                 "la respuesta no dice la version de la configuracion del grupo"
             );
 
-            // Los blobs van direccionados por su digest, y son los del
-            // ganador.
+            // The blobs are addressed by their digest, and are those of the
+            // winner.
             let blob = the_blob(&deployment, port, GROUP, &the_digest(&first_layer));
             assert_eq!(blob.status, 200, "el blob del ganador no se sirve");
             assert_eq!(blob.body, first_layer, "el blob no es el del ganador");
             assert_eq!(blob.resolved_from.as_deref(), Some(FIRST));
 
-            // El blob del segundo miembro tambien se sirve: el grupo no
-            // fusiona, y lo que hay en un miembro sigue siendo alcanzable
-            // por su digest.
+            // The second member's blob is also served: the group does not
+            // merge, and what is in a member remains reachable
+            // by its digest.
             let other = the_blob(&deployment, port, GROUP, &the_digest(&second_layer));
             assert_eq!(other.status, 200, "el blob del segundo miembro no se sirve");
             assert_eq!(other.body, second_layer);
 
-            // La lista de etiquetas del grupo es la union de las de sus
-            // miembros: una entrada por nombre, y no se sirve a medias.
+            // The group's tag list is the union of its members':
+            // one entry per name, and it is not served halfway.
             let token = support::token(FIRST_ACCOUNT, "alice");
             let into = deployment.directory.path().join("tags.json");
             let tags =
@@ -534,8 +534,8 @@ fn ac1_the_first_member_with_the_tag_wins_and_the_provenance_is_said() {
                 "la etiqueta del miembro no esta en la lista del grupo: {body}"
             );
 
-            // Y la ruta directa de cada miembro no cambia: el grupo no le
-            // da acceso a nada que su propia ruta no tenga.
+            // And each member's direct path does not change: the group does not
+            // give it access to anything its own path does not have.
             let direct = the_manifest(&deployment, port, FIRST);
             assert_eq!(direct.body, first_manifest);
             assert_eq!(direct.resolved_from, None);
@@ -562,8 +562,8 @@ fn ac1_a_member_without_the_tag_is_a_miss_and_the_next_one_wins() {
             let mut service = deployment.start(&[]);
             let port = service.port;
 
-            // Solo el segundo miembro publica la etiqueta: el primero dice
-            // con certeza que no la tiene, y la resolucion sigue.
+            // Only the second member publishes the tag: the first says
+            // with certainty that it does not have it, and the resolution continues.
             let second_manifest =
                 publish(&deployment, port, SECOND, b"la-capa-del-segundo-miembro");
 
@@ -615,7 +615,7 @@ fn ac1_a_tag_that_nobody_has_is_an_unknown_manifest() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: el HEAD recorre la misma resolucion.
+// AC2: HEAD walks the same resolution.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -670,7 +670,7 @@ fn ac2_the_head_and_the_get_take_the_same_resolution() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: identidad y permisos.
+// AC3: identity and permissions.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -685,8 +685,8 @@ fn ac3_a_repository_of_another_account_is_unknown_and_says_nothing() {
             let mut service = deployment.start(&[]);
             let port = service.port;
 
-            // El repositorio de la otra cuenta existe, pero no para esta:
-            // la respuesta no dice si existe en el otro sitio.
+            // The other account's repository exists, but not for this one:
+            // the response does not say whether it exists elsewhere.
             let token = support::token(FIRST_ACCOUNT, "alice");
             let into = deployment.directory.path().join("answer.bin");
             let answer = Curl::download(
@@ -722,8 +722,8 @@ fn ac3_a_member_the_principal_cannot_read_is_skipped_without_saying_it_exists() 
         Expectation::Succeeds,
         || {
             let deployment = the_deployment(&[]);
-            // alice puede leer el grupo y el segundo miembro, pero no el
-            // primero.
+            // alice can read the group and the second member, but not the
+            // first.
             deployment.write_policy(&the_policy(&[GROUP, SECOND]));
             let mut service = deployment.start(&[]);
             let port = service.port;
@@ -733,8 +733,8 @@ fn ac3_a_member_the_principal_cannot_read_is_skipped_without_saying_it_exists() 
             publish(&deployment, port, FIRST, &first_layer);
             let second_manifest = publish(&deployment, port, SECOND, &second_layer);
 
-            // El primer miembro tiene la etiqueta, pero alice no puede
-            // leerlo: se omite sin decir que existe, y gana el segundo.
+            // The first member has the tag, but alice cannot
+            // read it: it is skipped without saying that it exists, and the second wins.
             let answer = the_manifest(&deployment, port, GROUP);
             assert_eq!(answer.status, 200, "el grupo no resuelve la etiqueta");
             assert_eq!(answer.body, second_manifest);
@@ -744,7 +744,7 @@ fn ac3_a_member_the_principal_cannot_read_is_skipped_without_saying_it_exists() 
                 "gana el miembro que el principal puede leer"
             );
 
-            // Y la ruta directa del miembro que no puede leer sigue cerrada.
+            // And the direct path of the member she cannot read stays closed.
             let token = support::token(FIRST_ACCOUNT, "alice");
             let into = deployment.directory.path().join("answer.bin");
             let direct = Curl::download(
@@ -770,11 +770,11 @@ fn ac3_a_member_the_principal_cannot_read_is_skipped_without_saying_it_exists() 
     );
 }
 
-/// La politica de Cedar de la suite: alice puede leer lo que se nombra.
+/// The suite's Cedar policy: alice can read what is named.
 ///
-/// El principal verificado es `hrn:hodei:iam::<cuenta>:User/<usuario>`: la
-/// region vacia se escribe con sus dos puntos, que es como el token lo
-/// declara.
+/// The verified principal is `hrn:hodei:iam::<account>:User/<user>`: the
+/// empty region is written with its two colons, which is how the token
+/// declares it.
 fn the_policy(downloads: &[&str]) -> String {
     let mut text = String::new();
     let principal = format!("hrn:hodei:iam::{FIRST_ACCOUNT}:User/alice");
@@ -790,7 +790,7 @@ fn the_policy(downloads: &[&str]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// R6: la confianza del ganador detiene la resolucion.
+// R6: the winner's trust stops the resolution.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -801,8 +801,8 @@ fn r6_a_trust_gate_that_hides_the_winner_does_not_make_the_group_jump() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            // El primer miembro es el canal **trusted**: su compuerta de
-            // confianza no deja pasar lo que no tiene concesion.
+            // The first member is the **trusted** channel: its trust
+            // gate does not let through what has no grant.
             let deployment = the_deployment(&[FIRST]);
             let mut service = deployment.start(&[]);
             let port = service.port;
@@ -812,9 +812,9 @@ fn r6_a_trust_gate_that_hides_the_winner_does_not_make_the_group_jump() {
             publish(&deployment, port, FIRST, &first_layer);
             publish(&deployment, port, SECOND, &second_layer);
 
-            // El ganador (el primero) lo oculta la confianza: el grupo
-            // contesta que no existe y NO baja al segundo miembro, que es
-            // otro contenido.
+            // The winner (the first) is hidden by trust: the group
+            // answers that it does not exist and does NOT go down to the second member, which is
+            // other content.
             let answer = the_manifest(&deployment, port, GROUP);
             assert_eq!(
                 answer.status, 404,
@@ -836,7 +836,7 @@ fn r6_a_trust_gate_that_hides_the_winner_does_not_make_the_group_jump() {
 }
 
 // ---------------------------------------------------------------------------
-// R10: un grupo no guarda nada.
+// R10: a group stores nothing.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -856,7 +856,7 @@ fn r10_a_write_against_a_group_is_rejected_as_unsupported() {
             std::fs::write(&file, b"contenido").expect("the body is written");
             let into = deployment.directory.path().join("answer.bin");
 
-            // El inicio de una subida contra el grupo.
+            // The start of an upload against the group.
             let upload = Curl::call(
                 port,
                 "POST",
@@ -879,7 +879,7 @@ fn r10_a_write_against_a_group_is_rejected_as_unsupported() {
                 "la respuesta no habla el dialecto de la distribucion: {text}"
             );
 
-            // Y el manifiesto tampoco.
+            // And the manifest neither.
             let manifest = Curl::call(
                 port,
                 "PUT",
@@ -903,89 +903,89 @@ fn r10_a_write_against_a_group_is_rejected_as_unsupported() {
 }
 
 // ---------------------------------------------------------------------------
-// El miembro proxy: el upstream de distribucion del laboratorio.
+// The proxy member: the lab's distribution upstream.
 // ---------------------------------------------------------------------------
 
-/// El nombre del miembro proxy.
+/// The name of the proxy member.
 const PROXY: &str = "oci-proxy";
 
-/// El grupo que tiene un miembro proxy.
+/// The group that has a proxy member.
 const PROXY_GROUP: &str = "oci-proxy-group";
 
-/// El miembro proxy cuyo upstream esta caido.
+/// The proxy member whose upstream is down.
 const DOWN: &str = "oci-proxy-down";
 
-/// El proxy directo cuyo ambito no cubre el listado.
+/// The direct proxy whose scope does not cover the listing.
 ///
-/// Su upstream tiene un ambito que no alcanza `v2/<nombre>/tags/list`: el
-/// repositorio **no puede enumerar**, y su listado es la lista vacia.
+/// Its upstream has a scope that does not reach `v2/<name>/tags/list`: the
+/// repository **cannot enumerate**, and its listing is the empty list.
 const SCOPED: &str = "oci-proxy-scoped";
 
-/// La credencial que el upstream exige en su realm.
+/// The credential that the upstream requires in its realm.
 const CREDENTIAL: &str = "secreto-del-laboratorio";
 
-/// El token que el upstream emite.
+/// The token that the upstream issues.
 const TOKEN: &str = "token-del-laboratorio";
 
-/// La variable de entorno que lleva la credencial del upstream.
+/// The environment variable that carries the upstream's credential.
 const CREDENTIAL_VARIABLE: &str = "LAB_OCI_CREDENTIAL";
 
-/// La cabecera que dice el digest del contenido servido.
+/// The header that states the digest of the served content.
 const DOCKER_CONTENT_DIGEST: HeaderName = HeaderName::from_static("docker-content-digest");
 
-/// Como se comporta el upstream.
+/// How the upstream behaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TheBehaviour {
-    /// Pide token y sirve lo que tiene.
+    /// Asks for a token and serves what it has.
     Normal,
-    /// Su reto apunta a un realm que **no** es el declarado.
+    /// Its challenge points to a realm that is **not** the declared one.
     HostileRealm,
-    /// Su lista de etiquetas esta **paginada**: la responde con la cabecera
-    /// `Link`, que dice que hay mas paginas.
+    /// Its tag list is **paginated**: it answers with the `Link` header,
+    /// which says there are more pages.
     Paginated,
 }
 
-/// Lo que el upstream ha recibido.
+/// What the upstream has received.
 #[derive(Debug, Clone)]
 struct Seen {
-    /// El camino pedido.
+    /// The requested path.
     path: String,
-    /// La cabecera `Authorization`, si la hubo.
+    /// The `Authorization` header, if there was one.
     authorization: Option<String>,
 }
 
-/// El estado del upstream.
+/// The state of the upstream.
 struct TheWorld {
-    /// Los manifiestos, por referencia.
+    /// The manifests, by reference.
     manifests: Mutex<HashMap<String, Vec<u8>>>,
-    /// Los blobs, por digest hexadecimal.
+    /// The blobs, by hexadecimal digest.
     blobs: Mutex<HashMap<String, Vec<u8>>>,
-    /// Las etiquetas de cada repositorio del upstream.
+    /// The tags of each repository of the upstream.
     tags: Mutex<HashMap<String, Vec<String>>>,
-    /// Lo que el upstream ha recibido.
+    /// What the upstream has received.
     seen: Mutex<Vec<Seen>>,
-    /// Como se comporta.
+    /// How it behaves.
     behaviour: Mutex<TheBehaviour>,
-    /// El origen al que apunta el reto hostil.
+    /// The origin that the hostile challenge points to.
     elsewhere: Mutex<String>,
-    /// El origen de este upstream, para el reto.
+    /// The origin of this upstream, for the challenge.
     origin: Mutex<String>,
 }
 
-/// El upstream de distribucion del laboratorio.
+/// The lab's distribution upstream.
 ///
-/// Pide un token en su realm, lo emite a quien presenta la credencial, y
-/// sirve manifiestos y blobs. Es el mismo patron que el de HSP-228: aqui
-/// lo que se mide es el camino del **grupo** con ese upstream delante.
+/// It asks for a token in its realm, issues it to whoever presents the credential, and
+/// serves manifests and blobs. It is the same pattern as HSP-228's: here
+/// what is measured is the path of the **group** with this upstream in front.
 struct TheRegistry {
-    /// El puerto donde escucha.
+    /// The port it listens on.
     port: u16,
-    /// El estado que comparte.
+    /// The state it shares.
     world: Arc<TheWorld>,
 }
 
 impl TheRegistry {
-    /// Arranca un upstream vacio.
+    /// Starts an empty upstream.
     fn start() -> Self {
         let world = Arc::new(TheWorld {
             manifests: Mutex::new(HashMap::new()),
@@ -1002,22 +1002,22 @@ impl TheRegistry {
         registry
     }
 
-    /// El puerto donde escucha.
+    /// The port it listens on.
     fn port(&self) -> u16 {
         self.port
     }
 
-    /// El origen del upstream.
+    /// The origin of the upstream.
     fn origin(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// La base del upstream, con barra final.
+    /// The base of the upstream, with a trailing slash.
     fn base(&self) -> String {
         format!("{}/", self.origin())
     }
 
-    /// Publica un manifiesto, bajo una referencia.
+    /// Publishes a manifest, under a reference.
     fn publish(&self, reference: &str, bytes: Vec<u8>) {
         self.world
             .manifests
@@ -1026,7 +1026,7 @@ impl TheRegistry {
             .insert(reference.to_string(), bytes);
     }
 
-    /// Publica un blob.
+    /// Publishes a blob.
     fn publish_blob(&self, digest: &str, bytes: Vec<u8>) {
         self.world
             .blobs
@@ -1035,10 +1035,10 @@ impl TheRegistry {
             .insert(digest.to_string(), bytes);
     }
 
-    /// Registra una etiqueta en un repositorio del upstream.
+    /// Registers a tag in a repository of the upstream.
     ///
-    /// Es lo que el upstream responde en su `tags/list`: la lista de lo que
-    /// tiene cada repositorio.
+    /// It is what the upstream answers in its `tags/list`: the list of what
+    /// each repository has.
     fn tag(&self, repository: &str, tag: &str) {
         let mut tags = self.world.tags.lock().expect("the tags");
         let entry = tags.entry(repository.to_string()).or_default();
@@ -1047,17 +1047,17 @@ impl TheRegistry {
         }
     }
 
-    /// Cambia el comportamiento del upstream.
+    /// Changes the upstream's behaviour.
     fn behave(&self, behaviour: TheBehaviour) {
         *self.world.behaviour.lock().expect("the behaviour") = behaviour;
     }
 
-    /// A donde apunta el reto hostil.
+    /// Where the hostile challenge points.
     fn elsewhere(&self, origin: &str) {
         *self.world.elsewhere.lock().expect("the elsewhere") = origin.to_string();
     }
 
-    /// Los caminos que le han pedido.
+    /// The paths that have been requested of it.
     fn paths(&self) -> Vec<String> {
         self.world
             .seen
@@ -1068,29 +1068,29 @@ impl TheRegistry {
             .collect()
     }
 
-    /// Cuantas veces le han pedido un camino.
+    /// How many times a path has been requested.
     ///
-    /// El camino es el que va **despues** de `/v2/`: el upstream se pide por
-    /// `v2/<nombre>/manifests/<referencia>`, y lo que se registra es lo que
-    /// viene de la ruta.
+    /// The path is the one that goes **after** `/v2/`: the upstream is requested by
+    /// `v2/<name>/manifests/<reference>`, and what is recorded is what
+    /// comes from the route.
     fn hits(&self, path: &str) -> usize {
         self.paths().iter().filter(|one| *one == path).count()
     }
 }
 
-/// El origen hostil: solo registra lo que le llega.
+/// The hostile origin: it only records what reaches it.
 ///
-/// Es el sitio al que un upstream puede mandar el reto del token cuando no
-/// es el declarado: la credencial no puede viajar ahi.
+/// It is the place to which an upstream can send the token challenge when it is not
+/// the declared one: the credential cannot travel there.
 struct TheHostile {
-    /// El puerto donde escucha.
+    /// The port it listens on.
     port: u16,
-    /// Lo que ha recibido.
+    /// What it has received.
     seen: Arc<Mutex<Vec<Seen>>>,
 }
 
 impl TheHostile {
-    /// Arranca un origen que solo registra lo que le llega.
+    /// Starts an origin that only records what reaches it.
     fn start() -> Self {
         let seen: Arc<Mutex<Vec<Seen>>> = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
@@ -1127,18 +1127,18 @@ impl TheHostile {
         Self { port, seen }
     }
 
-    /// El origen del hostil.
+    /// The hostile one's origin.
     fn origin(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// Lo que el hostil ha recibido.
+    /// What the hostile one has received.
     fn seen(&self) -> Vec<Seen> {
         self.seen.lock().expect("the log").clone()
     }
 }
 
-/// Arranca un servidor con el router del upstream y devuelve el puerto.
+/// Starts a server with the upstream's router and returns the port.
 fn serve(world: Arc<TheWorld>) -> u16 {
     let app = Router::new()
         .route("/token", get(the_token_endpoint))
@@ -1162,9 +1162,9 @@ fn serve(world: Arc<TheWorld>) -> u16 {
     port
 }
 
-/// El endpoint de token del upstream.
+/// The upstream's token endpoint.
 ///
-/// Solo entrega el token a quien presenta la credencial.
+/// It only hands the token to whoever presents the credential.
 async fn the_token_endpoint(State(_world): State<Arc<TheWorld>>, headers: HeaderMap) -> Response {
     let expected = format!("Basic {}", base64_of(&format!("lab:{CREDENTIAL}")));
     match headers
@@ -1186,7 +1186,7 @@ async fn the_token_endpoint(State(_world): State<Arc<TheWorld>>, headers: Header
     }
 }
 
-/// La superficie de la distribucion: manifiestos y blobs.
+/// The distribution surface: manifests and blobs.
 async fn the_distribution(
     State(world): State<Arc<TheWorld>>,
     Path(path): Path<String>,
@@ -1205,8 +1205,8 @@ async fn the_distribution(
     let origin = world.origin.lock().expect("the origin").clone();
     let elsewhere = world.elsewhere.lock().expect("the elsewhere").clone();
 
-    // El reto: el upstream pide un token en su realm. El upstream hostil lo
-    // pide en el realm de **otro**, que es lo que un upstream puede hacer.
+    // The challenge: the upstream asks for a token in its realm. The hostile upstream
+    // asks for it in the realm of **another**, which is what an upstream can do.
     let realm = match behaviour {
         TheBehaviour::HostileRealm => format!("{elsewhere}/token"),
         _ => format!("{origin}/token"),
@@ -1223,7 +1223,7 @@ async fn the_distribution(
             .into_response();
     }
 
-    // `v2/<nombre>/tags/list`: la lista de etiquetas del repositorio.
+    // `v2/<name>/tags/list`: the repository's tag list.
     if let Some((name, tail)) = path.split_once("/tags/list")
         && tail.is_empty()
     {
@@ -1240,9 +1240,9 @@ async fn the_distribution(
             json!({ "name": name, "tags": tags }).to_string(),
         )
             .into_response();
-        // Una lista **paginada**: el upstream lo dice con la cabecera
-        // `Link`, que anuncia la pagina siguiente. Lo que se recibe es la
-        // primera pagina, no la lista entera.
+        // A **paginated** list: the upstream says so with the
+        // `Link` header, which announces the next page. What is received is the
+        // first page, not the whole list.
         if behaviour == TheBehaviour::Paginated {
             answer.headers_mut().insert(
                 header::LINK,
@@ -1252,7 +1252,7 @@ async fn the_distribution(
         return answer;
     }
 
-    // `v2/<nombre>/manifests/<referencia>` y `v2/<nombre>/blobs/<digest>`.
+    // `v2/<name>/manifests/<reference>` and `v2/<name>/blobs/<digest>`.
     if let Some((_name, reference)) = path.split_once("/manifests/") {
         let manifest = world
             .manifests
@@ -1299,13 +1299,13 @@ async fn the_distribution(
     (StatusCode::NOT_FOUND, "{}".to_string()).into_response()
 }
 
-/// Un texto en base64.
+/// A text in base64.
 fn base64_of(text: &str) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(text)
 }
 
-/// Un puerto donde no escucha nadie: el upstream caido.
+/// A port where nobody listens: the down upstream.
 fn a_closed_port() -> u16 {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("the port binds");
     let port = listener.local_addr().expect("the address").port();
@@ -1313,21 +1313,21 @@ fn a_closed_port() -> u16 {
     port
 }
 
-/// La configuracion de un repositorio proxy, con su upstream.
+/// The configuration of a proxy repository, with its upstream.
 ///
-/// La base es la del upstream y el realm del token: los dos son el mismo
-/// origen, porque un upstream que pide el token en otro sitio no es el
-/// upstream declarado.
+/// The base is the upstream's and the token's realm: both are the same
+/// origin, because an upstream that asks for the token elsewhere is not the
+/// declared upstream.
 fn the_proxy(base: &str) -> serde_json::Value {
     the_proxy_with_scopes(base, &["v2/"])
 }
 
-/// La configuracion de un repositorio proxy, con los ambitos que se le
-/// declaran.
+/// The configuration of a proxy repository, with the scopes that are
+/// declared for it.
 ///
-/// El ambito es lo que decide si una ruta se puede pedir al upstream: lo
-/// que no cae en un scope no se pide. Un ambito que no cubre el listado
-/// hace un proxy que **no puede enumerar**.
+/// The scope is what decides whether a path can be requested from the upstream: what
+/// does not fall in a scope is not requested. A scope that does not cover the listing
+/// makes a proxy that **cannot enumerate**.
 fn the_proxy_with_scopes(base: &str, scopes: &[&str]) -> serde_json::Value {
     json!({
         "upstream": {
@@ -1349,29 +1349,29 @@ fn the_proxy_with_scopes(base: &str, scopes: &[&str]) -> serde_json::Value {
     })
 }
 
-/// El laboratorio con el upstream de distribucion delante.
+/// The lab with the distribution upstream in front.
 struct TheLab {
-    /// El despliegue con el catalogo sembrado.
+    /// The deployment with the catalog seeded.
     deployment: Deployment,
-    /// El upstream de distribucion.
+    /// The distribution upstream.
     registry: TheRegistry,
-    /// El origen hostil.
+    /// The hostile origin.
     hostile: TheHostile,
-    /// El puerto donde no escucha nadie: el upstream caido.
+    /// The port where nobody listens: the down upstream.
     down_port: u16,
 }
 
 impl TheLab {
-    /// El puerto del origen hostil.
+    /// The hostile origin's port.
     fn hostile_port(&self) -> u16 {
         self.hostile.port
     }
 
-    /// Un despliegue con los miembros sembrados y el upstream delante.
+    /// A deployment with the members seeded and the upstream in front.
     ///
-    /// Los miembros del grupo son los que se nombran; el resto esta
-    /// sembrado tambien, para que una suite pueda reordenar el grupo sin
-    /// volver a sembrar.
+    /// The group's members are the ones named; the rest are
+    /// seeded too, so that a suite can reorder the group without
+    /// seeding again.
     fn new(members: &[&str], namespaces: Option<serde_json::Value>) -> Self {
         let deployment = Deployment::new();
         let registry = TheRegistry::start();
@@ -1391,8 +1391,8 @@ impl TheLab {
                 "format": "oci",
                 "proxy": the_proxy(&down_base),
             }),
-            // El ambito de este proxy no cubre el listado: el
-            // repositorio **no puede enumerar**.
+            // This proxy's scope does not cover the listing: the
+            // repository **cannot enumerate**.
             json!({
                 "key": SCOPED,
                 "format": "oci",
@@ -1416,7 +1416,7 @@ impl TheLab {
         }
     }
 
-    /// El entorno del servicio: la salida permitida y la credencial.
+    /// The service's environment: the allowed egress and the credential.
     fn the_environment(&self) -> Vec<(String, String)> {
         let allowed = format!(
             "127.0.0.1:{};private;http,127.0.0.1:{};private;http,127.0.0.1:{};private;http",
@@ -1434,7 +1434,7 @@ impl TheLab {
         ]
     }
 
-    /// Arranca el servicio con la salida permitida.
+    /// Starts the service with the allowed egress.
     fn start(&self) -> support::Service {
         let environment = self.the_environment();
         let borrowed: Vec<(&str, &str)> = environment
@@ -1444,15 +1444,15 @@ impl TheLab {
         self.deployment.start(&borrowed)
     }
 
-    /// Publica en el upstream una imagen, con su etiqueta.
+    /// Publishes an image to the upstream, with its tag.
     fn publish_upstream(&self, layer: &[u8]) -> Vec<u8> {
         self.publish_upstream_tag(TAG, layer)
     }
 
-    /// Publica en el upstream una imagen, con una etiqueta propia.
+    /// Publishes an image to the upstream, with a tag of its own.
     ///
-    /// La etiqueta se registra tambien en la lista del upstream: es lo que
-    /// el grupo enumera cuando pregunta a su miembro proxy.
+    /// The tag is also registered in the upstream's list: it is what
+    /// the group enumerates when it asks its proxy member.
     fn publish_upstream_tag(&self, tag: &str, layer: &[u8]) -> Vec<u8> {
         let (manifest, config) = the_image(layer);
         self.registry.publish(tag, manifest.clone());
@@ -1466,7 +1466,7 @@ impl TheLab {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: el miembro proxy dentro del grupo.
+// AC3: the proxy member inside the group.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1481,7 +1481,7 @@ fn ac3_with_a_proxy_in_the_group_the_first_member_wins() {
             let mut service = lab.start();
             let port = service.port;
 
-            // Los tres miembros tienen la misma etiqueta y distinto digest.
+            // The three members have the same tag and a different digest.
             let first_manifest =
                 publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             publish(
@@ -1493,7 +1493,7 @@ fn ac3_with_a_proxy_in_the_group_the_first_member_wins() {
             let proxy_manifest = lab.publish_upstream(b"la-capa-del-upstream");
             assert_ne!(first_manifest, proxy_manifest);
 
-            // Gana el primero en el orden configurado.
+            // The first in the configured order wins.
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
                 answer.status,
@@ -1510,7 +1510,7 @@ fn ac3_with_a_proxy_in_the_group_the_first_member_wins() {
                 Some(FIRST),
                 "la respuesta no dice que miembro sirvio el contenido"
             );
-            // Y el proxy no se ha consultado: la precedencia es la del orden.
+            // And the proxy has not been queried: precedence is by order.
             assert_eq!(
                 lab.registry.hits(&format!("{PROXY}/manifests/{TAG}")),
                 0,
@@ -1540,7 +1540,7 @@ fn ac3_the_proxy_wins_when_it_is_the_first_member() {
             let mut service = lab.start();
             let port = service.port;
 
-            // Los dos miembros tienen la misma etiqueta y distinto digest.
+            // Both members have the same tag and a different digest.
             let proxy_manifest = lab.publish_upstream(b"la-capa-del-upstream");
             let hosted_manifest =
                 publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
@@ -1568,8 +1568,8 @@ fn ac3_the_proxy_wins_when_it_is_the_first_member() {
                 "la respuesta no dice el digest del contenido servido"
             );
 
-            // El upstream se consulta con el **nombre del miembro**, no con
-            // el del grupo: el grupo no renombra a su miembro.
+            // The upstream is queried with the **member's name**, not with
+            // the group's: the group does not rename its member.
             assert!(
                 lab.registry.hits(&format!("{PROXY}/manifests/{TAG}")) > 0,
                 "el upstream no se consulto con el nombre del miembro: {:?}",
@@ -1582,7 +1582,7 @@ fn ac3_the_proxy_wins_when_it_is_the_first_member() {
                 lab.registry.paths()
             );
 
-            // Y el blob del proxy se sirve por su digest, desde el miembro.
+            // And the proxy's blob is served by its digest, from the member.
             let layer = b"la-capa-del-upstream".to_vec();
             let blob = the_blob(&lab.deployment, port, PROXY_GROUP, &the_digest(&layer));
             assert_eq!(blob.status, 200, "el blob del proxy no se sirve");
@@ -1607,8 +1607,8 @@ fn ac3_an_upstream_that_is_down_stops_the_resolution() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            // El primer miembro es un proxy cuyo upstream no esta: el
-            // segundo miembro tiene la etiqueta.
+            // The first member is a proxy whose upstream is not there: the
+            // second member has the tag.
             let lab = TheLab::new(&[DOWN, FIRST], None);
             let mut service = lab.start();
             let port = service.port;
@@ -1616,10 +1616,10 @@ fn ac3_an_upstream_that_is_down_stops_the_resolution() {
             let hosted_manifest =
                 publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
 
-            // El upstream caido es un ERROR: la resolucion se detiene y se
-            // contesta el error. No se salta al siguiente miembro, porque un
-            // fallo transitorio no puede cambiar en silencio lo que se
-            // descarga.
+            // The down upstream is an ERROR: the resolution stops and the
+            // error is answered. It does not skip to the next member, because a
+            // transient failure cannot silently change what is
+            // downloaded.
             let answer = the_manifest(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
                 answer.status,
@@ -1659,8 +1659,8 @@ fn ac3_an_upstream_without_the_reference_is_a_miss() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El upstream **no** tiene la etiqueta: lo dice con certeza, y
-            // es un MISS. El segundo miembro la tiene.
+            // The upstream does **not** have the tag: it says so with certainty, and
+            // it is a MISS. The second member has it.
             let hosted_manifest =
                 publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
 
@@ -1701,8 +1701,8 @@ fn ac3_a_reserved_name_is_not_served_from_the_proxy() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            // La reserva del grupo reserva el nombre del miembro proxy: un
-            // nombre reservado no sale de un upstream publico.
+            // The group's reservation reserves the proxy member's name: a
+            // reserved name does not come out of a public upstream.
             let lab = TheLab::new(
                 &[PROXY, FIRST],
                 Some(json!({ "reserved": [PROXY], "on_conflict": "deny" })),
@@ -1710,7 +1710,7 @@ fn ac3_a_reserved_name_is_not_served_from_the_proxy() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El upstream tiene la etiqueta, y el segundo miembro tambien.
+            // The upstream has the tag, and the second member too.
             lab.publish_upstream(b"la-capa-del-upstream");
             let hosted_manifest =
                 publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
@@ -1731,8 +1731,8 @@ fn ac3_a_reserved_name_is_not_served_from_the_proxy() {
                 Some(FIRST),
                 "gana el miembro que no esta reservado"
             );
-            // El upstream no se ha consultado: el juicio de la reserva es
-            // sobre el nombre del repositorio, y se hace antes.
+            // The upstream has not been queried: the reservation judgment is
+            // on the repository name, and is made first.
             assert_eq!(
                 lab.registry.hits(&format!("{PROXY}/manifests/{TAG}")),
                 0,
@@ -1759,8 +1759,8 @@ fn ac3_the_credential_does_not_travel_to_a_foreign_realm() {
         Expectation::Succeeds,
         || {
             let lab = TheLab::new(&[PROXY, FIRST], None);
-            // El upstream pide el token en un realm que **no** es el
-            // declarado: la credencial no puede viajar ahi.
+            // The upstream asks for the token in a realm that is **not** the
+            // declared one: the credential cannot travel there.
             lab.hostile_port();
             lab.registry.behave(TheBehaviour::HostileRealm);
             lab.registry.elsewhere(&lab.hostile.origin());
@@ -1777,7 +1777,7 @@ fn ac3_the_credential_does_not_travel_to_a_foreign_realm() {
                 lab.deployment.the_log()
             );
 
-            // El origen hostil no ha recibido la credencial.
+            // The hostile origin has not received the credential.
             for seen in lab.hostile.seen() {
                 assert!(
                     !seen
@@ -1806,7 +1806,7 @@ fn ac3_a_real_oci_client_pulls_from_the_group() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            // El cliente real: `skopeo` primero, y `oras` si no esta.
+            // The real client: `skopeo` first, and `oras` if it is not there.
             let client = match the_real_client() {
                 Some(client) => client,
                 None => {
@@ -1848,20 +1848,20 @@ fn ac3_a_real_oci_client_pulls_from_the_group() {
 }
 
 // ---------------------------------------------------------------------------
-// El cliente OCI real.
+// The real OCI client.
 // ---------------------------------------------------------------------------
 
-/// Lo que un cliente OCI real contesta.
+/// What a real OCI client answers.
 struct TheClientAnswer {
-    /// Si la peticion salio bien.
+    /// Whether the request went well.
     ok: bool,
-    /// Lo que el cliente dijo.
+    /// What the client said.
     detail: String,
-    /// Lo que el cliente devolvio.
+    /// What the client returned.
     body: String,
 }
 
-/// Un cliente OCI real del entorno.
+/// A real OCI client of the environment.
 enum TheClient {
     /// `skopeo`.
     Skopeo,
@@ -1870,7 +1870,7 @@ enum TheClient {
 }
 
 impl TheClient {
-    /// El nombre del comando.
+    /// The command's name.
     fn the_command(&self) -> &'static str {
         match self {
             Self::Skopeo => "skopeo",
@@ -1878,7 +1878,7 @@ impl TheClient {
         }
     }
 
-    /// Le pide al cliente que mire el manifiesto del grupo.
+    /// Asks the client to look at the group's manifest.
     fn inspect(&self, port: u16, token: &str, repository: &str, tag: &str) -> TheClientAnswer {
         let reference = format!("127.0.0.1:{port}/{repository}:{tag}");
         let output = match self {
@@ -1923,7 +1923,7 @@ impl TheClient {
     }
 }
 
-/// El cliente OCI real del entorno, si hay alguno.
+/// The environment's real OCI client, if there is one.
 fn the_real_client() -> Option<TheClient> {
     for candidate in [TheClient::Skopeo, TheClient::Oras] {
         let output = std::process::Command::new(candidate.the_command())
@@ -1936,10 +1936,10 @@ fn the_real_client() -> Option<TheClient> {
     None
 }
 
-/// Publica un manifiesto arbitrario en un repositorio OCI.
+/// Publishes an arbitrary manifest to an OCI repository.
 ///
-/// Es lo que hace falta para colgar un referrer: un manifiesto con
-/// `subject` es lo que el protocolo llama referrer.
+/// It is what is needed to hang a referrer: a manifest with
+/// `subject` is what the protocol calls a referrer.
 fn publish_manifest(
     deployment: &Deployment,
     port: u16,
@@ -1980,13 +1980,13 @@ fn ac3_the_referrers_of_the_group_are_the_ones_of_its_members() {
             let mut service = deployment.start(&[]);
             let port = service.port;
 
-            // El sujeto: una imagen en el primer miembro.
+            // The subject: an image in the first member.
             let layer = b"la-capa-del-primer-miembro".to_vec();
             let subject = publish(&deployment, port, FIRST, &layer);
             let subject_digest = the_digest(&subject);
 
-            // El referrer: un manifiesto que cuelga del sujeto, con los
-            // mismos blobs (que ya estan en el repositorio).
+            // The referrer: a manifest that hangs from the subject, with the
+            // same blobs (which are already in the repository).
             let config = b"{\"architecture\":\"amd64\",\"os\":\"linux\"}".to_vec();
             let referrer = json!({
                 "schemaVersion": 2,
@@ -2012,8 +2012,8 @@ fn ac3_the_referrers_of_the_group_are_the_ones_of_its_members() {
             .into_bytes();
             publish_manifest(&deployment, port, FIRST, "firma", &referrer);
 
-            // El grupo responde con los referrers de **sus miembros**: un
-            // grupo no guarda nada, asi que los suyos propios no existen.
+            // The group answers with the referrers of **its members**: a
+            // group stores nothing, so it has none of its own.
             let token = support::token(FIRST_ACCOUNT, "alice");
             let into = deployment.directory.path().join("referrers.json");
             let answer = Curl::download(
@@ -2045,7 +2045,7 @@ fn ac3_the_referrers_of_the_group_are_the_ones_of_its_members() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4: el listado de etiquetas del grupo, con un miembro proxy delante.
+// AC4: the group's tag listing, with a proxy member in front.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -2060,8 +2060,8 @@ fn ac4_the_listing_of_the_group_has_the_tags_of_the_proxy() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El miembro hosted tiene su etiqueta, y el upstream tiene una
-            // que solo existe en el upstream.
+            // The hosted member has its tag, and the upstream has one
+            // that only exists in the upstream.
             publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
 
@@ -2081,8 +2081,8 @@ fn ac4_the_listing_of_the_group_has_the_tags_of_the_proxy() {
                 "la etiqueta que solo tiene el proxy no esta en la lista: {tags:?}"
             );
 
-            // Y el upstream se pregunta con el nombre del **miembro**, no con
-            // el del grupo: el grupo no renombra a su miembro.
+            // And the upstream is queried with the **member's** name, not with
+            // the group's: the group does not rename its member.
             assert!(
                 lab.registry.hits(&format!("{PROXY}/tags/list")) > 0,
                 "el upstream no se consulto por su lista: {:?}",
@@ -2117,8 +2117,8 @@ fn ac4_the_listing_has_one_entry_per_name() {
             let mut service = lab.start();
             let port = service.port;
 
-            // Los dos miembros tienen la misma etiqueta: la del primero en
-            // el orden configurado es la que cuenta.
+            // Both members have the same tag: the first's in
+            // the configured order is the one that counts.
             publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             lab.publish_upstream(b"la-capa-del-upstream");
 
@@ -2160,7 +2160,7 @@ fn ac4_a_tag_of_the_listing_can_be_pulled_from_the_group() {
             let hosted = publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             let proxied = lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
 
-            // El listado trae las dos etiquetas.
+            // The listing brings both tags.
             let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(status, 200, "el grupo no lista sus etiquetas:\n{body}");
             assert!(
@@ -2168,9 +2168,9 @@ fn ac4_a_tag_of_the_listing_can_be_pulled_from_the_group() {
                 "la etiqueta que solo tiene el proxy no esta en la lista: {tags:?}"
             );
 
-            // Y lo que el listado dice se puede descargar: la etiqueta que
-            // solo tiene el proxy sale del proxy, con su digest, y la
-            // respuesta dice de que miembro salio.
+            // And what the listing says can be downloaded: the tag that
+            // only the proxy has comes out of the proxy, with its digest, and the
+            // response says which member it came from.
             let answer = the_manifest_of(&lab.deployment, port, PROXY_GROUP, "solo-en-el-proxy");
             assert_eq!(
                 answer.status,
@@ -2194,8 +2194,8 @@ fn ac4_a_tag_of_the_listing_can_be_pulled_from_the_group() {
                 "la respuesta no dice el digest del contenido servido"
             );
 
-            // Y la del hosted sale del hosted: el listado y la resolucion
-            // cuentan la misma historia.
+            // And the hosted's comes out of the hosted: the listing and the resolution
+            // tell the same story.
             let other = the_manifest_of(&lab.deployment, port, PROXY_GROUP, TAG);
             assert_eq!(other.status, 200, "la etiqueta del hosted no se descarga");
             assert_eq!(other.body, hosted, "el manifiesto no es el del hosted");
@@ -2219,14 +2219,14 @@ fn ac4_an_upstream_that_is_down_does_not_serve_a_partial_listing() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            // El primer miembro es un proxy cuyo upstream no esta: el
-            // segundo miembro tiene una etiqueta.
+            // The first member is a proxy whose upstream is not there: the
+            // second member has a tag.
             let lab = TheLab::new(&[DOWN, FIRST], None);
             let mut service = lab.start();
             let port = service.port;
 
-            // El miembro hosted tiene su etiqueta: si el listado se sirviera
-            // a medias, apareceria sola.
+            // The hosted member has its tag: if the listing were served
+            // halfway, it would appear alone.
             publish_as(
                 &lab.deployment,
                 port,
@@ -2262,7 +2262,7 @@ fn ac4_an_upstream_that_is_down_does_not_serve_a_partial_listing() {
 }
 
 // ---------------------------------------------------------------------------
-// AC5: el listado de etiquetas de un proxy **directo**.
+// AC5: the tag listing of a **direct** proxy.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -2277,12 +2277,12 @@ fn ac5_the_listing_of_a_direct_proxy_has_the_tags_of_the_upstream() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El upstream tiene una etiqueta que el catalogo no tiene: un
-            // proxy no guarda filas de etiqueta.
+            // The upstream has a tag that the catalog does not have: a
+            // proxy does not store tag rows.
             lab.publish_upstream_tag("solo-en-el-upstream", b"la-capa-del-upstream");
 
-            // El listado del proxy **directo**: el mismo camino que el del
-            // grupo, pero sin grupo delante.
+            // The **direct** proxy's listing: the same path as the group's,
+            // but without a group in front.
             let (status, tags, body) = the_tags(&lab.deployment, port, PROXY);
             assert_eq!(
                 status,
@@ -2295,8 +2295,8 @@ fn ac5_the_listing_of_a_direct_proxy_has_the_tags_of_the_upstream() {
                 "la etiqueta que solo tiene el upstream no esta en la lista: {tags:?}"
             );
 
-            // Y el upstream se pregunta con el nombre del **proxy**, no con
-            // el del grupo.
+            // And the upstream is queried with the **proxy's** name, not with
+            // the group's.
             assert!(
                 lab.registry.hits(&format!("{PROXY}/tags/list")) > 0,
                 "el upstream no se consulto por su lista: {:?}",
@@ -2333,7 +2333,7 @@ fn ac5_a_tag_of_the_listing_can_be_pulled_from_the_direct_proxy() {
 
             let proxied = lab.publish_upstream_tag("solo-en-el-upstream", b"la-capa-del-upstream");
 
-            // El listado trae la etiqueta.
+            // The listing brings the tag.
             let (status, tags, body) = the_tags(&lab.deployment, port, PROXY);
             assert_eq!(
                 status, 200,
@@ -2344,8 +2344,8 @@ fn ac5_a_tag_of_the_listing_can_be_pulled_from_the_direct_proxy() {
                 "la etiqueta que solo tiene el upstream no esta en la lista: {tags:?}"
             );
 
-            // Y lo que el listado dice se puede descargar: el listado y la
-            // resolucion cuentan la misma historia.
+            // And what the listing says can be downloaded: the listing and the
+            // resolution tell the same story.
             let answer = the_manifest_of(&lab.deployment, port, PROXY, "solo-en-el-upstream");
             assert_eq!(
                 answer.status,
@@ -2383,9 +2383,9 @@ fn ac5_an_upstream_that_is_down_does_not_serve_an_empty_listing() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El upstream del proxy caido no responde: el listado **no**
-            // se sirve parcial. Una lista vacia pareceria completa, y el
-            // cliente creeria que el upstream no tiene nada.
+            // The down proxy's upstream does not answer: the listing is **not**
+            // served partially. An empty list would look complete, and the
+            // client would believe that the upstream has nothing.
             let (status, tags, body) = the_tags(&lab.deployment, port, DOWN);
             assert_eq!(
                 status,
@@ -2421,10 +2421,10 @@ fn ac5_a_proxy_whose_scope_does_not_cover_the_listing_serves_an_empty_list() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El ambito de este proxy no cubre `v2/<nombre>/tags/list`: el
-            // repositorio **no puede enumerar**. En un proxy directo no
-            // hay "los demas" que listar, asi que la lista vacia es la
-            // unica respuesta honesta.
+            // This proxy's scope does not cover `v2/<name>/tags/list`: the
+            // repository **cannot enumerate**. In a direct proxy there are
+            // no "others" to list, so the empty list is the
+            // only honest answer.
             let (status, tags, body) = the_tags(&lab.deployment, port, SCOPED);
             assert_eq!(
                 status,
@@ -2437,7 +2437,7 @@ fn ac5_a_proxy_whose_scope_does_not_cover_the_listing_serves_an_empty_list() {
                 "un proxy que no puede enumerar no deberia listar etiquetas: {tags:?}"
             );
 
-            // Y lo que no cae en el ambito no se pregunta al upstream.
+            // And what does not fall in the scope is not asked of the upstream.
             assert_eq!(
                 lab.registry.hits(&format!("{SCOPED}/tags/list")),
                 0,
@@ -2456,7 +2456,7 @@ fn ac5_a_proxy_whose_scope_does_not_cover_the_listing_serves_an_empty_list() {
 }
 
 // ---------------------------------------------------------------------------
-// AC6: el listado del proxy, honesto y completo.
+// AC6: the proxy's listing, honest and complete.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -2471,8 +2471,8 @@ fn ac6_the_listing_only_announces_the_tags_that_can_be_pulled() {
             let mut service = lab.start();
             let port = service.port;
 
-            // El upstream tiene una etiqueta buena y una que **no** es una
-            // etiqueta: lleva una barra, y la resolucion la rechaza.
+            // The upstream has a good tag and one that is **not** a
+            // tag: it carries a slash, and the resolution rejects it.
             publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
             lab.registry.tag(PROXY, "con/barra");
@@ -2488,8 +2488,8 @@ fn ac6_the_listing_only_announces_the_tags_that_can_be_pulled() {
                 tags.contains(&"solo-en-el-proxy".to_string()),
                 "la etiqueta que el upstream si tiene no esta en la lista: {tags:?}"
             );
-            // El listado solo promete lo que se puede descargar: un nombre
-            // que la resolucion rechaza --con una barra-- no se anuncia.
+            // The listing only promises what can be downloaded: a name
+            // that the resolution rejects --with a slash-- is not announced.
             assert!(
                 !tags.iter().any(|one| one.contains('/')),
                 "el listado anuncia una etiqueta que la resolucion rechaza: {tags:?}"
@@ -2517,18 +2517,18 @@ fn ac6_a_member_whose_scope_does_not_cover_the_listing_is_not_listed() {
         Scope::Product,
         Expectation::Succeeds,
         || {
-            // El primer miembro es un proxy cuyo **ambito** no cubre el
-            // listado: no se puede preguntar por su lista.
+            // The first member is a proxy whose **scope** does not cover the
+            // listing: its list cannot be asked for.
             let lab = TheLab::new(&[SCOPED, FIRST], None);
             let mut service = lab.start();
             let port = service.port;
 
-            // El segundo miembro tiene una etiqueta: el listado del grupo
-            // **no se sirve a medias**, se sirve con lo que si se puede
-            // enumerar.
+            // The second member has a tag: the group's listing
+            // is **not served halfway**, it is served with what can
+            // be enumerated.
             publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
-            // Y el upstream tiene algo bajo el nombre del miembro que no
-            // puede enumerar: no se anuncia, porque no se puede preguntar.
+            // And the upstream has something under the member's name that it cannot
+            // enumerate: it is not announced, because it cannot be asked for.
             lab.registry.tag(SCOPED, "solo-en-el-scoped");
 
             let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
@@ -2547,7 +2547,7 @@ fn ac6_a_member_whose_scope_does_not_cover_the_listing_is_not_listed() {
                 "un miembro que no puede enumerar no aporta etiquetas al listado: {tags:?}"
             );
 
-            // Lo que no cae en el ambito no se pregunta al upstream.
+            // What does not fall in the scope is not asked of the upstream.
             assert_eq!(
                 lab.registry.hits(&format!("{SCOPED}/tags/list")),
                 0,
@@ -2555,8 +2555,8 @@ fn ac6_a_member_whose_scope_does_not_cover_the_listing_is_not_listed() {
                 lab.registry.paths()
             );
 
-            // Y la decision queda **vista**: el servicio avisa de que un
-            // miembro no puede enumerar y de por que.
+            // And the decision is **seen**: the service warns that a
+            // member cannot enumerate and why.
             let log = lab.deployment.the_log();
             assert!(
                 log.contains("cannot be enumerated"),
@@ -2582,8 +2582,8 @@ fn ac6_a_paginated_upstream_does_not_serve_a_partial_listing() {
         Expectation::Succeeds,
         || {
             let lab = TheLab::new(&[FIRST, PROXY], None);
-            // El upstream pagina su lista: lo que responde es la primera
-            // pagina, y lo dice con la cabecera `Link`.
+            // The upstream paginates its list: what it answers is the first
+            // page, and it says so with the `Link` header.
             lab.registry.behave(TheBehaviour::Paginated);
             let mut service = lab.start();
             let port = service.port;
@@ -2591,8 +2591,8 @@ fn ac6_a_paginated_upstream_does_not_serve_a_partial_listing() {
             publish(&lab.deployment, port, FIRST, b"la-capa-del-primer-miembro");
             lab.publish_upstream_tag("solo-en-el-proxy", b"la-capa-del-upstream");
 
-            // El listado **no se sirve**: una primera pagina presentada como
-            // la lista entera es el defecto que esto cierra.
+            // The listing is **not served**: a first page presented as
+            // the whole list is the defect this closes.
             let (status, tags, body) = the_tags(&lab.deployment, port, PROXY_GROUP);
             assert_eq!(
                 status,

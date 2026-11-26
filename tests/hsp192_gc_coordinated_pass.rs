@@ -1,11 +1,11 @@
-//! La pasada coordinada fenced, sobre un libro y un object store de
-//! prueba (HSP-192).
+//! The fenced coordinated pass, over a test ledger and object store
+//! (HSP-192).
 //!
-//! El libro simula la autoridad: el claim vive en el libro, no en el
-//! worker; el fence es el token vigente, y toda operacion de pasada lo
-//! presenta. El object store simula las capacidades del almacén:
-//! versionado con marca, delete condicionado y cuarentena, para poder
-//! provocar la reescritura concurrente que AC2 exige no pisar jamas.
+//! The ledger simulates the authority: the claim lives in the ledger, not in the
+//! worker; the fence is the current token, and every pass operation
+//! presents it. The object store simulates the store's capabilities:
+//! versioning with a marker, conditional delete and quarantine, so as to be able to
+//! provoke the concurrent rewrite that AC2 demands never be overwritten.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -28,30 +28,30 @@ const GRACE: Duration = Duration::from_secs(60);
 const SCOPE: &str = "hrn:hodei:account:acme";
 
 fn age() -> Duration {
-    // Los blobs de prueba siempre son viejos: la gracia no es lo que
-    // se prueba aqui.
+    // The test blobs are always old: grace is not what
+    // is being tested here.
     GRACE * 10
 }
 
 // ---------------------------------------------------------------------------
-// El object store de prueba: CAS versionado, con marca por version.
+// The test object store: versioned CAS, with a marker per version.
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StoreMode {
-    /// Versiones con marca y delete condicional seguro.
+    /// Versions with a marker and safe conditional delete.
     Conditional,
-    /// Versiones con marca, pero el delete condicional NO es seguro:
-    /// la unica salida honesta es la cuarentena versionada.
+    /// Versions with a marker, but conditional delete is NOT safe:
+    /// the only honest way out is versioned quarantine.
     QuarantineOnly,
-    /// Ni marcas ni condicion: el almacén no puede ofrecer guarda.
+    /// Neither markers nor condition: the store cannot offer a guard.
     Legacy,
 }
 
 struct CasInner {
-    /// digest -> pila de versiones (marker, bytes), la ultima vigente.
+    /// digest -> stack of versions (marker, bytes), the last one current.
     versions: HashMap<String, Vec<(String, Vec<u8>)>>,
-    /// La cuarentena: clave nueva -> bytes.
+    /// The quarantine: new key -> bytes.
     quarantined: HashMap<String, Vec<u8>>,
     counter: u64,
 }
@@ -101,8 +101,8 @@ impl MockCas {
         self.inner.lock().unwrap().quarantined.get(key).cloned()
     }
 
-    /// Reescribe la clave con otro contenido: es la carrera que AC2
-    /// veda pisar.
+    /// Rewrites the key with other content: it is the race that AC2
+    /// forbids overwriting.
     fn republish(&self, digest: &ContentDigest, bytes: &[u8]) {
         self.put_version(digest, bytes);
     }
@@ -280,7 +280,7 @@ impl ConditionalBlob for MockCas {
 }
 
 // ---------------------------------------------------------------------------
-// El libro fenced de prueba: el claim vive aqui, como en la autoridad.
+// The test fenced ledger: the claim lives here, as in the authority.
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -298,18 +298,18 @@ struct Inner {
     runs: Vec<GcRun>,
     tombstones: Vec<GcDeletion>,
     quarantines: Vec<Quarantined>,
-    /// scope -> claim vigente.
+    /// scope -> current claim.
     leases: HashMap<String, LeaseRow>,
-    /// scope -> ultima generacion emitida (aun vencida).
+    /// scope -> last generation issued (even if expired).
     generations: HashMap<String, u64>,
     tokens: u64,
-    /// El historial de claims emitidos, para resucitar tokens viejos.
+    /// The history of issued claims, to resurrect old tokens.
     issued: Vec<(String, GcLease)>,
     page_calls: Vec<usize>,
-    /// Sabotaje: el renew falla a partir de la enesima pasada.
+    /// Sabotage: the renew fails from the nth pass onward.
     renew_failures_after: Option<usize>,
     renew_calls: usize,
-    /// Sabotaje: una accion disparada al registrar una intencion.
+    /// Sabotage: an action triggered when an intent is recorded.
     on_record: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
@@ -387,8 +387,8 @@ impl MockLedger {
             .unwrap_or(0)
     }
 
-    /// El fence de la autoridad: quien presenta un token que no es el
-    /// vigente del scope, recibe PreconditionFailed.
+    /// The authority's fence: whoever presents a token that is not the
+    /// scope's current one receives PreconditionFailed.
     fn fence(
         inner: &Inner,
         scope: &str,
@@ -504,7 +504,7 @@ impl ContentLedger for MockLedger {
             .cloned())
     }
 
-    // -- coordinado ----------------------------------------------------------
+    // -- coordinated ---------------------------------------------------------
 
     fn supports_fenced_pass(&self) -> bool {
         true
@@ -518,8 +518,8 @@ impl ContentLedger for MockLedger {
         now: DateTime<Utc>,
     ) -> Result<GcLease, CatalogError> {
         let mut inner = self.inner.lock().unwrap();
-        // Primero se decide contra el estado vigente, sin sostener el
-        // borrow a traves de la mutacion.
+        // It is first decided against the current state, without holding the
+        // borrow across the mutation.
         enum Decision {
             Renew(GcLease),
             Busy,
@@ -555,9 +555,9 @@ impl ContentLedger for MockLedger {
                 back
             }
             _ => {
-                // Vencido o inexistente: generacion NUEVA y token NUEVO.
-                // Esto es lo que fencea al zombie de la generacion
-                // anterior.
+                // Expired or nonexistent: NEW generation and NEW token.
+                // This is what fences the zombie of the previous
+                // generation.
                 let next = inner.generations.get(scope).copied().unwrap_or(0) + 1;
                 inner.tokens += 1;
                 let back = GcLease {
@@ -611,8 +611,8 @@ impl ContentLedger for MockLedger {
     ) -> Result<Vec<RunCandidate>, CatalogError> {
         let mut inner = self.inner.lock().unwrap();
         Self::fence(&inner, scope, lease, Utc::now())?;
-        // La guarda de referencias, dentro de la misma "transaccion":
-        // un candidato con nombre vivo aborta la marca entera.
+        // The references guard, inside the same "transaction":
+        // a candidate with a live name aborts the whole mark.
         if let Some(hit) = candidate_digests
             .iter()
             .find(|digest| inner.roots.iter().any(|root| &root.digest == *digest))
@@ -748,8 +748,8 @@ impl ContentLedger for MockLedger {
         Self::fence(&inner, scope, lease, now)?;
         inner.renew_calls += 1;
         if inner.renew_failures_after == Some(inner.renew_calls) {
-            // Sabotaje: el scope paso a otra generacion a mitad de
-            // barrido (el zombie no continua).
+            // Sabotage: the scope moved to another generation mid-way
+            // through the sweep (the zombie does not continue).
             let next = inner.generations.get(scope).copied().unwrap_or(0) + 1;
             inner.generations.insert(scope.to_string(), next);
             inner.tokens += 1;
@@ -845,10 +845,10 @@ fn pass(w: &World, owner: &str) -> CoordinatedPass {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el claim fenced, el zombie y el publisher concurrente.
+// AC1: the fenced claim, the zombie and the concurrent publisher.
 // ---------------------------------------------------------------------------
 
-/// Un claim ajeno vigente ocupa el scope: el segundo worker no barre.
+/// A live foreign claim occupies the scope: the second worker does not sweep.
 #[tokio::test]
 async fn a_live_lease_of_another_owner_busy_the_scope() {
     let w = world(StoreMode::Conditional);
@@ -860,12 +860,12 @@ async fn a_live_lease_of_another_owner_busy_the_scope() {
     assert!(matches!(error, GcError::Busy), "{error:?}");
 }
 
-/// El zombie de la generacion vencida no puede hacer NADA de la pasada:
-/// marcar, reconfirmar, registrar, renovar o cerrar fallan con el fence.
+/// The zombie of the expired generation can do NOTHING in the pass:
+/// marking, reconfirming, recording, renewing or closing fail with the fence.
 #[tokio::test]
 async fn a_zombie_with_an_expired_generation_cannot_act() {
     let w = world(StoreMode::Conditional);
-    // Generacion 1 vive y muere (lease vencido, take-over real).
+    // Generation 1 lives and dies (expired lease, real take-over).
     pass(&w, "worker-a").run().await.expect("worker A passes");
     w.ledger.force_expire();
     pass(&w, "worker-b")
@@ -934,14 +934,14 @@ async fn a_zombie_with_an_expired_generation_cannot_act() {
             .await,
         Err(CatalogError::PreconditionFailed { .. })
     ));
-    // Y el blob del zombie sigue donde estaba: la generacion nueva no
-    // lo borro ni lo marco.
+    // And the zombie's blob is still where it was: the new generation did not
+    // delete or mark it.
     assert!(w.store.has_key(&orphan));
     assert!(w.ledger.tombstone(&orphan).is_none());
 }
 
-/// La pasada que pierde el lease a mitad de barrido para: los
-/// candidatos que quedan no se tocan (AC1).
+/// The pass that loses its lease mid-sweep stops: the
+/// remaining candidates are not touched (AC1).
 #[tokio::test]
 async fn a_pass_that_loses_the_lease_mid_sweep_stops() {
     let w = world(StoreMode::Conditional);
@@ -955,9 +955,9 @@ async fn a_pass_that_loses_the_lease_mid_sweep_stops() {
         .expect_err("the take-over must stop this pass");
     assert!(matches!(error, GcError::Busy), "{error:?}");
 
-    // Uno de los dos se barro completo y el otro NO toco nada: ni
-    // intencion ni borrado. El orden del censo no es deterministic,
-    // asi que se afirma sobre la propiedad, no sobre cual.
+    // One of the two was swept completely and the other touched NOTHING: neither
+    // intent nor deletion. The census order is not deterministic,
+    // so the assertion is on the property, not on which one.
     let first_gone = !w.store.has_key(&first);
     let second_gone = !w.store.has_key(&second);
     assert_ne!(first_gone, second_gone, "exactly one was swept");
@@ -976,14 +976,14 @@ async fn a_pass_that_loses_the_lease_mid_sweep_stops() {
     );
 }
 
-/// Marca durable + publisher concurrente + reanudacion: la referencia
-/// viva NUNCA se borra, aunque la marca la senalo huerfana.
+/// Durable mark + concurrent publisher + resumption: the live reference
+/// is NEVER deleted, even if the mark flagged it as an orphan.
 #[tokio::test]
 async fn a_republished_blob_survives_the_resume_of_an_older_mark() {
     let w = world(StoreMode::Conditional);
     let orphan = w.store.put(b"revived").await.expect("put");
 
-    // Un worker de la generacion 1 marca durable y muere.
+    // A worker of generation 1 marks durably and dies.
     let lease1 = w
         .ledger
         .claim_gc_pass(SCOPE, "worker-a", Duration::from_secs(30), Utc::now())
@@ -1011,8 +1011,8 @@ async fn a_republished_blob_survives_the_resume_of_an_older_mark() {
         .expect("durable mark");
     w.ledger.force_expire();
 
-    // Un publisher vuelve a nombrar el contenido, y otro worker
-    // reanuda bajo la generacion 2.
+    // A publisher names the content again, and another worker
+    // resumes under generation 2.
     w.ledger.add_root(&orphan, "refs/revived");
     let report = pass(&w, "worker-b").run().await.expect("resume pass");
     assert!(report.resumed, "the mark is durable, not in the worker");
@@ -1033,11 +1033,11 @@ async fn a_republished_blob_survives_the_resume_of_an_older_mark() {
 }
 
 // ---------------------------------------------------------------------------
-// Borrado condicional y AC2.
+// Conditional delete and AC2.
 // ---------------------------------------------------------------------------
 
-/// El camino feliz: huerfanos reales se borran condicionados a la
-/// version marcada, con trastro confirmado post-efecto.
+/// The happy path: real orphans are deleted conditioned on the
+/// marked version, with the trace confirmed post-effect.
 #[tokio::test]
 async fn a_coordinated_pass_deletes_conditionally_and_confirms_after() {
     let w = world(StoreMode::Conditional);
@@ -1061,16 +1061,16 @@ async fn a_coordinated_pass_deletes_conditionally_and_confirms_after() {
     assert_eq!(report.bytes_freed, 9);
 }
 
-/// AC2 (delete condicional): una reescritura concurrente entre la
-/// intencion y el borrado produce `NotApplied`. La clave nueva NO se
-/// toca y su reutilizacion queda vedada: el rastro sigue `Intended`
-/// con la marca vieja, para reconciliar.
+/// AC2 (conditional delete): a concurrent rewrite between the
+/// intent and the delete produces `NotApplied`. The new key is NOT
+/// touched and its reuse is forbidden: the trace stays `Intended`
+/// with the old marker, to be reconciled.
 #[tokio::test]
 async fn a_concurrent_rewrite_blocks_the_delete_and_the_key_is_not_reused() {
     let w = world(StoreMode::Conditional);
     let orphan = w.store.put(b"old-bytes").await.expect("put");
-    // Al escribir la intencion, la autoridad "sufre" la reescritura:
-    // otra replica subio contenido nuevo bajo la misma clave.
+    // When writing the intent, the authority "suffers" the rewrite:
+    // another replica uploaded new content under the same key.
     let store = Arc::clone(&w.store);
     let digest = orphan.clone();
     w.ledger.on_record_intention(move || {
@@ -1093,9 +1093,9 @@ async fn a_concurrent_rewrite_blocks_the_delete_and_the_key_is_not_reused() {
     );
 }
 
-/// AC2 (cuarentena versionada): un almacén sin delete condicional
-/// seguro no borra la clave original a ciegas. Los bytes marcados van
-/// a un nombre NUEVO, nunca se reescribe, y la reserva queda registrada.
+/// AC2 (versioned quarantine): a store without safe conditional
+/// delete does not delete the original key blindly. The marked bytes go
+/// to a NEW name, are never rewritten, and the reservation is recorded.
 #[tokio::test]
 async fn a_store_without_safe_conditional_delete_quarantines_by_version() {
     let w = world(StoreMode::QuarantineOnly);
@@ -1123,8 +1123,8 @@ async fn a_store_without_safe_conditional_delete_quarantines_by_version() {
     );
 }
 
-/// AC2/fail-closed: un almacén sin ninguna guarda (ni version ni
-/// condicion) NO se toca nada. Todo queda `Unknown`.
+/// AC2/fail-closed: a store with no guard at all (neither version nor
+/// condition) gets NOTHING touched. Everything stays `Unknown`.
 #[tokio::test]
 async fn a_legacy_store_without_guards_is_never_touched() {
     let w = world(StoreMode::Legacy);
@@ -1142,11 +1142,11 @@ async fn a_legacy_store_without_guards_is_never_touched() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: censo paginado sin materializar.
+// AC3: paginated census without materializing.
 // ---------------------------------------------------------------------------
 
-/// Miles de raices se recorren por paginas acotadas: el censo nunca
-/// materializa el grafo entero de una lectura.
+/// Thousands of roots are walked in bounded pages: the census never
+/// materializes the whole graph in one read.
 #[tokio::test]
 async fn the_census_walks_bounded_pages_without_materializing() {
     let w = world(StoreMode::Conditional);
@@ -1162,7 +1162,7 @@ async fn the_census_walks_bounded_pages_without_materializing() {
         PassConfig::new(SCOPE, "worker-a", Duration::from_secs(30)).with_page_limit(512),
     );
     let report = pass.run().await.expect("pass");
-    // 2000 / 512 = 3 paginas llenas + 1 final corta.
+    // 2000 / 512 = 3 full pages + 1 short final one.
     assert_eq!(report.census_pages, 4);
     assert_eq!(w.ledger.max_page_calls(), 512, "every read is bounded");
     assert_eq!(report.marked, 0, "nothing is orphan: all 2000 are roots");
@@ -1174,7 +1174,7 @@ async fn a_restarted_worker_resumes_from_the_durable_mark() {
     let w = world(StoreMode::Conditional);
     let orphan = w.store.put(b"durable").await.expect("put");
 
-    // Generacion 1 marca y muere ANTES de borrar.
+    // Generation 1 marks and dies BEFORE deleting.
     let lease1 = w
         .ledger
         .claim_gc_pass(SCOPE, "worker-a", Duration::from_secs(30), Utc::now())
@@ -1201,8 +1201,8 @@ async fn a_restarted_worker_resumes_from_the_durable_mark() {
         .await
         .expect("mark");
 
-    // El mismo worker revive: renueva su propio claim (generacion 1) y
-    // reanuda la marca desde el libro.
+    // The same worker revives: it renews its own claim (generation 1) and
+    // resumes the mark from the ledger.
     w.ledger.force_expire();
     let report = pass(&w, "worker-a").run().await.expect("pass");
     assert!(report.resumed);

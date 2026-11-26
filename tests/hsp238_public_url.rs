@@ -435,8 +435,8 @@ fn a_host_that_is_not_an_authority_is_not_reflected() {
                 "the host {hostile} was reflected in {path}"
             );
         }
-        // El reto del token OCI: o no hay reto, o dice `localhost`, y en
-        // ningun caso dice el host que el cliente escribio.
+        // The OCI token challenge: either there is no challenge, or it says `localhost`, and
+        // in no case does it say the host the client wrote.
         let answer = call(dir, port, "GET", "/v2/", "", &headers, None);
         let challenge = answer.header("www-authenticate").unwrap_or_default();
         assert!(

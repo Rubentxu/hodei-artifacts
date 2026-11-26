@@ -1,12 +1,12 @@
-//! El GOPROXY de HSP-121, a nivel HTTP.
+//! HSP-121's GOPROXY, at the HTTP level.
 //!
-//! Se prueba: la publicacion `PUT` de los tres artefactos de una version,
-//! el listado ensamblado en orden semver, `@latest`, las rutas escapadas,
-//! la inmutabilidad de la version, el rechazo de lo que el protocolo no
-//! sabe hacer y la cache del proxy con el servicio despues sin red.
+//! Covered: `PUT` publication of a version's three artifacts,
+//! the listing assembled in semver order, `@latest`, escaped paths,
+//! version immutability, rejection of what the protocol does not
+//! know how to do, and the proxy cache with the service afterwards offline.
 //!
-//! El cliente real (`go`) se prueba en su propio fichero; aqui el
-//! protocolo se habla como lo hablaria el cliente.
+//! The real client (`go`) is tested in its own file; here the
+//! protocol is spoken the way the client would speak it.
 
 mod support;
 
@@ -31,7 +31,7 @@ fn next(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{n}"))
 }
 
-/// Una peticion al servicio.
+/// A request to the service.
 fn call(port: u16, method: &str, path: &str, token: &str, body: Option<&[u8]>) -> Answer {
     let sent = body.map(|bytes| {
         let target = next("sent");
@@ -59,27 +59,27 @@ fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// El documento `.info` canonico de una version.
+/// The canonical `.info` document of a version.
 fn info_document(version: &str) -> Vec<u8> {
     json!({ "Version": version, "Time": "2026-11-17T12:00:00Z" })
         .to_string()
         .into_bytes()
 }
 
-/// Un `go.mod` que declara el modulo sin escapar: el `!x` de la ruta es
-/// solo codificacion de caminos, el go.mod vive dentro y dice la verdad.
+/// A `go.mod` that declares the module unescaped: the `!x` in the path is
+/// only path encoding, the go.mod lives inside and tells the truth.
 fn go_mod(module: &str) -> Vec<u8> {
     let declared = hodei_catalog::gomod::unescape(module);
     format!("module {declared}\n\ngo 1.22\n").into_bytes()
 }
 
-/// Los bytes del zip: a nivel HTTP son opacos; el cliente real los
-/// descomprime en su propio test.
+/// The zip bytes: at the HTTP level they are opaque; the real client
+/// unpacks them in its own test.
 fn module_zip(tag: &str) -> Vec<u8> {
     format!("the module zip of {tag}").into_bytes()
 }
 
-/// Publica la version entera: `.info`, `.mod` y `.zip`.
+/// Publishes the whole version: `.info`, `.mod` and `.zip`.
 fn publish_version(
     port: u16,
     repository: &str,
@@ -117,7 +117,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // Publicar la 1.0.0: los tres artefactos por su ruta de protocolo.
+    // Publish 1.0.0: the three artifacts by their protocol path.
     let zip = module_zip("hello-1.0.0");
     publish_version(
         port,
@@ -162,8 +162,8 @@ fn a_version_is_published_and_served_through_goproxy() {
     assert_eq!(served_mod.status, 200, "{}", text_of(&served_mod));
     assert_eq!(served_mod.body, go_mod("example.com/hello"));
 
-    // El zip sale byte a byte: el checksum que calcule el cliente sobre
-    // estos bytes es el mismo que el del publicado.
+    // The zip comes out byte for byte: the checksum the client computes over
+    // these bytes is the same as the published one.
     let download = call(
         port,
         "GET",
@@ -178,7 +178,7 @@ fn a_version_is_published_and_served_through_goproxy() {
         Some("application/zip")
     );
 
-    // Mas versiones: el listado ordena por semver, no por texto.
+    // More versions: the listing sorts by semver, not by text.
     publish_version(
         port,
         "go-hosted",
@@ -204,7 +204,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     );
     assert_eq!(text_of(&list), "v1.0.0\nv1.2.0\nv1.10.0\n");
 
-    // `@latest` senala la ultima, con su documento.
+    // `@latest` points to the latest one, with its document.
     let latest = call(
         port,
         "GET",
@@ -216,8 +216,8 @@ fn a_version_is_published_and_served_through_goproxy() {
     let document: Value = serde_json::from_slice(&latest.body).expect("the latest info");
     assert_eq!(document["Version"], json!("v1.10.0"));
 
-    // Republicar los mismos bytes es el eco de una publicacion
-    // interrumpida.
+    // Republishing the same bytes is the echo of an interrupted
+    // publication.
     let again = call(
         port,
         "PUT",
@@ -227,7 +227,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     );
     assert_eq!(again.status, 200, "{}", text_of(&again));
 
-    // Republicar la misma version con otros bytes es un conflicto.
+    // Republishing the same version with other bytes is a conflict.
     let conflict = call(
         port,
         "PUT",
@@ -237,7 +237,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     );
     assert_eq!(conflict.status, 409, "{}", text_of(&conflict));
 
-    // Un `.info` que miente sobre su version no entra.
+    // An `.info` that lies about its version is not accepted.
     let liar = call(
         port,
         "PUT",
@@ -247,7 +247,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     );
     assert_eq!(liar.status, 400, "{}", text_of(&liar));
 
-    // Un `.mod` que declara otro modulo tampoco.
+    // A `.mod` that declares another module is not accepted either.
     let wrong = call(
         port,
         "PUT",
@@ -257,7 +257,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     );
     assert_eq!(wrong.status, 400, "{}", text_of(&wrong));
 
-    // Lo que nadie publico no esta.
+    // What nobody published is not there.
     let missing_list = call(
         port,
         "GET",
@@ -283,7 +283,7 @@ fn a_version_is_published_and_served_through_goproxy() {
     );
     assert_eq!(missing_version.status, 404, "{}", text_of(&missing_version));
 
-    // Sin credencial no se mira ni la ruta.
+    // Without a credential not even the path is looked at.
     let anonymous = call(
         port,
         "GET",
@@ -302,7 +302,7 @@ fn escaped_modules_are_addressed_by_their_canonical_path() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // El escapado canonico del protocolo: mayuscula es `!minuscula`.
+    // The protocol's canonical escaping: uppercase is `!lowercase`.
     publish_version(
         port,
         "go-hosted",
@@ -321,8 +321,8 @@ fn escaped_modules_are_addressed_by_their_canonical_path() {
     assert_eq!(list.status, 200, "{}", text_of(&list));
     assert_eq!(text_of(&list), "v1.0.0\n");
 
-    // El `go.mod` declara el modulo sin escapar, y esa es la comprobacion
-    // que paso al publicar.
+    // The `go.mod` declares the module unescaped, and that is the check
+    // done at publish time.
     let served_mod = call(
         port,
         "GET",
@@ -332,7 +332,7 @@ fn escaped_modules_are_addressed_by_their_canonical_path() {
     );
     assert_eq!(served_mod.body, go_mod("example.com/BurntSushi/toml"));
 
-    // La forma sin escapar NO es una ruta: el protocolo habla en escapado.
+    // The unescaped form is NOT a path: the protocol speaks in escaped form.
     let unescaped = call(
         port,
         "GET",
@@ -355,7 +355,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // Un metodo que el protocolo no tiene.
+    // A method the protocol does not have.
     let post = call(
         port,
         "POST",
@@ -373,7 +373,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     );
     assert_eq!(delete.status, 405, "{}", text_of(&delete));
 
-    // La lista no se publica: solo las tres piezas de una version.
+    // The list is not published: only the three pieces of a version.
     let put_list = call(
         port,
         "PUT",
@@ -383,7 +383,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     );
     assert_eq!(put_list.status, 405, "{}", text_of(&put_list));
 
-    // Rutas que no son GOPROXY, ni con trampa de caminos.
+    // Paths that are not GOPROXY, not even with path tricks.
     for hostile in [
         "/go/go-hosted/random/stuff",
         "/go/go-hosted/example.com/hello/@v/v1.0.0.exe",
@@ -394,7 +394,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
         assert_eq!(answer.status, 404, "{hostile}: {}", text_of(&answer));
     }
 
-    // Un proxy no acepta publicacion: no es un hosted con otro nombre.
+    // A proxy does not accept publishing: it is not a hosted under another name.
     let publish_into_proxy = call(
         port,
         "PUT",
@@ -409,8 +409,8 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
         text_of(&publish_into_proxy)
     );
 
-    // Un repositorio de otro formato no es un GOPROXY, y no se sirve
-    // como Raw por equivalencia: no existe para esta superficie.
+    // A repository of another format is not a GOPROXY, and is not served
+    // as Raw by equivalence: it does not exist for this surface.
     let other_format = call(
         port,
         "GET",
@@ -421,12 +421,12 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     assert_eq!(other_format.status, 404, "{}", text_of(&other_format));
 }
 
-/// Un upstream GOPROXY de verdad-en-falso: sirve lo que se le ponga por
-/// ruta y cuenta cada pedido.
+/// A fake-for-real GOPROXY upstream: serves whatever is put at
+/// a path and counts every request.
 struct Upstream {
-    /// El puerto donde escucha.
+    /// The port it listens on.
     port: u16,
-    /// Cuantas peticiones ha atendido, por ruta.
+    /// How many requests it has served, per path.
     asked: Arc<Mutex<HashMap<String, usize>>>,
 }
 
@@ -549,8 +549,8 @@ fn the_proxy_caches_the_module_and_survives_without_network() {
     assert_eq!(first.body, zip, "el proxy reescribe el zip");
     assert_eq!(first.header("x-hodei-cache").as_deref(), Some("miss"));
 
-    // La segunda vez no sale: la cache sirve los mismos bytes, y el
-    // checksum que calcule el cliente no puede ser otro.
+    // The second time it does not go out: the cache serves the same bytes, and the
+    // checksum the client computes cannot be any other.
     let second = call(
         port,
         "GET",
@@ -566,7 +566,7 @@ fn the_proxy_caches_the_module_and_survives_without_network() {
         1
     );
 
-    // La lista y el go.mod, igual que el zip: por la ruta del protocolo.
+    // The list and the go.mod, same as the zip: by the protocol path.
     let list = call(
         port,
         "GET",
@@ -589,8 +589,8 @@ fn the_proxy_caches_the_module_and_survives_without_network() {
     let before = upstream.total();
     support::stop(&mut service);
 
-    // Sin red, el modulo cacheado se sigue sirviendo tal cual; lo que no
-    // se cacheo es un 503 que lo dice.
+    // Without network, the cached module is still served as is; what was not
+    // cached is a 503 that says so.
     let mut service = deployment.start(&[
         ("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str()),
         ("HODEI_PROXY__OFFLINE", "true"),
@@ -618,13 +618,13 @@ fn the_proxy_caches_the_module_and_survives_without_network() {
     assert_eq!(upstream.total(), before, "offline toco la red");
 }
 
-/// Un grupo go es un grupo go: ensambla la union de las versiones de sus
-/// miembros y **no** se convierte en un repositorio crudo que sirva rutas
-/// sueltas.
+/// A go group is a go group: it assembles the union of its members'
+/// versions and does **not** turn into a raw repository serving loose
+/// paths.
 ///
-/// El grupo que no tiene ningun modulo publicado responde con el `404` del
-/// protocolo go --"no hay ningun modulo con ese nombre"-, y no con el `405`
-/// de una modalidad que la release no sabe servir: HSP-232 lo sirvio.
+/// A group with no published module answers with the go protocol's `404`
+/// -- "there is no module with that name" -, and not with the `405`
+/// of a modality the release does not know how to serve: HSP-232 served it.
 #[test]
 fn a_go_group_answers_in_the_dialect_of_go_and_never_degrades_to_raw() {
     let deployment = Deployment::new();
@@ -648,9 +648,9 @@ fn a_go_group_answers_in_the_dialect_of_go_and_never_degrades_to_raw() {
         "el rechazo debe hablar de modulos: {body}"
     );
 
-    // Y no es la superficie cruda hablando: la misma ruta por `/raw/`
-    // no tiene un asset que servir, y el go-group no se registra como
-    // repositorio crudo.
+    // And it is not the raw surface speaking: the same path through `/raw/`
+    // has no asset to serve, and the go-group is not registered as a
+    // raw repository.
     let raw = call(
         port,
         "GET",
@@ -661,10 +661,10 @@ fn a_go_group_answers_in_the_dialect_of_go_and_never_degrades_to_raw() {
     assert_eq!(raw.status, 404, "{}", text_of(&raw));
 }
 
-/// El cliente `go` autentica con Basic desde su `.netrc` y la credencial
-/// viaja en la contrasena. La superficie la normaliza a Bearer antes de
-/// preguntar; esto fija el dialecto a nivel de protocolo, que el test del
-/// cliente real solo puede ejercer por TLS.
+/// The `go` client authenticates with Basic from its `.netrc` and the credential
+/// travels in the password. The surface normalizes it to Bearer before
+/// asking; this pins the dialect at the protocol level, which the real
+/// client test can only exercise over TLS.
 #[test]
 fn the_basic_credentials_of_the_go_client_are_understood() {
     use base64::Engine;
@@ -697,7 +697,7 @@ fn the_basic_credentials_of_the_go_client_are_understood() {
     let body: Value = serde_json::from_slice(&answer.body).expect("the info document");
     assert_eq!(body["Version"], "v1.0.0");
 
-    // Basic no es una puerta libre: sin credencial valida no se pasa.
+    // Basic is not a free pass: without a valid credential you do not get through.
     let junk = base64::engine::general_purpose::STANDARD.encode("alice:not-a-token");
     let denied = Curl::call_with_headers(
         port,

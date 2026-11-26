@@ -1,44 +1,44 @@
-//! HSP-194: PyPI sobre el motor Dgraph real, sin scan global.
+//! HSP-194: PyPI over the real Dgraph engine, without a global scan.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como los IT del stack (TLS + ACL,
-//! el servidor vivo h186). La espina del catálogo (HSP-187/190/191/193:
-//! guardas por clave, outbox atómico, cursor estable, búsqueda indexada)
-//! es la que sirve el contrato PyPI de HSP-112/HSP-178
-//! (`crates/hodei-catalog/src/pypi.rs` + `src/handlers/pypi.rs`), y este
-//! slice lo demuestra CONTRA EL MOTOR:
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like the stack's ITs (TLS + ACL,
+//! the live h186 server). The catalog spine (HSP-187/190/191/193:
+//! per-key guards, atomic outbox, stable cursor, indexed search)
+//! is what serves the PyPI contract of HSP-112/HSP-178
+//! (`crates/hodei-catalog/src/pypi.rs` + `src/handlers/pypi.rs`), and this
+//! slice demonstrates it AGAINST THE ENGINE:
 //!
-//! - **AC1** el cliente PyPI real (`twine` publica, `pip` instala) publica
-//!   y descarga sobre el vertical con el catálogo Dgraph: el simple index
-//!   por rango acotado (el listado de la raíz sale de `assets_under` con
-//!   ventana acotada), la metadata POR PAQUETE con los digests estables del
-//!   contenido servido (el `#sha256=` del índice es el digest de los bytes
-//!   que salen del CAS), el wheel sale del CAS y el grafo solo guarda
-//!   coordenadas y referencias, y el outbox atómico acompaña a cada commit
-//!   de publicación (patrón 187/193).
-//! - **AC2** versionado PEP 440 (la versión canonizada por la superficie),
-//!   republicación inmutable de una distribución (otro contenido con el
-//!   mismo nombre es 409 y no deja nada escrito), re-entrega idempotente
-//!   (el mismo contenido dicho dos veces no es un error ni un hecho nuevo),
-//!   scoping por cuenta, consulta acotada con FIXTURE DISTRACTORA (muchos
-//!   paquetes de otros tenants con las mismas claves → sin scan global; el
-//!   probe de plan confirma el índice exacto, patrón hsp191/hsp193), cursor
-//!   estable en los listados y lecturas del estado PyPI según el
-//!   contrato.
-//! - los DOS fixes de hsp193 (la publicación settled y las líneas de la
-//!   consulta de efectos) ya vienen en la base: aquí NO se reintroducen.
-//!   El camino PyPI ejercita la frontera por OTRO lado: el documento del
-//!   proyecto se mueve con precondición de digest vigente (la mutación de
-//!   metadata) mientras las distribuciones son inmutables.
+//! - **AC1** the real PyPI client (`twine` publishes, `pip` installs) publishes
+//!   and downloads over the vertical with the Dgraph catalog: the simple index
+//!   by bounded range (the root listing comes from `assets_under` with a
+//!   bounded window), the PER-PACKAGE metadata with the stable digests of the
+//!   served content (the index's `#sha256=` is the digest of the bytes
+//!   coming out of the CAS), the wheel comes from the CAS and the graph only stores
+//!   coordinates and references, and the atomic outbox accompanies each publication
+//!   commit (187/193 pattern).
+//! - **AC2** PEP 440 versioning (the version canonicalized by the surface),
+//!   immutable republication of a distribution (other content with the
+//!   same name is 409 and leaves nothing written), idempotent re-delivery
+//!   (the same content stated twice is neither an error nor a new fact),
+//!   per-account scoping, bounded query with a DISTRACTOR FIXTURE (many
+//!   packages from other tenants with the same keys → no global scan; the
+//!   plan probe confirms the exact index, hsp191/hsp193 pattern), stable cursor
+//!   in listings and reads of the PyPI state according to the
+//!   contract.
+//! - the TWO hsp193 fixes (the settled publication and the lines of the
+//!   effects query) are already in the base: they are NOT reintroduced here.
+//!   The PyPI path exercises the boundary from ANOTHER side: the project
+//!   document moves with a current-digest precondition (the metadata
+//!   mutation) while the distributions are immutable.
 //!
-//! La suite es SERIALIZADA (`--test-threads=1`): la apertura de la guarda
-//! bajo carga es el flake conocido del stack (HSP-219) y `open_store` lo
-//! absorbe con tres intentos, como hsp191/hsp193.
+//! The suite is SERIALIZED (`--test-threads=1`): opening the guard
+//! under load is the stack's known flake (HSP-219) and `open_store` absorbs
+//! it with three attempts, like hsp191/hsp193.
 //!
-//! Carril de cliente real: `twine` y `pip` del host (el mismo carril que
-//! hsp112), con su `HOME`, su `netrc` y su cache aislados. El `pip`
-//! instala el wheel desde una cache vacía; el sdist se verifica por su
-//! contrato HTTP (bytes servidos == digest del índice == fila del
-//! catálogo), sin pedir al host que construya fuentes.
+//! Real client lane: the host's `twine` and `pip` (the same lane as
+//! hsp112), with their `HOME`, `netrc` and cache isolated. `pip`
+//! installs the wheel from an empty cache; the sdist is verified through its
+//! HTTP contract (served bytes == index digest == catalog
+//! row), without asking the host to build sources.
 
 use sha2::Digest as _;
 use std::io::Write as _;
@@ -78,8 +78,8 @@ use hodei_hub::blob::FileBlobStore;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// La ejecución: una por corrida, para que ninguna prueba se encuentre
-/// con lo que otra dejó.
+/// The run: one per run, so that no test runs into
+/// what another left behind.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -88,13 +88,13 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Una cuenta por prueba y por ejecución.
+/// One account per test and per run.
 fn account(tag: &str) -> String {
     format!("it194{}{}", tag, &nonce()[8..])
 }
 
-/// El pid: nombres de paquete únicos por corrida (el recurso de auditoría
-/// no lleva la cuenta, y el censo del outbox cuenta por camino).
+/// The pid: package names unique per run (the audit resource
+/// does not carry the account, and the outbox census counts by path).
 fn the_pid() -> u32 {
     std::process::id()
 }
@@ -130,7 +130,7 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     Some(Arc::new(client))
 }
 
-/// El directorio de la evidencia: `target/uat/hsp194/`.
+/// The evidence directory: `target/uat/hsp194/`.
 fn the_evidence_dir() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
@@ -139,7 +139,7 @@ fn the_evidence_dir() -> PathBuf {
     dir
 }
 
-/// Una línea de evidencia, con el momento.
+/// An evidence line, with the timestamp.
 fn record_evidence(test: &str, line: &str) {
     let file = the_evidence_dir().join("evidencia.md");
     let entry = format!("- [{test}] {line}\n");
@@ -152,9 +152,9 @@ fn record_evidence(test: &str, line: &str) {
     }
 }
 
-/// El almacén Dgraph del catálogo, con la apertura acotada: bajo carga,
-/// la apertura de la guarda es el flake preexistente del stack (lecciones
-/// HSP-190/HSP-219); la suite lo absorbe con tres intentos y un respiro.
+/// The catalog's Dgraph store, with bounded opening: under load,
+/// opening the guard is the stack's pre-existing flake (lessons
+/// HSP-190/HSP-219); the suite absorbs it with three attempts and a breather.
 async fn open_store(client: Arc<GraphClient>) -> DgraphCatalogStore {
     let mut last = String::new();
     for _attempt in 0..3 {
@@ -177,7 +177,7 @@ fn correlation_of(account: &str) -> String {
     format!("corr-hsp194-{account}")
 }
 
-/// Un descriptor de repositorio hosted, del formato y los ajustes pedidos.
+/// A hosted repository descriptor, with the requested format and settings.
 fn a_descriptor(
     account: &str,
     repo_key: &str,
@@ -200,12 +200,12 @@ fn a_descriptor(
 }
 
 // ---------------------------------------------------------------------------
-// Los fixtures PyPI: un wheel y un sdist construidos aquí, sin depender de
-// una herramienta de Python (la misma forma que `tests/support` usa para
-// la superficie PyPI de hsp112).
+// The PyPI fixtures: a wheel and an sdist built here, without depending on
+// a Python tool (the same shape `tests/support` uses for
+// hsp112's PyPI surface).
 // ---------------------------------------------------------------------------
 
-/// La metadata del paquete, tal y como la lee `twine`.
+/// The package metadata, as `twine` reads it.
 fn the_metadata(name: &str, version: &str, requires_python: Option<&str>) -> String {
     let mut metadata = format!(
         "Metadata-Version: 2.1\n\
@@ -220,13 +220,13 @@ fn the_metadata(name: &str, version: &str, requires_python: Option<&str>) -> Str
     metadata
 }
 
-/// El nombre que lleva el fichero de una distribución: PEP 427 escapa el
-/// nombre del proyecto con `_` en el fichero.
+/// The name a distribution's file carries: PEP 427 escapes the
+/// project name with `_` in the file.
 fn the_escaped_name(name: &str) -> String {
     name.replace(['-', '.'], "_")
 }
 
-/// El `RECORD` de un wheel: los ficheros, su hash y su tamaño.
+/// A wheel's `RECORD`: the files, their hash and their size.
 fn the_record(entries: &[(&str, &[u8])]) -> String {
     let mut record = String::new();
     for (path, body) in entries {
@@ -240,10 +240,10 @@ fn the_record(entries: &[(&str, &[u8])]) -> String {
     record
 }
 
-/// Un wheel: un zip con los metadatos, el `RECORD` y el módulo, cuyo
-/// contenido lleva la marca pedida (dos cuentas con el mismo camino tienen
-/// que guardar CONTENIDO distinto, y la inmutabilidad se demuestra con
-/// otro contenido bajo el mismo nombre).
+/// A wheel: a zip with the metadata, the `RECORD` and the module, whose
+/// content carries the requested mark (two accounts with the same path have
+/// to store DIFFERENT CONTENT, and immutability is demonstrated with
+/// other content under the same name).
 fn a_wheel(name: &str, version: &str, requires_python: Option<&str>, value: u32) -> Vec<u8> {
     let escaped = the_escaped_name(name);
     let dist = format!("{escaped}-{version}.dist-info");
@@ -284,7 +284,7 @@ fn a_wheel(name: &str, version: &str, requires_python: Option<&str>, value: u32)
     writer.finish().expect("the wheel is closed").into_inner()
 }
 
-/// Un sdist: un tar con gzip con el `PKG-INFO` y el `pyproject.toml`.
+/// An sdist: a gzipped tar with the `PKG-INFO` and the `pyproject.toml`.
 fn an_sdist(name: &str, version: &str, requires_python: Option<&str>, value: u32) -> Vec<u8> {
     let root = format!("{name}-{version}");
     let metadata = the_metadata(name, version, requires_python);
@@ -316,7 +316,7 @@ fn an_sdist(name: &str, version: &str, requires_python: Option<&str>, value: u32
     encoder.finish().expect("the sdist is closed")
 }
 
-/// La cabecera de un fichero de tar.
+/// A tar file's header.
 fn the_tar_header(path: &str, size: u64) -> [u8; 512] {
     let mut header = [0u8; 512];
     header[..path.len()].copy_from_slice(path.as_bytes());
@@ -339,7 +339,7 @@ fn the_tar_header(path: &str, size: u64) -> [u8; 512] {
     header
 }
 
-/// El hex SHA-256 de unos bytes, tal y como lo lleva el índice.
+/// The SHA-256 hex of some bytes, as the index carries it.
 fn sha256_hex(bytes: &[u8]) -> String {
     sha2::Sha256::digest(bytes)
         .iter()
@@ -347,7 +347,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Los nombres de las distribuciones de un paquete de la suite.
+/// The names of a suite package's distributions.
 fn the_wheel_file(name: &str, version: &str) -> String {
     format!("{}-{version}-py3-none-any.whl", the_escaped_name(name))
 }
@@ -357,12 +357,12 @@ fn the_sdist_file(name: &str, version: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Las publicaciones PyPI al nivel del almacén: la misma forma que escribe
-// la superficie (`src/handlers/pypi.rs`), para sembrar estados completos
-// sin pasar por el cliente real.
+// The PyPI publications at the store level: the same shape the surface
+// writes (`src/handlers/pypi.rs`), to seed complete states
+// without going through the real client.
 // ---------------------------------------------------------------------------
 
-/// La entrada de índice de una distribución publicada.
+/// The index entry of a published distribution.
 fn an_entry(filename: &str, bytes: &[u8], requires_python: Option<&str>) -> FileEntry {
     FileEntry {
         filename: filename.to_string(),
@@ -374,10 +374,10 @@ fn an_entry(filename: &str, bytes: &[u8], requires_python: Option<&str>) -> File
     }
 }
 
-/// Publica una distribución PyPI, con las coordenadas de la superficie: el
-/// camino `{proyecto}/{fichero}` y las coordenadas (`{proyecto}/{fichero}`,
-/// versión PEP 440). Una distribución es inmutable: el commit lleva la
-/// guarda de la CLAVE del asset y `overwrite: false`.
+/// Publishes a PyPI distribution, with the surface's coordinates: the
+/// path `{proyecto}/{fichero}` and the coordinates (`{proyecto}/{fichero}`,
+/// PEP 440 version). A distribution is immutable: the commit carries the
+/// ASSET KEY's guard and `overwrite: false`.
 async fn publish_a_distribution<Store>(
     store: &Store,
     account: &str,
@@ -414,9 +414,9 @@ async fn publish_a_distribution<Store>(
         .expect("the distribution publication settles");
 }
 
-/// Publica una instantánea del documento del proyecto, como la superficie:
-/// cada estado es una versión nueva de contenido direccionada por digest y
-/// el puntero de la ruta se mueve con la precondición del digest anterior.
+/// Publishes a snapshot of the project document, like the surface:
+/// each state is a new digest-addressed content version and
+/// the path pointer moves with the previous digest's precondition.
 async fn publish_a_document_snapshot<Store>(
     store: &Store,
     account: &str,
@@ -463,8 +463,8 @@ where
     digest
 }
 
-/// Siembra un paquete PyPI completo: su wheel, su sdist y el documento del
-/// proyecto que los nombra. Devuelve el digest de la instantánea.
+/// Seeds a complete PyPI package: its wheel, its sdist and the
+/// project document that names them. Returns the snapshot's digest.
 async fn seed_a_package<Store>(
     store: &Store,
     account: &str,
@@ -505,13 +505,13 @@ where
     publish_a_document_snapshot(store, account, repository, project, &entries, None).await
 }
 
-/// El contenido determinista de la distribución sembrada de un proyecto.
+/// The deterministic content of a project's seeded distribution.
 fn seeded_wheel(project: &str, version: &str, value: u32) -> Vec<u8> {
     a_wheel(project, version, Some(">=3.9"), value)
 }
 
 // ---------------------------------------------------------------------------
-// El vertical HTTP: el router del hub sobre el catálogo Dgraph.
+// The HTTP vertical: the hub router over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
 struct ContractAuthenticator {
@@ -534,7 +534,7 @@ impl PrincipalAuthenticator for ContractAuthenticator {
     }
 }
 
-/// La Cedar bundle: solo `alice` de esta cuenta publica y descarga.
+/// The Cedar bundle: only `alice` of this account publishes and downloads.
 fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     let policy = format!(
         r#"permit(
@@ -561,9 +561,9 @@ fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
 struct Vertical {
     app: Router,
     store: Arc<DgraphCatalogStore>,
-    /// El CAS del vertical: la siembra al nivel del almacén tiene que
-    /// dejar AHI los bytes que el catálogo referencia, o las lecturas del
-    /// contrato no encuentran el contenido.
+    /// The vertical's CAS: seeding at the store level has to
+    /// leave THERE the bytes the catalog references, or the contract
+    /// reads do not find the content.
     #[allow(dead_code)]
     content: Arc<dyn hodei_hub::blob::BlobStore>,
     #[allow(dead_code)]
@@ -633,7 +633,7 @@ impl Vertical {
     }
 }
 
-/// El mismo servicio, en un puerto de verdad: el cliente PyPI habla TCP.
+/// The same service, on a real port: the PyPI client speaks TCP.
 async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -648,7 +648,7 @@ async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     address
 }
 
-/// La respuesta de una petición del contrato HTTP.
+/// The response to an HTTP contract request.
 struct Answer {
     status: StatusCode,
     etag: Option<String>,
@@ -695,7 +695,7 @@ async fn send(
 }
 
 // ---------------------------------------------------------------------------
-// El cliente PyPI real, como hsp112: su HOME, su netrc y su cache.
+// The real PyPI client, like hsp112: its HOME, its netrc and its cache.
 // ---------------------------------------------------------------------------
 
 fn require_twine() {
@@ -722,9 +722,9 @@ fn require_pip() {
     );
 }
 
-/// El sitio donde el interprete tiene sus paquetes de usuario: el `twine`
-/// instalado para el usuario real no se ve desde el HOME aislado sin este
-/// camino (hsp112).
+/// The place where the interpreter keeps its user packages: the `twine`
+/// installed for the real user is not visible from the isolated HOME without this
+/// path (hsp112).
 fn the_python_path() -> Option<String> {
     let output = Command::new("python3")
         .args(["-c", "import site; print(site.getusersitepackages())"])
@@ -740,16 +740,16 @@ fn the_python_path() -> Option<String> {
     Some(path)
 }
 
-/// La salida de un proceso, por stdout y por stderr.
+/// A process's output, via stdout and stderr.
 fn the_text(stdout: &[u8], stderr: &[u8]) -> String {
     let mut text = String::from_utf8_lossy(stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(stderr));
     text
 }
 
-/// Un cliente PyPI aislado: su `HOME`, su `netrc` y su cache. La
-/// credencial viaja en la CONTRASEÑA de la autenticación básica, que es
-/// como la llevan `pip` y `twine` (hsp112).
+/// An isolated PyPI client: its `HOME`, its `netrc` and its cache. The
+/// credential travels in the basic-auth PASSWORD, which is
+/// how `pip` and `twine` carry it (hsp112).
 struct Client {
     root: PathBuf,
     netrc: PathBuf,
@@ -781,7 +781,7 @@ impl Client {
         }
     }
 
-    /// Publica una distribución con `twine`.
+    /// Publishes a distribution with `twine`.
     fn publish(&self, file: &Path) -> Run {
         let mut command = Command::new("twine");
         command
@@ -794,7 +794,7 @@ impl Client {
             .arg("--non-interactive")
             .arg("--disable-progress-bar")
             .arg(file)
-            // La credencial va en el entorno, nunca en la linea de ordenes.
+            // The credential goes in the environment, never on the command line.
             .env("TWINE_USERNAME", "alice")
             .env("TWINE_PASSWORD", "alice")
             .env("HOME", self.root.join("home"))
@@ -809,7 +809,7 @@ impl Client {
         }
     }
 
-    /// Instala con `pip` desde una cache vacía.
+    /// Installs with `pip` from an empty cache.
     fn install(&self, target: &Path, package: &str) -> Run {
         let output = Command::new("pip")
             .arg("install")
@@ -841,15 +841,15 @@ struct Run {
     output: String,
 }
 
-/// Cuántos eventos del outbox de ESTA cuenta nombra el recurso pedido.
+/// How many outbox events of THIS account name the requested resource.
 ///
-/// El censo va POR TENANT (índice exacto), no por el `pending()` global:
-/// el outbox del servidor compartido acumula los hechos pendientes de
-/// TODAS las corridas —ninguna prueba los marca entregados— y su respuesta
-/// ya desborda el límite de mensaje gRPC (4 MiB). La cuenta es única por
-/// corrida, así que la raíz `eq(tenant)` trae por índice solo los hechos
-/// de ESTA prueba, y el filtro del recurso va en el adaptador (frontera
-/// hallada por HSP-194; ver la evidencia).
+/// The census goes PER TENANT (exact index), not through the global `pending()`:
+/// the shared server's outbox accumulates the pending facts of
+/// ALL runs -- no test marks them delivered -- and its response
+/// already overflows the gRPC message limit (4 MiB). The account is unique per
+/// run, so the `eq(tenant)` root brings through the index only the facts
+/// of THIS test, and the resource filter goes in the adapter (boundary
+/// found by HSP-194; see the evidence).
 async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str) -> usize {
     let escaped = tenant.replace('\\', "\\\\").replace('"', "\\\"");
     let response = client
@@ -876,8 +876,8 @@ async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el cliente PyPI real publica y lee sobre el catálogo Dgraph, con
-// digests estables, wheel desde el CAS y outbox atómico.
+// AC1: the real PyPI client publishes and reads over the Dgraph catalog, with
+// stable digests, wheel from the CAS and atomic outbox.
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -910,9 +910,9 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
 
     let client = Client::new(&root, "client", address.port(), repo, "alice");
 
-    // La publicación real: el `twine` manda el protocolo de subida y el
-    // catálogo Dgraph lo asienta (distribución inmutable + documento del
-    // proyecto con su instantánea).
+    // The real publication: `twine` sends the upload protocol and the
+    // Dgraph catalog records it (immutable distribution + project
+    // document with its snapshot).
     for file in [&wheel, &sdist] {
         let published = client.publish(file);
         assert!(
@@ -927,9 +927,9 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         &format!("twine upload de {wheel_file} y {sdist_file} sobre {repo} (catálogo Dgraph): OK"),
     );
 
-    // El simple index POR RANGO: la raíz lista los proyectos del
-    // repositorio sin escanear nada (el rango acotado de assets_under),
-    // y el proyecto aparece.
+    // The simple index BY RANGE: the root lists the repository's projects
+    // without scanning anything (assets_under's bounded range),
+    // and the project shows up.
     let root_index = send(
         &vertical.app,
         Method::GET,
@@ -963,9 +963,9 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         ),
     );
 
-    // La metadata POR PAQUETE, leída dos veces: la página es una
-    // instantánea estable (mismo body y mismo ETag), y cada fichero lleva
-    // el hash del contenido que el servicio sirve.
+    // The PER-PACKAGE metadata, read twice: the page is a stable
+    // snapshot (same body and same ETag), and each file carries
+    // the hash of the content the service serves.
     let project_url = format!("/pypi/{repo}/simple/{project}/");
     let first = send(
         &vertical.app,
@@ -1021,10 +1021,10 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         "metadata por paquete estable (mismo body y ETag en dos lecturas); wheel y sdist llevan en el índice el sha256 de SUS bytes",
     );
 
-    // El wheel sale del CAS: los bytes servidos son los que el servicio
-    // digeró al publicar, y el grafo dice lo mismo: la versión del
-    // catálogo con las coordenadas de la superficie lleva el sha256 de
-    // ESOS bytes.
+    // The wheel comes from the CAS: the served bytes are the ones the service
+    // digested on publish, and the graph says the same: the catalog
+    // version with the surface's coordinates carries the sha256 of
+    // THOSE bytes.
     let served_wheel = send(
         &vertical.app,
         Method::GET,
@@ -1081,8 +1081,8 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         ),
     );
 
-    // El cliente real RESUELVE desde una cache vacía: `pip install` baja
-    // el wheel por el índice y el módulo instalado es el publicado.
+    // The real client RESOLVES from an empty cache: `pip install` downloads
+    // the wheel through the index and the installed module is the published one.
     let target = root.join("installed-wheel");
     let installed = client.install(&target, &project);
     assert!(
@@ -1107,10 +1107,10 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         "pip install desde cache vacía contra el índice del port Dgraph: los bytes instalados son los del wheel servido por el CAS",
     );
 
-    // La distribución es INMUTABLE: otro contenido con el mismo nombre de
-    // fichero es un 409, y el catálogo no reescribe nada. El nombre de
-    // fichero es EL MISMO (la distribución se nombra por su fichero): el
-    // contenido que lo lleva es OTRO.
+    // The distribution is IMMUTABLE: other content with the same file name
+    // is a 409, and the catalog rewrites nothing. The file name
+    // is THE SAME (the distribution is named by its file): the
+    // content that carries it is OTHER.
     let other = dist.join("other").join(&wheel_file);
     std::fs::create_dir_all(dist.join("other")).expect("the other directory");
     std::fs::write(&other, a_wheel(&project, "1.0", Some(">=3.9"), 43))
@@ -1140,9 +1140,9 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         "the immutable version keeps its own content"
     );
 
-    // La re-entrega IDEMPOTENTE: el mismo contenido dicho dos veces no es
-    // un error NI un hecho nuevo (la publicación settled lee el resultado
-    // comprometido; el documento no cambia porque el fichero ya estaba).
+    // The IDEMPOTENT re-delivery: the same content stated twice is neither
+    // an error NOR a new fact (the settled publication reads the committed
+    // result; the document does not change because the file was already there).
     let census = fresh_client().await.expect("client");
     let needle = format!("{repo}/{project}");
     let before = the_events_of(&census, &account, &needle).await;
@@ -1165,10 +1165,10 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
         ),
     );
 
-    // El grafo solo guarda coordenadas y referencias: el puntero del
-    // documento del proyecto es la última instantánea, y su versión
-    // `#project` guarda el mismo digest. Las distribuciones nunca son el
-    // documento.
+    // The graph only stores coordinates and references: the project
+    // document's pointer is the latest snapshot, and its `#project`
+    // version holds the same digest. Distributions are never the
+    // document.
     let pointer = vertical
         .store
         .asset(&account, repo, &project)
@@ -1194,8 +1194,8 @@ async fn the_real_pypi_client_publishes_and_reads_over_dgraph() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: cursor estable, scoping por cuenta y distractores que NO causan
-// scan global (el probe confirma el índice en los predicados).
+// AC2: stable cursor, per-account scoping and distractors that do NOT cause
+// a global scan (the probe confirms the index on the predicates).
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1231,8 +1231,8 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         )
         .await
         .expect("the noise repository is created");
-    // La cuenta distractora: la MISMA clave de repositorio y los MISMOS
-    // nombres de proyecto. Lo que ella guarda no existe aquí.
+    // The distractor account: the SAME repository key and the SAME
+    // project names. What it stores does not exist here.
     store
         .create_repository(
             &other,
@@ -1247,16 +1247,16 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         .await
         .expect("the other repository is created");
 
-    // Los paquetes de la cuenta: seis proyectos en pypi-hosted (wheel +
-    // sdist + documento cada uno). La marca 42: el contenido de ESTA
-    // cuenta.
+    // The account's packages: six projects in pypi-hosted (wheel +
+    // sdist + document each). The 42 mark: THIS account's
+    // content.
     for index in 1..=6u32 {
         let project = format!("pkg-{index:02}");
         seed_a_package(store.as_ref(), &account, "pypi-hosted", &project, "1.0", 42).await;
     }
-    // Distractores de la MISMA cuenta (otro repositorio PyPI) y de la OTRA
-    // cuenta (el mismo repositorio, los mismos proyectos, otro contenido).
-    // Suficientes para que un scan global destaque.
+    // Distractors from the SAME account (another PyPI repository) and from the OTHER
+    // account (the same repository, the same projects, other content).
+    // Enough for a global scan to stand out.
     for index in 0..30u32 {
         let project = format!("noise-{index:02}");
         seed_a_package(store.as_ref(), &account, "pypi-noise", &project, "1.0", 42).await;
@@ -1266,7 +1266,7 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         seed_a_package(store.as_ref(), &other, "pypi-hosted", &project, "1.0", 43).await;
     }
 
-    // El listado de repositorios es DE LA CUENTA.
+    // The repository listing is THE ACCOUNT'S.
     let repositories = store.repositories(&account).await.expect("the listing");
     let keys: Vec<String> = repositories
         .iter()
@@ -1285,9 +1285,9 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         vec!["pypi-hosted".to_string()],
     );
 
-    // Búsqueda exacta por paquete: solo la distribución de ESTA cuenta. Ni
-    // las de la otra cuenta con los mismos caminos, ni las de ruido de la
-    // propia cuenta.
+    // Exact search by package: only THIS account's distribution. Neither
+    // those of the other account with the same paths, nor the noise ones of
+    // its own account.
     let wheel_path = format!("pkg-03/{}", the_wheel_file("pkg-03", "1.0"));
     let started = std::time::Instant::now();
     let page = store
@@ -1314,9 +1314,9 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         ),
     );
 
-    // La metadata POR PAQUETE: las coordenadas completas dicen la fila del
-    // documento del proyecto (el puntero `#project`), por índice y sin
-    // scan, y las de la distribución dicen el sha256 de su contenido.
+    // The PER-PACKAGE metadata: the full coordinates state the row of the
+    // project document (the `#project` pointer), by index and without a
+    // scan, and the distribution's state the sha256 of its content.
     let version = store
         .version(
             &account,
@@ -1350,8 +1350,8 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         .expect("the project snapshot by coordinates");
     assert_eq!(snapshot.digest.value, pointer.digest.value);
 
-    // El scoping: el MISMO camino en la OTRA cuenta es OTRO contenido, y
-    // el total de la caminata de ESTA cuenta no cuenta lo de la otra.
+    // Scoping: the SAME path in the OTHER account is OTHER content, and
+    // the total of THIS account's walk does not count the other's.
     let ours = store
         .asset(&account, "pypi-hosted", "pkg-01")
         .await
@@ -1365,16 +1365,16 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         .search(&account, &repositories, &SearchQuery::new().with_limit(100))
         .await
         .expect("the walk");
-    // 18 filas en pypi-hosted (6 proyectos x [documento, wheel, sdist]) +
-    // 90 filas en pypi-noise (30 x 3), sin las 18 de la otra cuenta.
+    // 18 rows in pypi-hosted (6 projects x [document, wheel, sdist]) +
+    // 90 rows in pypi-noise (30 x 3), without the other account's 18.
     assert_eq!(
         all.total,
         Some(108),
         "the whole account: 18 in pypi-hosted + 90 in pypi-noise, without the other account's rows"
     );
 
-    // El cursor estable: la caminata por clave no salta ni duplica aunque
-    // llegue una inserción ANTES de la clave ya vista, como hsp191.
+    // The stable cursor: the key walk neither skips nor duplicates even if
+    // an insertion arrives BEFORE the already seen key, like hsp191.
     let first = store
         .search(
             &account,
@@ -1444,9 +1444,9 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
         "cursor estable en el listado PyPI tras insertar pkg-00 antes de la clave ya vista: la caminata no salta ni duplica y el tardío queda fuera; el total por cuenta no cuenta las 18 filas de la otra",
     );
 
-    // El probe del PLAN: los predicados que las consultas PyPI filtran
-    // llevan índice exacto, y las claves llevan `@upsert` — el servidor es
-    // el que arbitra dos escritores de la misma clave.
+    // The PLAN probe: the predicates the PyPI queries filter on
+    // carry an exact index, and the keys carry `@upsert` -- the server is
+    // what arbitrates two writers of the same key.
     let probed = [
         ("hodei.catalog.asset.key", true),
         ("hodei.catalog.version.key", true),
@@ -1481,14 +1481,14 @@ async fn the_pypi_queries_are_scoped_keyed_and_indexed() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: las lecturas del estado PyPI dicen lo que el contrato dice.
+// AC2: reads of the PyPI state say what the contract says.
 // ---------------------------------------------------------------------------
 
-/// La secuencia de publicaciones PyPI contra el almacén pedido: las
-/// distribuciones de cada versión y una instantánea del documento por
-/// estado; el proyecto del medio lleva una segunda instantánea (el yank
-/// simulado al nivel del documento) que deja la primera en la historia.
-/// Devuelve, por proyecto, el digest de la instantánea vigente.
+/// The sequence of PyPI publications against the requested store: the
+/// distributions of each version and one document snapshot per
+/// state; the middle project carries a second snapshot (the yank
+/// simulated at the document level) that leaves the first in the history.
+/// Returns, per project, the digest of the current snapshot.
 macro_rules! seed_the_pypi_state {
     ($store:expr, $account:expr, $repo:expr) => {{
         let mut pointers: Vec<(&'static str, ContentDigest)> = Vec::new();
@@ -1526,9 +1526,9 @@ macro_rules! seed_the_pypi_state {
             let mut current =
                 publish_a_document_snapshot($store, $account, $repo, project, &entries, None).await;
             if second_state {
-                // La mutación de metadata: la versión queda retirada
-                // (PEP 592) y el documento se mueve CON la precondición
-                // del digest vigente, como hace la superficie.
+                // The metadata mutation: the version is left yanked
+                // (PEP 592) and the document moves WITH the current
+                // digest's precondition, as the surface does.
                 let mut entries = vec![
                     an_entry(&the_wheel_file(project, version), &wheel, Some(">=3.9")),
                     an_entry(&the_sdist_file(project, version), &sdist, Some(">=3.9")),
@@ -1557,11 +1557,11 @@ macro_rules! seed_the_pypi_state {
     }};
 }
 
-/// El estado PyPI publicado responde lo que el contrato dice: el listado
-/// por rango (los nueve caminos, ordenados, con el digest de lo publicado),
-/// el puntero del documento (la última instantánea), la distribución por
-/// coordenadas y la búsqueda exacta. HSP-314 F4: antes se comparaba con un
-/// segundo motor; ahora los valores esperados salen de lo publicado.
+/// The published PyPI state answers what the contract says: the range
+/// listing (the nine paths, ordered, with the digest of what was published),
+/// the document pointer (the latest snapshot), the distribution by
+/// coordinates and the exact search. HSP-314 F4: it used to be compared against a
+/// second engine; now the expected values come from what was published.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_pypi_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
@@ -1586,9 +1586,9 @@ async fn the_pypi_reads_match_the_contract_for_the_published_state() {
 
     let pointers = seed_the_pypi_state!(dgraph.as_ref(), &account, repo);
 
-    // El listado por rango: los caminos publicados, en orden, con el
-    // digest de lo publicado. Los documentos llevan el de su instantánea
-    // vigente; las distribuciones, el de sus bytes y su tamaño.
+    // The range listing: the published paths, in order, with the
+    // digest of what was published. Documents carry that of their current
+    // snapshot; distributions, that of their bytes and their size.
     let dgraph_assets = dgraph
         .assets_under(&account, repo, "")
         .await
@@ -1625,7 +1625,7 @@ async fn the_pypi_reads_match_the_contract_for_the_published_state() {
         dgraph_view, expected_view,
         "the ranged listing is every published path, in order, with its digest"
     );
-    // Tres proyectos x (documento + wheel + sdist).
+    // Three projects x (document + wheel + sdist).
     assert_eq!(dgraph_view.len(), 9);
     for (path, size) in &expected_sizes {
         let asset = dgraph_assets
@@ -1635,7 +1635,7 @@ async fn the_pypi_reads_match_the_contract_for_the_published_state() {
         assert_eq!(asset.size_bytes, *size, "the size of {path}");
     }
 
-    // El puntero del documento y la distribución por coordenadas.
+    // The document pointer and the distribution by coordinates.
     for (project, version, _) in [
         ("parity-one", "1.0", ()),
         ("parity-two", "2.0", ()),
@@ -1669,7 +1669,7 @@ async fn the_pypi_reads_match_the_contract_for_the_published_state() {
         );
     }
 
-    // La búsqueda exacta por paquete devuelve solo la distribución pedida.
+    // The exact search by package returns only the requested distribution.
     let repositories = dgraph.repositories(&account).await.expect("the listing");
     let query = SearchQuery::new()
         .with_package_name(format!(

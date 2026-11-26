@@ -1,10 +1,10 @@
-//! El contrato del paquete de resolucion: exportar lo resuelto, importar
-//! sin red y no hacer visible nada que no este respaldado.
+//! The resolution bundle contract: export what was resolved, import
+//! without network and make nothing visible that is not backed.
 //!
-//! Lo que se comprueba aqui es el valor del HAR-24: un sitio sin salida a
-//! la red puede resolver contra un proxy importando el paquete, el origen
-//! es procedencia y no autoridad, lo que falta es explicable, un paquete
-//! podrido no publica nada, y cruzar de dueno exige decirlo explicitamente.
+//! What is checked here is the value of HAR-24: a site with no outbound
+//! network access can resolve against a proxy by importing the bundle, the origin
+//! is provenance and not authority, what is missing is explainable, a
+//! rotten bundle publishes nothing, and crossing owners requires saying so explicitly.
 
 use chrono::{Duration, Utc};
 use hodei_catalog::model::{
@@ -30,7 +30,7 @@ use graph_profile::Workdir;
 
 const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 
-/// Un registro con su catalogo y su almacen, en un directorio propio.
+/// A registry with its catalog and its store, in a directory of its own.
 struct Site {
     tmp: Workdir,
     store: DgraphCatalogStore,
@@ -105,8 +105,8 @@ impl Site {
             .expect("the hosted repository is created");
     }
 
-    /// Lo que hace una resolucion de proxy: guardar, publicar y firmar el
-    /// recibo que la confirma.
+    /// What a proxy resolution does: store, publish and sign the
+    /// receipt that confirms it.
     async fn resolve(
         &self,
         account: &str,
@@ -212,7 +212,7 @@ impl Site {
     }
 }
 
-/// Exporta el origen en el directorio `name` de su propio temporal.
+/// Exports the origin into the `name` directory of its own temp dir.
 async fn export(site: &Site, name: &str, account: &str, repository: &str) -> std::path::PathBuf {
     let to = site.tmp.path().join(name);
     let blobs = site.blobs();
@@ -264,7 +264,7 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
     let site = Site::new().await;
     site.create_proxy("acme", "mirror", "central").await;
 
-    // Resuelta y confirmada: entra.
+    // Resolved and confirmed: it gets in.
     let good = site
         .resolve("acme", "mirror", "tools/a.bin", b"tool a")
         .await;
@@ -280,8 +280,8 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
     )
     .await;
 
-    // Retenida: hubo confirmacion, pero el recibo mas reciente es una
-    // cuarentena vigente.
+    // Held back: there was a confirmation, but the most recent receipt is a
+    // quarantine in force.
     let quarantined = site
         .resolve("acme", "mirror", "tools/b.bin", b"tool b")
         .await;
@@ -310,7 +310,7 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
     )
     .await;
 
-    // Confirmada por una configuracion que ya no vigente: se retiene.
+    // Confirmed by a configuration that is no longer in force: it is held back.
     let stale = site
         .resolve("acme", "mirror", "tools/c.bin", b"tool c")
         .await;
@@ -326,7 +326,7 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
     )
     .await;
 
-    // Confirmada pero sin bytes en el almacen: se retiene, no se inventan.
+    // Confirmed but without bytes in the store: it is held back, nothing is invented.
     let missing = site
         .resolve("acme", "mirror", "tools/d.bin", b"tool d")
         .await;
@@ -348,7 +348,7 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
     )
     .expect("the blob is taken away");
 
-    // Promovida por una decision: la decision sale como evidencia.
+    // Promoted by a decision: the decision comes out as evidence.
     let promoted = site
         .resolve("acme", "mirror", "tools/e.bin", b"tool e")
         .await;
@@ -406,8 +406,8 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
     assert_eq!(decision.decision_id, "dec-1");
     assert_eq!(decision.actor, "hrn:hodei:iam:acme:User/carol");
 
-    // La cuarentena vigente manda sobre su confirmacion anterior, y la
-    // ausencia se explica sola.
+    // The quarantine in force overrides its earlier confirmation, and the
+    // absence explains itself.
     assert_eq!(manifest.withheld.len(), 3);
     for (path, prefix) in [
         ("tools/b.bin", "the origin has this content quarantined"),
@@ -438,9 +438,9 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
         .collect();
     assert_eq!(paths, ["tools/b.bin", "tools/c.bin", "tools/d.bin"]);
 
-    // Los ficheros estan en el reparto del almacen, y el paquete no lleva
-    // la URL del upstream como configuracion: solo como evidencia por
-    // archivo, sin secretos.
+    // The files are in the store layout, and the bundle does not carry
+    // the upstream URL as configuration: only as per-file
+    // evidence, without secrets.
     assert!(
         directory
             .join(BundleManifest::blob_file(&manifest.assets[0].digest))
@@ -475,9 +475,9 @@ async fn an_imported_package_resolves_without_the_network() {
         .await;
     let directory = export(&origin, "out", "acme", "mirror").await;
 
-    // El destino es un sitio nuevo con su propia configuracion: misma
-    // autoridad del upstream porque el operador la configuro igual, y el
-    // recibo que aqui se escribe lo firma ESA configuracion.
+    // The destination is a new site with its own configuration: same
+    // upstream authority because the operator configured it the same, and the
+    // receipt written here is signed by THAT configuration.
     let destination = Site::new().await;
     destination.create_proxy("acme", "mirror", "central").await;
     let report = import(
@@ -513,7 +513,7 @@ async fn an_imported_package_resolves_without_the_network() {
         "the destination signs its own receipt"
     );
 
-    // Los bytes llegaron y verifican contra su digest.
+    // The bytes arrived and verify against their digest.
     let content = destination
         .blobs()
         .get(&digest)
@@ -521,8 +521,8 @@ async fn an_imported_package_resolves_without_the_network() {
         .expect("the blob verifies in the destination store");
     assert_eq!(content, b"tool a");
 
-    // Repetir la importacion no duplica ni reescribe: el recibo se firma
-    // con la misma identidad y la ruta ya apunta al mismo contenido.
+    // Repeating the import neither duplicates nor rewrites: the receipt is signed
+    // with the same identity and the path already points to the same content.
     let again = import(
         &destination,
         &directory,
@@ -581,7 +581,7 @@ async fn a_corrupt_package_makes_nothing_visible() {
         .await;
     let directory = export(&origin, "out", "acme", "mirror").await;
 
-    // Un byte podrido en un blob: el manifiesto lo niega y nada se publica.
+    // A rotten byte in a blob: the manifest denies it and nothing is published.
     let blob = directory.join(BundleManifest::blob_file(&other.to_string()));
     std::fs::write(&blob, b"tool x tampered").expect("the file is poisoned");
 
@@ -639,8 +639,8 @@ async fn provenance_is_not_authority() {
         .await;
     let directory = export(&origin, "out", "acme", "mirror").await;
 
-    // Un destino que resuelve contra otro upstream no puede recibir el
-    // paquete: la procedencia del origen no autoriza aqui.
+    // A destination that resolves against another upstream cannot receive the
+    // bundle: the provenance of the origin does not authorize here.
     let wrong_upstream = Site::new().await;
     wrong_upstream.create_proxy("acme", "mirror", "nexus").await;
     let error = import(
@@ -655,7 +655,7 @@ async fn provenance_is_not_authority() {
     assert!(error.to_string().contains("nexus"), "{error}");
     assert!(error.to_string().contains("central"), "{error}");
 
-    // Y un destino que no es proxy tampoco lo recibe.
+    // And a destination that is not a proxy does not receive it either.
     let hosted = Site::new().await;
     hosted.create_hosted("acme", "vault").await;
     let error = import(&hosted, &directory, "acme", "vault", Mapping::default())
@@ -663,7 +663,7 @@ async fn provenance_is_not_authority() {
         .expect_err("a hosted repository does not resolve");
     assert!(error.to_string().contains("hosted"), "{error}");
 
-    // Sin repositorio de destino, se dice cual es el paso que falta.
+    // Without a destination repository, the missing step is named.
     let empty = Site::new().await;
     let error = import(&empty, &directory, "acme", "mirror", Mapping::default())
         .await
@@ -700,7 +700,7 @@ async fn crossing_owners_needs_the_explicit_mapping() {
         .create_proxy("umbrella", "mirror", "central")
         .await;
 
-    // Sin el flag explicito, la cuenta del paquete no es la del destino.
+    // Without the explicit flag, the bundle's account is not the destination's.
     let error = import(
         &destination,
         &directory,
@@ -712,8 +712,8 @@ async fn crossing_owners_needs_the_explicit_mapping() {
     .expect_err("the crossing is refused");
     assert!(error.to_string().contains("mapping"), "{error}");
 
-    // Con el flag, la importacion es una decision del destino: los
-    // recibos quedan a nombre de la cuenta que importa.
+    // With the flag, the import is a decision of the destination: the
+    // receipts are left in the name of the importing account.
     let report = import(
         &destination,
         &directory,
