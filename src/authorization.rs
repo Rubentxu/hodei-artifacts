@@ -277,7 +277,7 @@ fn intersect_grants(
     }
 }
 
-/// Memoizes authorization decisions per principal, action, resource, policy
+/// Memoizes authorization decisions per principal, account, action, resource, policy
 /// generation and attribute fingerprint (HSP-150, AC#3).
 ///
 /// Invalidation is a generation counter: [`CachedAuthorizer::invalidate`]
@@ -285,8 +285,8 @@ fn intersect_grants(
 /// in one atomic bump. A resource label or attribute change is not a policy
 /// change: it alters the fingerprint, so only the decisions computed with the
 /// old attributes stop matching. Decisions are never shared across
-/// principals, and an `Indeterminate` outcome is returned as such — a cached
-/// error can never become a `Permit`.
+/// principals, and an `Indeterminate` outcome is returned as such but never
+/// cached: a transient evaluator error is re-evaluated (still fail-closed).
 pub struct CachedAuthorizer {
     inner: Arc<dyn AuthorizerPort>,
     generation: Arc<AtomicU64>,
@@ -297,6 +297,7 @@ pub struct CachedAuthorizer {
 #[derive(PartialEq, Eq, Hash)]
 struct CacheKey {
     principal: String,
+    account: String,
     groups: String,
     action: String,
     resource: String,
@@ -320,9 +321,24 @@ impl CachedAuthorizer {
 
     /// Record that the policy layer changed: no previously cached decision is
     /// reused, for any principal.
+    ///
+    /// Ordering contract: swap the policies of the inner evaluator FIRST and
+    /// call this AFTER. If the order is reversed, a request that arrives
+    /// between the two steps is keyed with the new generation but evaluated
+    /// by the old policies, and that stale decision would be cached under the
+    /// new generation. Prefer [`CachedAuthorizer::replace_policies`], which
+    /// enforces the order.
     pub fn invalidate(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.locked_cache().clear();
+    }
+
+    /// Run `swap` (which must replace the inner evaluator's policies) and
+    /// then invalidate the cache, so the required order cannot be inverted.
+    pub fn replace_policies<R>(&self, swap: impl FnOnce() -> R) -> R {
+        let result = swap();
+        self.invalidate();
+        result
     }
 
     pub fn cached_decisions(&self) -> usize {
@@ -347,6 +363,11 @@ impl CachedAuthorizer {
         attributes.push_str(&render_attributes(request.context_attributes()));
         CacheKey {
             principal: principal.subject().as_str().to_string(),
+            account: {
+                let mut account = String::new();
+                push_field(&mut account, principal.account().as_str());
+                account
+            },
             groups: principal
                 .groups()
                 .iter()
@@ -420,6 +441,11 @@ impl AuthorizerPort for CachedAuthorizer {
             return cached.clone();
         }
         let outcome = self.inner.authorize(request);
+        if matches!(outcome, AuthorizationOutcome::Indeterminate(_)) {
+            // Never memoize an evaluation error: a transient failure must not
+            // keep blocking the key. Re-evaluating stays fail-closed.
+            return outcome;
+        }
         let mut cache = self.locked_cache();
         if cache.len() >= self.max_entries {
             cache.clear();
@@ -1167,8 +1193,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn indeterminate_is_cached_as_indeterminate_never_permit() {
-        // AC#3: a memoized engine error keeps blocking.
+    async fn indeterminate_is_never_cached_and_stays_blocking() {
+        // AC#3: an engine error blocks every time and is re-evaluated, so a
+        // transient failure cannot pin a key.
         let inner = cedar(
             r#"permit(
                 principal, action, resource
@@ -1176,7 +1203,7 @@ mod tests {
         );
         let recorder = Arc::new(RecordingAuthorizer::new(inner));
         let cached = Arc::new(CachedAuthorizer::new(recorder.clone(), 8));
-        let use_case = AuthorizeResourceUseCase::new(cached);
+        let use_case = AuthorizeResourceUseCase::new(cached.clone());
 
         for _ in 0..3 {
             assert_eq!(
@@ -1184,8 +1211,92 @@ mod tests {
                 AuthorizationOutcome::Indeterminate(IndeterminateReason::EvaluationError)
             );
         }
-        // Cached: one engine call for three decisions, all indeterminate.
-        assert_eq!(recorder.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(recorder.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(cached.cached_decisions(), 0);
+    }
+
+    #[tokio::test]
+    async fn permit_and_deny_are_still_cached() {
+        let policy = Arc::new(GrantSwitcher::new("alice"));
+        let calls = policy.calls.clone();
+        let cached = Arc::new(CachedAuthorizer::new(policy, 8));
+        let use_case = AuthorizeResourceUseCase::new(cached.clone());
+        for _ in 0..3 {
+            assert_eq!(
+                use_case.execute(
+                    context_named("hrn:hodei:iam::acme:User/alice").await,
+                    action(),
+                    resource("acme")
+                ),
+                AuthorizationOutcome::Permit
+            );
+            assert!(matches!(
+                use_case.execute(
+                    context_named("hrn:hodei:iam::acme:User/bob").await,
+                    action(),
+                    resource("acme")
+                ),
+                AuthorizationOutcome::Deny(_)
+            ));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(cached.cached_decisions(), 2);
+    }
+
+    #[tokio::test]
+    async fn same_subject_in_another_account_does_not_share_an_entry() {
+        let policy = Arc::new(GrantSwitcher::new("alice"));
+        let calls = policy.calls.clone();
+        let cached = CachedAuthorizer::new(policy, 8);
+        let mut requests = Vec::new();
+        for account in ["acme", "beta", "acme"] {
+            let context = VerifiedContext::from_principal(
+                verify_principal(
+                    &ClaimsAuthenticator(PrincipalClaims::new(
+                        PrincipalId::new("alice").unwrap(),
+                        AccountId::new(account).unwrap(),
+                    )),
+                    &Credentials::bearer("token"),
+                )
+                .await
+                .unwrap(),
+            );
+            requests.push(AuthorizationRequest::new(
+                context,
+                action(),
+                resource("acme"),
+            ));
+        }
+        let _ = cached.authorize(&requests[0]);
+        let _ = cached.authorize(&requests[1]);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let _ = cached.authorize(&requests[2]);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn replace_policies_swaps_then_invalidates() {
+        let policy = Arc::new(GrantSwitcher::new("alice"));
+        let cached = CachedAuthorizer::new(policy.clone(), 8);
+        let use_case_cache = Arc::new(cached);
+        let use_case = AuthorizeResourceUseCase::new(use_case_cache.clone());
+        assert_eq!(
+            use_case.execute(
+                context_named("hrn:hodei:iam::acme:User/alice").await,
+                action(),
+                resource("acme")
+            ),
+            AuthorizationOutcome::Permit
+        );
+        use_case_cache.replace_policies(|| policy.grant_to("bob"));
+        assert!(matches!(
+            use_case.execute(
+                context_named("hrn:hodei:iam::acme:User/alice").await,
+                action(),
+                resource("acme")
+            ),
+            AuthorizationOutcome::Deny(_)
+        ));
     }
 
     #[test]
