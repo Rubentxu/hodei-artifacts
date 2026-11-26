@@ -142,7 +142,7 @@ mkdir -p "$OCI_STAGE/bin" "$OCI_STAGE/config"
 install -m 0755 "$BIN_DIR/$BIN_NAME" "$OCI_STAGE/bin/$BIN_NAME"
 OCI_BIN_SHA256="$(sha256sum "$OCI_STAGE/bin/$BIN_NAME" | cut -d' ' -f1)"
 
-for cfg in default.toml release.toml standalone.toml external.toml dgraph.toml; do
+for cfg in default.toml release.toml dgraph.toml; do
   if [ ! -f "$ROOT/config/$cfg" ]; then
     echo "error: missing config/$cfg" >&2
     exit 1

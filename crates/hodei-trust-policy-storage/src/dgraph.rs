@@ -1,6 +1,6 @@
 //! The trust grants and the promotion decisions over the graph authority.
 //!
-//! This adapter sits beside the Surreal ones, not instead of them: the
+//! This adapter replaces the retired Surreal ones: the
 //! deployment chooses one store, the domain chooses neither. What it adds
 //! is the profile the trusted channel needs on the shared graph:
 //!
@@ -1381,7 +1381,9 @@ pub enum DgraphIntentError {
     /// A receipt arrived while the intent is still claimed but its lease
     /// is dead: the claim does not exist any more, whatever the state
     /// field says.
-    #[error("the claim of intent {identity} has no live lease, so nobody can receive this receipt")]
+    #[error(
+        "the claim of intent {identity} has no live lease, so nobody can receive this receipt"
+    )]
     LeaseDead {
         /// The intent the receipt spoke about.
         identity: String,

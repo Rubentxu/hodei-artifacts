@@ -31,9 +31,9 @@ use crate::features::add_user_to_group::use_case::AddUserToGroupUseCase;
 /// # Example
 ///
 /// ```rust,ignore
-/// let user_finder = Arc::new(SurrealUserAdapter::new(db));
-/// let group_finder = Arc::new(SurrealGroupAdapter::new(db));
-/// let user_persister = Arc::new(SurrealUserAdapter::new(db));
+/// let user_finder = Arc::new(DgraphIamAdapter::new(client));
+/// let group_finder = Arc::new(DgraphIamAdapter::new(client));
+/// let user_persister = Arc::new(DgraphIamAdapter::new(client));
 ///
 /// let add_user_to_group = create_add_user_to_group_use_case(
 ///     user_finder,

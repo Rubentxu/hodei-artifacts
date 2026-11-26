@@ -1,6 +1,6 @@
 //! The adapters of the evidence context over the graph authority.
 //!
-//! They sit beside the Surreal adapters, not instead of them: the
+//! They replace the retired Surreal adapters: the
 //! deployment chooses one store, the domain chooses neither. What is
 //! shared is the port — the contracts of `hodei-evidence` — and what
 //! the contract proves is the SEMANTICS of each adapter over the engine

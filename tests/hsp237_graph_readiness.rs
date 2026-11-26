@@ -86,7 +86,6 @@ async fn app(probe: Arc<dyn ReadinessProbe>) -> (Router, Workdir) {
     let mut config = AppConfig::default();
     tmp.apply(&mut config);
     config.content.cas_path = tmp.path().join("cas").to_string_lossy().into_owned();
-    config.repository.durable = true;
     let state = bootstrap(
         &config,
         BootstrapConfig {

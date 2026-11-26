@@ -3,7 +3,7 @@
 //!
 //! El motor (`hodei-reactive`) y sus adaptadores de dominio
 //! (`PromotionDecisionRequester`, `DomainIntentExecutor`, el outbox
-//! duradero `SurrealIntentStore`) existían y estaban probados, pero solo
+//! duradero) existían y estaban probados, pero solo
 //! vivían en los tests de sus crates. Este módulo es la composition root
 //! de ese ciclo: los conecta a las piezas que el servicio ya construye
 //! (el grafo, el catálogo, el plano de confianza, los hechos de riesgo) y
@@ -56,22 +56,14 @@ use std::sync::{Arc, Mutex};
 use chrono::{DateTime, Utc};
 use kernel::Hrn;
 use serde::Serialize;
-#[cfg(feature = "legacy")]
-use surrealdb::Surreal;
-#[cfg(feature = "legacy")]
-use surrealdb::engine::local::Db;
 
 use hodei_catalog::{GrantSweepRow, GrantSweepSource, TrustLedger};
 use hodei_evidence::application::capsule::CapsuleAssembler;
 use hodei_evidence::application::projector::evidence_hrn;
-#[cfg(feature = "legacy")]
-use hodei_evidence::domain::graph::RelationType;
 use hodei_evidence::domain::graph::{GraphChangeSet, GraphNode, NodeKind};
 use hodei_evidence::ports::graph::{GraphReadLimits, GraphWriter};
 use hodei_evidence::standards::inventory::read_cyclonedx_17;
 use hodei_evidence::{ContentDigest, EvidenceId, RelationDeltaScan};
-#[cfg(feature = "legacy")]
-use hodei_evidence::{RelationDelta, RelationDeltaKind};
 use hodei_graph_client::GraphClient;
 use hodei_reactive::behavior::{BehaviorError, GuardOutcome};
 use hodei_reactive::events::{Event, EventKind, Subscription};
@@ -89,18 +81,10 @@ use hodei_risk_storage::BlastRadiusReader;
 use hodei_risk_storage::dgraph_cases::DgraphSecurityCaseStore;
 use hodei_risk_storage::dgraph_view::{DgraphBlastRadius, DgraphImpactView};
 use hodei_risk_storage::impact_view::ImpactMaterializer;
-#[cfg(feature = "legacy")]
-use hodei_risk_storage::impact_view::SurrealImpactView;
-#[cfg(feature = "legacy")]
-use hodei_risk_storage::reactions::SurrealSecurityCaseStore;
 use hodei_risk_storage::subject_risk::RiskFactsReader;
 use hodei_trust_policy::PromotionService;
 use hodei_trust_policy::context::TrustContext;
 use hodei_trust_policy::ports::DecisionStore;
-#[cfg(feature = "legacy")]
-use hodei_trust_policy_storage::SurrealDecisionStore;
-#[cfg(feature = "legacy")]
-use hodei_trust_policy_storage::intents::SurrealIntentStore;
 use hodei_trust_policy_storage::reactions::{PromotionDecisionRequester, TrustContextSource};
 use hodei_trust_policy_storage::{DgraphDecisionStore, DgraphIntentStore, DgraphTrustStore};
 
@@ -357,7 +341,7 @@ fn digest_of_subject(subject: &Hrn) -> Result<String, String> {
     Ok(format!("{algorithm}:{value}"))
 }
 
-/// An identifier safe for a Surreal record id and for an event name.
+/// An identifier safe for a record id and for an event name.
 ///
 /// The HRNs of the cycle are full of `:` and `/`, and a raw HRN inside an
 /// id would either fail to store or collide with the parser of another
@@ -372,21 +356,6 @@ fn sanitize(value: &str) -> String {
             _ => '.',
         })
         .collect()
-}
-
-#[cfg(feature = "legacy")]
-/// A concession as the embedded engine stores it, with everything the
-/// renewal needs.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct StaleGrantRow {
-    decision_id: String,
-    account: String,
-    repository: String,
-    digest_algorithm: String,
-    digest: String,
-    subject: Option<String>,
-    policy_version: Option<String>,
-    valid_until: Option<DateTime<Utc>>,
 }
 
 /// The planned reevaluation of a concession whose validity lapsed.
@@ -780,42 +749,6 @@ impl VulnerabilityReactor {
             ledger,
             limits,
         }
-    }
-
-    /// Builds the cycle over the embedded engine.
-    ///
-    /// The Surreal adapters are the reference of every port; this keeps
-    /// the composition of the legacy profile exactly as it was.
-    #[cfg(feature = "legacy")]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        db: Arc<Surreal<Db>>,
-        graph: Arc<hodei_evidence_storage::SurrealGraphStore<Db>>,
-        view: SurrealImpactView<Db>,
-        plane: Arc<TrustPlane>,
-        ledger: Arc<dyn TrustLedger>,
-        evidence: Arc<dyn EvidenceReader>,
-        risk_facts: Arc<dyn RiskFactsReader>,
-        limits: InvestigationConfig,
-    ) -> Self {
-        let intents = Arc::new(SurrealIntentStore::new(db.clone()));
-        let sources = Arc::new(SurrealReactorSources::new(db.clone()));
-        Self::from_ports(ReactorPorts {
-            graph: graph.clone(),
-            blast_radius: graph,
-            view: Arc::new(view),
-            deltas: sources.clone(),
-            grants: sources,
-            execution: intents.clone(),
-            outbox: intents,
-            cases: Arc::new(SurrealSecurityCaseStore::new(db.clone())),
-            decisions: Arc::new(SurrealDecisionStore::new(db)),
-            plane,
-            ledger,
-            evidence,
-            risk_facts,
-            limits,
-        })
     }
 
     /// Builds the cycle over the graph authority.
@@ -1299,103 +1232,6 @@ impl VulnerabilityReactor {
     }
 }
 
-#[cfg(feature = "legacy")]
-/// Rebuilds a delta from the row the ledger stored.
-///
-/// A row that does not parse is skipped, not failed: the
-/// reconciliation is a converger, and one unreadable row of a long pass
-/// must not stop the other nine hundred. It mirrors the storage crate's
-/// own row shape (its helper is private): the same fields, the same
-/// kinds, the same leniency.
-fn delta_of_row(row: &hodei_evidence_storage::DeltaRow) -> Option<RelationDelta> {
-    Some(RelationDelta {
-        kind: match row.kind.as_str() {
-            "added" => RelationDeltaKind::Added,
-            "removed" => RelationDeltaKind::Removed,
-            "support_changed" => RelationDeltaKind::SupportChanged,
-            _ => return None,
-        },
-        tenant: Hrn::from_string(&row.tenant)?,
-        relation: RelationType::parse(&row.relation)?,
-        from: Hrn::from_string(&row.from)?,
-        to: Hrn::from_string(&row.to)?,
-        evidence: EvidenceId::new(row.evidence.clone()),
-        cause: row.cause.clone(),
-        observed_at: row.observed_at,
-    })
-}
-
-#[cfg(feature = "legacy")]
-/// The embedded engine's answer to the two questions the sweep and the
-/// reconciliation ask of the whole store: the concessions nobody revoked
-/// and the deltas of every tenant. It is the SurrealQL the cycle always
-/// ran, behind the ports.
-pub struct SurrealReactorSources {
-    db: Arc<Surreal<Db>>,
-}
-
-#[cfg(feature = "legacy")]
-impl SurrealReactorSources {
-    /// The sources over the database of the embedded profile.
-    pub fn new(db: Arc<Surreal<Db>>) -> Self {
-        Self { db }
-    }
-}
-
-#[cfg(feature = "legacy")]
-#[async_trait::async_trait]
-impl GrantSweepSource for SurrealReactorSources {
-    async fn unrevoked_grants(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<GrantSweepRow>, hodei_catalog::CatalogError> {
-        let rows: Vec<StaleGrantRow> = self
-            .db
-            .query(format!(
-                "SELECT decision_id, account, repository, digest_algorithm, digest, subject, \
-                 policy_version, valid_until FROM trust_grant \
-                 WHERE revoked_at = NONE \
-                 ORDER BY account, repository, digest \
-                 LIMIT {limit};"
-            ))
-            .await
-            .map_err(|error| hodei_catalog::CatalogError::unavailable(error.to_string()))?
-            .take(0)
-            .map_err(|error| hodei_catalog::CatalogError::unavailable(error.to_string()))?;
-        Ok(rows
-            .into_iter()
-            .map(|row| GrantSweepRow {
-                decision_id: row.decision_id,
-                account: row.account,
-                repository: row.repository,
-                digest_algorithm: row.digest_algorithm,
-                digest: row.digest,
-                subject: row.subject,
-                policy_version: row.policy_version,
-                valid_until: row.valid_until,
-            })
-            .collect())
-    }
-}
-
-#[cfg(feature = "legacy")]
-#[async_trait::async_trait]
-impl RelationDeltaScan for SurrealReactorSources {
-    async fn scan(&self, quota: usize) -> Result<Vec<RelationDelta>, String> {
-        let rows: Vec<hodei_evidence_storage::DeltaRow> = self
-            .db
-            .query(format!(
-                "SELECT * FROM type::table($table) ORDER BY tenant, seq LIMIT {quota};"
-            ))
-            .bind(("table", hodei_evidence_storage::DELTA_TABLE))
-            .await
-            .map_err(|error| error.to_string())?
-            .take(0)
-            .map_err(|error| error.to_string())?;
-        Ok(rows.iter().filter_map(delta_of_row).collect())
-    }
-}
-
 /// The digest a grant row names.
 fn digest_of_row(row: &GrantSweepRow) -> Result<ContentDigest, String> {
     let algorithm = match row.digest_algorithm.as_str() {
@@ -1413,7 +1249,6 @@ fn digest_of_row(row: &GrantSweepRow) -> Result<ContentDigest, String> {
     Ok(digest)
 }
 
-#[cfg(feature = "legacy")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1472,39 +1307,6 @@ mod tests {
         // and reading one would be inventing the concession's key.
         let stranger = hrn("hrn:hodei:artifacts:eu:acme:artifact/releases");
         assert!(digest_of_subject(&stranger).is_err());
-    }
-
-    // --- delta_of_row: a row that does not parse is skipped, not fatal. ---
-
-    fn row(kind: &str) -> hodei_evidence_storage::DeltaRow {
-        hodei_evidence_storage::DeltaRow {
-            seq: 1,
-            kind: kind.to_string(),
-            tenant: "hrn:hodei:artifacts:eu:acme:artifact/acme".to_string(),
-            relation: "affected_by".to_string(),
-            from: subject().to_string(),
-            to: "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-0001".to_string(),
-            evidence: "ev-1".to_string(),
-            cause: "c".to_string(),
-            observed_at: Utc::now(),
-        }
-    }
-
-    #[test]
-    fn the_three_known_kinds_round_trip_and_anything_else_is_skipped() {
-        assert!(delta_of_row(&row("added")).is_some());
-        assert!(delta_of_row(&row("removed")).is_some());
-        assert!(delta_of_row(&row("support_changed")).is_some());
-        assert!(
-            delta_of_row(&row("exploded")).is_none(),
-            "an unknown kind must not stop a long pass"
-        );
-        let broken = row("added");
-        let broken = hodei_evidence_storage::DeltaRow {
-            tenant: "not-an-hrn".to_string(),
-            ..broken
-        };
-        assert!(delta_of_row(&broken).is_none());
     }
 
     // --- the planners: the pass in the key is what lets time be said twice. ---
@@ -1610,29 +1412,6 @@ mod tests {
             ),
             "a drift that reaches nobody is not this behaviour's to answer"
         );
-    }
-
-    // --- GraphBlastRadius: the identity gate, before any read. ---
-
-    #[tokio::test]
-    async fn the_radius_refuses_a_stranger_before_reading_the_graph() {
-        // The gate is a property of the adapter's contract, and it is
-        // exercised without a seeded graph: nothing is asked, nothing is
-        // reached. An adapter whose gate needs a live store could not
-        // be tested where it matters -- the account that does not match.
-        let scratch: Surreal<Db> = Surreal::new::<surrealdb::engine::local::Mem>(())
-            .await
-            .expect("an in-memory scratch store");
-        let radius = GraphBlastRadius {
-            graph: Arc::new(hodei_evidence_storage::SurrealGraphStore::new(Arc::new(
-                scratch,
-            ))),
-            limits: InvestigationConfig::default(),
-        };
-        let advisory = hrn("hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-0001").to_string();
-        assert!(radius.impacted("", &advisory).await.is_err());
-        assert!(radius.impacted("other", &advisory).await.is_err());
-        assert!(radius.impacted("acme", "not-an-hrn").await.is_err());
     }
 
     // --- the admission's own shape: what the cycle answers. ---

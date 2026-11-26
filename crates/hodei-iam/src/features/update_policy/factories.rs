@@ -29,7 +29,7 @@ use super::use_case::UpdatePolicyUseCase;
 ///
 /// ```rust,ignore
 /// let validator = Arc::new(CedarPolicyValidator::new(schema_storage));
-/// let policy_port = Arc::new(SurrealPolicyAdapter::new(db));
+/// let policy_port = Arc::new(DgraphIamAdapter::new(client));
 ///
 /// let update_policy = update_policy_use_case(
 ///     validator,

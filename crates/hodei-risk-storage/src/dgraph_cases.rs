@@ -1,6 +1,6 @@
 //! The security cases of the risk, in the SAME Dgraph the walk reads.
 //!
-//! This is the Dgraph port of [`crate::reactions::SurrealSecurityCaseStore`]:
+//! This is the Dgraph port of the retired Surreal security-case store:
 //! the same [`SecurityCaseSink`] contract — the case of a vulnerability is
 //! opened ONCE, and asking again gives the case that is there — mapped onto
 //! the engine the stack already proves, with the conventions of

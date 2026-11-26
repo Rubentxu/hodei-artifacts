@@ -407,13 +407,12 @@ pub(crate) async fn the_repository_of(
 ///
 /// A `Deny` decision never degrades to `NotFound` (404).
 pub(crate) fn authorize_repository(
-    state: &AppState,
+    authorize_resource: &crate::authorization::AuthorizeResourceUseCase,
     context: &VerifiedContext,
     action: ActionId,
     repository: &RepositoryDescriptor,
 ) -> Result<PolicyDecision, ResolutionError> {
-    let outcome = state
-        .authorize_resource
+    let outcome = authorize_resource
         .execute_canonical(context.clone(), action.clone(), &repository.hrn)
         .map_err(|_| ResolutionError::Internal)?;
     match &outcome {
@@ -434,7 +433,7 @@ pub(crate) fn the_decision(
     action: ActionId,
     repository: &RepositoryDescriptor,
 ) -> Result<(), ResolutionError> {
-    authorize_repository(state, context, action, repository).map(|_| ())
+    authorize_repository(&state.authorize_resource, context, action, repository).map(|_| ())
 }
 
 /// Maps a trust admission refusal into a [`ResolutionError`].
@@ -1357,9 +1356,6 @@ pub(crate) fn hex_of(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-// The three decision tests bootstrap the embedded engine and run only with
-// `legacy`; their helpers are unused in the default build (HSP-314 F2).
-#[cfg_attr(not(feature = "legacy"), allow(dead_code, unused_imports))]
 mod tests {
     use std::sync::Arc;
 
@@ -1375,37 +1371,25 @@ mod tests {
     };
     use kernel::Hrn as CanonicalHrn;
 
-    #[cfg(feature = "legacy")]
     use super::authorize_repository;
     use super::{CacheStatus, ResolutionError, ResolutionOrigin, the_publication_error};
-    #[cfg(feature = "legacy")]
     use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
-    #[cfg(feature = "legacy")]
-    use crate::bootstrap::{BootstrapConfig, bootstrap};
-    #[cfg(feature = "legacy")]
-    use crate::config::AppConfig;
 
-    #[cfg(feature = "legacy")]
     struct PermitAuthorizer;
-    #[cfg(feature = "legacy")]
     impl AuthorizerPort for PermitAuthorizer {
         fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
             AuthorizationOutcome::Permit
         }
     }
 
-    #[cfg(feature = "legacy")]
     struct DenyAuthorizer;
-    #[cfg(feature = "legacy")]
     impl AuthorizerPort for DenyAuthorizer {
         fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
             AuthorizationOutcome::Deny(DenyReason::NoMatchingPolicy)
         }
     }
 
-    #[cfg(feature = "legacy")]
     struct IndeterminateAuthorizer;
-    #[cfg(feature = "legacy")]
     impl AuthorizerPort for IndeterminateAuthorizer {
         fn authorize(&self, _request: &AuthorizationRequest) -> AuthorizationOutcome {
             AuthorizationOutcome::Indeterminate(IndeterminateReason::EvaluationError)
@@ -1453,41 +1437,20 @@ mod tests {
         }
     }
 
-    // The state is bootstrapped on the embedded engine: legacy only (HSP-314 F2).
-    #[cfg(feature = "legacy")]
-    async fn test_state(
-        authorizer: Arc<dyn AuthorizerPort>,
-    ) -> (tempfile::TempDir, crate::AppState) {
-        let dir = tempfile::tempdir().unwrap();
-        let mut config = AppConfig::default();
-        config.rocksdb.path = dir
-            .path()
-            .join("test.rocksdb")
-            .to_string_lossy()
-            .to_string();
-        let mut state = bootstrap(
-            &config,
-            BootstrapConfig {
-                register_iam_schema: false,
-                schema_version: None,
-                validate_schemas: false,
-            },
-        )
-        .await
-        .unwrap();
-        state.authorize_resource = Arc::new(AuthorizeResourceUseCase::new(authorizer));
-        (dir, state)
+    /// The use case of the decision over a fixed authorizer: the decision
+    /// needs nothing of the application state but this.
+    fn test_use_case(authorizer: Arc<dyn AuthorizerPort>) -> AuthorizeResourceUseCase {
+        AuthorizeResourceUseCase::new(authorizer)
     }
 
-    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn permit_decision_carries_policy_revision_and_outcome() {
-        let (_dir, state) = test_state(Arc::new(PermitAuthorizer)).await;
+        let use_case = test_use_case(Arc::new(PermitAuthorizer));
         let context = test_context().await;
         let repository = test_repository();
 
         let decision = authorize_repository(
-            &state,
+            &use_case,
             &context,
             crate::actions::download_asset(),
             &repository,
@@ -1499,15 +1462,14 @@ mod tests {
         assert_eq!(decision.action, crate::actions::download_asset());
     }
 
-    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn deny_decision_never_degrades_to_not_found() {
-        let (_dir, state) = test_state(Arc::new(DenyAuthorizer)).await;
+        let use_case = test_use_case(Arc::new(DenyAuthorizer));
         let context = test_context().await;
         let repository = test_repository();
 
         let error = authorize_repository(
-            &state,
+            &use_case,
             &context,
             crate::actions::download_asset(),
             &repository,
@@ -1518,15 +1480,14 @@ mod tests {
         assert_eq!(error.the_verdict().0, StatusCode::FORBIDDEN);
     }
 
-    #[cfg(feature = "legacy")]
     #[tokio::test]
     async fn indeterminate_decision_never_degrades_to_not_found() {
-        let (_dir, state) = test_state(Arc::new(IndeterminateAuthorizer)).await;
+        let use_case = test_use_case(Arc::new(IndeterminateAuthorizer));
         let context = test_context().await;
         let repository = test_repository();
 
         let error = authorize_repository(
-            &state,
+            &use_case,
             &context,
             crate::actions::download_asset(),
             &repository,

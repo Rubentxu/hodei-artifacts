@@ -6,9 +6,7 @@
 //!
 //! - PARITY (AC1): the materialized view says what the authoritative
 //!   walk says — the same subjects, the same depths — including the
-//!   522-subject benchmark fixture, and the Dgraph walk says what the
-//!   Surreal reference walk says for the same changesets. THREE
-//!   answers, one truth.
+//!   522-subject benchmark fixture.
 //! - SELECTIVE INVALIDATION (AC1): a relation delta, a VEX statement
 //!   and a withdrawn support invalidate ONLY the advisories whose route
 //!   they touch — the write is per delta, through the frontier of
@@ -36,18 +34,15 @@ use hodei_evidence::application::projection::ProjectionDelivery;
 use hodei_evidence::application::projection::ProjectionFrontier;
 use hodei_evidence::domain::delta::{RelationDelta, RelationDeltaKind, RelationDeltaSubscription};
 use hodei_evidence::domain::graph::{NodeKind, RelationType};
-use hodei_evidence::ports::graph::{GraphReadLimits, GraphWriter};
+use hodei_evidence::ports::graph::GraphReadLimits;
 use hodei_evidence::{
     EvidenceId, GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal,
 };
-use hodei_evidence_storage::surreal::SurrealGraphStore;
 use hodei_evidence_storage::{DgraphGraphStore, DgraphProjectionFrontier};
 use hodei_graph_client::{GraphClient, GraphClientConfig, schema::ensure_ready};
 use hodei_risk_storage::dgraph_view::{DgraphImpactView, walk_impact_dgraph};
 use hodei_risk_storage::impact_view::Freshness;
 use kernel::Hrn;
-use surrealdb::Surreal;
-use surrealdb::engine::local::Mem;
 
 fn config_from_env() -> Option<GraphClientConfig> {
     let endpoint = std::env::var("HODEI_GRAPH_IT_ENDPOINT").ok()?;
@@ -90,17 +85,6 @@ async fn connect() -> Option<Arc<GraphClient>> {
         started.elapsed().as_millis(),
     );
     Some(Arc::new(client))
-}
-
-/// The reference store, on an in-memory Surreal: the parity oracle of
-/// the walk, with no dependency on any server.
-async fn reference_store() -> SurrealGraphStore<surrealdb::engine::local::Db> {
-    let db = Arc::new(Surreal::new::<Mem>(()).await.expect("memory db"));
-    db.use_ns("hodei")
-        .use_db("hsp202")
-        .await
-        .expect("the namespace");
-    SurrealGraphStore::new(db)
 }
 
 fn nonce() -> String {
@@ -301,28 +285,13 @@ fn the_subscription(tenant: &Hrn) -> RelationDeltaSubscription {
     )
 }
 
-/// The subject set the reference oracle compares with: the artifacts at
-/// their depth, the components at depth zero, sorted.
-fn subjects_of_radius(radius: &hodei_risk::case::BlastRadius) -> Vec<(String, usize)> {
-    let mut subjects: Vec<(String, usize)> = radius
-        .affected_subjects
-        .iter()
-        .map(|subject| (subject.clone(), 1usize))
-        .collect();
-    for component in &radius.affected_components {
-        subjects.push((component.clone(), 0usize));
-    }
-    subjects.sort();
-    subjects
-}
-
 /// One serial lane per binary: the tests share the engine, and the
 /// timings the evidence records are cleaner one after another.
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// AC1 — the view materializes what the walk says, including the
-/// 522-subject benchmark case: the Dgraph walk, the Surreal reference
-/// walk and the materialized view agree on the SAME fixture, and the
+/// 522-subject benchmark case: the Dgraph walk and the materialized
+/// view agree on the SAME fixture, and the
 /// read through the view carries the watermark the walk ran at.
 #[tokio::test]
 async fn the_view_says_what_the_walk_says_including_522_subjects() {
@@ -388,25 +357,6 @@ async fn the_view_says_what_the_walk_says_including_522_subjects() {
         walk.trace.reasons
     );
     assert_eq!(walk.snapshot_subjects().len(), 522, "the benchmark case");
-
-    // The reference walk on the Surreal store, with the SAME changesets.
-    let reference = reference_store().await;
-    for index in 0..521 {
-        reference
-            .apply(the_contains(&tenant, "evt-load", index))
-            .await
-            .expect("the reference load");
-    }
-    let radius = hodei_risk_storage::blast_radius(&reference, &tenant, &the_vulnerability(&tenant))
-        .await
-        .expect("the reference walk runs");
-    let reference_subjects = subjects_of_radius(&radius);
-    assert_eq!(reference_subjects.len(), 522, "the reference case too");
-    assert_eq!(
-        walk.snapshot_subjects(),
-        reference_subjects,
-        "the native walk says what the reference walk says"
-    );
 
     // The view, materialized from the same walk.
     let started = Instant::now();

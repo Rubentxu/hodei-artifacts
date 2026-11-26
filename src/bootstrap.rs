@@ -1,7 +1,7 @@
 //! Bootstrap module for Hodei Artifacts API
 //!
 //! This module handles the initialization of the application, including:
-//! - RocksDB database connection setup
+//! - Dgraph profile assembly (the single authority of the metadata)
 //! - Infrastructure adapter creation
 //! - Use case composition via CompositionRoot
 //! - Optional IAM schema registration
@@ -9,39 +9,17 @@
 use crate::app_state::AppState;
 use crate::auth::JwtAuthenticator;
 use crate::authorization::SharedAuthorizer;
-#[cfg(feature = "legacy")]
-use crate::composition_root::CompositionRoot;
 use crate::config::AppConfig;
-// HSP-213: los importes del lector embebido quedan tras la feature
-// `legacy`; el binario productivo se construye sin ellos.
-#[cfg(feature = "legacy")]
-use crate::repository_surreal::SurrealRepositoryStore;
-#[cfg(feature = "legacy")]
-use async_trait::async_trait;
 use cedar_policy::{Entities, Schema};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
-#[cfg(feature = "legacy")]
-use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_hub::blob::FileBlobStore;
 use std::fs;
 
-#[cfg(feature = "legacy")]
-use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
 use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
-#[cfg(feature = "legacy")]
-use hodei_policies::build_schema::error::BuildSchemaError;
 use hodei_policies::build_schema::ports::{AUTHORIZATION_BUNDLE_SCHEMA_ID, SchemaStoragePort};
-#[cfg(feature = "legacy")]
-use hodei_policies::build_schema::ports::StoredSchema;
-#[cfg(feature = "legacy")]
-use serde::Deserialize;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(feature = "legacy")]
-use surrealdb::Surreal;
-#[cfg(feature = "legacy")]
-use surrealdb::engine::local::RocksDb;
 use tracing::{info, warn};
 
 /// Configuration for the bootstrap process
@@ -85,8 +63,8 @@ pub enum BootstrapError {
 ///
 /// This function:
 /// 1. Validates configuration and fails explicitly on any issues
-/// 2. Initializes the RocksDB database connection and storage adapters
-/// 3. Creates the CompositionRoot with all use case ports
+/// 2. Refuses a configuration that does not declare the `[graph]` authority
+/// 3. Assembles the Dgraph profile (stores, use cases, content store)
 /// 4. Optionally registers the IAM schema
 /// 5. Returns the configured AppState ready for Axum
 pub async fn bootstrap(
@@ -95,14 +73,21 @@ pub async fn bootstrap(
 ) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
     info!("🚀 Starting Hodei Artifacts API bootstrap");
 
+    // A configuration without `[graph]` is the retired embedded profile: it
+    // is refused with the way out before anything is validated or touched
+    // (not even the content path is created); there is no other profile to
+    // fall back to.
+    if config.graph.is_none() {
+        return Err(crate::config::GRAPH_PROFILE_REQUIRED.to_string().into());
+    }
+
     // Step 0: Validate configuration and fail explicitly on any issues
     info!("🔍 Validating application configuration");
     config
         .security
         .validate_production_auth()
         .map_err(|error| BootstrapError::Security(error.to_string()))?;
-    validate_bootstrap_configuration(config)
-        .map_err(|e| BootstrapError::Initialization(e.to_string()))?;
+    info!("✅ Configuration validation passed");
     // The storage preflight is separate from the validation on purpose: the
     // validation looks at the configuration and cannot fail because of the
     // machine, while the preflight looks at the machine and says so when it
@@ -111,376 +96,16 @@ pub async fn bootstrap(
         .preflight_storage()
         .map_err(|error| BootstrapError::Initialization(format!("storage preflight: {error}")))?;
 
-    // Step 1: Initialize infrastructure
+    // Step 1: the profile. The graph is the only authority of the metadata
+    // (HSP-209, HSP-314 F4).
     info!("📦 Initializing infrastructure adapters");
-    // The engine of the metadata is decided by the profile (HSP-209): with
-    // a `[graph]` section the authority is the alpha and the embedded
-    // engine is never opened — its path is not created, not locked, not
-    // touched. There is no branch that tries one and falls back to the
-    // other: the choice was validated at the configuration, and a store
-    // that cannot open stops the boot with its own error.
-    if config.graph.is_some() {
-        return bootstrap_graph_profile(config, bootstrap_config).await;
-    }
-    // HSP-213: sin `[graph]` el despliegue pide la autoridad embebida, y
-    // esa autoridad sale del binario productivo. El binario se construye
-    // sin la feature `legacy` y rechaza el perfil con el mensaje de
-    // migracion; la herramienta legacy y las suites del arbol conservan
-    // la feature mientras dure la ventana.
-    #[cfg(feature = "legacy")]
-    return bootstrap_embedded_profile(config, bootstrap_config).await;
-    #[cfg(not(feature = "legacy"))]
-    {
-        let _ = bootstrap_config;
-        Err(LEGACY_PROFILE_REFUSAL.to_string().into())
-    }
-}
-
-/// HSP-213: la respuesta del binario productivo al perfil embebido antiguo.
-/// Nombra la retirada y el destino (la autoridad externa).
-pub const LEGACY_PROFILE_REFUSAL: &str = "the embedded engine (SurrealDB over RocksDB) is \
-retired from the production binary (HSP-213): declare a [graph] section so the external \
-authority is the single source of truth; the embedded-store operator tools were retired \
-in HSP-314 F4, so migrate the local store with a release that still shipped them";
-
-/// Bootstrap the deployment whose authority is the embedded engine.
-///
-/// HSP-213: this is the legacy profile, behind the `legacy` feature so the
-/// production binary —built `--no-default-features`— never links SurrealDB
-/// nor RocksDB. A deployment that still asks for it is refused by
-/// [`bootstrap`] with [`LEGACY_PROFILE_REFUSAL`]; the tool surface keeps
-/// the feature while the migration window is open.
-#[cfg(feature = "legacy")]
-async fn bootstrap_embedded_profile(
-    config: &AppConfig,
-    bootstrap_config: BootstrapConfig,
-) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
-    let schema_storage = initialize_schema_storage(config).await?;
-
-    // When the production bundle declares a Cedar schema, persist the same
-    // schema for IAM policy validation. The gate and the persisted evaluator
-    // then validate against one schema rather than two divergent sources.
-    if let Some(schema_path) = &config.security.authorization_schema_path {
-        let raw = fs::read_to_string(schema_path).map_err(|error| {
-            BootstrapError::Security(format!(
-                "cannot read authorization schema {schema_path}: {error}"
-            ))
-        })?;
-        let fragment: serde_json::Value = serde_json::from_str(&raw)
-            .map_err(|error| BootstrapError::Security(format!("invalid Cedar schema: {error}")))?;
-        let envelope = serde_json::json!({
-            "format": "cedar-schema-fragments-v1",
-            "fragments": [fragment],
-        });
-        schema_storage
-            .save_schema(
-                envelope.to_string(),
-                Some(AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string()),
-            )
-            .await
-            .map_err(|error| BootstrapError::Security(format!("cannot persist schema: {error}")))?;
-    }
-
-    // Initialize policy adapter with the same DB client
-    let policy_adapter = Arc::new(SurrealPolicyAdapter::new(
-        schema_storage.db().clone().into(),
-    ));
-
-    // The account index of the IAM policies cannot be declared from here:
-    // defining an index on the local engine keeps the database directory
-    // locked by the process that defined it, so the service would serve
-    // correctly but could never open the database again — which breaks
-    // booting twice against the same database. The index belongs to a command
-    // of its own, and a deployment that has not run it is told so, with the
-    // command to run.
-    match policy_adapter.scope_initialized().await {
-        Ok(true) => {}
-        Ok(false) => warn!(
-            "⚠️  The policy account index is missing. The IAM listing still isolates by account, \
-             but it scans the table. The index command (`ensure-iam-index`) was \
-             retired in HSP-314 F4."
-        ),
-        Err(error) => warn!(
-            "⚠️  The policy account index could not be checked: {}. The index command was \
-             retired in HSP-314 F4.",
-            error
-        ),
-    }
-
-    // Step 2: Use Composition Root to create all use case ports
-    info!("🏗️  Creating use cases via CompositionRoot");
-    // When the deployment declares a bundle schema, that schema is the one
-    // every policy is validated and evaluated against. Naming it is what
-    // keeps the gate and the persisted evaluator on the same declarations: the
-    // IAM schema registered below would otherwise displace it simply by being
-    // stored later, and the two circuits would validate against different
-    // schemas without anybody deciding that.
-    let authoritative_schema_id = config
-        .security
-        .authorization_schema_path
-        .as_ref()
-        .map(|_| AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string());
-    let root = CompositionRoot::production_with_authoritative_schema(
-        schema_storage.clone(),
-        policy_adapter,
-        authoritative_schema_id,
-    );
-
-    // Step 3: Determine schema version
-    let schema_version = if bootstrap_config.register_iam_schema {
-        info!("📝 Registering IAM schema");
-        let result = register_iam_schema(
-            &*root.iam_ports.register_iam_schema,
-            bootstrap_config.schema_version.clone(),
-            bootstrap_config.validate_schemas,
-        )
-        .await?;
-
-        info!(
-            "✅ IAM schema registered successfully (version: {}, entities: {}, actions: {})",
-            result.schema_version, result.entity_types_registered, result.action_types_registered
-        );
-
-        result.schema_version
-    } else {
-        warn!("⚠️  Skipping IAM schema registration");
-        bootstrap_config
-            .schema_version
-            .unwrap_or_else(|| "unregistered".to_string())
-    };
-
-    // Step 4: Create AppState from CompositionRoot
-    info!("🎯 Creating application state");
-    let app_state = AppState::from_composition_root(schema_version.clone(), root);
-    let app_state = if config.repository.durable {
-        let repository_store = Arc::new(SurrealRepositoryStore::new(schema_storage.db().clone()));
-        repository_store
-            .initialize()
-            .await
-            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-        app_state.with_repository_store(repository_store)
-    } else {
-        app_state
-    };
-    // The evidence of the deployment is read from the same store the
-    // repositories live in: the trust capsule is assembled from the
-    // evidence that is there, and the evidence is there.
-    let app_state = app_state.with_evidence_store(crate::evidence_surreal::reader_over(Arc::new(
-        schema_storage.db().clone(),
-    )));
-    // The catalog and the store of content. The catalog lives in the same
-    // engine as the rest, because a transaction that touches two databases
-    // is not a transaction; and the content lives in a directory, because
-    // the bytes of an artifact are not rows of a database.
-    let app_state = if config.repository.durable {
-        // The catalog does not decide again what the HTTP boundary already
-        // decided with Cedar. Its queries are already scoped to the
-        // verified account, so the isolation between accounts does not
-        // depend on this second check: it depends on the key of each row.
-        // The check that does matter --the permission to publish or to
-        // download-- is asked at the boundary, where the canonical HRN of
-        // the repository is known; the port of the catalog does not carry
-        // the region, and a second decision about another resource would
-        // not be stronger, it would be another decision.
-        // The content store comes first: the probe over it is what the
-        // catalog needs to be able to tell a healthy record from a
-        // broken one.
-        //
-        // Which store it is depends on the deployment, not on the
-        // request: the catalog rows name a digest, and a digest has to
-        // live in one place. The chosen backend is the only one ever
-        // consulted -- an S3 deployment never reads nor writes
-        // `cas_path` -- and a backend that is configured but
-        // unreachable stops the boot instead of falling back to the
-        // directory, because content that silently lives in two places
-        // is content the GC deletes as garbage and the health probe
-        // reports as fine.
-        let (content, content_check) = open_content_store(config).await?;
-        // The catalog does not decide again what the HTTP boundary already
-        // decided with Cedar. Its queries are already scoped to the
-        // verified account, so the isolation between accounts does not
-        // depend on this second check: it depends on the key of each row.
-        // The check that does matter --the permission to publish or to
-        // download-- is asked at the boundary, where the canonical HRN of
-        // the repository is known; the port of the catalog does not carry
-        // the region, and a second decision about another resource would
-        // not be stronger, it would be a second decision.
-        let catalog = Arc::new(
-            SurrealCatalogStore::with_authorizer(
-                schema_storage.db().clone(),
-                Arc::new(hodei_catalog::AllowAllAuthorizer),
-            )
-            // The probe is what makes the catalog able to say that the
-            // bytes are where the record says. Without it, a record whose
-            // content is not in the store is served as healthy, and the
-            // corruption is confused with the absence.
-            .with_probe(Arc::new(crate::blob_probe::BlobStoreProbe::new(
-                content.clone(),
-            ))),
-        );
-        catalog
-            .initialize()
-            .await
-            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-        let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
-        let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
-        let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = Arc::new(
-            crate::trust::cache::CachedTrustLedger::with_default_ttl(catalog.clone()),
-        );
-        let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = catalog.clone();
-        // The search is the same catalog with another question: there is
-        // no separate index to synchronise, and that is why what the
-        // search promises is what there is.
-        let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
-        let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog;
-        // The garbage collection reads the roots from the same catalog and
-        // reclaims from the same store; it is the only thing that deletes
-        // bytes. If the store cannot reclaim, the surface stays closed.
-        let scrub = crate::recovery::Scrubber::new(
-            ledger.clone(),
-            content.clone(),
-            Duration::from_secs(config.content.gc_grace_secs),
-        );
-        let gc = crate::gc::GcService::new(
-            ledger,
-            content.clone(),
-            Duration::from_secs(config.content.gc_grace_secs),
-        );
-        // The promotion: the decisions live in the same engine as the
-        // rest, and the policy that decides is the one the deployment
-        // declares. A policy that is declared and cannot be read stops
-        // the boot; one that is not declared leaves every promotion
-        // refused with a recorded decision.
-        let policies = crate::trust::promotion::registry_from(
-            config.trust.policy_file.as_deref(),
-            &config.trust.policy_id,
-        )
-        .map_err(BootstrapError::Initialization)?;
-        let decisions = Arc::new(hodei_trust_policy_storage::SurrealDecisionStore::new(
-            Arc::new(schema_storage.db().clone()),
-        ));
-        let plane = Arc::new(crate::trust::promotion::TrustPlane::new(
-            decisions,
-            policies,
-            config.trust.policy_id.clone(),
-            chrono::Duration::seconds(i64::from(
-                u32::try_from(config.trust.grant_max_validity_secs.max(1)).unwrap_or(u32::MAX),
-            )),
-        ));
-        // The egress policy comes from the service configuration, never
-        // from a repository: an empty list means no outbound request.
-        let egress = crate::proxy::egress::EgressPolicy::new(config.proxy.allowed_hosts.clone())
-            .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-        // A credential name that a repository could never reference is a
-        // configuration mistake: it is refused at start, not silently kept.
-        for name in &config.proxy.allowed_credentials {
-            hodei_catalog::CredentialRef::parse(&format!("env:{name}"))
-                .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-        }
-        let fetcher = crate::proxy::fetch::ProxyFetcher::new(
-            egress,
-            crate::proxy::fetch::FetchLimits {
-                connect_timeout: Duration::from_secs(config.proxy.connect_timeout_secs),
-                total_timeout: Duration::from_secs(config.proxy.total_timeout_secs),
-                max_bytes: config.proxy.max_bytes,
-            },
-            config.proxy.max_concurrent,
-        )
-        .with_allowed_credentials(config.proxy.allowed_credentials.iter().cloned())
-        .with_offline(config.proxy.offline);
-        let proxy_plane = Arc::new(crate::proxy::ProxyPlane::new(fetcher, provenance_ledger));
-        let app_state = app_state
-            .with_catalog(reader, writer)
-            .with_catalog_search(searcher)
-            .with_trust_ledger(trust_ledger)
-            .with_proxy_plane(proxy_plane)
-            .with_trust_plane(plane)
-            .with_content_store(content)
-            // El probe de readiness del perfil activo. Lo que exige este
-            // despliegue es el catalogo --que vive en el motor embebido-- y
-            // el almacen de contenido. La politica de confianza se carga
-            // en memoria al arrancar y no se puede perder en caliente, asi
-            // que no es una dependencia de readiness.
-            //
-            // El probe va envuelto en el cache corto: dos sondeos
-            // seguidos no gastan el presupuesto dos veces, y el handler no
-            // tiene estado.
-            .with_readiness(Arc::new(crate::readiness::CachedProbe::new(Arc::new(
-                crate::readiness::ProfileProbe::new()
-                    .with_catalog(schema_storage.db().clone())
-                    .with_content(content_check),
-            ))));
-        let app_state = match scrub {
-            Ok(scrub) => app_state.with_scrub(Arc::new(scrub)),
-            Err(error) => {
-                warn!(%error, "the integrity scrub is not available");
-                app_state
-            }
-        };
-        match gc {
-            Ok(gc) => app_state.with_gc(Arc::new(gc)),
-            Err(error) => {
-                warn!(%error, "the garbage collection is not available");
-                app_state
-            }
-        }
-    } else {
-        app_state
-    };
-    let app_state = app_state.with_body_limit(config.server.max_body_size);
-    // El registro de las sesiones de subida: el estado que vive entre
-    // peticiones, con los limites que dice la configuracion.
-    let app_state = app_state.with_uploads(Arc::new(crate::oci::uploads::UploadRegistry::new(
-        std::time::Duration::from_secs(config.security.oci_upload_ttl_secs),
-        config.security.oci_max_concurrent_uploads,
-    )));
-    // El libro mayor de las cuotas: los limites que dice la
-    // configuracion, compartidos por toda peticion y toda sesion. Un
-    // despliegue que no dice cuotas obtiene un libro sin limites, que
-    // admite todo y es exactamente lo que dijo.
-    let app_state = app_state.with_quota(config.quota.the_limits());
-    // The public address and the signed-URL ring: one wiring shared with the
-    // graph profile.
-    let app_state = crate::public_url_wiring::wire_public_url_and_signing(app_state, config)?;
-    if config.quota.max_stored_bytes_per_account.is_some()
-        || config.quota.max_concurrent_uploads_per_account.is_some()
-    {
-        info!(
-            max_stored_bytes_per_account = ?config.quota.max_stored_bytes_per_account,
-            max_concurrent_uploads_per_account = ?config.quota.max_concurrent_uploads_per_account,
-            "the account quotas are in force"
-        );
-    }
-    let app_state = configure_production_security(app_state, config)?;
-    // La investigacion se cablea DESPUES de la seguridad de produccion:
-    // el autorizador que la investigation usa es el que el deployment
-    // declara, y cablearla antes seria cablear el de reserva --el que
-    // deniega todo-- por error de orden.
-    let app_state = wire_the_investigation(app_state, config, &schema_storage)?;
-    let app_state = wire_the_risk_facts(app_state, config, &schema_storage);
-    // El ciclo reactivo CVE se cablea al final: necesita el plano de
-    // confianza, el libro mayor y los hechos de riesgo ya montados. Sin
-    // plano no hay ciclo: la entrada de advisories responde 501 y el
-    // despliegue sigue sirviendo como antes de este módulo.
-    let app_state = wire_the_reactor(app_state, config, &schema_storage).await?;
-    if config.security.admin_api_enabled && !app_state.admin_surface_ready() {
-        tracing::error!(
-            "admin_api_enabled=true but no authenticator/authorizer is configured; the administrative API remains closed"
-        );
-    }
-
-    info!(
-        "✅ Bootstrap completed successfully (schema version: {})",
-        schema_version
-    );
-
-    Ok(app_state)
+    bootstrap_graph_profile(config, bootstrap_config).await
 }
 
 /// Build the store of content the configuration names and clean the staging
 /// an interrupted upload left behind.
 ///
-/// The boot of both profiles —the embedded and the graph one— goes through
+/// The boot goes through
 /// here so the bytes live in exactly one place and the cleanup rules are
 /// decided once: the directory backend removes the files no one is writing;
 /// the object store aborts the multipart uploads whose last part is older
@@ -570,23 +195,19 @@ fn the_staging_margin_secs(config: &AppConfig) -> u64 {
 
 /// Bootstrap the deployment whose authority is the graph (HSP-209).
 ///
-/// This is the other half of the single-profile contract: a service that
-/// declares `[graph]` never opens the embedded engine -- its path is not
-/// created, not locked, not touched -- and every store of the profile is
-/// assembled by [`crate::profile`] over one connected, logged-in, schema-
-/// guarded client. There is no fallback in either direction: if the alpha,
-/// the CAS, or any store cannot open, the boot dies with that store's own
-/// error, and RocksDB is not even tried.
+/// This is the single profile of the service: every store is assembled by
+/// [`crate::profile`] over one connected, logged-in, schema-guarded client.
+/// There is no fallback: if the alpha, the CAS, or any store cannot open,
+/// the boot dies with that store's own error.
 ///
 /// What the profile does NOT carry, and says so instead of degrading:
 ///
 /// - Nothing about the Cedar schema is missing: `SchemaStoragePort` is
 ///   implemented over Dgraph (`DgraphSchemaStore`), the bundle schema is
 ///   persisted, and the IAM schema registration runs when it is asked for.
-/// - The investigation and the legacy repository registry: their wiring is
-///   not done yet; the surfaces answer with their default closed behavior
-///   and the profile does not open a local engine to make them answer. (The
-///   evidence reader, the risk facts and the CVE reactor are wired over
+/// - The investigation and the `/repositories` registry have no port over
+///   Dgraph yet: the surfaces answer with their default closed behavior.
+///   (The evidence reader, the risk facts and the CVE reactor are wired over
 ///   Dgraph: HSP-314 F3a/F3b.)
 async fn bootstrap_graph_profile(
     config: &AppConfig,
@@ -594,10 +215,8 @@ async fn bootstrap_graph_profile(
 ) -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
     info!("🕸️  Starting the Dgraph profile: the alpha is the single authority of the metadata");
 
-    // Step 0 is shared with the embedded profile and already ran: the
-    // security bundle, the configuration validation (which under a graph
-    // section refuses the embedded engine), and the storage preflight
-    // (which under a graph section does not touch the RocksDB path).
+    // Step 0 already ran: the security bundle, the configuration
+    // validation and the storage preflight.
 
     // Step 1: the authority itself. Connection, ACL login and the versioned
     // schema guard (v7) inside the IAM adapter's open: no store of the
@@ -607,8 +226,7 @@ async fn bootstrap_graph_profile(
     // The Cedar schema store of the profile: one tenant of the graph, the
     // same authority as every other store. The bundle schema the deployment
     // declares is persisted under its well-known id, so the gate and the
-    // persisted evaluator validate against ONE schema, exactly as the
-    // embedded profile does.
+    // persisted evaluator validate against ONE schema.
     let schema_store = Arc::new(hodei_iam::infrastructure::DgraphSchemaStore::new(
         graph.client.clone(),
         graph.tenant.as_str(),
@@ -622,8 +240,7 @@ async fn bootstrap_graph_profile(
         .as_ref()
         .map(|_| AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string());
 
-    // Step 2: the bytes. The same decision and the same readiness the
-    // embedded profile makes of its content store: an S3 deployment that
+    // Step 2: the bytes. The content store decision and its readiness: an S3 deployment that
     // cannot reach its bucket does not boot, and never writes the
     // filesystem CAS on the side.
     let (content, content_check) = open_content_store(config).await?;
@@ -662,8 +279,8 @@ async fn bootstrap_graph_profile(
     let app_state =
         crate::profile::assemble_graph_profile(app_state, config, &graph, content).await?;
 
-    // The tail the two profiles share: the body limit, the quotas (the
-    // in-memory ledger the embedded deployment also uses; the durable
+    // The tail: the body limit, the quotas (the
+    // in-memory ledger; the durable
     // `DgraphQuotaStore` waits for its production consumer), and the
     // production security bundle, which on this profile is the file-based
     // gate without the persistence step.
@@ -999,383 +616,6 @@ fn configure_production_security(
 /// reader can always find it again.
 pub const UNVERSIONED_SCHEMA_ID: &str = "latest";
 
-#[cfg(feature = "legacy")]
-/// Cablea la investigacion sobre el grafo y la evidencia.
-///
-/// Se cablea al final, cuando la seguridad de produccion ya ha
-/// sustituido el autorizador de reserva por el que declara el
-/// deployment: el autorizador que la investigation usa tiene que ser el
-/// mismo que decide en la frontera, y no uno que deniega todo.
-///
-/// Sin almacen de contenido no hay investigacion: el contenido de la
-/// evidencia vive en el CAS del deployment, y un despliegue que no tiene
-/// uno no puede leer las pruebas. La superficie responde entonces con un
-/// `503` y dice por que, en vez de devolver un informe vacio que parece
-/// una respuesta.
-fn wire_the_investigation(
-    state: AppState,
-    config: &AppConfig,
-    schema_storage: &Arc<SurrealSchemaAdapter>,
-) -> Result<AppState, BootstrapError> {
-    let Some(content) = state.content_store.clone() else {
-        warn!(
-            "the investigation is not wired: the deployment has no store of content to read the evidence from"
-        );
-        return Ok(state.with_investigation_limits(config.investigation.clone()));
-    };
-    let db = Arc::new(schema_storage.db().clone());
-    let evidence: Arc<dyn hodei_evidence::ports::EvidenceStore> = Arc::new(
-        hodei_evidence_storage::SurrealEvidenceStore::new(db.clone()),
-    );
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    // El registro de deltas es el MISMO que usa el grafo --la misma
-    // tabla--: el comprobador de frescura pregunta por la version del
-    // tenant y por lo que cambio desde la version que el informe dice
-    // haber leido, y esa historia la escribe el grafo.
-    let deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger> =
-        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
-    let investigation = Arc::new(crate::investigation::GraphInvestigation::new(
-        evidence,
-        Arc::new(crate::investigation::CasContentStore::new(content)),
-        graph,
-        deltas,
-        state.authorize_resource.clone(),
-        config.investigation.clone(),
-    ));
-    Ok(state
-        .with_investigation(investigation)
-        .with_investigation_limits(config.investigation.clone()))
-}
-
-#[cfg(feature = "legacy")]
-/// Los hechos de riesgo de la promocion, leidos del grafo de impacto.
-///
-/// La vista materializada y el registro de deltas son los mismos que ya
-/// usan las reacciones: no hay un segundo evaluador ni un almacen nuevo.
-/// El catalogo de severidades esta vacio hasta que un feed lo llene, y
-/// eso es honesto: sin severidad conocida los hechos NO se establecen, y
-/// la politica que los exige no concede.
-fn wire_the_risk_facts(
-    state: AppState,
-    config: &AppConfig,
-    schema_storage: &Arc<SurrealSchemaAdapter>,
-) -> AppState {
-    use hodei_risk_storage::impact_view::SurrealImpactView;
-    use hodei_risk_storage::subject_risk::{AdvisoryCatalog, EmptyCatalog, SurrealRiskFacts};
-    let catalog: Arc<dyn AdvisoryCatalog> = match config.trust.risk_catalog_file.as_deref() {
-        Some(path) => match crate::risk_facts::load_risk_catalog(path) {
-            Ok(catalog) => Arc::new(catalog),
-            Err(error) => {
-                tracing::warn!("{error}: the risk facts will stay UNKNOWN");
-                Arc::new(EmptyCatalog)
-            }
-        },
-        None => Arc::new(EmptyCatalog),
-    };
-    let db = Arc::new(schema_storage.db().clone());
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    let deltas = Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
-    let view = SurrealImpactView::new(graph, deltas);
-    state.with_risk_facts(Arc::new(SurrealRiskFacts::new(view, catalog)))
-}
-
-#[cfg(feature = "legacy")]
-/// El ciclo reactivo CVE: la composition root de `VulnerabilityReactor`.
-///
-/// Solo existe si el plano de confianza existe: sin politicas ni
-/// decisiones no hay nada que reevaluar, y un ciclo que decide por su
-/// cuenta seria un segundo plano de confianza disfrazado. El `resume`
-/// corre ANTES de abrir el estado al trafico: es lo que hace que un
-/// `kill -9` a mitad de un efecto converja al reiniciar, y correrlo
-/// despues dejaria una ventana en la que el servicio sirve con los
-/// intents del crash aun dichos y no perseguidos.
-async fn wire_the_reactor(
-    state: AppState,
-    config: &AppConfig,
-    schema_storage: &Arc<SurrealSchemaAdapter>,
-) -> Result<AppState, BootstrapError> {
-    let (Some(plane), Some(ledger)) = (state.trust_plane.clone(), state.trust_ledger.clone())
-    else {
-        return Ok(state);
-    };
-    let db = Arc::new(schema_storage.db().clone());
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    let deltas = Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(db));
-    let view = hodei_risk_storage::impact_view::SurrealImpactView::new(graph.clone(), deltas);
-    let reactor = Arc::new(crate::trust::reaction::VulnerabilityReactor::new(
-        Arc::new(schema_storage.db().clone()),
-        graph,
-        view,
-        plane,
-        ledger,
-        state.evidence_reader.clone(),
-        state.risk_facts.clone(),
-        config.investigation.clone(),
-    ));
-    let resume = reactor.resume(chrono::Utc::now()).await;
-    // El barrido periodico: la vigencia que caduca y la politica que se
-    // sustituyen se reevaluan aqui, no al servir (el camino de servicio
-    // ya rechaza la concesion vencida desde HSP-135; el barrido es lo
-    // que escribe la verdad nueva). `0` desactiva el bucle.
-    if config.trust.sweep_interval_secs > 0 {
-        let sweeper = reactor.clone();
-        let interval = Duration::from_secs(config.trust.sweep_interval_secs);
-        tokio::spawn(async move {
-            let mut clock = tokio::time::interval(interval);
-            clock.tick().await;
-            loop {
-                clock.tick().await;
-                let now = chrono::Utc::now();
-                if let Err(error) = sweeper.sweep_stale_grants(now).await {
-                    tracing::warn!(%error, "the validity sweep could not run");
-                }
-                if let Err(error) = sweeper.reconcile_impact_view().await {
-                    tracing::warn!(%error, "the impact view could not be reconciled");
-                }
-            }
-        });
-    }
-    resume.map_err(|error| BootstrapError::Initialization(error.to_string()))?;
-    Ok(state.with_reactor(reactor))
-}
-
-#[cfg(feature = "legacy")]
-/// SurrealDB adapter for schema storage///
-/// This adapter implements the SchemaStoragePort trait for SurrealDB with RocksDB.
-#[derive(Clone)]
-pub struct SurrealSchemaAdapter {
-    db: Surreal<surrealdb::engine::local::Db>,
-}
-
-#[cfg(feature = "legacy")]
-impl SurrealSchemaAdapter {
-    /// Get a reference to the underlying database client
-    pub fn db(&self) -> &Surreal<surrealdb::engine::local::Db> {
-        &self.db
-    }
-}
-
-#[cfg(feature = "legacy")]
-impl SurrealSchemaAdapter {
-    /// Create a new SurrealDB schema adapter
-    pub fn new(db: Surreal<surrealdb::engine::local::Db>) -> Self {
-        Self { db }
-    }
-}
-
-#[cfg(feature = "legacy")]
-/// Row shape of a stored schema record.
-///
-/// A single-record SurrealDB response is an object that also carries the
-/// record `id`, and that `id` reaches the deserializer as a SurrealDB `Thing`.
-/// Asking for `serde_json::Value` in that case fails with
-/// "invalid type: enum, expected any valid JSON value": the JSON visitor is
-/// handed the `id` as an enum and rejects it, so the whole response fails to
-/// deserialize. Declaring the fields that are actually needed lets serde
-/// ignore the rest — the same shape the policy adapter already uses.
-#[derive(Debug, Clone, Deserialize)]
-struct SchemaRecordRow {
-    /// The persisted schema
-    content: String,
-}
-
-#[cfg(feature = "legacy")]
-/// Row shape used when only the version of a stored schema is needed.
-#[derive(Debug, Clone, Deserialize)]
-struct SchemaVersionRow {
-    /// The schema version, absent when the record was stored without one
-    version: Option<String>,
-    /// When the record was stored, used to order the versions
-    created_at: Option<String>,
-}
-
-#[cfg(feature = "legacy")]
-#[async_trait]
-impl SchemaStoragePort for SurrealSchemaAdapter {
-    async fn save_schema(
-        &self,
-        schema_json: String,
-        version: Option<String>,
-    ) -> Result<String, BuildSchemaError> {
-        // The record is stored under its version, so the version *is* the id.
-        let schema_id = version
-            .clone()
-            .unwrap_or_else(|| UNVERSIONED_SCHEMA_ID.to_string());
-
-        // The stored record has to declare the version under which it can be
-        // found again, and that version is its own id. A schema stored
-        // without an explicit version used to be written with a `null`
-        // version, which made it invisible to the reader: it looks the newest
-        // record up by its version, so a record without one was never
-        // selected. The schema was persisted and never applied, and every
-        // consumer concluded that no schema existed — which degraded policy
-        // validation to a syntax check and let policies over undeclared
-        // actions and entity types pass.
-        let stored_version = version.unwrap_or_else(|| schema_id.clone());
-
-        // `upsert`, not `create`: `create` fails with "Found existing record"
-        // when the version was already stored, which is exactly what happens
-        // the second time the service boots against the same database.
-        // Persisting a schema has to be idempotent, otherwise the service can
-        // only ever boot once per database.
-        let _: Option<SchemaRecordRow> = self
-            .db
-            .upsert(("schema", schema_id.as_str()))
-            .content(serde_json::json!({
-                "content": schema_json,
-                "version": stored_version,
-                "created_at": chrono::Utc::now().to_rfc3339(),
-            }))
-            .await
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
-
-        Ok(format!("schema:{}", schema_id))
-    }
-
-    async fn get_latest_schema(&self) -> Result<Option<String>, BuildSchemaError> {
-        Ok(self
-            .get_latest_schema_entry()
-            .await?
-            .map(|entry| entry.schema_string))
-    }
-
-    /// Retrieve the latest schema together with the version it is stored under
-    ///
-    /// The version is not a decoration: it is the id the record is stored
-    /// under, and it is the only way a reader can tell *which* schema it got.
-    /// The default implementation of the port would report the content
-    /// without it, so the adapter overrides it with the version the record
-    /// actually declares.
-    async fn get_latest_schema_entry(&self) -> Result<Option<StoredSchema>, BuildSchemaError> {
-        // A schema is stored under its own version, so there is no record
-        // named "latest" to select: the latest is the most recently stored
-        // one. Selecting a record called "latest" always came back empty,
-        // which made every consumer believe that no schema existed.
-        let rows: Vec<SchemaVersionRow> = self
-            .db
-            .query("SELECT version, created_at FROM schema")
-            .await
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?
-            .take(0)
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
-
-        let latest = rows
-            .into_iter()
-            .max_by(|a, b| a.created_at.cmp(&b.created_at));
-
-        // A record written before the version became mandatory says `null`,
-        // but it is still stored under the id "latest", so it is still
-        // addressable. Falling back to that id keeps those records readable
-        // instead of leaving them invisible.
-        let Some(latest) = latest else {
-            return Ok(None);
-        };
-
-        let version = latest
-            .version
-            .unwrap_or_else(|| UNVERSIONED_SCHEMA_ID.to_string());
-
-        let result: Option<SchemaRecordRow> = self
-            .db
-            .select(("schema", version.as_str()))
-            .await
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
-
-        Ok(result.map(|row| {
-            StoredSchema::new(
-                row.content,
-                Some(version.clone()),
-                format!("schema:{}", version),
-            )
-        }))
-    }
-
-    async fn get_schema_by_version(
-        &self,
-        version: &str,
-    ) -> Result<Option<String>, BuildSchemaError> {
-        let result: Option<SchemaRecordRow> = self
-            .db
-            .select(("schema", version))
-            .await
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
-
-        Ok(result.map(|row| row.content))
-    }
-
-    async fn delete_schema(&self, schema_id: &str) -> Result<bool, BuildSchemaError> {
-        // The id returned by `save_schema` is prefixed with the table name
-        // ("schema:<version>") while the record itself is stored under the
-        // bare version. Both spellings are accepted so that a caller that
-        // round-trips the id deletes the record it just wrote.
-        let record_id = schema_id.strip_prefix("schema:").unwrap_or(schema_id);
-
-        let result: Option<SchemaRecordRow> = self
-            .db
-            .delete(("schema", record_id))
-            .await
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
-
-        Ok(result.is_some())
-    }
-
-    async fn list_schema_versions(&self) -> Result<Vec<String>, BuildSchemaError> {
-        // Query all schemas
-        let results: Vec<SchemaVersionRow> = self
-            .db
-            .query("SELECT version FROM schema")
-            .await
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?
-            .take(0)
-            .map_err(|e| BuildSchemaError::SchemaStorageError(e.to_string()))?;
-
-        let versions = results.into_iter().filter_map(|row| row.version).collect();
-
-        Ok(versions)
-    }
-}
-
-#[cfg(feature = "legacy")]
-/// Initialize the SurrealDB schema storage adapter with RocksDB
-async fn initialize_schema_storage(
-    config: &AppConfig,
-) -> Result<Arc<SurrealSchemaAdapter>, Box<dyn std::error::Error + Send + Sync>> {
-    let rocksdb_config = &config.rocksdb;
-
-    info!(
-        "💎 Initializing SurrealDB with RocksDB: {}",
-        rocksdb_config.path
-    );
-
-    // Create directory if it doesn't exist
-    if let Some(parent) = std::path::Path::new(&rocksdb_config.path).parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .map_err(|e| BootstrapError::Initialization(e.to_string()))?;
-    }
-
-    // Connect to RocksDB embedded database
-    let db = Surreal::new::<RocksDb>(&rocksdb_config.path)
-        .await
-        .map_err(|e| BootstrapError::DatabaseConnection(e.to_string()))?;
-
-    // Configure namespace and database
-    let namespace = config.database.namespace.as_ref().unwrap();
-    let database = config.database.database.as_ref().unwrap();
-
-    info!(
-        "📂 Using namespace '{}' and database '{}'",
-        namespace, database
-    );
-
-    db.use_ns(namespace)
-        .use_db(database)
-        .await
-        .map_err(|e| BootstrapError::Initialization(e.to_string()))?;
-
-    Ok(Arc::new(SurrealSchemaAdapter::new(db)))
-}
-
 /// Persist the Cedar schema the deployment's authorization bundle declares,
 /// in the envelope the build-schema use case writes, under the id that
 /// makes it the authoritative one.
@@ -1401,42 +641,6 @@ async fn persist_bundle_schema(
         )
         .await
         .map_err(|error| BootstrapError::Security(format!("cannot persist schema: {error}")))?;
-    Ok(())
-}
-
-/// Validate bootstrap configuration and fail explicitly on any issues
-///
-/// This function performs additional validation beyond what's in AppConfig::validate()
-/// to ensure the application fails fast on configuration problems.
-///
-/// It looks at the configuration only. Whether the storage can be used is a
-/// question about the machine, and `AppConfig::preflight_storage` answers
-/// it, separately and with its own error.
-fn validate_bootstrap_configuration(
-    config: &AppConfig,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Validate database configuration
-    if config.database.namespace.is_none() || config.database.namespace.as_ref().unwrap().is_empty()
-    {
-        return Err(Box::new(BootstrapError::Initialization(
-            "Database namespace is required but not configured. Set HODEI_DATABASE__NAMESPACE or [database].namespace in config/default.toml".to_string(),
-        )));
-    }
-
-    if config.database.database.is_none() || config.database.database.as_ref().unwrap().is_empty() {
-        return Err(Box::new(BootstrapError::Initialization(
-            "Database name is required but not configured. Set HODEI_DATABASE__DATABASE or [database].database in config/default.toml".to_string(),
-        )));
-    }
-
-    // Validate RocksDB path
-    if config.rocksdb.path.is_empty() {
-        return Err(Box::new(BootstrapError::Initialization(
-            "RocksDB path is required but not configured. Set HODEI_ROCKSDB__PATH or [rocksdb].path in config/default.toml".to_string(),
-        )));
-    }
-
-    info!("✅ Configuration validation passed");
     Ok(())
 }
 
@@ -1473,170 +677,5 @@ mod staging_margin_tests {
         assert_eq!(the_staging_margin_secs(&config), 86_460);
         config.security.oci_upload_ttl_secs = 600;
         assert_eq!(the_staging_margin_secs(&config), 3600);
-    }
-}
-
-#[cfg(feature = "legacy")]
-#[cfg(test)]
-mod tests {
-    #[tokio::test]
-    async fn an_unreachable_s3_backend_fails_with_an_actionable_redacted_message() {
-        use crate::config::{ContentBackend, S3ContentConfig};
-        let mut config = AppConfig::default();
-        config.content.backend = ContentBackend::S3;
-        config.content.s3 = Some(S3ContentConfig {
-            bucket: "missing-bucket".to_string(),
-            endpoint: Some("127.0.0.1:1".to_string()),
-            region: Some("us-east-1".to_string()),
-            tls: false,
-        });
-        let error = match the_content_store(&config).await {
-            Ok(_) => panic!("an unreachable store must be an error"),
-            Err(error) => error.to_string(),
-        };
-        assert!(error.contains("missing-bucket"), "{error}");
-        assert!(error.contains("HODEI_CONTENT__S3__ENDPOINT"), "{error}");
-    }
-
-    #[test]
-    fn the_required_bootstrap_values_name_the_variable_and_the_action() {
-        type Break = fn(&mut AppConfig);
-        let cases: [(Break, &str); 3] = [
-            (|c| c.database.namespace = None, "HODEI_DATABASE__NAMESPACE"),
-            (
-                |c| c.database.database = Some(String::new()),
-                "HODEI_DATABASE__DATABASE",
-            ),
-            (|c| c.rocksdb.path = String::new(), "HODEI_ROCKSDB__PATH"),
-        ];
-        for (break_it, variable) in cases {
-            let mut config = AppConfig::default();
-            break_it(&mut config);
-            let error = validate_bootstrap_configuration(&config)
-                .expect_err("a required value is missing")
-                .to_string();
-            assert!(error.contains(variable), "{error}");
-            assert!(error.contains("config/default.toml"), "{error}");
-        }
-    }
-
-    #[test]
-    fn the_bucket_failure_never_echoes_a_private_key() {
-        let pem = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----";
-        let text = the_bucket_failure("b", &format!("cannot be used: {pem}"));
-        assert!(
-            !text.contains("BEGIN") && !text.contains("MIIEvQIBADAN"),
-            "{text}"
-        );
-        assert!(text.contains("HODEI_CONTENT__S3__ENDPOINT"), "{text}");
-    }
-
-    #[test]
-    fn the_bucket_failure_never_echoes_credentials() {
-        let text = the_bucket_failure("b", "cannot be used: secret_access_key=abc123 token=zzz9");
-        assert!(!text.contains("abc123") && !text.contains("zzz9"), "{text}");
-    }
-
-    #[tokio::test]
-    async fn an_unwritable_content_directory_stops_the_bootstrap_with_the_path() {
-        let tmp = tempdir().unwrap();
-        let blocker = tmp.path().join("file");
-        std::fs::write(&blocker, "x").unwrap();
-        let mut config = AppConfig::default();
-        config.rocksdb.path = tmp.path().join("db").to_string_lossy().to_string();
-        // A path below a regular file can never be created.
-        config.content.cas_path = blocker.join("cas").to_string_lossy().to_string();
-        let bootstrap_config = BootstrapConfig {
-            register_iam_schema: false,
-            schema_version: None,
-            validate_schemas: false,
-        };
-        let error = match bootstrap(&config, bootstrap_config).await {
-            Ok(_) => panic!("must fail"),
-            Err(error) => error.to_string(),
-        };
-        assert!(error.contains("HODEI_CONTENT__CAS_PATH"), "{error}");
-        assert!(error.contains(&blocker.display().to_string()), "{error}");
-    }
-
-    use super::*;
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn test_bootstrap_with_rocksdb() {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.rocksdb");
-
-        let mut config = AppConfig::default();
-        config.rocksdb.path = db_path.to_string_lossy().to_string();
-
-        let bootstrap_config = BootstrapConfig {
-            register_iam_schema: false, // Skip IAM registration for faster tests
-            schema_version: None,
-            validate_schemas: false,
-        };
-
-        let result = bootstrap(&config, bootstrap_config).await;
-
-        // Should succeed with RocksDB
-        if result.is_ok() {
-            println!("Bootstrap succeeded with RocksDB");
-        } else {
-            println!("Bootstrap failed: {:?}", result.err());
-        }
-
-        // Clean up
-        drop(temp_dir);
-    }
-
-    #[tokio::test]
-    async fn test_bootstrap_without_iam_schema_registration() {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test_no_iam.rocksdb");
-
-        let mut config = AppConfig::default();
-        config.rocksdb.path = db_path.to_string_lossy().to_string();
-
-        let bootstrap_config = BootstrapConfig {
-            register_iam_schema: false,
-            schema_version: None,
-            validate_schemas: false,
-        };
-
-        let result = bootstrap(&config, bootstrap_config).await;
-
-        if result.is_ok() {
-            println!("Bootstrap succeeded without IAM schema");
-        } else {
-            println!("Bootstrap failed: {:?}", result.err());
-        }
-
-        // Clean up
-        drop(temp_dir);
-    }
-
-    #[tokio::test]
-    async fn test_bootstrap_with_custom_schema_version() {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test_custom.rocksdb");
-
-        let mut config = AppConfig::default();
-        config.rocksdb.path = db_path.to_string_lossy().to_string();
-
-        let bootstrap_config = BootstrapConfig {
-            register_iam_schema: true,
-            schema_version: Some("v2.0.0-test".to_string()),
-            validate_schemas: true,
-        };
-
-        let result = bootstrap(&config, bootstrap_config).await;
-
-        if let Ok(app_state) = result {
-            // The schema version should be set correctly
-            assert!(!app_state.schema_version.is_empty());
-        }
-
-        // Clean up
-        drop(temp_dir);
     }
 }

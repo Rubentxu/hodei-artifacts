@@ -49,7 +49,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("📋 Configuration loaded");
     info!("   Server: {}", config.server_address());
     info!("   Database: {}", config.database.db_type);
-    info!("   RocksDB path: {}", config.rocksdb.path);
     info!("   Schema storage: {}", config.schema.storage_type);
     info!(
         "   IAM schema registration: {}",
@@ -180,35 +179,16 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "legacy")]
-    use tempfile::tempdir;
 
     #[test]
-    fn test_config_validation() {
-        let config = AppConfig::default();
-        assert!(config.validate().is_ok());
-    }
-
-    // Boots the embedded engine: legacy only (HSP-314 F2).
-    #[cfg(feature = "legacy")]
-    #[tokio::test]
-    async fn test_bootstrap() {
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.rocksdb");
-
-        let mut config = AppConfig::default();
-        config.rocksdb.path = db_path.to_string_lossy().to_string();
-
-        let bootstrap_config = BootstrapConfig {
-            register_iam_schema: false, // Skip IAM registration for faster tests
-            schema_version: None,
-            validate_schemas: false,
-        };
-
-        let result = bootstrap(&config, bootstrap_config).await;
-        assert!(result.is_ok(), "Bootstrap should succeed with RocksDB");
-
-        // Clean up
-        drop(temp_dir);
+    fn a_configuration_without_the_graph_is_refused() {
+        let error = AppConfig::default()
+            .validate()
+            .expect_err("the graph is the only profile");
+        assert!(
+            error
+                .to_string()
+                .contains(hodei_artifacts_api::config::GRAPH_PROFILE_REQUIRED)
+        );
     }
 }

@@ -3,12 +3,11 @@
 //! activation guard decides the race.
 //!
 //! Gated on HODEI_GRAPH_IT_ENDPOINT like every IT of the stack. What it
-//! proves, against the real engine and against the Surreal reference:
+//! proves, against the real engine:
 //!
-//! - **Equivalence**: ALLOW/DENY/INDETERMINATE decisions round-trip the
-//!   same through the Dgraph store and the Surreal reference, and the
-//!   grant answers — active, expired, legacy — are the same the Surreal
-//!   ledger gives for the same facts (AC1).
+//! - **Round trip**: ALLOW/DENY/INDETERMINATE decisions round-trip
+//!   through the Dgraph store, and the grant answers — active, expired,
+//!   legacy — are the expected ones for the same facts (AC1).
 //! - **Revocation confirmed before a new read prevents the pull even
 //!   through another surface**: a brand-new connection reads no grant
 //!   after the revoke commit is visible (AC1).
@@ -25,17 +24,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{Duration as ChronoDuration, Utc};
-use hodei_catalog::{AllowAllAuthorizer, TrustGrant, TrustLedger};
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog::{TrustGrant, TrustLedger};
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{GraphClient, GraphClientConfig, Tenant};
 use hodei_trust_policy::ports::DecisionStore;
 use hodei_trust_policy::promotion::{DecisionId, PromotionDecision};
 use hodei_trust_policy_storage::dgraph::{DgraphDecisionStore, DgraphTrustError, DgraphTrustStore};
-use hodei_trust_policy_storage::SurrealDecisionStore;
 use serde_json::{json, Value};
-use surrealdb::engine::local::Mem;
-use surrealdb::Surreal;
 
 /// The env configuration of the stack ITs, exactly as hsp199 reads it.
 fn config_from_env() -> Option<GraphClientConfig> {
@@ -116,16 +111,6 @@ fn run_scope() -> String {
     format!("hsp203-{}-{}", nanos, RUN.fetch_add(1, Ordering::SeqCst))
 }
 
-/// The Surreal reference of the same ledger, on a throwaway store.
-async fn surreal_reference() -> SurrealCatalogStore {
-    let db = Surreal::new::<Mem>(()).await.expect("the reference opens");
-    db.use_ns("hodei").use_db("trust").await.expect("the ns/db");
-    let store = SurrealCatalogStore::with_authorizer(db, Arc::new(AllowAllAuthorizer));
-    store.initialize().await.expect("the reference initializes");
-    store
-}
-
-/// A grant of one digest, with full validity.
 fn a_grant(
     account: &str,
     repository: &str,
@@ -218,31 +203,16 @@ fn decision_wire(decision: &PromotionDecision) -> Value {
     serde_json::to_value(decision).expect("a decision serializes")
 }
 
-/// AC1 (decisions): ALLOW, DENY and INDETERMINATE round-trip the same
-/// through the Surreal reference and the Dgraph port.
+/// AC1 (decisions): ALLOW, DENY and INDETERMINATE round-trip through the
+/// Dgraph port.
 #[tokio::test]
-async fn allow_deny_indeterminate_round_trip_the_same_through_both_stores() {
+async fn allow_deny_indeterminate_round_trip_through_the_graph_store() {
     let Some(client) = fresh_client().await else {
         return;
     };
     let graph = DgraphDecisionStore::open(client.clone())
         .await
         .expect("the decision store opens");
-    let tmp = tempfile::tempdir().expect("a throwaway directory");
-    let surreal_db = Arc::new(
-        Surreal::new::<surrealdb::engine::local::RocksDb>(
-            tmp.path().join("db").to_string_lossy().to_string(),
-        )
-        .await
-        .expect("the reference opens"),
-    );
-    surreal_db
-        .use_ns("hodei")
-        .use_db("trust")
-        .await
-        .expect("the ns/db");
-    let surreal = SurrealDecisionStore::new(surreal_db);
-
     let scope = run_scope();
     let account = &scope;
     let subject = format!("hrn:hodei:artifacts:eu-west-1:{scope}:Artifact/web-1.0.0");
@@ -256,30 +226,16 @@ async fn allow_deny_indeterminate_round_trip_the_same_through_both_stores() {
         } else {
             a_decision(&format!("{scope}-{outcome}"), outcome, account, &subject)
         };
-        surreal
-            .put(&decision)
-            .await
-            .expect("the reference writes the decision");
         graph
             .put(&decision)
             .await
             .expect("the graph writes the decision");
 
-        let from_surreal = surreal
-            .get(&id)
-            .await
-            .expect("the reference reads")
-            .expect("the reference kept the decision");
         let from_graph = graph
             .get(&id)
             .await
             .expect("the graph reads")
             .expect("the graph kept the decision");
-        assert_eq!(
-            decision_wire(&from_surreal),
-            decision_wire(&from_graph),
-            "the same decision reads the same from both stores ({outcome})"
-        );
         assert_eq!(
             decision_wire(&decision),
             decision_wire(&from_graph),
@@ -316,17 +272,15 @@ async fn allow_deny_indeterminate_round_trip_the_same_through_both_stores() {
 }
 
 /// AC1 (grants): the answers of the Dgraph ledger — active, expired,
-/// legacy — are the answers the Surreal reference gives for the same
-/// facts, at the same hours.
+/// legacy — are the expected ones for the facts, at the given hours.
 #[tokio::test]
-async fn grant_validity_answers_match_the_surreal_reference() {
+async fn grant_validity_answers_follow_the_facts() {
     let Some(_client) = fresh_client().await else {
         return;
     };
     let Some((_client, graph)) = open_store().await else {
         return;
     };
-    let reference = surreal_reference().await;
     let scope = run_scope();
     let account = &scope;
     let now = Utc::now();
@@ -347,30 +301,22 @@ async fn grant_validity_answers_match_the_surreal_reference() {
     legacy.valid_until = None;
     legacy.policy_version = None;
     let all: Vec<TrustGrant> = grants.into_iter().chain([legacy.clone()]).collect();
-    reference.grant(&all).await.expect("the reference grants");
     graph.grant(&all).await.expect("the graph grants");
 
     for content in ["active", "expired", "legacy", "never-granted"] {
         let digest = ContentDigest::of_bytes(content.as_bytes());
-        let from_reference = reference
-            .active_grant(account, "raw", &digest, now)
-            .await
-            .expect("the reference answers");
         let from_graph = graph
             .active_grant(account, "raw", &digest, now)
             .await
             .expect("the graph answers");
+        // Only a grant with a declared, still-open validity serves: the
+        // expired one, the legacy one (no declared validity) and the
+        // never-granted digest are all closed.
+        let expected = content == "active";
         assert_eq!(
-            from_reference
-                .as_ref()
-                .map(|grant| grant.decision_id.clone()),
-            from_graph.as_ref().map(|grant| grant.decision_id.clone()),
-            "the active answer for {content} is the same in both ledgers"
-        );
-        assert_eq!(
-            from_reference.is_some(),
             from_graph.is_some(),
-            "the presence for {content} is the same in both ledgers"
+            expected,
+            "the presence for {content} follows its validity"
         );
     }
     // The exact hours: an active grant inside its horizon, expired at the
@@ -386,15 +332,7 @@ async fn grant_validity_answers_match_the_surreal_reference() {
         .active_grant(account, "raw", &digest, now + ChronoDuration::hours(1))
         .await
         .expect("read");
-    assert!(
-        at_deadline.is_none(),
-        "at the deadline the grant is over, like the reference"
-    );
-    let reference_at_deadline = reference
-        .active_grant(account, "raw", &digest, now + ChronoDuration::hours(1))
-        .await
-        .expect("read");
-    assert!(reference_at_deadline.is_none(), "the reference agrees");
+    assert!(at_deadline.is_none(), "at the deadline the grant is over");
 
     // Repeating a grant neither duplicates nor revives.
     graph

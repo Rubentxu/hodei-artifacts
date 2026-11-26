@@ -53,7 +53,7 @@
 //
 // La suite con `nextest` queda fuera, a propósito: la ejecuta
 // `cargo nextest run --workspace --no-fail-fast --test-threads=1`, que es
-// el aislamiento por prueba, y las pruebas de RocksDB y de binario
+// el aislamiento por prueba, y las pruebas de binario
 // necesitan un solo hilo. Duplicaría la cobertura en cada ejecución sin
 // estar en el camino de la entrega.
 
@@ -75,9 +75,6 @@ pipeline {
             timestamps {
                 sh("cargo fmt --all -- --check")
                 sh("cargo clippy --workspace --all-targets -- -D warnings")
-                // HSP-314 F2: `legacy` ya no es el defecto; el motor embebido
-                // se valida aparte, con la misma regla, hasta F4.
-                sh("cargo clippy --workspace --all-targets --features legacy -- -D warnings")
                 sh("cargo build --workspace")
             }
         }
@@ -100,39 +97,30 @@ pipeline {
                     "cargo test --workspace --lib --bins " + listOf(
                         "--test authorization_isolation",
                         "--test hsp314_cedar_artifact_schema",
+                        "--test hsp314_no_embedded_engine_sbom",
                         "--test outbox_flow",
                         "--test planned_isolation",
                         "--test architecture_fitness",
                         "--test capsule_contract",
                         "--test trust_policy_contract",
-                        "--test promotion_contract",
-                        "--test m3_uat",
                         "--test risk_contract",
-                        "--test m4_uat",
                         "--test reachability_contract",
                         "--test reactive_contract",
                         "--test simulation_contract",
                         "--test base_contract",
                         "--test hsp92_result_contract",
                         "--test hsp92_conformance",
-                        "--test m7_uat",
                         "--test investigator_contract",
                         "--test deterministic_contract",
                         "--test freshness_contract",
-                        "--test m8_uat",
                         "--test hub_contract",
                         "--test m9_uat",
                         "--test har01_cas_contract",
                         "--test hsp104_reclaim_contract",
-                        "--test m6_uat",
-                        "--test m5_uat",
                         "--test ci_suites",
                         "--test compose_smoke_contract",
                         "--test test_affected_selection",
                         "--test evidence_contract",
-                        "--test graph_contract",
-                        "--test m1_uat",
-                        "--test m2_uat",
                         "--test graph_projection",
                         "--test hrn_migration",
                         "--test hrn_parity",
@@ -167,48 +155,18 @@ pipeline {
             timestamps {
                 sh(
                     "cargo test --workspace " + listOf(
-                        "--test atomic_projection",
                         "--test dgraph_profile_failclosed",
                         "--test backend_selection_failclosed",
-                        "--test ingestion_contract",
-                        "--test ledger_contract",
-                        "--test planned_migration",
-                        "--test reactions_isolation",
-                        "--test relation_deltas",
-                        "--test impact_view",
-                        "--test intent_store",
-                        "--test integration_create_group_comprehensive_test",
-                        "--test integration_create_policy_new_test",
-                        "--test integration_create_user_comprehensive_test",
-                        "--test support_reconciliation",
-                        "--test har03_outbox_contract",
-                        "--test hsp104_gc_ledger_contract",
                         "--test hsp104_gc_service",
                         "--test hsp174_gc_census_cache",
-                        "--test hsp175_precondition_guard",
-                        "--test hsp176_capsule_subject_bounded",
-                        "--test hsp178_pypi_simple_index_bounded",
-                        "--test hsp179_export_portable",
-                        "--test hsp146_put_transaction",
-                        "--test hsp149_lifecycle",
-                        "--test hsp179_keyset_plan",
                         "--test hsp192_gc_coordinated_pass",
                         "--test hsp210_idempotent_import",
                         "--test hsp211_projection_reconcile",
                         "--test hsp212_cutover_rehearsal",
-                        "--test hsp154_trust_root_rotation",
-                        "--test hsp155_intelligence_sla",
                         "--test hsp166_dataset",
                         "--test intelligence_oracle",
                         "--test slsa_contract",
                         "--test trust_chain_contract",
-                        "--test hsp105_trust_ledger_contract",
-                        "--test hsp106_provenance_ledger_contract",
-                        "--test hsp108_group_contract",
-                        "--test hsp109_maven_contract",
-                        "--test hsp113_search_contract",
-                        "--test freshness_storage",
-                        "--test hsp92_surreal_conformance",
                     ).joinToString(" ")
                 )
             }
@@ -250,9 +208,8 @@ pipeline {
                         "--test hsp314_f3c_investigation_wiring_it",
                         "--test hsp220_drain_outbox_it",
                         "--test hsp314_surface_probe",
-                        // HSP-314 F4 S3: catalogo y formatos sobre Dgraph real, sin
-                        // `legacy` (la paridad con el motor embebido es ya una asercion
-                        // directa del contrato).
+                        // HSP-314 F4 S3: catalogo y formatos sobre Dgraph real (la paridad
+                        // con el motor embebido, retirado, es ya una asercion directa).
                         "--test hsp187_catalog_dgraph_it",
                         "--test hsp190_oci_catalog_dgraph_it",
                         "--test hsp191_maven_dgraph_it",
@@ -282,9 +239,15 @@ pipeline {
                 // `bootstrap` en proceso) arranca sobre `RUN_MODE=dgraph` y cada despliegue
                 // crea y borra su propio namespace ACL del alpha. Sin
                 // HODEI_GRAPH_IT_ENDPOINT (+ _USER/_PASSWORD/_ADMIN) se saltan a si mismas
-                // (exit 0) y el gate de arriba declara NOT_RUN. Sin `legacy`.
+                // (exit 0) y el gate de arriba declara NOT_RUN.
                 sh(
                     "cargo test --workspace " + listOf(
+                        // HSP-314 F4 S7: the four suites that used to seed the embedded
+                        // engine now deploy their own namespace on the graph profile.
+                        "--test audit_events",
+                        "--test repository_create",
+                        "--test repository_read",
+                        "--test hsp132_registry_list",
                         "--test hsp112_pypi_cli",
                         "--test admin_surface",
                         "--test iam_scope",
@@ -522,8 +485,6 @@ pipeline {
                         "--test binary_contract",
                         "--test distribution_contract",
                         "--test startup_errors",
-                        "--test crash_recovery",
-                        "--test har02_catalog_contract",
                         "--test hsp116_localstack_fidelity",
                         "--test hsp116_s3_contract",
                         "--test hsp116_s3_bench",
@@ -540,11 +501,11 @@ pipeline {
                         // smoke de despliegue real con Podman (HSP-242).
                         "--test hsp242_oci_image",
                         // El camino comunitario (HSP-241) sobre el perfil de
-                        // grafo: el tarball real sin legacy contra un Dgraph y
+                        // grafo: el tarball real contra un Dgraph y
                         // un S3 propios levantados con podman (sin podman el
                         // script sale 77 y la prueba lo dice: NOT_RUN visible).
                         // Con la documentacion que lee HSP-243, que no
-                        // necesita ni Dgraph ni legacy.
+                        // necesita Dgraph.
                         "--test hsp241_community_quickstart",
                         "--test hsp243_user_guides",
                         // Release verificable: SBOM SPDX/CycloneDX, provenance,
@@ -554,7 +515,7 @@ pipeline {
                         // (HSP-259, HSP-263): scripts contra tarballs reales.
                         "--test hsp259_installer",
                         "--test hsp263_release_bundle",
-                        // Politica de licencias, estado real de surrealdb,
+                        // Politica de licencias, ausencia de surrealdb,
                         // arbol limpio y coherencia ARCH/target (HSP-289).
                         "--test hsp289_release_policy",
                         // Prueba contra Dgraph real (HSP-181): sin
@@ -619,55 +580,25 @@ pipeline {
                 // contra el mismo Zero+Alpha y el object store de la
                 // serie HSP-116, y fija que Raw, OCI y confianza sirven
                 // juntos sobre la autoridad unica, que el arranque no
-                // toca RocksDB y que el fallback rechazado muere
+                // toca un almacen local y que el fallback rechazado muere
                 // nombrandolo. La evidencia queda en target/uat/hsp209/.
                 // Un solo hilo: las claves propias se leen por membresia
                 // sobre el alpha compartido.
                 sh(
                     "cargo test --workspace --test hsp209_profile_smoke_it -- --test-threads=1"
                 )
-                // El cierre productivo (HSP-213): la promesa de que el
-                // arbol del binario no enlaza ni surrealdb ni rocksdb se
-                // comprueba contra el propio arbol de dependencias, con
-                // la contraprueba de que `legacy` sigue trayendolo. El
-                // script solo resuelve el tree: el corte lo sostiene el
-                // build de la feature.
+                // El cierre productivo (HSP-213, HSP-314 F4): la promesa de que
+                // el arbol del binario no enlaza ni surrealdb ni rocksdb se
+                // comprueba contra el propio arbol de dependencias.
                 sh("bash scripts/check-production-closure.sh")
-                // La mitad observable del retiro, con el proceso real:
-                // el binario construido SIN `legacy` --el arbol que
-                // empaqueta scripts/package-release.sh-- rechaza el
-                // perfil embebido con el mensaje de migracion: nombra la
-                // retirada, la herramienta y la ventana, y no crea el
-                // almacen local. Con las features del arbol el target
-                // queda vacio a proposito: el binario default no puede
-                // rechazar nada, y una prueba que no afirma nada es peor
-                // que no tenerla. En el mismo arbol corre el ensayo de
-                // rollback (HSP-213/AC3, maquina de HSP-212): demostrar
-                // que volver atras no levanta dos autoridades justo aqui
-                // --sin el motor embebido retirado-- es parte de la
-                // prueba.
+                // La mitad observable del retiro, con el proceso real: el
+                // binario rechaza el perfil embebido con el mensaje de
+                // migracion (nombra la retirada y el perfil [graph]) y no crea
+                // el almacen local. En el mismo arbol corre el ensayo de
+                // rollback (HSP-213/AC3): volver atras no levanta dos
+                // autoridades.
                 sh(
-                    "cargo test -p hodei-artifacts-api --no-default-features --test hsp213_profile_rejection --test hsp213_rollback_single_authority"
-                )
-            }
-        }
-
-        // HSP-314 F2: `legacy` ya no es el defecto, asi que el motor embebido
-        // (SurrealDB sobre RocksDB) tiene su propia etapa. Aqui corren las
-        // suites que lo siembran o lo montan y que solo se compilan con
-        // `--features legacy` (`required-features` en Cargo.toml). La etapa
-        // cubre el motor embebido hasta F4, cuando se retira surrealdb y
-        // estas suites migran a [graph] o se borran con el. Cada target
-        // vive en exactamente una suite (tests/ci_suites.rs).
-        stage("legacy (embedded engine)") {
-            timestamps {
-                sh(
-                    "cargo test --workspace --features legacy " + listOf(
-                        "--test audit_events",
-                        "--test repository_create",
-                        "--test repository_read",
-                        "--test hsp132_registry_list",
-                    ).joinToString(" ")
+                    "cargo test -p hodei-artifacts-api --test hsp213_profile_rejection --test hsp213_rollback_single_authority"
                 )
             }
         }

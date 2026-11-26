@@ -34,7 +34,7 @@ use tracing::debug;
 /// use std::sync::Arc;
 ///
 /// // Composition root creates the schema storage adapter
-/// let schema_storage = Arc::new(SurrealSchemaStorage::new(db_client));
+/// let schema_storage = Arc::new(DgraphSchemaStore::new(client));
 ///
 /// // Get hodei-policies ports via their factories
 /// let (entity_port, action_port, schema_port) =
@@ -83,7 +83,7 @@ pub fn create_register_iam_schema_use_case(
 /// use std::sync::Arc;
 ///
 /// // Composition root creates the adapter
-/// let schema_storage = Arc::new(SurrealSchemaStorage::new(db_client));
+/// let schema_storage = Arc::new(DgraphSchemaStore::new(client));
 ///
 /// // Factory handles all the wiring internally
 /// let iam_schema_uc = factories::create_register_iam_schema_use_case_with_storage(schema_storage);

@@ -3,15 +3,11 @@
 //! IT condicionado a `HODEI_GRAPH_IT_ENDPOINT` como todos los de la pila.
 //! Corre contra el alpha REAL compartido (asserts por MEMBRESIA sobre el
 //! tenant del test, nunca sobre conteos globales, HSP-198/219/220) y
-//! contra la referencia Surreal en memoria dentro del mismo proceso
-//! (el patron de paridad de HSP-193/194/195/197). Lo que prueba:
+//! Lo que prueba:
 //!
 //! - REPRODUCIBILIDAD: dos lecturas a la misma watermark sellan el MISMO
 //!   read-set byte a byte (manifiesto y huella identicos), con las
 //!   versiones de los apoyos que el informe cita (HSP-89);
-//! - PARIDAD: el mismo material, en el mismo orden, sella el mismo
-//!   read-set en Dgraph y en la referencia Surreal, y el retiro de un
-//!   apoyo produce el MISMO veredicto en los dos motores;
 //! - RETIRO DE APOYO: un informe que se apoya en un apoyo retirado es
 //!   Stale con la cita de lo que se movio; el informe que no se apoyaba
 //!   en el movimiento sigue Current; y un apoyo ANADIDO a una relacion
@@ -40,11 +36,10 @@ use hodei_evidence::domain::evidence::{
 use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal, NodeKind, RelationType,
 };
-use hodei_evidence::ports::graph::GraphWriter;
 use hodei_evidence::{ContentDigest, ContentRef, ContentStore, EvidenceStore};
 use hodei_evidence_storage::{
     DgraphDeltaLedger, DgraphEvidenceStore, DgraphGraphStore, DgraphProjectionFrontier,
-    InMemoryContentStore, SurrealEvidenceStore, SurrealGraphStore, SurrealRelationDeltaLedger,
+    InMemoryContentStore,
 };
 use hodei_graph_client::{GraphClient, GraphClientConfig, schema::ensure_ready};
 use hodei_investigator::freshness::{ChangeKind, Freshness, GRAPH_SOURCE};
@@ -55,12 +50,8 @@ use hodei_investigator::scope::{
     RetrievedContext,
 };
 use hodei_investigator_storage::freshness::LedgerFreshness;
-use hodei_investigator_storage::{
-    DgraphEvidenceRetriever, GraphEvidenceRetriever, GraphSource, InvestigationRetriever,
-};
+use hodei_investigator_storage::{DgraphEvidenceRetriever, GraphSource, InvestigationRetriever};
 use kernel::Hrn;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, Mem};
 
 /// La puerta de autorizacion es la del nucleo, ya probada por la
 /// referencia (m8, HSP-89): aqui se prueba la lectura, el sello y el
@@ -371,91 +362,12 @@ impl World {
     }
 }
 
-/// El mundo de la referencia: Surreal en memoria dentro del test, el
-/// material con el que HSP-89 demostro estas conductas.
-struct Reference {
-    graph: Arc<SurrealGraphStore<Db>>,
-    deltas: Arc<SurrealRelationDeltaLedger<Db>>,
-    evidence: Arc<SurrealEvidenceStore<Db>>,
-    content: Arc<InMemoryContentStore>,
-    tenant: Hrn,
-}
-
-impl Reference {
-    async fn open(tenant: Hrn) -> Self {
-        let db = Arc::new(Surreal::new::<Mem>(()).await.expect("memory surreal"));
-        db.use_ns("hodei")
-            .use_db("hsp206")
-            .await
-            .expect("the namespace");
-        Self {
-            graph: Arc::new(SurrealGraphStore::new(db.clone())),
-            deltas: Arc::new(SurrealRelationDeltaLedger::new(db.clone())),
-            evidence: Arc::new(SurrealEvidenceStore::new(db.clone())),
-            content: Arc::new(InMemoryContentStore::new()),
-            tenant,
-        }
-    }
-
-    async fn admit(&self, id: &str, subject: &Hrn, text: &str) {
-        self.content
-            .put(text.as_bytes().to_vec())
-            .await
-            .expect("the content is stored");
-        self.evidence
-            .put(evidence_record(&self.tenant, id, subject, text))
-            .await
-            .expect("the reference admits the evidence");
-    }
-
-    async fn project(&self, changes: GraphChangeSet) {
-        self.graph
-            .apply(changes)
-            .await
-            .expect("the reference projects");
-    }
-
-    async fn read(&self, scope: RetrievalScope) -> RetrievedContext {
-        let retriever = GraphEvidenceRetriever::new(
-            self.evidence.clone(),
-            self.content.clone(),
-            self.graph.clone(),
-            Arc::new(EveryoneReads),
-            self.tenant.clone(),
-        );
-        retriever
-            .retrieve(&scope)
-            .await
-            .expect("the reference answers")
-    }
-
-    fn checker(&self) -> LedgerFreshness {
-        LedgerFreshness::new(
-            self.evidence.clone(),
-            self.deltas.clone(),
-            self.tenant.clone(),
-        )
-    }
-}
-
 /// Los sellos de relacion de un manifiesto, ordenados.
 fn relation_stamps(report: &ReadSet) -> Vec<ReadStamp> {
     let mut stamps: Vec<ReadStamp> = report
         .stamps
         .iter()
         .filter(|stamp| stamp.kind == ReadKind::Relation)
-        .cloned()
-        .collect();
-    stamps.sort();
-    stamps
-}
-
-/// Los sellos de evidencia de un manifiesto, ordenados.
-fn evidence_stamps(report: &ReadSet) -> Vec<ReadStamp> {
-    let mut stamps: Vec<ReadStamp> = report
-        .stamps
-        .iter()
-        .filter(|stamp| stamp.kind == ReadKind::Evidence)
         .cloned()
         .collect();
     stamps.sort();
@@ -679,92 +591,6 @@ async fn the_read_set_is_reproduced_and_the_retirement_is_stale() {
         }
         other => panic!("a subject of another account is UNKNOWN, not {other:?}"),
     }
-
-    // PARIDAD con la referencia Surreal: el MISMO material en el MISMO
-    // orden sella el mismo read-set y dice el mismo veredicto.
-    let reference = Reference::open(tenant.clone()).await;
-    reference
-        .admit(&sbom, &subject, "the sbom declares lib")
-        .await;
-    reference
-        .admit(&advisory, &subject, "the advisory warns about lib")
-        .await;
-    reference
-        .project(
-            GraphChangeSet::empty()
-                .with_cause("ref-assert")
-                .with_node(node(&tenant, NodeKind::Artifact, "app"))
-                .with_node(node(&tenant, NodeKind::Component, "lib"))
-                .with_node(node(&tenant, NodeKind::Evidence, &sbom))
-                .with_node(node(&tenant, NodeKind::Evidence, &advisory))
-                .with_relation(relation(
-                    &tenant,
-                    RelationType::Contains,
-                    &subject,
-                    &component,
-                    &sbom,
-                )),
-        )
-        .await;
-    let ref_report = reference.read(world.scope()).await;
-    assert_eq!(
-        relation_stamps(&report.read_set),
-        relation_stamps(&ref_report.read_set),
-        "both engines seal the same relation with the same support"
-    );
-    assert_eq!(
-        evidence_stamps(&report.read_set),
-        evidence_stamps(&ref_report.read_set),
-        "both engines seal the same evidence with the same digest"
-    );
-    reference
-        .project(
-            GraphChangeSet::empty()
-                .with_cause("ref-second")
-                .with_relation(relation(
-                    &tenant,
-                    RelationType::Contains,
-                    &subject,
-                    &component,
-                    &advisory,
-                )),
-        )
-        .await;
-    let ref_second = reference.read(world.scope()).await;
-    assert_eq!(
-        relation_stamps(&second.read_set),
-        relation_stamps(&ref_second.read_set),
-        "the last said support seals the same on both engines"
-    );
-    reference
-        .project(
-            GraphChangeSet::empty()
-                .with_cause("ref-retire")
-                .with_withdrawal(withdrawal(
-                    &tenant,
-                    RelationType::Contains,
-                    &subject,
-                    &component,
-                    &advisory,
-                )),
-        )
-        .await;
-    let ref_verdict = reference
-        .checker()
-        .freshness_of(&ref_second.read_set, &subject)
-        .await;
-    let dgraph_verdict = world
-        .checker()
-        .freshness_of(&second.read_set, &subject)
-        .await;
-    assert!(
-        matches!(ref_verdict, Freshness::Stale { .. }),
-        "the reference retires the report: {ref_verdict:?}"
-    );
-    assert_eq!(
-        ref_verdict, dgraph_verdict,
-        "the authority of the graph says exactly what the reference says"
-    );
 }
 
 /// AC #2: lo incompleto se DECLARA y lo ilegible es UNKNOWN — nunca un

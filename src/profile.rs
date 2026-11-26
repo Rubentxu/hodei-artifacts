@@ -8,12 +8,10 @@
 //! el orden que las dependencias imponen, y se obtiene el `AppState` del
 //! despliegue productivo: Dgraph para el metadato, S3 para el byte, Cedar
 //! para la decisión. No hay un segundo almacén de metadato en ningún sitio:
-//! el motor embebido queda rechazado en la validación de la configuración
-//! ([`crate::config::DatabaseConfig::validate_without_engine`]) y su
-//! preflight no toca el disco ([`crate::config::AppConfig::preflight_storage`]),
-//! de modo que una implantación que declara `[graph]` no abre, crea ni
-//! escribe nunca un RocksDB — si el perfil no puede montarse, el arranque
-//! muere con el error de la pieza concreta en vez de degradar.
+//! el grafo es el único perfil (la validación de la configuración exige
+//! `[graph]`, [`crate::config::AppConfig::validate`]) — si el perfil no puede
+//! montarse, el arranque muere con el error de la pieza concreta en vez de
+//! degradar.
 //!
 //! La composición es intencionadamente **fallida-antes-que-degradada**: la
 //! guarda del esquema versionado (`ensure_ready`, v7) es la primera puerta
@@ -30,16 +28,15 @@
 //!   (HSP-314 P2), un tenant del mismo grafo. El esquema del bundle y el
 //!   del registro IAM sobreviven al reinicio y las políticas se validan
 //!   contra él.
-//! - Registro de repositorios legacy (`/repositories`, superficie
-//!   `RepositoryReader/Writer`): sin implementación sobre Dgraph. El
+//! - Registro `/repositories` (superficie `RepositoryReader/Writer`):
+//!   sin implementación sobre Dgraph (registro en memoria). El
 //!   repositorio del catálogo (`/catalog/repositories`) sí está cableado,
 //!   que es el que usan las modalidades verticales.
 //! - Evidencia, cápsulas e investigación sobre el grafo: los almacenes
 //!   existen (`hodei-evidence-storage`, `src/bundles/capsule_dgraph.rs`)
 //!   pero los wrappers de lectura del servicio están genéricos sobre el
 //!   motor embebido o sin adaptador de handler; el perfil responde con el
-//!   comportamiento por defecto (503/404 honestos) y no abre RocksDB a
-//!   escondidas para tener una respuesta.
+//!   comportamiento por defecto (503/404 honestos).
 //! - Cuotas durables: `DgraphQuotaStore` existe (HSP-198) sin consumidor en
 //!   producción; el perfil usa el ledger de memoria que usa hoy el
 //!   despliegue embebido — mismo comportamiento, cero degradación de
@@ -108,7 +105,7 @@ impl GraphAuthority {
         // La puerta del esquema vive en el open del adapter: ensure_ready
         // (v7) decide si este binario puede escribir en ese servidor. Un
         // alpha compatible pero esquema viejísimo o nuevo de más devuelve
-        // el error tipado y el arranque muere ahí, sin tocar RocksDB.
+        // el error tipado y el arranque muere ahí, sin tocar nada local.
         let iam = Arc::new(
             DgraphIamAdapter::open(Arc::new(client))
                 .await
@@ -249,7 +246,7 @@ pub async fn assemble_graph_profile(
             })?,
     );
     // El plano del proxy: el mismo cable que el perfil embebido, con el
-    // libro del grafo en lugar del de RocksDB.
+    // libro del grafo.
     let egress = crate::proxy::egress::EgressPolicy::new(config.proxy.allowed_hosts.clone())
         .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
     for name in &config.proxy.allowed_credentials {
@@ -361,50 +358,44 @@ pub fn composition_root_for_graph(
     )
 }
 
-/// Rechazo explícito del intento de degradar: un despliegue con `[graph]`
-/// declarado whose `[database]` reclama el motor embebido, o cuyo preflight
-/// intentara tocar el disco, no llega a abrir ninguna de las dos cosas.
+/// Rechazo explícito de un `[database]` que no declara el grafo: el único
+/// backend es Dgraph, y cualquier otro valor (el motor embebido retirado
+/// incluido) se rechaza nombrándolo.
 ///
-/// Existe como función nombrada porque la prueba de rechazo (el arranque
-/// real del binario con el perfil productivo y `HODEI_DATABASE__DB_TYPE=rocksdb`)
-/// necesita citar el mensaje exacto con el que el perfil se niega; el
-/// camino lo recorre `AppConfig::validate`, y esta lo enuncia.
-pub const REFUSAL_MESSAGE: &str = "the Dgraph profile refuses the embedded RocksDB engine";
+/// Existe como constante nombrada porque las pruebas de rechazo (el arranque
+/// real del binario con `HODEI_DATABASE__DB_TYPE=rocksdb`) necesitan citar el
+/// mensaje exacto con el que el perfil se niega; el camino lo recorre
+/// `AppConfig::validate`, y esta lo enuncia.
+pub const REFUSAL_MESSAGE: &str = crate::config::REFUSED_DATABASE_TYPE;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::config::DatabaseConfig;
 
-    fn a_graph_database() -> DatabaseConfig {
-        DatabaseConfig {
-            db_type: "dgraph".to_string(),
-            namespace: Some("hodei".to_string()),
-            database: Some("artifacts".to_string()),
-            pool_size: 10,
-        }
-    }
+    use super::REFUSAL_MESSAGE;
 
     #[test]
-    fn the_refusal_names_the_engine_it_refuses() {
+    fn the_refusal_names_the_backend_it_refuses() {
         // El mensaje por el que la prueba de rechazo busca es el mismo que
         // enuncia la validación: si uno cambia sin el otro, el arranque
         // negaría con un texto que nadie espera.
-        let mut database = a_graph_database();
-        database.db_type = "rocksdb".to_string();
+        let database = DatabaseConfig {
+            db_type: "rocksdb".to_string(),
+        };
         let error = database
-            .validate_without_engine()
-            .expect_err("the graph profile refuses the embedded engine");
-        assert!(
-            error.to_string().contains(REFUSAL_MESSAGE),
-            "the rejection must name the refused engine: {error}"
-        );
+            .validate()
+            .expect_err("the graph profile refuses a backend that is not the graph");
+        let text = error.to_string();
+        assert!(text.contains(REFUSAL_MESSAGE), "{text}");
+        assert!(text.contains("rocksdb"), "the value is named: {text}");
     }
 
     #[test]
-    fn a_graph_profile_without_the_engine_claim_validates() {
-        a_graph_database()
-            .validate_without_engine()
-            .expect("a profile that does not claim the embedded engine is valid");
+    fn a_database_declaring_the_graph_validates() {
+        DatabaseConfig {
+            db_type: "dgraph".to_string(),
+        }
+        .validate()
+        .expect("the graph is the supported backend");
     }
 }

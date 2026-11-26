@@ -28,7 +28,7 @@ use std::sync::Arc;
 /// use std::sync::Arc;
 ///
 /// // Composition root creates the adapter
-/// let schema_adapter = Arc::new(SurrealSchemaStorage::new(db_client));
+/// let schema_adapter = Arc::new(DgraphSchemaStore::new(client));
 ///
 /// // Factory receives the adapter and assembles the use case
 /// let use_case = factories::create_evaluate_policies_use_case(schema_adapter);

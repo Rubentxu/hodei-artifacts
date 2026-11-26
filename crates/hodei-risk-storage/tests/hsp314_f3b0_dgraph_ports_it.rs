@@ -1,5 +1,5 @@
-//! HSP-314 F3b-0: the two Dgraph ports the CVE reactor needs without
-//! SurrealDB, against the real engine.
+//! HSP-314 F3b-0: the two Dgraph ports the CVE reactor needs,
+//! against the real engine.
 //!
 //! Gated on HODEI_GRAPH_IT_ENDPOINT like every IT of the stack.
 //!
@@ -15,8 +15,6 @@
 //!   exactly that reach (direct and transitive depth, the components the
 //!   vulnerability is in, nothing of an unrelated artifact), it refuses a
 //!   walk that hit its bounds, and it never reads another account.
-//! - The equivalence with the Surreal reference runs with `--features
-//!   legacy`, where the reference exists.
 
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -647,40 +645,4 @@ async fn another_account_reaches_nothing_of_this_graph() {
     .await
     .expect("the owner's walk runs");
     assert_eq!(owned.affected_subjects.len(), 2);
-}
-
-/// The parity oracle: the SAME world written to the Surreal reference and
-/// to Dgraph gives the SAME blast radius, field by field. It needs the
-/// reference, so it exists with `--features legacy`.
-#[cfg(feature = "legacy")]
-#[tokio::test]
-async fn the_dgraph_radius_equals_the_surreal_reference_for_the_same_data() {
-    use hodei_evidence_storage::surreal::SurrealGraphStore;
-    use surrealdb::Surreal;
-    use surrealdb::engine::local::Mem;
-
-    let tenant = tenant("parity");
-    let Some(graph) = seeded_graph(&tenant).await else {
-        return;
-    };
-    let db = Arc::new(Surreal::new::<Mem>(()).await.expect("memory db"));
-    db.use_ns("hodei")
-        .use_db("hsp314f3b0")
-        .await
-        .expect("the namespace");
-    let reference = SurrealGraphStore::new(db);
-    reference
-        .apply(seed_world(&tenant))
-        .await
-        .expect("the reference is written");
-
-    let vulnerability = hrn_of(&tenant, "Vulnerability", ADVISORY);
-    let expected = hodei_risk_storage::blast_radius(&reference, &tenant, &vulnerability)
-        .await
-        .expect("the reference walk runs");
-    let actual = blast_radius_dgraph(&graph, &tenant, &vulnerability, &GraphReadLimits::default())
-        .await
-        .expect("the dgraph walk runs");
-    assert_eq!(actual, expected, "the same data, the same blast radius");
-    assert_eq!(actual.affected_subjects.len(), 2, "and it is not vacuous");
 }

@@ -40,7 +40,7 @@ use tracing::{info, instrument, warn};
 /// use std::sync::Arc;
 ///
 /// let validator = Arc::new(CedarPolicyValidator::new());
-/// let updater = Arc::new(SurrealPolicyAdapter::new(db));
+/// let updater = Arc::new(DgraphIamAdapter::new(client));
 /// let use_case = UpdatePolicyUseCase::new(validator, updater);
 ///
 /// let command = UpdatePolicyCommand {

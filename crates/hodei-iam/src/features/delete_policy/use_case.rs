@@ -37,7 +37,7 @@ use tracing::{info, instrument, warn};
 /// use hodei_iam::{DeletePolicyUseCase, DeletePolicyCommand};
 /// use std::sync::Arc;
 ///
-/// let deleter = Arc::new(SurrealPolicyAdapter::new(db));
+/// let deleter = Arc::new(DgraphIamAdapter::new(client));
 /// let use_case = DeletePolicyUseCase::new(deleter);
 ///
 /// let command = DeletePolicyCommand {

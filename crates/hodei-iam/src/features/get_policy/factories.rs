@@ -27,7 +27,7 @@ use crate::features::get_policy::use_case::GetPolicyUseCase;
 /// # Example
 ///
 /// ```rust,ignore
-/// let policy_reader = Arc::new(SurrealPolicyAdapter::new(db));
+/// let policy_reader = Arc::new(DgraphIamAdapter::new(client));
 ///
 /// let get_policy = create_get_policy_use_case(policy_reader);
 /// ```

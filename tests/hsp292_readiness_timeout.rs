@@ -128,7 +128,7 @@ async fn three_silent_dependencies_share_the_two_second_probe_budget() {
     // the 2 s probe budget: it is declared `timeout` without being asked.
     let probe = Arc::new(CachedProbe::new(Arc::new(Silent {
         required: vec![
-            Dependency::Catalog,
+            Dependency::TrustPolicy,
             Dependency::Graph,
             Dependency::ContentStore,
         ],
@@ -141,7 +141,7 @@ async fn three_silent_dependencies_share_the_two_second_probe_budget() {
     assert_eq!(
         statuses(&body),
         vec![
-            ("catalog".to_string(), "timeout".to_string()),
+            ("trust_policy".to_string(), "timeout".to_string()),
             ("graph".to_string(), "timeout".to_string()),
             ("content_store".to_string(), "timeout".to_string()),
         ]

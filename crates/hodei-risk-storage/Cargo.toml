@@ -9,9 +9,7 @@ license = "MIT"
 async-trait = { workspace = true }
 chrono = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
-# HSP-213: el lector embebido no entra en el binario productivo, y el
-# feature legacy de este crate tira tambien del de su almacen.
-hodei-evidence-storage = { path = "../hodei-evidence-storage", default-features = false }
+hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-graph-client = { path = "../hodei-graph-client" }
 tracing = { workspace = true }
 hodei-reactive = { path = "../hodei-reactive" }
@@ -19,22 +17,8 @@ hodei-risk = { path = "../hodei-risk" }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-surrealdb = { workspace = true, optional = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-
-[features]
-default = ["legacy"]
-legacy = ["dep:surrealdb", "hodei-evidence-storage/legacy"]
-
-# La medicion del impacto escribe en el motor embebido: no existe sin legacy.
-[[bin]]
-name = "impact_view_benchmark"
-required-features = ["legacy"]
-
-[[bin]]
-name = "spike003_benchmark"
-required-features = ["legacy"]
 
 [dev-dependencies]
 serde_json = { workspace = true }

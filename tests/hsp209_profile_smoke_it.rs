@@ -7,12 +7,11 @@
 //! sesión de push, la decisión de promoción y los bytes viven en las dos
 //! autoridades declaradas, no en una tercera. Lo que esta suite fija:
 //!
-//! 1. **El arranque no toca RocksDB.** El perfil nombra un path embebido
-//!    (`[rocksdb]` existe en el esquema y aquí señala un directorio
-//!    fresco bajo el árbol de evidencia); tras el arranque exitoso ese
-//!    path sigue sin existir y el log no abre el motor. El fallback está
-//!    rechazado con nombre: la misma config con `db_type = "rocksdb"`
-//!    muere en el arranque citando el rechazo, sin abrir puerto.
+//! 1. **El arranque no tiene otro motor.** El log anuncia el perfil del
+//!    grafo y ninguna apertura de un almacén local. Un backend que no es el
+//!    grafo está rechazado con nombre: la misma config con
+//!    `db_type = "rocksdb"` muere en el arranque citando el rechazo, sin
+//!    abrir puerto.
 //! 2. **La superficie vertical funciona end-to-end sobre el grafo**:
 //!    crear el repositorio (catálogo Dgraph), publicar por raw y
 //!    descargar el mismo digest (bytes en S3, metadato en el grafo),
@@ -287,10 +286,8 @@ fn without_the_colors(text: &str) -> String {
 
 /// El proceso del perfil productivo, con la config **emitida**
 /// (`config/dgraph.toml` vía `RUN_MODE=dgraph`) y el entorno del
-/// operador. A diferencia del arranque embebido del arnés, el perfil del
-/// grafo decide su propio `repository.durable` (falso, y el humo lo
-/// levanta a true solo donde la superficie legacy lo exige) y abre su
-/// bundle de seguridad con los ficheros que `Deployment` ya escribió.
+/// operador. Abre su bundle de seguridad con los ficheros que `Deployment`
+/// ya escribió.
 struct GraphBoot {
     port: u16,
     child: std::process::Child,
@@ -301,7 +298,6 @@ impl GraphBoot {
     fn launch(
         evidence: &Path,
         cas_path: &Path,
-        rocksdb_path: &Path,
         bucket: &str,
         extra: &[(&str, &str)],
     ) -> Result<Self, String> {
@@ -315,7 +311,6 @@ impl GraphBoot {
             .env("HODEI_SERVER__HOST", "127.0.0.1")
             .env("HODEI_SERVER__PORT", port.to_string())
             .env("HODEI_CONTENT__CAS_PATH", cas_path)
-            .env("HODEI_ROCKSDB__PATH", rocksdb_path)
             .env("HODEI_CONTENT__S3__BUCKET", bucket)
             .env("HODEI_CONTENT__S3__REGION", "us-east-1")
             .env("HODEI_CONTENT__S3__ENDPOINT", the_endpoint())
@@ -497,9 +492,7 @@ fn the_suite_is_gated_on_a_real_graph() {
 /// emitida y el alpha + localstack vivos:
 ///
 /// - el proceso arranca y anuncia el perfil del grafo en el log,
-/// - el path embebido que el perfil nombra **no existe** tras el arranque,
-/// - el log no abre el motor (sin "RocksDB" en claro en el camino de
-///   arranque del grafo),
+/// - el log no abre ningún motor local,
 /// - el bundle de seguridad del perfil (ficheros Cedar del arnés,
 ///   esquema desde fichero — el persistido sobre grafo es el bloqueador
 ///   registrado) permite la superficie completa.
@@ -527,7 +520,6 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
     // grafo es el bloqueador registrado, y el gate (los cinco campos
     // juntos o el arranque muere) se abre aquí igual que en producción.
     let cas = evidence.join("cas-superficie");
-    let rocksdb_claimed = evidence.join("rocksdb-debe-no-existir");
     let policy_path = deployment
         .directory
         .path()
@@ -545,10 +537,8 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
     let boot = GraphBoot::launch(
         &evidence,
         &cas,
-        &rocksdb_claimed,
         &bucket,
         &[
-            ("HODEI_REPOSITORY__DURABLE", "true"),
             ("HODEI_SECURITY__AUTH_JWT_SECRET", &secret),
             ("HODEI_SECURITY__AUTH_ISSUER", support::ISSUER),
             ("HODEI_SECURITY__AUTH_AUDIENCE", support::AUDIENCE),
@@ -561,24 +551,11 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
     let port = boot.port;
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // La prueba de arranque: el log anuncia el perfil del grafo, y el
-    // path embebido que el fichero nombra no fue tocado.
+    // La prueba de arranque: el log anuncia el perfil del grafo.
     let log = boot.redacted_log();
     assert!(
         log.contains("Bootstrap completed successfully on the graph profile"),
         "the boot must announce the graph profile:\n{log}"
-    );
-    assert!(
-        !rocksdb_claimed.exists(),
-        "the graph profile must not create the embedded path it names"
-    );
-    // S0 observable del rechazo: el motor embebido no se abre. El eco
-    // de la config al arrancar (main.rs) nombra el path siempre — lo que
-    // NO puede aparecer en el perfil del grafo es la apertura de la
-    // tienda: "Initializing SurrealDB with RocksDB".
-    assert!(
-        !log.contains("Initializing SurrealDB with RocksDB"),
-        "the graph profile must never open the embedded engine:\n{log}"
     );
 
     // 1. El repositorio: creado por la API, persistido en el grafo.
@@ -749,7 +726,6 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
                     "perfil": "config/dgraph.toml (RUN_MODE=dgraph)",
                     "binario": support::BIN,
                     "anuncia_el_perfil": log.contains("Bootstrap completed successfully on the graph profile"),
-                    "path_embebido_creado": rocksdb_claimed.exists(),
                     "esquema": "graph-v7",
                 }),
             ),
@@ -779,10 +755,9 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
 }
 
 /// AC#1 (la mitad explícita del rechazo): el **mismo** arranque real que
-/// arriba, declarando el motor embebido (`HODEI_DATABASE__DB_TYPE=rocksdb`
-/// — la forma en que los perfiles emitidos reclaman RocksDB) sobre el
-/// perfil del grafo, debe morir citando el rechazo, sin abrir puerto y
-/// sin crear el path.
+/// arriba, declarando el motor embebido retirado
+/// (`HODEI_DATABASE__DB_TYPE=rocksdb`) sobre el perfil del grafo, debe morir
+/// citando el rechazo y sin abrir puerto.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_real_boot_refuses_the_rocksdb_fallback_by_name() {
     if config_from_env().is_none() {
@@ -796,11 +771,9 @@ async fn the_real_boot_refuses_the_rocksdb_fallback_by_name() {
     a_bucket(&s3, &bucket).await;
 
     let cas = evidence.join("cas-rechazo");
-    let rocksdb_claimed = evidence.join("rocksdb-reclamado-no-debe-existir");
     let outcome = GraphBoot::launch(
         &evidence,
         &cas,
-        &rocksdb_claimed,
         &bucket,
         &[("HODEI_DATABASE__DB_TYPE", "rocksdb")],
     );
@@ -829,10 +802,6 @@ async fn the_real_boot_refuses_the_rocksdb_fallback_by_name() {
         !redacted.contains("Listening on"),
         "the refused boot must die before opening the port:\n{redacted}"
     );
-    assert!(
-        !rocksdb_claimed.exists(),
-        "the refused boot must not create the embedded path"
-    );
     archive(
         &evidence,
         "smoke-rechazo-rocksdb.md",
@@ -842,7 +811,6 @@ async fn the_real_boot_refuses_the_rocksdb_fallback_by_name() {
                 "config": "RUN_MODE=dgraph + HODEI_DATABASE__DB_TYPE=rocksdb",
                 "esperado": refusal,
                 "abierto_el_puerto": redacted.contains("Listening on"),
-                "path_creado": rocksdb_claimed.exists(),
             }),
         )],
         Some(&redacted),

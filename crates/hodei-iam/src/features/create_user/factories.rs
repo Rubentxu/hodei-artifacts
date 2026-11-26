@@ -29,7 +29,7 @@ use kernel::HrnGenerator;
 /// # Example
 ///
 /// ```rust,ignore
-/// let user_repo = Arc::new(SurrealUserAdapter::new(db));
+/// let user_repo = Arc::new(DgraphIamAdapter::new(client));
 /// let hrn_generator = Arc::new(UuidHrnGenerator::new("hodei".to_string(), "iam".to_string(), "account".to_string()));
 ///
 /// let create_user = create_user_use_case(

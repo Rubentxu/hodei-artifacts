@@ -42,7 +42,7 @@ pub fn create_validate_policy_use_case_without_schema<S: SchemaStoragePort + 'st
 /// use std::sync::Arc;
 ///
 /// // Composition root creates the adapter
-/// let schema_adapter = Arc::new(SurrealSchemaStorage::new(db_client));
+/// let schema_adapter = Arc::new(DgraphSchemaStore::new(client));
 ///
 /// // Factory receives the adapter and assembles the use case
 /// let use_case = factories::create_validate_policy_use_case_with_schema(schema_adapter);

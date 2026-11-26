@@ -5,22 +5,14 @@
 //!
 //! 1. **El perfil se valida consigo mismo.** Un `AppConfig` con `[graph]`
 //!    declarado valida la sección del alpha (endpoint con puerto, TLS con
-//!    su CA, credenciales completas) y deja de validar —y de preflightar—
-//!    el motor embebido: con `[graph]` no hay RocksDB que abrir. Un
-//!    despliegue que declara mal el alpha no arranca, igual que uno que
-//!    declara mal RocksDB en el perfil embebido.
-//! 2. **El fallback a RocksDB está rechazado, no ausente.** El AC prohíbe
-//!    explícitamente que un arranque del perfil productivo "intente abrir
-//!    RocksDB" en silencio: lo que la suite fija es que ese intento es un
-//!    error con nombre. Con `[graph]`, `[database] db_type = "rocksdb"`
-//!    —la forma exacta en que los perfiles emitidos reclaman el motor
-//!    embebido— produce el rechazo que nombra el motor rechazado, y el
-//!    preflight del perfil de grafo no crea, abre ni toca el path que la
-//!    sección `[rocksdb]` menciona. Sin `[graph]`, el contrato viejo sigue
-//!    intacto: `dgraph` en `db_type` es rechazado por el validador del
-//!    motor embebido, no encendido como si fuera un backend.
+//!    su CA, credenciales completas). Un despliegue que declara mal el
+//!    alpha no arranca.
+//! 2. **No hay otro perfil.** Desde HSP-314 F4 el motor embebido no existe:
+//!    con `[graph]`, `[database] db_type = "rocksdb"` produce un rechazo que
+//!    nombra el valor rechazado, y una configuración sin `[graph]` (el
+//!    perfil antiguo) se rechaza con el mensaje de migración.
 //!
-//! Los tres caminos usan el mismo deserializador estratificado y el mismo
+//! Los caminos usan el mismo deserializador estratificado y el mismo
 //! `validate()`/`preflight_storage()` que el arranque del binario, y los
 //! ficheros que la distribución emite de verdad: una regresión aquí
 //! significa que un perfil emitido arranca mal, no que un struct discute
@@ -33,12 +25,12 @@ use hodei_artifacts_api::config::AppConfig;
 /// El perfil productivo del grafo tal y como lo emite la distribución.
 const SHIPPED_GRAPH_PROFILE: &str = "config/dgraph.toml";
 
-/// El perfil embebido tal y como lo emite la distribución (el que el grafo
-/// debe seguir sin tocar).
-const SHIPPED_RELEASE_PROFILE: &str = "config/release.toml";
+/// La base que la distribución emite para todos los perfiles: sin `[graph]`
+/// no es un perfil arrancable.
+const SHIPPED_BASE_PROFILE: &str = "config/default.toml";
 
-/// The message the Dgraph profile answers with when the embedded engine is
-/// claimed. It is the same constant the profile module and the boot share;
+/// The message the Dgraph profile answers with when a backend that is not the
+/// graph is claimed. It is the same constant the profile module and the boot share;
 /// a change in one that does not change the other must fail here.
 const REFUSAL: &str = hodei_artifacts_api::profile::REFUSAL_MESSAGE;
 
@@ -88,9 +80,7 @@ fn with_line(profile: &str, key: &str, value: &str) -> String {
 /// authority: `[graph]` presente y validada (endpoint con puerto, TLS con
 /// su CA declarada, credenciales completas — la contraseña llega por el
 /// entorno del proceso, que es la cadena que la config promete y que aquí
-/// se simula con una fuente superpuesta), el motor embebido sin reclamar
-/// (`db_type = "dgraph"`), y el preflight del perfil sin crear, abrir ni
-/// tocar el path que `[rocksdb]` nombra.
+/// se simula con una fuente superpuesta), y `db_type = "dgraph"`.
 #[test]
 fn the_shipped_graph_profile_boots_on_the_single_authority() {
     // HODEI_GRAPH__CREDENTIALS__PASSWORD entra por el entorno del
@@ -107,36 +97,16 @@ fn the_shipped_graph_profile_boots_on_the_single_authority() {
         config.graph.is_some(),
         "the graph profile declares its authority"
     );
-    assert_ne!(
-        config.database.db_type, "rocksdb",
-        "the graph profile must not claim the embedded engine"
-    );
-    // El preflight del perfil de grafo es una decisión de autoridad, no un
-    // check de redirección: el path embebido que el fichero nombra sigue
-    // siendo inexistente después de preflightar.
-    let nonexistent = {
-        let mut path = std::env::temp_dir();
-        path.push(format!(
-            "hodei-hsp209-rocksdb-should-not-exist-{}",
-            std::process::id()
-        ));
-        path.to_string_lossy().into_owned()
-    };
-    let mut config = config;
-    config.rocksdb.path = nonexistent.clone();
-    config
-        .preflight_storage()
-        .expect("the graph profile preflight never touches the embedded engine");
-    assert!(
-        !std::path::Path::new(&nonexistent).exists(),
-        "a graph deployment must not create the RocksDB path it names"
+    assert_eq!(
+        config.database.db_type, "dgraph",
+        "the graph profile declares the graph as its backend"
     );
 }
 
 /// G2: the rejection the AC#1 demands, in its exact observable form. With
-/// `[graph]` declared, asking for the embedded engine —the `db_type =
-/// "rocksdb"` of the shipped embedded profiles— is refused by an error
-/// that names the refused engine, before anything opens anything.
+/// `[graph]` declared, asking for the retired embedded engine —the `db_type =
+/// "rocksdb"` of the old profiles— is refused by an error that names the
+/// refused value, before anything opens anything.
 #[test]
 fn the_graph_profile_refuses_the_rocksdb_fallback_by_name() {
     let graph_profile = shipped_profile(SHIPPED_GRAPH_PROFILE);
@@ -151,8 +121,8 @@ fn the_graph_profile_refuses_the_rocksdb_fallback_by_name() {
         "the rejection must name the refused engine, got: {message}"
     );
     assert!(
-        message.contains("no fallback"),
-        "the rejection must say there is no fallback, got: {message}"
+        message.contains("rocksdb") && message.contains("single authority"),
+        "the rejection must name the value and the single authority, got: {message}"
     );
 }
 
@@ -180,25 +150,32 @@ fn an_impossible_graph_deployment_does_not_boot() {
     );
 }
 
-/// G4: el contrato viejo del motor embebido sigue vivo. Sin `[graph]`,
-/// reclamar el backend del grafo en `db_type` era —y debe seguir siendo—
-/// un rechazo nombrado; el nuevo perfil no reabrió esa puerta. Y el
-/// perfil embebido emitido (`config/release.toml`) valida con el motor
-/// embebido tal y como lo declara el fichero.
+/// G4: no hay perfil embebido. La base que emite la distribución, sin
+/// `[graph]`, es el perfil antiguo y se rechaza con el mensaje de
+/// migración; y reclamar el backend del grafo sin declarar `[graph]` sigue
+/// siendo un rechazo, no un arranque.
 #[test]
-fn the_embedded_contract_survives_the_graph_profile() {
-    let release = shipped_profile(SHIPPED_RELEASE_PROFILE);
+fn a_configuration_without_the_graph_is_refused_with_the_migration_message() {
+    let base = shipped_profile(SHIPPED_BASE_PROFILE);
     assert!(
-        !release.contains("[graph]"),
-        "the embedded profile must not declare the graph section"
+        !base.contains("[graph]"),
+        "the shared base must not declare the graph section"
     );
-    deserialize_like_the_boot(std::slice::from_ref(&release))
-        .expect("config/release.toml must boot on the embedded engine");
-    let error = deserialize_like_the_boot(&[with_line(&release, "db_type", "\"dgraph\"")])
-        .expect_err("db_type = \"dgraph\" without [graph] must be refused, never booted");
+    let error = deserialize_like_the_boot(std::slice::from_ref(&base))
+        .expect_err("a configuration without [graph] must be refused, never booted");
     assert!(
-        error.to_string().contains("dgraph"),
-        "the refusal names the value the deployment asked for: {error}"
+        error
+            .to_string()
+            .contains(hodei_artifacts_api::config::GRAPH_PROFILE_REQUIRED),
+        "the refusal carries the migration message: {error}"
+    );
+    let error = deserialize_like_the_boot(&[with_line(&base, "db_type", "\"rocksdb\"")])
+        .expect_err("db_type = \"rocksdb\" without [graph] must be refused, never booted");
+    assert!(
+        error
+            .to_string()
+            .contains(hodei_artifacts_api::config::GRAPH_PROFILE_REQUIRED),
+        "without [graph] the profile itself is what is refused: {error}"
     );
 }
 

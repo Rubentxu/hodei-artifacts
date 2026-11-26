@@ -8,9 +8,8 @@
 //! - [`HrnEntityResolver`]: a resolver that materializes the principal and the
 //!   resource entities from their HRNs.
 //!
-//! The persistence-backed policy finder lives with the rest of the SurrealDB
-//! adapters (see `crate::infrastructure::surreal::policy_adapter`), because the
-//! database handle lives there.
+//! The persistence-backed policy finder lives with the Dgraph adapter (see
+//! `crate::infrastructure::dgraph`), because the graph client lives there.
 
 use kernel::Hrn;
 use kernel::domain::policy::{HodeiPolicy, HodeiPolicySet};

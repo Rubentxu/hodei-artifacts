@@ -725,7 +725,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
     runtime.block_on(async {
         // ---- AC2: una dependencia que el perfil no exige.
         let probe = Arc::new(Counting::new(
-            vec![Dependency::Catalog],
+            vec![Dependency::Graph],
             Err(DependencyFailure::Unreachable),
         ));
         let report = CachedProbe::new(probe.clone()).report().await;
@@ -743,7 +743,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                 }
                 // La dependencia que no se exige no aparece en el veredicto
                 // y no se comprueba: no puede hacer fallar el readiness.
-                if report.failing != vec![(Dependency::Catalog, DependencyFailure::Unreachable)] {
+                if report.failing != vec![(Dependency::Graph, DependencyFailure::Unreachable)] {
                     return LabCase::new(AC2_OPTIONAL, "una dependencia que el perfil no exige no puede fallar el readiness").failed(format!(
                         "the verdict names {:?}",
                         report.failing
@@ -797,7 +797,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
 
         // ---- AC3: una comprobacion por dependencia.
         let probe = Arc::new(Counting::new(
-            vec![Dependency::Catalog, Dependency::ContentStore],
+            vec![Dependency::Graph, Dependency::ContentStore],
             Ok(()),
         ));
         let report = CachedProbe::new(probe.clone()).report().await;

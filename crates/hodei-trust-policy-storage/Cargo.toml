@@ -5,17 +5,10 @@ edition = "2021"
 description = "El almacen de las decisiones de promocion de Hodei."
 license = "MIT"
 
-[features]
-default = ["legacy"]
-legacy = ["dep:surrealdb", "hodei-evidence-storage/legacy"]
-
 [dev-dependencies]
 chrono = { workspace = true }
-hodei-catalog-storage = { path = "../hodei-catalog-storage" }
 hodei-evidence = { path = "../hodei-evidence" }
-hodei-risk-storage = { path = "../hodei-risk-storage" }
 hodei-reactive = { path = "../hodei-reactive" }
-tempfile = { workspace = true }
 tokio = { workspace = true }
 
 [dependencies]
@@ -24,15 +17,12 @@ kernel = { path = "../kernel" }
 chrono = { workspace = true }
 hodei-catalog = { path = "../hodei-catalog" }
 hodei-evidence = { path = "../hodei-evidence" }
-# HSP-213: el lector embebido no entra en el binario productivo; el
-# feature legacy de este crate tira del de su almacen.
-hodei-evidence-storage = { path = "../hodei-evidence-storage", default-features = false }
+hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-graph-client = { path = "../hodei-graph-client" }
 hodei-reactive = { path = "../hodei-reactive" }
 hodei-trust-policy = { path = "../hodei-trust-policy" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-surrealdb = { workspace = true, optional = true }
 thiserror = { workspace = true }
 # El reintento de una transaccion en conflicto cede el executor entre
 # intentos para que diez escritores concurrentes no se apilen.

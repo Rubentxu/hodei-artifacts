@@ -2,32 +2,32 @@
 //!
 //! # Why this file exists
 //!
-//! The graph-storage initiative (doc-20) retires the embedded SurrealDB-over-
-//! RocksDB metadata adapters and moves the product to a single remote Dgraph
-//! profile (HSP-209). Across that transition the one unacceptable outcome is a
-//! quiet one: a deployment (or a default) asks for a metadata backend the
-//! binary does not implement and the boot wires the local RocksDB adapters
-//! anyway. The bootstrap never falls back -- `DatabaseConfig::validate`
-//! refuses every `db_type` it does not implement, the content backend is a
-//! closed enum, and `backend = "s3"` without its table is an error that says
-//! so -- but nothing pinned those refusals. This suite pins them.
+//! The product runs on a single remote Dgraph profile (HSP-209) and the
+//! embedded SurrealDB-over-RocksDB engine was retired (HSP-314 F4). The one
+//! unacceptable outcome is a quiet one: a deployment (or a default) asks for
+//! a metadata backend the binary does not implement and the boot degrades
+//! into something else. The bootstrap never falls back --
+//! `DatabaseConfig::validate` refuses every `db_type` that is not the graph,
+//! the content backend is a closed enum, and `backend = "s3"` without its
+//! table is an error that says so -- and this suite pins those refusals.
 //!
 //! The knob is exercised through the same deserializer and the same
 //! `validate()` the boot runs (`build_config` in `src/config.rs`), fed with
 //! the very files the distribution ships, so a regression here means the
 //! shipped profiles boot wrong, not merely that a struct disagrees with
-//! itself.
+//! itself. The shared base files declare no `[graph]` (the authority is the
+//! deployment's decision), so the suite layers a minimal graph section over
+//! them, as the environment of a real deployment does.
 //!
 //! # Guarantees
 //!
 //! - G1 Every shipped profile declares its backend knobs with values the
-//!   binary actually wires: metadata on RocksDB (the only implemented
-//!   backend today), content on the filesystem default. A knob that claims
-//!   an unimplemented backend is a profile that must not boot.
-//! - G2 (negative) A metadata backend the binary does not implement -- the
-//!   future "dgraph"/remote profile included -- is refused at startup by an
-//!   error that names the offending value. No route silently lands on
-//!   RocksDB, and a missing `db_type` is not silently defaulted either.
+//!   binary actually wires: metadata on the graph (the only backend),
+//!   content on the filesystem default.
+//! - G2 (negative) A metadata backend that is not the graph -- the retired
+//!   embedded engine included -- is refused at startup by an error that
+//!   names the offending value. No route silently lands on another
+//!   backend, and a missing `db_type` is not silently defaulted either.
 //! - G3 (negative) The content backend is a closed choice: unknown values
 //!   fail deserialization, `s3` without its table fails validation with the
 //!   "no fallback" message, and an enabled `s3` backend is never demoted.
@@ -48,25 +48,25 @@ const SHIPPED_DEFAULT: &str = "config/default.toml";
 
 /// The shipped profiles, in the same precedence order `build_config`
 /// applies: `default.toml` first, then the per-mode file on top of it.
-const SHIPPED_PROFILES: &[&str] = &[
-    "config/default.toml",
-    "config/release.toml",
-    "config/development.toml",
-];
+const SHIPPED_PROFILES: &[&str] = &["config/default.toml", "config/release.toml"];
 
-/// The metadata backends the binary does not implement. The first two are the
-/// names the graph-storage migration could plausibly introduce; the rest are
-/// the spellings a typo or an optimistic profile would use. Every one of them
-/// must be a refusal, never a fallback to the implemented backend.
+/// The minimal graph section a deployment adds to the shared base files:
+/// the authority is the deployment's decision, never the file's.
+const GRAPH_OVERLAY: &str = "[graph]\nendpoint = \"127.0.0.1:9080\"\n\n[graph.tls]\nenabled = false\n";
+
+/// The metadata backends the binary does not implement. The first is the
+/// retired embedded engine; the rest are the spellings a typo or an
+/// optimistic profile would use. Every one of them must be a refusal, never a
+/// fallback to the implemented backend.
 const UNIMPLEMENTED_METADATA_BACKENDS: &[&str] = &[
-    "dgraph",
+    "rocksdb",
     "remote",
     "postgres",
     "sqlite",
     "surrealkv",
     "memory",
-    "RocksDB",
-    " rocksdb",
+    "Dgraph",
+    " dgraph",
 ];
 
 /// Reads one of the shipped profile files.
@@ -120,8 +120,8 @@ fn with_metadata_backend(profile: &str, db_type: &str) -> String {
 }
 
 /// G1: every shipped profile declares backend knobs the binary actually
-/// wires. The metadata backend of every shipped profile is `rocksdb` --
-/// today the only implemented one -- the schema storage agrees with it, and
+/// wires. The metadata backend of every shipped profile is `dgraph` -- the
+/// only implemented one -- the schema storage agrees with it, and
 /// the content backend resolves to the filesystem default the files
 /// document. A profile whose declaration drifted from the wiring must not
 /// pass unnoticed.
@@ -129,15 +129,15 @@ fn with_metadata_backend(profile: &str, db_type: &str) -> String {
 fn shipped_profiles_declare_only_implemented_backends() {
     for profile in SHIPPED_PROFILES {
         let text = shipped_profile(profile);
-        let config = deserialize_like_the_boot(&[text])
+        let config = deserialize_like_the_boot(&[text, GRAPH_OVERLAY.to_string()])
             .unwrap_or_else(|error| panic!("{profile} must boot: {error}"));
 
         assert_eq!(
-            config.database.db_type, "rocksdb",
+            config.database.db_type, "dgraph",
             "{profile} must declare the metadata backend the binary implements"
         );
         assert_eq!(
-            config.schema.storage_type, "rocksdb",
+            config.schema.storage_type, "dgraph",
             "{profile} must declare a schema storage consistent with the metadata backend"
         );
         assert_eq!(
@@ -184,17 +184,17 @@ fn the_shipped_backend_selections_are_exactly_the_enumerated_knobs() {
     }
 }
 
-/// G2: a metadata backend the binary does not implement is refused at
-/// startup, and the refusal names the value the deployment asked for. In
-/// particular the `dgraph`/`remote` profile the migration will introduce
-/// cannot boot into a RocksDB fallback: today it fails loudly, and when the
-/// backend becomes real the same refusal must keep protecting every other
-/// misspelling.
+/// G2: a metadata backend that is not the graph is refused at startup, and
+/// the refusal names the value the deployment asked for. The retired
+/// embedded engine cannot boot back in through a stale `db_type`.
 #[test]
 fn unimplemented_metadata_backends_are_refused_not_fallback() {
     let default = shipped_profile(SHIPPED_DEFAULT);
     for db_type in UNIMPLEMENTED_METADATA_BACKENDS {
-        let sources = [with_metadata_backend(&default, db_type)];
+        let sources = [
+            with_metadata_backend(&default, db_type),
+            GRAPH_OVERLAY.to_string(),
+        ];
         let error = deserialize_like_the_boot(&sources)
             .err()
             .unwrap_or_else(|| panic!("db_type = \"{db_type}\" must be refused, not booted"));
@@ -204,8 +204,8 @@ fn unimplemented_metadata_backends_are_refused_not_fallback() {
             "the refusal of db_type = \"{db_type}\" must name the offending value, got: {message}"
         );
         assert!(
-            message.contains("rocksdb"),
-            "the refusal of db_type = \"{db_type}\" must state which backends exist, got: {message}"
+            message.contains("dgraph"),
+            "the refusal of db_type = \"{db_type}\" must state which backend exists, got: {message}"
         );
     }
 }
@@ -252,7 +252,7 @@ fn the_content_backend_is_a_closed_choice() {
     // `s3` without its table is the configuration-level refusal the bootstrap
     // restates: there is no fallback to the filesystem.
     let s3_without_table = default.replace("[content]", "[content]\nbackend = \"s3\"");
-    let error = deserialize_like_the_boot(&[s3_without_table])
+    let error = deserialize_like_the_boot(&[s3_without_table, GRAPH_OVERLAY.to_string()])
         .err()
         .unwrap_or_else(|| panic!("backend = \"s3\" without [content.s3] must be refused"));
     let message = error.to_string();
@@ -266,7 +266,7 @@ fn the_content_backend_is_a_closed_choice() {
         "[content]",
         "[content]\nbackend = \"s3\"\n\n[content.s3]\nbucket = \"  \"",
     );
-    let error = deserialize_like_the_boot(&[s3_empty_bucket])
+    let error = deserialize_like_the_boot(&[s3_empty_bucket, GRAPH_OVERLAY.to_string()])
         .err()
         .unwrap_or_else(|| panic!("backend = \"s3\" with an empty bucket must be refused"));
     assert!(
@@ -280,7 +280,7 @@ fn the_content_backend_is_a_closed_choice() {
         "[content]",
         "[content]\nbackend = \"s3\"\n\n[content.s3]\nbucket = \"hodei-content\"\nregion = \"eu-west-1\"",
     );
-    let config = deserialize_like_the_boot(&[s3_configured])
+    let config = deserialize_like_the_boot(&[s3_configured, GRAPH_OVERLAY.to_string()])
         .unwrap_or_else(|error| panic!("a configured s3 backend must boot: {error}"));
     assert_eq!(config.content.backend, ContentBackend::S3);
 }

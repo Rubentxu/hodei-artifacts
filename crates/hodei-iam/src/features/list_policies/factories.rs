@@ -27,7 +27,7 @@ use crate::features::list_policies::use_case::ListPoliciesUseCase;
 /// # Example
 ///
 /// ```rust,ignore
-/// let policy_lister = Arc::new(SurrealPolicyAdapter::new(db));
+/// let policy_lister = Arc::new(DgraphIamAdapter::new(client));
 ///
 /// let list_policies = create_list_policies_use_case(policy_lister);
 /// ```
