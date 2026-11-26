@@ -562,11 +562,11 @@ async fn the_expiry_of_an_exception_triggers_its_reaction() {
 fn the_conclusion_of_spike_006_is_written_down() {
     let source = include_str!("../src/lib.rs");
     assert!(
-        source.contains("idempotencia por clave"),
+        source.contains("Idempotency by key"),
         "the conclusion says what a plain handler does not have"
     );
     assert!(
-        source.contains("observable, acotado, idempotente y reconstruible"),
+        source.contains("observable, bounded, idempotent and reconstructible"),
         "and it quotes the exit gate of the milestone"
     );
 }

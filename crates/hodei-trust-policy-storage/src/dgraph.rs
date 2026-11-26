@@ -73,7 +73,9 @@ use hodei_graph_client::{
 };
 use hodei_reactive::behavior::Effect;
 use hodei_reactive::execution::ExecutionRecord;
-use hodei_reactive::intent::{Intent, IntentOutbox, Receipt};
+use hodei_reactive::intent::{
+    Intent, IntentOutbox, IntentScan, IntentStatus, IntentStatusSource, Receipt,
+};
 use hodei_reactive::runtime::ExecutionStore;
 use hodei_trust_policy::ports::{DecisionStore, DecisionStoreError};
 use hodei_trust_policy::promotion::{DecisionId, PromotionDecision};
@@ -2214,6 +2216,59 @@ impl IntentOutbox for DgraphIntentStore {
 
     async fn reconcile(&self, identity: &str) -> Result<(), String> {
         self.reconcile_unknown(identity).await.map_err(Into::into)
+    }
+}
+
+/// How many intents one page of the status scan reads.
+const STATUS_PAGE: usize = 500;
+
+#[async_trait]
+impl IntentStatusSource for DgraphIntentStore {
+    async fn scan_intents(&self, limit: usize) -> Result<IntentScan, String> {
+        let mut rows: Vec<IntentStatus> = Vec::new();
+        let mut offset = 0usize;
+        // One extra row tells whether the bound cut something.
+        let wanted = limit.saturating_add(1);
+        while rows.len() < wanted {
+            let page = STATUS_PAGE.min(wanted - rows.len());
+            let query = format!(
+                "{{ q(func: type({INTENT_TYPE}), orderasc: hodei.intent.key, first: {page}, offset: {offset}) {{ {fields} hodei.intent.receipt }} }}",
+                fields = INTENT_FIELDS,
+            );
+            let response = query_json(&self.client, &query)
+                .await
+                .map_err(DgraphIntentError::unavailable)?;
+            let nodes = response
+                .get("q")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let read = nodes.len();
+            for node in nodes {
+                let intent = intent_of(&node)?.ok_or_else(|| {
+                    DgraphIntentError::Corrupt("an intent node without its payload".to_string())
+                })?;
+                let receipt = match text_of(&node, "hodei.intent.receipt") {
+                    None => None,
+                    Some(text) => Some(serde_json::from_str(&text).map_err(|error| {
+                        DgraphIntentError::Corrupt(format!("a receipt does not parse: {error}"))
+                    })?),
+                };
+                rows.push(IntentStatus {
+                    state: state_of(&node)?,
+                    attempts: generation_of(&node)?,
+                    receipt,
+                    intent,
+                });
+            }
+            if read < page {
+                break;
+            }
+            offset += read;
+        }
+        let truncated = rows.len() > limit;
+        rows.truncate(limit);
+        Ok(IntentScan { rows, truncated })
     }
 }
 

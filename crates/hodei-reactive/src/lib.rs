@@ -38,8 +38,8 @@ pub use behavior::{
 pub use events::{Event, EventKind, PayloadPredicate, Subscription};
 pub use execution::{Budget, BudgetState, ExecutionOutcome, ExecutionRecord};
 pub use intent::{
-    EventOrigin, InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan,
-    PlanningBehavior, ReadScope, Receipt,
+    EventOrigin, InMemoryIntentOutbox, Intent, IntentExecutor, IntentOrigin, IntentOutbox,
+    IntentScan, IntentStatus, IntentStatusSource, Plan, PlanningBehavior, ReadScope, Receipt,
 };
 pub use reactions::{
     BlastRadiusSource, DecisionRequester, DomainIntentExecutor, ExceptionExpiryReaction,

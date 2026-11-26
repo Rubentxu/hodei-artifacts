@@ -68,7 +68,8 @@ use hodei_graph_client::GraphClient;
 use hodei_reactive::behavior::{BehaviorError, GuardOutcome};
 use hodei_reactive::events::{Event, EventKind, Subscription};
 use hodei_reactive::intent::{
-    Intent, IntentExecutor, IntentOrigin, IntentOutbox, Plan, PlanningBehavior, ReadScope,
+    Intent, IntentExecutor, IntentOrigin, IntentOutbox, IntentScan, IntentStatusSource, Plan,
+    PlanningBehavior, ReadScope,
 };
 use hodei_reactive::reactions::{
     BlastRadiusSource, DecisionRequester, DomainIntentExecutor, ImpactedSubject,
@@ -546,6 +547,8 @@ pub struct VulnerabilityReactor {
     decisions: Arc<dyn DecisionStore>,
     ledger: Arc<dyn TrustLedger>,
     limits: InvestigationConfig,
+    /// The read side of the outbox, when the store has one (HSP-323).
+    status: Option<Arc<dyn IntentStatusSource>>,
 }
 
 /// Everything the cycle touches, as ports.
@@ -748,6 +751,28 @@ impl VulnerabilityReactor {
             decisions,
             ledger,
             limits,
+            status: None,
+        }
+    }
+
+    /// Gives the cycle the read side of its outbox.
+    ///
+    /// It is separate from [`ReactorPorts`] so a composition that has no
+    /// readable outbox stays valid: the status route then answers `501`.
+    pub fn with_status_source(mut self, source: Arc<dyn IntentStatusSource>) -> Self {
+        self.status = Some(source);
+        self
+    }
+
+    /// Reads at most `limit` intents of every tenant, or `None` when the
+    /// outbox of this composition cannot be read.
+    ///
+    /// The rows are NOT filtered by owner here: the caller does it with
+    /// [`intent_owner_account`].
+    pub async fn scan_intents(&self, limit: usize) -> Option<Result<IntentScan, String>> {
+        match &self.status {
+            Some(source) => Some(source.scan_intents(limit).await),
+            None => None,
         }
     }
 
@@ -813,6 +838,7 @@ impl VulnerabilityReactor {
                 .await
                 .map_err(|error| ReactorError::Unavailable(error.to_string()))?,
         );
+        let status_source: Arc<dyn IntentStatusSource> = intents.clone();
         let case_client = client.clone();
         let cases = Arc::new(PerTenantCaseSink::new(limits.clone(), move |tenant| {
             Arc::new(DgraphSecurityCaseStore::new(
@@ -835,7 +861,8 @@ impl VulnerabilityReactor {
             evidence,
             risk_facts,
             limits,
-        }))
+        })
+        .with_status_source(status_source))
     }
 
     /// Admits one OSV advisory and runs the cycle.
@@ -1230,6 +1257,21 @@ impl VulnerabilityReactor {
     pub fn the_limits(&self) -> &InvestigationConfig {
         &self.limits
     }
+}
+
+/// The account that owns an intent, derived from the HRN its payload names.
+///
+/// The `tenant` of an intent is the composition mark of the runtime (the
+/// service is multi-account), so it cannot say whose intent it is. What
+/// does: a decision reevaluation names its `subject` (an artifact HRN) and
+/// a security case names its `advisory` (a vulnerability HRN of the graph
+/// tenant). An intent that names neither has no owner, and an intent with
+/// no owner belongs to nobody who may ask for it.
+pub fn intent_owner_account(intent: &Intent) -> Option<String> {
+    ["subject", "advisory"].iter().find_map(|field| {
+        let text = intent.payload.get(*field)?.as_str()?;
+        Hrn::from_string(text).map(|hrn| hrn.account_id().to_string())
+    })
 }
 
 /// The digest a grant row names.

@@ -357,6 +357,12 @@ fn admin_v1_routes(app_state: AppState) -> Router {
             "/advisories/accept",
             post(crate::handlers::advisories::accept),
         )
+        // The status of the effects of the reactive cycle (HSP-323 AC3):
+        // read-only, scoped to the verified account, its own resource.
+        .route(
+            "/reactions/intents",
+            get(crate::handlers::reactions::list_intents),
+        )
         // Integrity scrub of the registry: read-only, its own resource.
         .route("/scrub", get(crate::handlers::scrub::report))
         // Migration from Nexus/Artifactory: inventory and import, both
