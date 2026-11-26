@@ -320,12 +320,12 @@ async fn the_studio_edits_the_real_lifecycle_per_tenant() {
     );
     assert_eq!(status, 404, "a foreign tenant cannot simulate it");
 
-    // --- Access refusal of the move: the editor has no activate grant. ---
+    // --- Access refusal of the move: a principal without the activate grant (not the author). ---
     let activate_v1 = json!({ "sequence": 1, "expected_head": null, "reason": "go live" });
-    let (status, _) = studio.call("POST", "activate", &editor, Some(&activate_v1));
+    let (status, _) = studio.call("POST", "activate", &viewer, Some(&activate_v1));
     assert_eq!(
         status, 403,
-        "an editor without the activate grant cannot move the head"
+        "a principal without the activate grant cannot move the head"
     );
     let (head, _) = studio.state_of(&viewer);
     assert_eq!(head["exists"], false, "no effect of the refused activation");
@@ -491,12 +491,12 @@ async fn the_studio_edits_the_real_lifecycle_per_tenant() {
     let (status, _) = studio.call(
         "POST",
         "rollback",
-        &editor,
+        &viewer,
         Some(&json!({ "target": 1, "expected_head": v2_seq, "reason": "no grant" })),
     );
     assert_eq!(
         status, 403,
-        "an editor without the rollback grant cannot move the head"
+        "a principal without the rollback grant cannot move the head"
     );
     let (status, body) = studio.call(
         "POST",
