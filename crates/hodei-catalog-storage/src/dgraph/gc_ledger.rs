@@ -298,12 +298,13 @@ fn scope_owner(scope: &str) -> String {
         .unwrap_or_else(|| scope.to_owned())
 }
 
-/// Las tres familias del plano de datos que mantienen vivo un digests.
+/// Las familias del plano de datos que mantienen vivo un digest.
 #[derive(Clone, Copy)]
 enum Family {
     Asset,
     Version,
     Reference,
+    AptSnapshot,
 }
 
 impl Family {
@@ -312,6 +313,7 @@ impl Family {
             Self::Asset => "hodei.catalog.asset",
             Self::Version => "hodei.catalog.version",
             Self::Reference => "hodei.catalog.reference",
+            Self::AptSnapshot => "hodei.catalog.apt_snapshot_root",
         }
     }
 
@@ -322,12 +324,13 @@ impl Family {
                 "hodei.catalog.version.package_name hodei.catalog.version.package_version"
             }
             Self::Reference => "hodei.catalog.reference.asset_path",
+            Self::AptSnapshot => "hodei.catalog.apt_snapshot_root.subject",
         }
     }
 
     fn kind(self) -> RootKind {
         match self {
-            Self::Asset => RootKind::Asset,
+            Self::Asset | Self::AptSnapshot => RootKind::Asset,
             Self::Version => RootKind::Version,
             Self::Reference => RootKind::Reference,
         }
@@ -359,6 +362,7 @@ impl CensusRow {
                 node_text(node, "hodei.catalog.version.package_version")?
             ),
             Family::Reference => node_text(node, "hodei.catalog.reference.asset_path")?,
+            Family::AptSnapshot => node_text(node, "hodei.catalog.apt_snapshot_root.subject")?,
         };
         let row_key = node_text(node, &format!("{prefix}.key"))?;
         Ok(Self {
@@ -1045,7 +1049,12 @@ impl DgraphCatalogStore {
         let account = scope_owner(scope);
         let cursor = after.map(cursor_of_digest).transpose()?;
         let mut fetched: Vec<CensusRow> = Vec::new();
-        for family in [Family::Asset, Family::Version, Family::Reference] {
+        for family in [
+            Family::Asset,
+            Family::Version,
+            Family::Reference,
+            Family::AptSnapshot,
+        ] {
             fetched.extend(
                 self.census_window(&account, family, cursor.as_ref(), limit + 1)
                     .await?,
@@ -1072,7 +1081,12 @@ impl DgraphCatalogStore {
         // `has_more` prometeria una pagina que siempre devuelve el
         // mismo digests. Se leen de la autoridad por igualdad exacta,
         // no de la ventana truncada.
-        for family in [Family::Asset, Family::Version, Family::Reference] {
+        for family in [
+            Family::Asset,
+            Family::Version,
+            Family::Reference,
+            Family::AptSnapshot,
+        ] {
             for row in self.census_equal(&account, family, &boundary).await? {
                 if !fetched.iter().any(|seen| seen.row_key == row.row_key) {
                     fetched.push(row);
@@ -1088,7 +1102,12 @@ impl DgraphCatalogStore {
         // Hay mas si algo, en cualquier familia, queda estrictamente
         // despues del digests limite.
         let mut has_more = false;
-        for family in [Family::Asset, Family::Version, Family::Reference] {
+        for family in [
+            Family::Asset,
+            Family::Version,
+            Family::Reference,
+            Family::AptSnapshot,
+        ] {
             if self.census_any_gt(&account, family, &boundary).await? {
                 has_more = true;
                 break;
@@ -1211,7 +1230,12 @@ impl DgraphCatalogStore {
         digest: &ContentDigest,
     ) -> Result<u64, CatalogError> {
         let mut total = 0u64;
-        for family in [Family::Asset, Family::Version, Family::Reference] {
+        for family in [
+            Family::Asset,
+            Family::Version,
+            Family::Reference,
+            Family::AptSnapshot,
+        ] {
             let query = format!(
                 "{{ q(func: eq({}.digest, {})) {{ uid }} }}",
                 family.prefix(),
@@ -1300,24 +1324,51 @@ impl DgraphCatalogStore {
 /// de digest. Cuentan en el snapshot de la transaccion; el bloque las
 /// nombra en su condicion para que DQL no las descarte como muertas.
 fn reference_guard_lines(digest: &ContentDigest) -> String {
-    [Family::Asset, Family::Version, Family::Reference]
-        .iter()
-        .enumerate()
-        .map(|(index, family)| {
-            format!(
-                "rv{} as var(func: eq({}.digest, {}))",
-                index,
-                family.prefix(),
-                dql_string(&digest.value)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" \n")
+    [
+        Family::Asset,
+        Family::Version,
+        Family::Reference,
+        Family::AptSnapshot,
+    ]
+    .iter()
+    .enumerate()
+    .map(|(index, family)| {
+        format!(
+            "rv{} as var(func: eq({}.digest, {}))",
+            index,
+            family.prefix(),
+            dql_string(&digest.value)
+        )
+    })
+    .collect::<Vec<_>>()
+    .join(" \n")
 }
 
 /// La condición de la guarda: ninguna fila nombra el digest.
 fn no_live_reference() -> String {
-    "eq(len(rv0), 0) AND eq(len(rv1), 0) AND eq(len(rv2), 0)".to_owned()
+    "eq(len(rv0), 0) AND eq(len(rv1), 0) AND eq(len(rv2), 0) AND eq(len(rv3), 0)".to_owned()
+}
+
+#[cfg(test)]
+mod reference_guard_tests {
+    use super::{no_live_reference, reference_guard_lines};
+    use hodei_evidence::{ContentDigest, DigestAlgorithm};
+
+    #[test]
+    fn deletion_guard_checks_every_live_root_family() {
+        let digest = ContentDigest {
+            algorithm: DigestAlgorithm::Sha256,
+            value: "a".repeat(64),
+        };
+        let guards = reference_guard_lines(&digest);
+        let condition = no_live_reference();
+
+        for index in 0..4 {
+            assert!(guards.contains(&format!("rv{index} as var(")));
+            assert!(condition.contains(&format!("eq(len(rv{index}), 0)")));
+        }
+        assert!(guards.contains("hodei.catalog.apt_snapshot_root.digest"));
+    }
 }
 
 /// Los n-quads de la marca de una pasada: el run, sus candidatos y las
