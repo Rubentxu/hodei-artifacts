@@ -4397,109 +4397,6 @@ impl AuditOutbox for DgraphAuditOutbox {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_text_pattern_is_a_literal_case_insensitive_regex() {
-        assert_eq!(the_text_pattern("LabPkg").unwrap(), "/LabPkg/i");
-        assert_eq!(the_text_pattern("a.b").unwrap(), "/a\\.b/i");
-        assert_eq!(the_text_pattern("dist/x").unwrap(), "/dist\\/x/i");
-        assert_eq!(the_text_pattern("(1)+[x]").unwrap(), "/\\(1\\)\\+\\[x\\]/i");
-        assert_eq!(the_text_pattern("a\\b").unwrap(), "/a\\\\b/i");
-        assert_eq!(the_text_pattern("a b-c_d").unwrap(), "/a b-c_d/i");
-    }
-
-    #[test]
-    fn the_text_pattern_refuses_control_characters() {
-        assert!(matches!(
-            the_text_pattern("a\nb"),
-            Err(CatalogError::InvalidRequest { .. })
-        ));
-        assert!(the_text_pattern("a\tb").is_err());
-    }
-
-    #[test]
-    fn guard_part_escapes_the_debian_charset() {
-        assert_eq!(guard_part("1.2+dfsg"), "1.2@2Bdfsg");
-        assert_eq!(guard_part("1.0.0~rc1"), "1.0.0@7Erc1");
-        assert_eq!(guard_part("plain/path.deb"), "plain/path.deb");
-        assert_eq!(guard_part("a%b"), "a@25b");
-        assert_eq!(guard_part("a@b"), "a@@b");
-    }
-
-    #[test]
-    fn guard_part_is_injective() {
-        // An escaped byte must not collide with a verbatim one, and two
-        // different escapes must not collide with each other.
-        assert_ne!(guard_part("a+b"), guard_part("a@2B"));
-        assert_ne!(guard_part("a~b"), guard_part("a@7E"));
-        assert_ne!(guard_part("a+b~c"), guard_part("a@2Bb~c"));
-    }
-
-    #[test]
-    fn the_apt_guard_scope_opens_for_debian_versions() {
-        // The regression HSP-195 fixes: a Debian pool path with `+` and `~`
-        // used to be refused by the guard on Dgraph only, while Surreal
-        // accepted it.
-        let scope = asset_guard_scope(
-            "alice",
-            "debian",
-            "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
-        )
-        .expect("a debian version is guardable");
-        assert_eq!(
-            scope.subject(),
-            "asset/debian/pool/main/h/hello_1.0.0@7Erc1@2Bdeb12_amd64.deb"
-        );
-    }
-
-    #[test]
-    fn a_go_module_path_with_the_case_escape_is_guardable() {
-        // HSP-314 P4: the canonical GOPROXY escape (`!azure` for `Azure`)
-        // used to be refused by the guard charset on Dgraph only (the
-        // publication answered 400 "not well formed"), while Surreal
-        // accepted it.
-        let scope = asset_guard_scope("alice", "go", "github.com/!azure/azure-sdk/@v/v1.0.0.zip")
-            .expect("an escaped go module path is guardable");
-        assert_eq!(
-            scope.subject(),
-            "asset/go/github.com/@21azure/azure-sdk/@@v/v1.0.0.zip"
-        );
-        // The map stays injective for the new escape: a lowercase path, a
-        // case-escaped path and a path that spells the escape differ.
-        assert_ne!(guard_part("a!b"), guard_part("ab"));
-        assert_ne!(guard_part("a!b"), guard_part("a@21b"));
-        // Any byte outside the charset is escaped, including non-ASCII.
-        assert_eq!(guard_part("a b"), "a@20b");
-        assert_eq!(guard_part("\u{e9}"), "@C3@A9");
-    }
-
-    #[test]
-    fn two_debian_versions_keep_two_distinct_guards() {
-        let left = asset_guard_scope("alice", "debian", "pool/main/h/hello_1.0_amd64.deb").unwrap();
-        let right =
-            asset_guard_scope("alice", "debian", "pool/main/h/hello_1.0~1_amd64.deb").unwrap();
-        assert_ne!(
-            hodei_graph_client::guard::guard_key(&left),
-            hodei_graph_client::guard::guard_key(&right)
-        );
-    }
-
-    #[test]
-    fn keys_still_carry_the_raw_path() {
-        // The escape lives only on the guard subject: the stored composite
-        // key keeps the path verbatim so reads and listings are unchanged.
-        let key = asset_key(
-            "alice",
-            "debian",
-            "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
-        );
-        assert!(key.contains("hello_1.0.0~rc1+deb12_amd64.deb"));
-    }
-}
-
 const APT_SNAPSHOT_MAX_PAYLOAD: usize = 900_000;
 
 fn apt_namespace(key: &AptSnapshotKey) -> String {
@@ -4879,5 +4776,108 @@ impl AptSnapshotStore for DgraphCatalogStore {
             });
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_text_pattern_is_a_literal_case_insensitive_regex() {
+        assert_eq!(the_text_pattern("LabPkg").unwrap(), "/LabPkg/i");
+        assert_eq!(the_text_pattern("a.b").unwrap(), "/a\\.b/i");
+        assert_eq!(the_text_pattern("dist/x").unwrap(), "/dist\\/x/i");
+        assert_eq!(the_text_pattern("(1)+[x]").unwrap(), "/\\(1\\)\\+\\[x\\]/i");
+        assert_eq!(the_text_pattern("a\\b").unwrap(), "/a\\\\b/i");
+        assert_eq!(the_text_pattern("a b-c_d").unwrap(), "/a b-c_d/i");
+    }
+
+    #[test]
+    fn the_text_pattern_refuses_control_characters() {
+        assert!(matches!(
+            the_text_pattern("a\nb"),
+            Err(CatalogError::InvalidRequest { .. })
+        ));
+        assert!(the_text_pattern("a\tb").is_err());
+    }
+
+    #[test]
+    fn guard_part_escapes_the_debian_charset() {
+        assert_eq!(guard_part("1.2+dfsg"), "1.2@2Bdfsg");
+        assert_eq!(guard_part("1.0.0~rc1"), "1.0.0@7Erc1");
+        assert_eq!(guard_part("plain/path.deb"), "plain/path.deb");
+        assert_eq!(guard_part("a%b"), "a@25b");
+        assert_eq!(guard_part("a@b"), "a@@b");
+    }
+
+    #[test]
+    fn guard_part_is_injective() {
+        // An escaped byte must not collide with a verbatim one, and two
+        // different escapes must not collide with each other.
+        assert_ne!(guard_part("a+b"), guard_part("a@2B"));
+        assert_ne!(guard_part("a~b"), guard_part("a@7E"));
+        assert_ne!(guard_part("a+b~c"), guard_part("a@2Bb~c"));
+    }
+
+    #[test]
+    fn the_apt_guard_scope_opens_for_debian_versions() {
+        // The regression HSP-195 fixes: a Debian pool path with `+` and `~`
+        // used to be refused by the guard on Dgraph only, while Surreal
+        // accepted it.
+        let scope = asset_guard_scope(
+            "alice",
+            "debian",
+            "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
+        )
+        .expect("a debian version is guardable");
+        assert_eq!(
+            scope.subject(),
+            "asset/debian/pool/main/h/hello_1.0.0@7Erc1@2Bdeb12_amd64.deb"
+        );
+    }
+
+    #[test]
+    fn a_go_module_path_with_the_case_escape_is_guardable() {
+        // HSP-314 P4: the canonical GOPROXY escape (`!azure` for `Azure`)
+        // used to be refused by the guard charset on Dgraph only (the
+        // publication answered 400 "not well formed"), while Surreal
+        // accepted it.
+        let scope = asset_guard_scope("alice", "go", "github.com/!azure/azure-sdk/@v/v1.0.0.zip")
+            .expect("an escaped go module path is guardable");
+        assert_eq!(
+            scope.subject(),
+            "asset/go/github.com/@21azure/azure-sdk/@@v/v1.0.0.zip"
+        );
+        // The map stays injective for the new escape: a lowercase path, a
+        // case-escaped path and a path that spells the escape differ.
+        assert_ne!(guard_part("a!b"), guard_part("ab"));
+        assert_ne!(guard_part("a!b"), guard_part("a@21b"));
+        // Any byte outside the charset is escaped, including non-ASCII.
+        assert_eq!(guard_part("a b"), "a@20b");
+        assert_eq!(guard_part("\u{e9}"), "@C3@A9");
+    }
+
+    #[test]
+    fn two_debian_versions_keep_two_distinct_guards() {
+        let left = asset_guard_scope("alice", "debian", "pool/main/h/hello_1.0_amd64.deb").unwrap();
+        let right =
+            asset_guard_scope("alice", "debian", "pool/main/h/hello_1.0~1_amd64.deb").unwrap();
+        assert_ne!(
+            hodei_graph_client::guard::guard_key(&left),
+            hodei_graph_client::guard::guard_key(&right)
+        );
+    }
+
+    #[test]
+    fn keys_still_carry_the_raw_path() {
+        // The escape lives only on the guard subject: the stored composite
+        // key keeps the path verbatim so reads and listings are unchanged.
+        let key = asset_key(
+            "alice",
+            "debian",
+            "pool/main/h/hello_1.0.0~rc1+deb12_amd64.deb",
+        );
+        assert!(key.contains("hello_1.0.0~rc1+deb12_amd64.deb"));
     }
 }

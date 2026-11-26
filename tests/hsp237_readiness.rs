@@ -54,9 +54,7 @@ use serde_json::Value;
 use support::lab::{Expectation, LabCase, Scope, describe_registry_lab, run_registry_lab_case};
 use support::{Answer, Curl, Deployment};
 
-#[path = "support/graph_profile.rs"]
-mod graph_profile;
-use graph_profile::Workdir;
+use support::graph_profile::Workdir;
 use tower::ServiceExt;
 
 /// The case: with the required store there, readiness says it can

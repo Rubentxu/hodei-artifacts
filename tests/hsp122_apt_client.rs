@@ -6,14 +6,14 @@
 //! that of any sysadmin:
 //!
 //! 1. inside the container a real `.deb` is built with
-//! `dpkg-deb --build` (ours, synthetic, would not install);
+//!    `dpkg-deb --build` (ours, synthetic, would not install);
 //! 2. the hub publishes it through `PUT /apt/{repo}/pool/...`;
 //! 3. the hub's key (`key.asc`) is dearmored and installed as
-//! `signed-by`, the path documented by Debian;
+//!    `signed-by`, the path documented by Debian;
 //! 4. `apt-get update` has to **verify the Release signature** with
-//! gpgv so as not to mark the origin as unsigned, and
-//! `apt-get install -y hello-hodei` has to download the package from the
-//! pool, check its SHA256 against the index and install it.
+//!    gpgv so as not to mark the origin as unsigned, and
+//!    `apt-get install -y hello-hodei` has to download the package from the
+//!    pool, check its SHA256 against the index and install it.
 //!
 //! Without podman or without the image, the suite fails saying it is missing, like
 //! the other real-client suites.

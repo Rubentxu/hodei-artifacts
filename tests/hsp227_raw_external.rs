@@ -3,13 +3,13 @@
 //! What is demonstrated here, against the **real service**:
 //!
 //! - a group of raw repositories serves the bytes the upstream
-//! declared, with its digest and its headers;
+//!   declared, with its digest and its headers;
 //! - `HEAD` and `Range` answer the same as `GET`;
 //! - when two members have the same path, the first wins, and the
-//! **trail** says which it was and in which version of the group's
-//! configuration, without mixing one's headers with the other's;
+//!   **trail** says which it was and in which version of the group's
+//!   configuration, without mixing one's headers with the other's;
 //! - traversal is blocked, a forbidden redirect is not followed, and a
-//! read without credentials receives no content.
+//!   read without credentials receives no content.
 //!
 //! By default the path **does not use the network**: the upstream is the
 //! lab's and the content is a fixture. The case against a public origin

@@ -1427,28 +1427,6 @@ fn no_live_reference() -> String {
     "eq(len(rv0), 0) AND eq(len(rv1), 0) AND eq(len(rv2), 0) AND eq(len(rv3), 0)".to_owned()
 }
 
-#[cfg(test)]
-mod reference_guard_tests {
-    use super::{no_live_reference, reference_guard_lines};
-    use hodei_evidence::{ContentDigest, DigestAlgorithm};
-
-    #[test]
-    fn deletion_guard_checks_every_live_root_family() {
-        let digest = ContentDigest {
-            algorithm: DigestAlgorithm::Sha256,
-            value: "a".repeat(64),
-        };
-        let guards = reference_guard_lines(&digest);
-        let condition = no_live_reference();
-
-        for index in 0..4 {
-            assert!(guards.contains(&format!("rv{index} as var(")));
-            assert!(condition.contains(&format!("eq(len(rv{index}), 0)")));
-        }
-        assert!(guards.contains("hodei.catalog.apt_snapshot_root.digest"));
-    }
-}
-
 /// The n-quads of a pass's mark: the run, its candidates and the
 /// run→candidate edges. Returns the set and the run key.
 fn run_mark_nquads(scope: &str, lease: &GcLease, run: &GcRun) -> (String, String) {
@@ -2020,5 +1998,27 @@ impl ContentLedger for DgraphCatalogStore {
 
     async fn census_accounts(&self) -> Result<Vec<String>, CatalogError> {
         self.census_accounts_here().await
+    }
+}
+
+#[cfg(test)]
+mod reference_guard_tests {
+    use super::{no_live_reference, reference_guard_lines};
+    use hodei_evidence::{ContentDigest, DigestAlgorithm};
+
+    #[test]
+    fn deletion_guard_checks_every_live_root_family() {
+        let digest = ContentDigest {
+            algorithm: DigestAlgorithm::Sha256,
+            value: "a".repeat(64),
+        };
+        let guards = reference_guard_lines(&digest);
+        let condition = no_live_reference();
+
+        for index in 0..4 {
+            assert!(guards.contains(&format!("rv{index} as var(")));
+            assert!(condition.contains(&format!("eq(len(rv{index}), 0)")));
+        }
+        assert!(guards.contains("hodei.catalog.apt_snapshot_root.digest"));
     }
 }
