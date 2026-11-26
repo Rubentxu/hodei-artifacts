@@ -289,6 +289,14 @@ pipeline {
                         "--test hsp111_npm_e2e",
                         "--test hsp121_go_e2e",
                         "--test hsp124_quota_e2e",
+                        // HSP-314 P3: the proxy cache, the virtual group and the
+                        // namespaces policy (they reconfigure repositories) and the
+                        // garbage collection over the graph profile: the platform-wide
+                        // pass is claimed and paged by account, never a global scan.
+                        "--test hsp104_gc_e2e",
+                        "--test hsp107_proxy_cache_e2e",
+                        "--test hsp108_group_e2e",
+                        "--test hsp143_namespaces_e2e",
                         // HSP-314 F4 S2b (A'): las suites en proceso (bootstrap con
                         // `Workdir`) y la readiness con fakes.
                         "--test capsule_read",
@@ -569,10 +577,6 @@ pipeline {
                         "--test oci_pull_contract",
                         "--test oci_push_contract",
                         "--test oci_index_contract",
-                        "--test hsp104_gc_e2e",
-                        "--test hsp107_proxy_cache_e2e",
-                        "--test hsp108_group_e2e",
-                        "--test hsp143_namespaces_e2e",
                         "--test hsp297_format_prefixes",
                         "--test hsp297_trusted_listings",
                         // Hugging Face: siembra HF sin portar.

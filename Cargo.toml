@@ -402,7 +402,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp104_gc_e2e"
 path = "tests/hsp104_gc_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp105_trust_e2e"
@@ -415,12 +414,10 @@ path = "tests/hsp106_proxy_e2e.rs"
 [[test]]
 name = "hsp107_proxy_cache_e2e"
 path = "tests/hsp107_proxy_cache_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp108_group_e2e"
 path = "tests/hsp108_group_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp109_maven_cli"
@@ -555,7 +552,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp143_namespaces_e2e"
 path = "tests/hsp143_namespaces_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp143_npm_namespaces_cli"
