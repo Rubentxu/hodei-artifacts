@@ -1,8 +1,8 @@
 //! HSP-134: los hechos de riesgo de la promoción salen del grafo real.
 //!
-//! El proceso arranca con `SurrealRiskFacts` cableado contra la misma
-//! base donde el arnés ha sembrado la vista materializada (`impact_view`,
-//! `impact_meta`) y el registro de deltas (`relation_delta`). Lo que la
+//! El proceso arranca con `DgraphRiskFacts` cableado contra el mismo
+//! namespace de Dgraph donde el arnés ha sembrado el registro de deltas y la
+//! vista materializada, por los almacenes reales. Lo que la
 //! política concede o rechaza es, por tanto, lo que el grafo dice -- no
 //! un `RiskFacts::default()`:
 //!
@@ -139,7 +139,7 @@ fn catalog_file(deployment: &Deployment, severities: &[(&str, &str)]) -> String 
     path.to_string_lossy().into_owned()
 }
 
-/// Lo que se siembra en la base antes de levantar el proceso: el registro
+/// Lo que se siembra en el grafo antes de levantar el proceso: el registro
 /// que habla, las rutas de la vista con su marca de agua y las filas que
 /// alcanzan a un sujeto.
 struct Seed {
@@ -151,111 +151,58 @@ struct Seed {
     rows: Vec<(String, String)>,
 }
 
-fn thing(table: &str, id: &str) -> surrealdb::sql::Thing {
-    surrealdb::sql::Thing::from((table.to_string(), id.to_string()))
-}
-
-/// Escribe la siembra en el mismo RocksDB que abrirá el servicio.
+/// Escribe la siembra en el namespace Dgraph del despliegue, por los
+/// almacenes reales: el registro de deltas dice la versión y la vista se
+/// materializa con esa marca de agua.
 ///
-/// Se hace ANTES de arrancar el proceso: la base la bloquea quien la
-/// tiene abierta, y el arnés es el operador.
+/// Se hace ANTES de arrancar el proceso, como lo haría el operador.
 fn seed(deployment: &Deployment, seed: &Seed) {
-    let tenant = tenant_of(&subject_of(b"whatever")).to_string();
-    let path = deployment.db.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let tenant = tenant_of(&subject_of(b"whatever"));
+    let plan = support::graph_risk::RiskSeed {
+        ledger_seq: seed.ledger_seq,
+        routes: seed.routes.clone(),
+        rows: seed.rows.clone(),
+    };
+    let graph = deployment.graph.as_ref().expect("the graph profile");
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("a runtime to seed");
-    runtime.block_on(async {
-        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_str())
-            .await
-            .expect("the seeded database opens");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns");
-        if seed.ledger_seq > 0 {
-            let row = serde_json::json!({
-                "seq": seed.ledger_seq,
-                "tenant": &tenant,
-                "kind": "added",
-                "relation": "depends_on",
-                "from": "node-a",
-                "to": "node-b",
-                "evidence": "ev-seed",
-                "cause": "seed",
-                "observed_at": "2026-01-01T00:00:00Z",
-            });
-            db.query("UPSERT $rid CONTENT $row;")
-                .bind(("rid", thing("relation_delta", "seed-0")))
-                .bind(("row", row))
-                .await
-                .expect("the ledger speaks");
-        }
-        for (index, (advisory, watermark)) in seed.routes.iter().enumerate() {
-            let row = serde_json::json!({
-                "tenant": &tenant,
-                "advisory": advisory,
-                "relations": [],
-                "evidences": [],
-                "nodes": [],
-                "paths": [],
-                "deployments": [],
-                "watermark": watermark,
-                "updated_at": "2026-01-01T00:00:00Z",
-            });
-            db.query("UPSERT $rid CONTENT $row;")
-                .bind(("rid", thing("impact_meta", &format!("seed-route-{index}"))))
-                .bind(("row", row))
-                .await
-                .expect("the route is materialized");
-        }
-        for (index, (advisory, subject)) in seed.rows.iter().enumerate() {
-            let row = serde_json::json!({
-                "tenant": &tenant,
-                "advisory": advisory,
-                "subject": subject,
-                "kind": "artifact",
-                "depth": 1,
-                "updated_at": "2026-01-01T00:00:00Z",
-            });
-            db.query("UPSERT $rid CONTENT $row;")
-                .bind(("rid", thing("impact_view", &format!("seed-row-{index}"))))
-                .bind(("row", row))
-                .await
-                .expect("the row reaches");
-        }
-        drop(db);
-    });
+        .expect("a runtime to seed")
+        .block_on(support::graph_risk::seed_risk(graph, &tenant, &plan));
 }
 
-/// Lee la última decisión persistida directamente de la base, con el
-/// servicio ya parado.
-#[derive(serde::Deserialize)]
+/// La última decisión persistida, leída del grafo con el servicio ya parado.
 struct Persisted {
     subject: String,
-    outcome: String,
-    #[serde(default)]
+    outcome: hodei_trust_policy::Outcome,
     risk_version: u64,
 }
 
 fn last_decision(deployment: &Deployment) -> Persisted {
-    let path = deployment.db.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let graph = deployment.graph.as_ref().expect("the graph profile");
+    let subject = subject_of(b"risk-free artifact").to_string();
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("a runtime to read");
-    runtime.block_on(async {
-        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_str())
-            .await
-            .expect("the database opens");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns");
-        let rows: Vec<Persisted> = db
-            .query("SELECT subject, outcome, risk_version, decided_at FROM promotion_decision ORDER BY decided_at DESC LIMIT 1")
-            .await
-            .expect("the decisions read")
-            .take(0)
-            .expect("one row");
-        drop(db);
-        rows.into_iter().next().expect("a persisted decision")
-    })
+        .expect("a runtime to read")
+        .block_on(async {
+            use hodei_trust_policy::DecisionStore as _;
+            let store = hodei_trust_policy_storage::DgraphDecisionStore::open(graph.client().await)
+                .await
+                .expect("the decision store opens");
+            let decision = store
+                .list_for_subject(FIRST_ACCOUNT, &subject)
+                .await
+                .expect("the decisions read")
+                .into_iter()
+                .next()
+                .expect("a persisted decision");
+            Persisted {
+                subject: decision.request.subject.to_string(),
+                outcome: decision.outcome,
+                risk_version: decision.trust.risk_version,
+            }
+        })
 }
 
 fn a_deployment(plan: &Seed) -> Deployment {
@@ -332,7 +279,8 @@ fn a_verified_zero_promotes_and_carries_the_ledger_version() {
         "the persisted decision carries the same version"
     );
     assert_eq!(
-        decision.outcome, "ALLOW",
+        decision.outcome,
+        hodei_trust_policy::Outcome::Allow,
         "the verdict is the one Cedar said"
     );
 }

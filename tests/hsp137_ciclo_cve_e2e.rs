@@ -174,37 +174,27 @@ fn a_deployment() -> Deployment {
     deployment
 }
 
-/// Escribe la ruta de referencia antes de levantar el proceso (la base la
-/// bloquea quien la tiene abierta; el arnes es el operador).
+/// Escribe la ruta de referencia antes de levantar el proceso, por los
+/// almacenes reales del grafo: una ruta materializada sin sujetos alcanzados,
+/// a la versión actual del registro, que es lo que hace a la vista
+/// "al día" (un cero verificado) antes de que entre ningún advisory.
 fn seed_baseline(deployment: &Deployment) {
-    let path = deployment.db.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
+    let plan = support::graph_risk::RiskSeed {
+        ledger_seq: 0,
+        routes: vec![(BASELINE_ROUTE.to_string(), 0)],
+        rows: Vec::new(),
+    };
+    let graph = deployment.graph.as_ref().expect("the graph profile");
+    let tenant = hodei_evidence_tenant();
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .expect("a runtime to seed");
-    runtime.block_on(async {
-        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_str())
-            .await
-            .expect("the seeded database opens");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns");
-        let route = serde_json::json!({
-            "tenant": TENANT,
-            "advisory": BASELINE_ROUTE,
-            "relations": [], "evidences": [], "nodes": [], "paths": [], "deployments": [],
-            "watermark": 10_000_000,
-            "updated_at": "2026-11-18T00:00:00Z",
-        });
-        db.query("UPSERT $rid CONTENT $row;")
-            .bind(("rid", thing("impact_meta", "hsp137-baseline")))
-            .bind(("row", route))
-            .await
-            .expect("the baseline route is materialized");
-        // El motor cierra en una tarea de fondo: soltar la hoja y dejar
-        // que el runtime la drene un rato es lo que libera el LOCK de la
-        // base antes del siguiente arranque.
-        drop(db);
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    });
+        .expect("a runtime to seed")
+        .block_on(support::graph_risk::seed_risk(graph, &tenant, &plan));
+}
+
+fn hodei_evidence_tenant() -> kernel::Hrn {
+    kernel::Hrn::from_string(TENANT).expect("the tenant is an HRN")
 }
 
 fn raw(path: &str) -> String {
@@ -308,162 +298,109 @@ fn hex_of(content: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Cirugia de la base (la ventana de crash y la lectura de la evidencia)
+// Cirugia del grafo (la ventana de crash y la lectura de la evidencia)
 // ---------------------------------------------------------------------------
 
-/// El escape del identificador de registro, igual que lo hace el outbox.
-fn esc(value: &str) -> String {
-    value.replace('~', "~0").replace(':', "~1")
+fn runtime() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
 }
 
-fn thing(table: &str, id: &str) -> surrealdb::sql::Thing {
-    surrealdb::sql::Thing::from((table.to_string(), id.to_string()))
-}
-
-/// Siembra la mitad sobreviviente del crash: el delta y su ruta en la
-/// vista (critico alcanzando al sujeto, severidad conocida) y el intent de
-/// reevaluacion PENDIENTE en el outbox duradero -- exactamente lo que
-/// queda vivo cuando el proceso muere despues de planificar y antes de
-/// revocar.
-async fn plant_crash_window(db: &surrealdb::Surreal<surrealdb::engine::local::Db>, subject: &str) {
+/// Siembra la mitad sobreviviente del crash: el crítico alcanzando al sujeto
+/// en el registro y la vista (con severidad conocida) y el intent de
+/// reevaluación PENDIENTE en el outbox duradero -- exactamente lo que queda
+/// vivo cuando el proceso muere después de planificar y antes de revocar.
+fn plant_crash_window(deployment: &Deployment, subject: &str) {
+    use hodei_reactive::intent::{EventOrigin, Intent, IntentOrigin};
+    use hodei_reactive::intent::IntentOutbox as _;
+    let graph = deployment.graph.as_ref().expect("the graph profile");
     let advisory = CRASH_ADVISORY;
-    let delta = serde_json::json!({
-        "seq": 5,
-        "tenant": TENANT,
-        "kind": "added",
-        "relation": "affected_by",
-        "from": "node-a",
-        "to": "node-b",
-        "evidence": "ev-plant",
-        "cause": "plant",
-        "observed_at": "2026-11-18T00:00:00Z",
-    });
-    db.query("UPSERT $rid CONTENT $row;")
-        .bind(("rid", thing("relation_delta", "plant-0")))
-        .bind(("row", delta))
-        .await
-        .expect("the ledger speaks");
-    let route = serde_json::json!({
-        "tenant": TENANT,
-        "advisory": advisory,
-        "relations": [], "evidences": [], "nodes": [], "paths": [], "deployments": [],
-        "watermark": 5,
-        "updated_at": "2026-11-18T00:00:00Z",
-    });
-    db.query("UPSERT $rid CONTENT $row;")
-        .bind(("rid", thing("impact_meta", "plant-route")))
-        .bind(("row", route))
-        .await
-        .expect("the route is materialized");
-    let row = serde_json::json!({
-        "tenant": TENANT,
-        "advisory": advisory,
-        "subject": subject,
-        "kind": "artifact",
-        "depth": 1,
-        "updated_at": "2026-11-18T00:00:00Z",
-    });
-    db.query("UPSERT $rid CONTENT $row;")
-        .bind(("rid", thing("impact_view", "plant-row")))
-        .bind(("row", row))
-        .await
-        .expect("the row reaches");
-    // El intent dicho por el planificador antes de morir. La identidad y
-    // la clave son las MISMAS que el plan del crate habria escrito:
-    // `intent:vulnerability_impact:{event}:{key}`.
-    let event_id = "evt-hsp137-crash-window";
-    let key = format!("decision:{advisory}:{subject}");
-    let intent = serde_json::json!({
-        "state": "pending",
-        "lease_owner": null,
-        "lease_until": null,
-        "receipt": null,
-        "intent": {
-            "identity": format!("intent:vulnerability_impact:{event_id}:{key}"),
-            "idempotency_key": key,
-            "tenant": "hodei",
-            "origin": {
-                "behavior": "vulnerability_impact",
-                "event": { "event_id": event_id, "causation": [] },
+    // The view says the same version as the ledger, for the baseline route
+    // too: the lagging route would make the whole tenant stale.
+    let plan = support::graph_risk::RiskSeed {
+        ledger_seq: 5,
+        routes: vec![(BASELINE_ROUTE.to_string(), 5), (advisory.to_string(), 5)],
+        rows: vec![(advisory.to_string(), subject.to_string())],
+    };
+    runtime().block_on(async {
+        support::graph_risk::seed_risk(graph, &hodei_evidence_tenant(), &plan).await;
+        // El intent dicho por el planificador antes de morir. La identidad y
+        // la clave son las MISMAS que el plan del crate habría escrito:
+        // `intent:vulnerability_impact:{event}:{key}`.
+        let event_id = "evt-hsp137-crash-window";
+        let key = format!("decision:{advisory}:{subject}");
+        let intent = Intent::new(
+            IntentOrigin {
+                behavior: "vulnerability_impact".to_string(),
+                event: EventOrigin::new(event_id, Vec::new()),
             },
-            "input_version": event_id,
-            "kind": "decision_reevaluation",
-            "payload": {
+            "hodei",
+            "decision_reevaluation",
+            key,
+            event_id,
+            serde_json::json!({
                 "subject": subject,
                 "advisory": advisory,
                 "reason": "vulnerability_impacted",
                 "at": "2026-11-18T00:00:00Z",
-            },
-        },
+            }),
+        );
+        hodei_trust_policy_storage::DgraphIntentStore::open(graph.client().await)
+            .await
+            .expect("the intent store opens")
+            .put_pending(&intent)
+            .await
+            .expect("the intent is said");
     });
-    db.query("UPSERT $rid CONTENT $row;")
-        .bind((
-            "rid",
-            thing(
-                "reactive_intent",
-                &esc(&format!("intent:vulnerability_impact:{event_id}:{key}")),
-            ),
-        ))
-        .bind(("row", intent))
-        .await
-        .expect("the intent is said");
 }
 
 /// La evidencia persistida que la prueba lee con el servicio ya parado.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug)]
 struct DecisionRow {
     subject: String,
     outcome: String,
     policy_version: String,
 }
 
+/// Las decisiones del sujeto, de la más antigua a la más reciente.
 fn decisions(deployment: &Deployment, subject: &str) -> Vec<DecisionRow> {
-    let subject = subject.to_string();
-    let path = deployment.db.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime to read");
-    runtime.block_on(async move {
-        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_str())
+    use hodei_trust_policy::DecisionStore as _;
+    let graph = deployment.graph.as_ref().expect("the graph profile");
+    runtime().block_on(async {
+        let store = hodei_trust_policy_storage::DgraphDecisionStore::open(graph.client().await)
             .await
-            .expect("the database opens");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns");
-        let rows: Vec<DecisionRow> = db
-            .query("SELECT subject, outcome, policy_version, decided_at FROM promotion_decision WHERE subject = $s ORDER BY decided_at")
-            .bind(("s", subject))
+            .expect("the decision store opens");
+        let mut rows = store
+            .list_for_subject(FIRST_ACCOUNT, subject)
             .await
-            .expect("the decisions read")
-            .take(0)
-            .expect("rows");
-        drop(db);
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        rows
+            .expect("the decisions read");
+        rows.sort_by_key(|decision| decision.decided_at);
+        rows.into_iter()
+            .map(|decision| DecisionRow {
+                subject: decision.request.subject.clone(),
+                outcome: format!("{:?}", decision.outcome).to_uppercase(),
+                policy_version: decision.trust.policy_version.clone(),
+            })
+            .collect()
     })
 }
 
+/// Cuántas veces se aplicó el efecto de esa clave.
 fn effect_receipts(deployment: &Deployment, key: &str) -> u64 {
-    let key = key.to_string();
-    let path = deployment.db.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime to read");
-    runtime.block_on(async move {
-        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_str())
+    use hodei_reactive::runtime::ExecutionStore as _;
+    let graph = deployment.graph.as_ref().expect("the graph profile");
+    runtime().block_on(async {
+        let store = hodei_trust_policy_storage::DgraphIntentStore::open(graph.client().await)
             .await
-            .expect("the database opens");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns");
-        let rows: Vec<serde_json::Value> = db
-            .query("SELECT idempotency_key FROM reactive_effect WHERE idempotency_key = $k")
-            .bind(("k", key))
+            .expect("the intent store opens");
+        store
+            .applied_effects()
             .await
-            .expect("the effects read")
-            .take(0)
-            .expect("rows");
-        drop(db);
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        rows.len() as u64
+            .iter()
+            .filter(|effect| effect.idempotency_key == key)
+            .count() as u64
     })
 }
 
@@ -796,20 +733,7 @@ fn a_crash_between_planning_and_revoking_converges_once() {
     // alcanzando al sujeto y el intent de reevaluacion pendiente, sin
     // recibo. Es la ventana exacta que el `kill -9` sobrevive.
     let subject = subject_of(&content);
-    let path = deployment.db.clone();
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("a runtime for the surgery");
-    runtime.block_on(async {
-        let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(path.as_str())
-            .await
-            .expect("the dead database opens");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns");
-        plant_crash_window(&db, &subject).await;
-        drop(db);
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    });
+    plant_crash_window(&deployment, &subject);
 
     // El arranque converge ANTES de abrir al trafico: `resume` reclamo
     // el intent pendiente, la reevaluacion nego por el critico y la
