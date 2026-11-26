@@ -51,7 +51,7 @@ use hodei_risk_storage::subject_risk::{
 };
 use hodei_trust_policy::context::{Exposure, RiskFacts, TrustContext};
 use hodei_trust_policy::{
-    AuthorizationResult, DecisionId, DecisionStore, PolicyRegistry, PromotionOutcome,
+    AuthorizationResult, DecisionId, DecisionStore, Outcome, PolicyRegistry, PromotionOutcome,
     PromotionRequest, Requirement, RequirementKind, TrustPolicy,
 };
 use hodei_trust_policy_storage::{DgraphDecisionStore, DgraphTrustStore};
@@ -583,6 +583,60 @@ async fn an_accepted_advisory_opens_the_case_measures_the_facts_and_takes_back_t
         .await
         .expect("the redelivery is answered");
     assert!(again.duplicate, "a redelivery is not a new event");
+}
+
+/// HSP-318 (M6-UAT-01): a new CVE does not rewrite the past. The prior ALLOW
+/// stays in the history and a NEW DENY decision is written next to it that
+/// names the decision it supersedes (its correlation is the prior id).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_new_cve_writes_a_deny_that_supersedes_the_prior_allow_and_keeps_it() {
+    let Some(endpoint) = endpoint() else {
+        return;
+    };
+    let stack = stack(connect_to(&endpoint).await, "sup").await;
+    let promoted = promote(&stack, "releases", false, None).await;
+    let prior_id = promoted.grant.decision_id.clone();
+
+    stack
+        .reactor
+        .admit_advisory(
+            &stack.account,
+            REGION,
+            "releases",
+            &promoted.digest,
+            &osv(&stack.advisory_id),
+            Some(INVENTORY),
+        )
+        .await
+        .expect("the advisory is admitted over the graph authority");
+
+    let history = stack
+        .decisions
+        .list_for_subject(&stack.account, &promoted.subject.to_string())
+        .await
+        .expect("the decisions of the subject read");
+
+    // The prior ALLOW is still there, untouched.
+    let prior = history
+        .iter()
+        .find(|decision| decision.id.as_str() == prior_id)
+        .expect("the prior decision stays in the history");
+    assert_eq!(prior.outcome, Outcome::Allow);
+    assert!(prior.applied);
+
+    // And a new DENY names it as the one it replaces.
+    let superseding: Vec<_> = history
+        .iter()
+        .filter(|decision| decision.id.as_str() != prior_id)
+        .collect();
+    assert_eq!(superseding.len(), 1, "one new decision: {superseding:?}");
+    let deny = superseding[0];
+    assert_eq!(deny.outcome, Outcome::Deny);
+    assert!(!deny.applied, "a DENY advances nothing");
+    assert_eq!(
+        deny.request.correlation_id, prior_id,
+        "the new decision says which one it supersedes"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

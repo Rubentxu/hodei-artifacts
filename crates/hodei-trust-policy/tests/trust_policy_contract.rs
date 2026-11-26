@@ -20,8 +20,8 @@ use hodei_evidence::domain::evidence::{
 };
 use hodei_evidence::{ContentDigest, ContentRef};
 use hodei_trust_policy::{
-    evaluate, Activation, AuthorizationResult, DecidedBy, ExceptionFact, Exposure, Outcome,
-    PolicyRegistry, PromotionGate, ReasonCode, Requirement, RequirementKind, RiskFacts,
+    evaluate, simulate, Activation, AuthorizationResult, DecidedBy, ExceptionFact, Exposure,
+    Outcome, PolicyRegistry, PromotionGate, ReasonCode, Requirement, RequirementKind, RiskFacts,
     TargetEnvironment, TrustContext, TrustPolicy, POLICY_SCHEMA_VERSION, TRUST_CONTEXT_VERSION,
 };
 use kernel::Hrn;
@@ -614,4 +614,48 @@ fn the_target_environment_is_part_of_the_context() {
         .build();
     assert_eq!(context.target, TargetEnvironment::Staging);
     assert_eq!(context.target.as_str(), "staging");
+}
+
+/// HSP-318 (M3-UAT-06): simulating a candidate policy against the current
+/// contexts names the affected releases and what the candidate says about
+/// them, and changes nothing: the policy that decides stays the active one.
+#[test]
+fn simulating_a_candidate_policy_names_the_affected_and_activates_nothing() {
+    let registry = PolicyRegistry::empty();
+    registry.activate(
+        production_policy(),
+        "alice",
+        "the policy of today",
+        Utc::now(),
+    );
+    let contexts = vec![(subject().to_string(), complete_context())];
+
+    // The candidate asks for a dimension the current release does not have.
+    let candidate = TrustPolicy::new(
+        "production",
+        "2.0.0",
+        vec![Requirement::denying(RequirementKind::Dimension {
+            dimension: DimensionName::TestEvidence,
+            accepts: vec![DimensionState::Verified],
+        })],
+    );
+
+    let active = registry.active("production");
+    let report = simulate(active.as_ref(), &candidate, &contexts);
+
+    assert_eq!(report.affected.len(), 1);
+    assert_eq!(report.affected[0].subject, subject().to_string());
+    assert_eq!(report.affected[0].current, Outcome::Allow);
+    assert_eq!(report.affected[0].candidate, Outcome::Deny);
+    assert!(report.affected[0].changed);
+    assert_eq!(report.changed, vec![subject().to_string()]);
+    assert_eq!(report.active_policy_version.as_deref(), Some("1.0.0"));
+
+    // Nothing was activated: not in the report, not in the registry.
+    assert!(!report.activated);
+    assert_eq!(
+        registry.active("production").map(|policy| policy.version),
+        Some("1.0.0".to_string())
+    );
+    assert_eq!(registry.activation_count(), 1);
 }
