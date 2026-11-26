@@ -19,9 +19,7 @@
 
 mod support;
 
-#[path = "support/graph_profile.rs"]
-mod graph_profile;
-use graph_profile::Workdir;
+use support::graph_profile::Workdir;
 
 use serde_json::{Value, json};
 use support::{Curl, Deployment};
