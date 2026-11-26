@@ -264,6 +264,45 @@ pub trait IntentOutbox: Send + Sync {
     async fn reconcile(&self, identity: &str) -> Result<(), String>;
 }
 
+/// One intent as an operator reads it: the intent itself plus what the
+/// outbox knows about its progress.
+///
+/// It is a **read model**: nothing here can change the outbox. The intent
+/// still carries its payload, because the owner of an intent is derived
+/// from it; whoever exposes a row is responsible for not exposing the
+/// payload (HSP-323 AC3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntentStatus {
+    /// The intent as it was said.
+    pub intent: Intent,
+    /// Its state: `pending`, `claimed`, `applied`, `failed` or `unknown`.
+    pub state: String,
+    /// How many times a worker claimed it. A durable store counts the
+    /// claims in the lease generation; a store without one says `0`.
+    pub attempts: u64,
+    /// The last receipt written for it, when there is one.
+    pub receipt: Option<Receipt>,
+}
+
+/// A bounded read of the outbox.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct IntentScan {
+    /// The rows read, ordered by identity.
+    pub rows: Vec<IntentStatus>,
+    /// Whether the outbox holds more rows than the bound allowed to read.
+    pub truncated: bool,
+}
+
+/// The read side of the outbox: what became of what was said.
+#[async_trait::async_trait]
+pub trait IntentStatusSource: Send + Sync {
+    /// Reads at most `limit` intents of every tenant, ordered by
+    /// identity. The caller filters by owner: the store cannot, because
+    /// the intent's `tenant` is the composition mark of the runtime and
+    /// not the account of the subject.
+    async fn scan_intents(&self, limit: usize) -> Result<IntentScan, String>;
+}
+
 /// The outbox of intents, in memory.
 ///
 /// The reference material of the port, for the tests and the processes
