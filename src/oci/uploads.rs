@@ -444,7 +444,13 @@ impl UploadRegistry {
             let record = self.the_journal_record(id).await?.ok_or_else(|| {
                 OciFailure::blob_upload_unknown("the upload session does not exist")
             })?;
-            if record.account != account || record.repository != repository || record.closed {
+            if record.account != account || record.repository != repository {
+                return Ok(None);
+            }
+            if !self.is_live(&record) {
+                // Closed, or older than the TTL: the session is not there
+                // any more, and the stale cache entry goes with it.
+                self.remove(id);
                 return Ok(None);
             }
             let writer = self.resume_writer(&record, store).await?;
@@ -479,7 +485,7 @@ impl UploadRegistry {
         // El ambito es parte de la identidad: una sesion de otra cuenta
         // o de otro repositorio no existe, y la autoridad lo dice sin
         // mirar el staging.
-        if record.account != account || record.repository != repository || record.closed {
+        if record.account != account || record.repository != repository || !self.is_live(&record) {
             return Ok(None);
         }
         let Some(writer) = self.resume_writer(&record, store).await? else {
@@ -537,12 +543,27 @@ impl UploadRegistry {
             Some(record)
                 if record.account == account
                     && record.repository == repository
-                    && !record.closed =>
+                    && self.is_live(&record) =>
             {
                 Some(record.offset)
             }
             _ => None,
         })
+    }
+
+    /// Si la autoridad todavia tiene viva la sesion: ni cerrada ni mas
+    /// vieja que el TTL desde que se toco por ultima vez.
+    ///
+    /// El TTL es una promesa del protocolo --pasado el, la sesion "no
+    /// esta" y el cliente recibe `BLOB_UPLOAD_UNKNOWN`--, y con journal
+    /// durable la promesa la cumple esta lectura: el barrido solo cierra
+    /// el registro y aborta el staging, y no corre en cada peticion.
+    /// Sin ella, un staging que la limpieza del arranque ya retiro
+    /// seguiria anunciandose como una subida viva (`204` con `Range`)
+    /// que luego no se puede reanudar.
+    fn is_live(&self, record: &SessionRecord) -> bool {
+        let ttl_millis = self.ttl.as_millis() as u64;
+        !record.closed && journal_now().saturating_sub(record.touched_at_millis) < ttl_millis
     }
 
     /// La autoridad de la sesion, si el registro tiene autoridad.
@@ -844,6 +865,43 @@ mod tests {
             "a store that cannot resume lost its writer"
         );
         assert!(session.the_handle().is_empty());
+    }
+
+    /// Una sesion journalizada que caduco no existe: ni el estado ni la
+    /// reanudacion la anuncian, aunque el barrido no la haya cerrado.
+    #[tokio::test]
+    async fn a_journaled_session_past_its_ttl_is_not_there() {
+        let journal = Arc::new(MemoryJournal::new());
+        let registry = UploadRegistry::with_journal(Duration::from_millis(30), 8, journal);
+        let store = InMemoryBlobStore::empty();
+        let session = registry
+            .open(
+                "acme",
+                "releases",
+                store.begin().await.expect("the session"),
+                an_unlimited_ticket(),
+            )
+            .await
+            .expect("the session opens");
+        let id = session.lock().await.the_id().to_string();
+        assert!(
+            registry
+                .the_journal_offset("acme", "releases", &id)
+                .await
+                .expect("the journal answers")
+                .is_some(),
+            "a fresh session is not announced"
+        );
+
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            registry
+                .the_journal_offset("acme", "releases", &id)
+                .await
+                .expect("the journal answers")
+                .is_none(),
+            "an expired session is still announced"
+        );
     }
 
     /// Una sesion journalizada de otra cuenta NO se reanima: la

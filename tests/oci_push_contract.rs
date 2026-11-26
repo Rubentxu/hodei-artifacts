@@ -11,9 +11,8 @@
 //! es un protocolo.
 //!
 //! Los fixtures (blobs, manifest, tag) se siembran en un **proceso
-//! aparte**, como el resto del catalogo: el motor de disco mantiene el
-//! bloqueo del directorio mientras el proceso lo tiene abierto, y el
-//! servicio es otro proceso.
+//! aparte**, como el resto del catalogo, contra el namespace Dgraph del
+//! despliegue (el perfil de grafo, el de produccion).
 
 mod support;
 
@@ -28,7 +27,7 @@ use support::{Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY
 /// El media type de un manifiesto OCI.
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// La ruta de la base, que el proceso hijo necesita.
+/// El localizador del tenant del grafo, que el proceso hijo necesita.
 const SEED_DB: &str = "HODEI_OCI_PUSH_SEED_DB";
 
 /// El contenido de una capa de ejemplo.
@@ -1575,27 +1574,17 @@ fn a_chunk_that_is_retried_does_not_duplicate_the_bytes() {
     support::stop(&mut service);
 }
 
-/// Un reinicio deja la subida en un estado recuperable: un error
-/// explicito.
+/// Opens an upload, sends its first chunk, and kills the service.
 ///
-/// La sesion vive en memoria, asi que un proceso que se cae se lleva la
-/// sesion. Lo que no se lleva es la promesa: el cliente recibe un
-/// `BLOB_UPLOAD_UNKNOWN` explicito, no una subida colgada, y el staging
-/// que dejo se limpia al arrancar.
-#[test]
-fn a_restart_leaves_the_upload_in_an_explicit_state() {
-    let mut case = the_case(
-        "OCI-PUSH-02 (reinicio)",
-        "una sesion de subida a medias",
-        "el proceso se muere de golpe y vuelve",
-        "curl --request POST <upload> ; kill -9 <servicio> ; <servicio>",
-    );
-    support::record_oci_push(case.clone());
-
-    let deployment = a_deployment();
-    let mut service = deployment.start(&[]);
+/// Returns the `Location` of the session, the token and the first chunk.
+/// The service ran with `environment`, so a case can give the session the
+/// life it needs.
+fn an_upload_cut_by_a_crash(
+    deployment: &Deployment,
+    environment: &[(&str, &str)],
+) -> (String, String, Vec<u8>) {
+    let mut service = deployment.start(environment);
     let token = support::token(FIRST_ACCOUNT, "alice");
-
     let answer = call(
         service.port,
         "POST",
@@ -1610,7 +1599,7 @@ fn a_restart_leaves_the_upload_in_an_explicit_state() {
     let chunk = a_layer(1);
     let file = deployment.directory.path().join("chunk.bin");
     std::fs::write(&file, &chunk).expect("the chunk is written");
-    call(
+    let answer = call(
         service.port,
         "PATCH",
         &location,
@@ -1619,20 +1608,195 @@ fn a_restart_leaves_the_upload_in_an_explicit_state() {
         Some("application/octet-stream"),
         None,
     );
+    assert_eq!(answer.status, 202, "the first chunk was refused");
     assert!(
         !deployment.staging_entries().is_empty(),
         "the upload did not leave a staging behind"
     );
 
-    // El proceso se cae de golpe.
+    // The process dies at once.
     support::kill(&mut service);
+    (location, token, chunk)
+}
 
-    // El staging que dejo envejece: la limpieza del arranque es la
-    // operacion de recuperacion, y su margen es la edad.
+/// Finishes the upload on the restarted service: asks where it is, sends
+/// the second chunk, closes it and reads the blob back.
+fn the_client_finishes_the_upload(
+    deployment: &Deployment,
+    service: &support::Service,
+    location: &str,
+    token: &str,
+    first: &[u8],
+) {
+    // The status says where the upload is, and it is the truth.
+    let answer = call(service.port, "GET", location, token, None, None, None);
+    assert_eq!(
+        answer.status,
+        204,
+        "the upload did not survive the restart:\n{}",
+        deployment.the_log()
+    );
+    assert_eq!(
+        answer.header("range"),
+        Some(format!("0-{}", first.len() - 1)),
+        "the status after the restart does not say how much there is"
+    );
+
+    // The client sends the rest where the status said.
+    let second = a_layer(2);
+    let file = deployment.directory.path().join("second.bin");
+    std::fs::write(&file, &second).expect("the second chunk is written");
+    let answer = call(
+        service.port,
+        "PATCH",
+        location,
+        token,
+        Some(&file),
+        Some("application/octet-stream"),
+        None,
+    );
+    assert_eq!(
+        answer.status,
+        202,
+        "the chunk after the restart was refused:\n{}",
+        deployment.the_log()
+    );
+
+    let whole: Vec<u8> = first.iter().chain(second.iter()).copied().collect();
+    let digest = the_digest(&whole);
+    let answer = call(
+        service.port,
+        "PUT",
+        &format!("{location}?digest=sha256:{digest}"),
+        token,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        answer.status,
+        201,
+        "the upload that crossed the restart was not published:\n{}",
+        deployment.the_log()
+    );
+
+    // And the blob is the two chunks, once each.
+    let into = deployment.directory.path().join("served.bin");
+    let answer = support::Curl::download(
+        service.port,
+        &the_oci_path("blobs", &format!("sha256:{digest}")),
+        token,
+        Some(&into),
+    )
+    .run();
+    assert_eq!(answer.status, 200, "the published blob is not served");
+    assert_eq!(
+        std::fs::read(&into).expect("the bytes are read"),
+        whole,
+        "the blob that crossed the restart is not the two chunks"
+    );
+}
+
+/// Un reinicio no pierde la subida: la sesion es durable (HSP-201).
+///
+/// En el perfil de grafo la sesion y su offset viven en el journal, y los
+/// bytes en el staging del CAS: un proceso que se cae a mitad de una subida
+/// no se lleva la sesion. El cliente pregunta por donde va, sigue desde ahi
+/// y la subida se publica con el digest de lo que mando, y el arranque no
+/// toca el staging de una sesion que sigue viva.
+#[test]
+fn a_restart_keeps_the_upload_and_it_completes() {
+    let mut case = the_case(
+        "OCI-PUSH-02 (reinicio)",
+        "una sesion de subida a medias",
+        "el proceso se muere de golpe, vuelve, y el cliente sigue",
+        "curl --request POST <upload> ; kill -9 <servicio> ; <servicio> ; curl --request PATCH <upload> ; curl --request PUT <upload>",
+    );
+    support::record_oci_push(case.clone());
+
+    let deployment = a_deployment();
+    let (location, token, first) = an_upload_cut_by_a_crash(&deployment, &[]);
+    let staging = deployment.staging_entries();
+
+    let mut service = deployment.start(&[]);
+    assert_eq!(
+        deployment.staging_entries(),
+        staging,
+        "the boot touched the staging of a live session"
+    );
+    the_client_finishes_the_upload(&deployment, &service, &location, &token, &first);
+
+    case.outcome =
+        "el offset sobrevive al reinicio, la subida se completa y el blob es exacto".to_string();
+    case.passed = true;
+    support::record_oci_push(case);
+
+    support::stop(&mut service);
+}
+
+/// La limpieza del arranque no retira el staging de una sesion viva.
+///
+/// El journal tiene la sesion abierta durante `oci_upload_ttl_secs`, y el
+/// staging es donde escribe la reanudacion: la edad de la limpieza nunca es
+/// mas corta que ese TTL. Aqui el TTL es mayor que `staging_max_age_secs`
+/// (el arnes lo fija a una hora) y el staging tiene dos horas: sigue en pie,
+/// y la subida se completa.
+#[test]
+fn the_boot_cleanup_keeps_the_staging_of_a_live_session() {
+    let mut case = the_case(
+        "OCI-PUSH-02 (limpieza del arranque)",
+        "una sesion viva cuyo staging es mas viejo que staging_max_age_secs",
+        "el proceso se muere y vuelve, y el cliente sigue",
+        "curl --request POST <upload> ; kill -9 <servicio> ; <servicio> ; curl --request PATCH <upload> ; curl --request PUT <upload>",
+    );
+    support::record_oci_push(case.clone());
+
+    let deployment = a_deployment();
+    let long_life = [("HODEI_SECURITY__OCI_UPLOAD_TTL_SECS", "86400")];
+    let (location, token, first) = an_upload_cut_by_a_crash(&deployment, &long_life);
     deployment.age_the_staging(std::time::Duration::from_secs(7200));
 
-    // Y vuelve.
-    let mut service = deployment.start(&[]);
+    let mut service = deployment.start(&long_life);
+    assert_eq!(
+        deployment.staging_entries().len(),
+        1,
+        "the boot removed the staging of a session that is still live"
+    );
+    the_client_finishes_the_upload(&deployment, &service, &location, &token, &first);
+
+    case.outcome =
+        "el staging de la sesion viva sobrevive al arranque y la subida se completa".to_string();
+    case.passed = true;
+    support::record_oci_push(case);
+
+    support::stop(&mut service);
+}
+
+/// Una subida que caduco no existe tras el reinicio, con el error explicito.
+///
+/// El TTL es la promesa del protocolo: pasado el, el cliente recibe
+/// `BLOB_UPLOAD_UNKNOWN`, no un `204` con un `Range` que luego no se puede
+/// escribir. Y el staging que dejo, ya viejo, se limpia al arrancar.
+#[test]
+fn an_upload_past_its_ttl_is_unknown_after_a_restart() {
+    let mut case = the_case(
+        "OCI-PUSH-02 (caducidad)",
+        "una sesion de subida a medias cuyo TTL vence mientras el proceso esta caido",
+        "el proceso vuelve y el cliente pregunta por la sesion",
+        "curl --request POST <upload> ; kill -9 <servicio> ; <servicio> ; curl <upload>",
+    );
+    support::record_oci_push(case.clone());
+
+    let deployment = a_deployment();
+    let short_life = [("HODEI_SECURITY__OCI_UPLOAD_TTL_SECS", "2")];
+    let (location, token, _first) = an_upload_cut_by_a_crash(&deployment, &short_life);
+
+    // The session expires while the process is down, and the staging it
+    // left grows old: the cleanup of the boot is the recovery operation.
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    deployment.age_the_staging(std::time::Duration::from_secs(7200));
+
+    let mut service = deployment.start(&short_life);
     let into = deployment.directory.path().join("error.bin");
     let answer = call(
         service.port,
@@ -1646,7 +1810,7 @@ fn a_restart_leaves_the_upload_in_an_explicit_state() {
     assert_eq!(
         answer.status,
         404,
-        "the upload survived the restart:\n{}",
+        "an expired upload is still announced:\n{}",
         deployment.the_log()
     );
     let body = String::from_utf8_lossy(&std::fs::read(&into).expect("the body")).into_owned();
@@ -1655,14 +1819,30 @@ fn a_restart_leaves_the_upload_in_an_explicit_state() {
         "the error does not speak OCI: {body}"
     );
 
-    // Y el staging que dejo el proceso muerto se limpio al arrancar.
+    // The chunk of a client that did not read the status is refused the
+    // same way, not with a retryable error.
+    let file = deployment.directory.path().join("late.bin");
+    std::fs::write(&file, a_layer(2)).expect("the chunk is written");
+    let answer = call(
+        service.port,
+        "PATCH",
+        &location,
+        &token,
+        Some(&file),
+        Some("application/octet-stream"),
+        None,
+    );
+    assert_eq!(answer.status, 404, "a chunk of an expired upload was taken");
+
     assert!(
         deployment.staging_entries().is_empty(),
         "the staging of the interrupted upload was left behind: {:?}",
         deployment.staging_entries()
     );
 
-    case.outcome = "BLOB_UPLOAD_UNKNOWN, y el staging envejecido se limpia al arrancar".to_string();
+    case.outcome =
+        "BLOB_UPLOAD_UNKNOWN pasado el TTL, y el staging envejecido se limpia al arrancar"
+            .to_string();
     case.passed = true;
     support::record_oci_push(case);
 
@@ -1739,17 +1919,10 @@ async fn the_admitted_artifact_can_be_inspected() {
         return;
     };
 
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(Path::new(&db_path))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").await.expect("ns");
-    db.use_db("artifacts").await.expect("db");
-
-    let catalog = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
-    );
-    catalog.initialize().await.expect("initialize");
+    // The real Dgraph catalog store of the deployment's own namespace.
+    let tenant = support::graph_profile::GraphTenant::from_locator(&db_path)
+        .expect("the locator names a graph tenant");
+    let catalog = tenant.catalog_store().await;
 
     // El asset del blob admitido, y el canal en que esta.
     let reference = catalog
