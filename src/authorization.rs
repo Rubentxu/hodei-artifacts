@@ -350,8 +350,10 @@ impl CachedAuthorizer {
             groups: principal
                 .groups()
                 .iter()
-                .map(|group| format!("{},", group.as_str()))
-                .collect(),
+                .fold(String::new(), |mut acc, group| {
+                    push_field(&mut acc, group.as_str());
+                    acc
+                }),
             action: format!(
                 "{}::{}",
                 request.action().service(),
@@ -364,27 +366,49 @@ impl CachedAuthorizer {
     }
 }
 
+/// Append `value` as a length-prefixed field so that no choice of attribute
+/// names or values (including `;`, `=`, `+`) can make two different
+/// attribute sets render to the same fingerprint.
+fn push_field(out: &mut String, value: &str) {
+    out.push_str(&value.len().to_string());
+    out.push(':');
+    out.push_str(value);
+}
+
 fn render_attributes(attributes: &Attributes) -> String {
     let mut rendered = String::new();
     for (name, value) in attributes {
-        rendered.push_str(name);
-        rendered.push('=');
+        push_field(&mut rendered, name);
         match value {
-            AttributeValue::String(value) => rendered.push_str(value),
-            AttributeValue::Bool(value) => rendered.push(if *value { '1' } else { '0' }),
-            AttributeValue::Long(value) => rendered.push_str(&value.to_string()),
-            AttributeValue::Entity(value) => rendered.push_str(value),
+            AttributeValue::String(value) => {
+                rendered.push('s');
+                push_field(&mut rendered, value);
+            }
+            AttributeValue::Bool(value) => rendered.push(if *value { 'T' } else { 'F' }),
+            AttributeValue::Long(value) => {
+                rendered.push('l');
+                push_field(&mut rendered, &value.to_string());
+            }
+            AttributeValue::Entity(value) => {
+                rendered.push('e');
+                push_field(&mut rendered, value);
+            }
             AttributeValue::Set(values) => {
+                rendered.push('S');
+                rendered.push_str(&values.len().to_string());
+                rendered.push('[');
                 for value in values {
-                    rendered.push_str(value);
-                    rendered.push('+');
+                    push_field(&mut rendered, value);
                 }
+                rendered.push(']');
             }
             // New hodei-authz values still render distinctively through Debug,
             // so a fingerprint change is conservative (recompute), never stale.
-            _ => rendered.push_str(&format!("{value:?}")),
+            _ => {
+                rendered.push('?');
+                push_field(&mut rendered, &format!("{value:?}"));
+            }
         }
-        rendered.push(';');
     }
     rendered
 }
@@ -1224,5 +1248,29 @@ mod tests {
             AttributeValue::String("org.other".into()),
         );
         assert_ne!(render_attributes(&first), render_attributes(&third));
+    }
+
+    #[test]
+    fn attribute_fingerprint_is_injective_over_delimiter_characters() {
+        // One attribute whose value smuggles the separators of a second one
+        // must not collide with two genuine attributes.
+        let mut smuggled = Attributes::new();
+        smuggled.insert("a".to_string(), AttributeValue::String("x;b=y".into()));
+        let mut genuine = Attributes::new();
+        genuine.insert("a".to_string(), AttributeValue::String("x".into()));
+        genuine.insert("b".to_string(), AttributeValue::String("y".into()));
+        assert_ne!(render_attributes(&smuggled), render_attributes(&genuine));
+
+        let mut joined = Attributes::new();
+        joined.insert(
+            "t".to_string(),
+            AttributeValue::Set(["a+b".to_string()].into_iter().collect()),
+        );
+        let mut split = Attributes::new();
+        split.insert(
+            "t".to_string(),
+            AttributeValue::Set(["a".to_string(), "b".to_string()].into_iter().collect()),
+        );
+        assert_ne!(render_attributes(&joined), render_attributes(&split));
     }
 }
