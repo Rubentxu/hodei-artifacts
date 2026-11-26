@@ -1,27 +1,27 @@
-//! El servicio de recoleccion: el censo, el dry-run y el barrido.
+//! The collection service: the census, the dry-run and the sweep.
 //!
-//! Une las tres fuentes --el catalogo (raices y retenciones), el almacen
-//! (los blobs y su edad) y el libro (la marca y el rastro)-- y deja que
-//! el plan puro decida. Sus reglas, de mas a menos importantes:
+//! It ties together the three sources --the catalog (roots and retentions), the store
+//! (the blobs and their age) and the ledger (the mark and the trail)-- and lets
+//! the pure plan decide. Its rules, from most to least important:
 //!
-//! 1. **Ante la duda, no se borra.** Si el censo o un manifiesto no se
-//!    puede leer, la pasada aborta: un grafo a medias dejaria sin
-//!    proteger lo que no se vio.
-//! 2. **El dry-run es el plan, y el barrido es el mismo plan.** Lo que
-//!    el informe dice reclamable es lo que el barrido puede borrar, y
-//!    nada mas.
-//! 3. **Marca y barrido son durables e idempotentes.** La pasada se
-//!    escribe antes de tocar un byte; un corte entre medias se reanuda
-//!    sin borrar dos veces y sin perder lo marcado.
-//! 4. **El borrado deja rastro.** La intencion se anota antes de borrar
-//!    y se confirma despues; el evento de auditoria sale al confirmar.
-//! 5. **Una sola pasada a la vez**, y cada borrado vuelve a comprobar la
-//!    edad bajo la barrera del almacen.
-//! 6. **El dry-run comparte censo.** Un plano del almacen vale lo mismo
-//!    para veinte peticiones que para una, y calcularlo veinte veces a la
-//!    vez no es mas fresco: es veinte grafos completos apilados en
-//!    memoria y en disco. Lo que borra --el barrido y el scrub-- toma
-//!    siempre su propio censo, al momento.
+//! 1. **When in doubt, nothing is deleted.** If the census or a manifest cannot
+//!    be read, the pass aborts: a half-built graph would leave unprotected
+//!    what was not seen.
+//! 2. **The dry-run is the plan, and the sweep is the same plan.** What
+//!    the report says is reclaimable is what the sweep can delete, and
+//!    nothing more.
+//! 3. **Mark and sweep are durable and idempotent.** The pass is
+//!    written before a byte is touched; a cut in between is resumed
+//!    without deleting twice and without losing what was marked.
+//! 4. **Deletion leaves a trail.** The intent is recorded before deleting
+//!    and confirmed afterwards; the audit event is emitted on confirmation.
+//! 5. **Only one pass at a time**, and each deletion re-checks the
+//!    age under the store's barrier.
+//! 6. **The dry-run shares the census.** A snapshot of the store is worth the same
+//!    for twenty requests as for one, and computing it twenty times at
+//!    once is not fresher: it is twenty complete graphs piled up in
+//!    memory and on disk. What deletes --the sweep and the scrub-- always
+//!    takes its own census, on the spot.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -50,86 +50,86 @@ const PLATFORM_SCOPE: &str = "platform";
 /// renews it before every candidate and releases it when it ends.
 const SWEEP_LEASE: Duration = Duration::from_secs(60);
 
-/// Por que una recoleccion no se hizo.
+/// Why a collection was not carried out.
 #[derive(Debug, thiserror::Error)]
 pub enum GcError {
-    /// El almacen no sabe listar ni borrar con barrera.
+    /// The store cannot list or delete with a barrier.
     #[error("the content store does not support reclamation")]
     Unsupported,
-    /// Ya hay una pasada en curso.
+    /// A pass is already in progress.
     #[error("a collection is already running")]
     Busy,
-    /// No se pudo saber que esta vivo, y por eso no se toca nada.
+    /// It could not be determined what is alive, and so nothing is touched.
     #[error("the state of the content is unknown, nothing was deleted: {0}")]
     Unknown(String),
-    /// El catalogo o el libro fallaron.
+    /// The catalog or the ledger failed.
     #[error("the catalog failed: {0}")]
     Ledger(#[from] CatalogError),
-    /// El almacen fallo.
+    /// The store failed.
     #[error("the content store failed: {0}")]
     Store(String),
-    /// La peticion no es valida.
+    /// The request is not valid.
     #[error("{0}")]
     Invalid(String),
 }
 
-/// El resultado de un barrido.
+/// The result of a sweep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SweepReport {
-    /// La pasada.
+    /// The pass.
     pub run_id: String,
-    /// Si es una pasada marcada antes y reanudada ahora.
+    /// Whether it is a pass marked earlier and resumed now.
     pub resumed: bool,
-    /// Cuantos blobs estaban marcados.
+    /// How many blobs were marked.
     pub marked: u64,
-    /// Cuantos se borraron en esta pasada.
+    /// How many were deleted in this pass.
     pub deleted: u64,
-    /// Los bytes liberados.
+    /// The bytes freed.
     pub bytes_freed: u64,
-    /// Cuantos se dejaron sin borrar porque dejaron de ser reclamables.
+    /// How many were left undeleted because they stopped being reclaimable.
     pub skipped: u64,
 }
 
-/// Como el censo trata un manifiesto que no se puede leer.
+/// How the census treats a manifest that cannot be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ManifestReads {
-    /// Un manifiesto ilegible es estado desconocido: la recoleccion no actua.
+    /// An unreadable manifest is unknown state: collection does not act.
     Strict,
-    /// Un manifiesto ausente o corrupto no aporta aristas y el censo sigue.
+    /// A missing or corrupt manifest contributes no edges and the census continues.
     Lenient,
 }
 
-/// La ventana maxima de validez del plano compartido del dry-run: un
-/// plano viejo por treinta segundos es un plano informado, no un plano
-/// roto; un plano viejo por horas no es un plano.
+/// The maximum validity window of the dry-run's shared plan: a
+/// plan that is thirty seconds old is an informed plan, not a
+/// broken one; a plan that is hours old is not a plan.
 const PLAN_CACHE_MAX_TTL: Duration = Duration::from_secs(30);
 
-/// El ultimo plano del dry-run: la generacion con la que se calculo, el
-/// instante en que se publico y el plano compartido.
+/// The last dry-run plan: the generation it was computed with, the
+/// instant it was published and the shared plan.
 type CachedPlan = (u64, Instant, Arc<Plan>);
 
-/// La recoleccion de basura del almacen.
+/// Garbage collection of the store.
 pub struct GcService {
     ledger: Arc<dyn ContentLedger>,
     store: Arc<dyn BlobStore>,
     grace: Duration,
-    /// Una sola pasada a la vez: dos barridos concurrentes escribirian
-    /// dos marcas y se pisarian el rastro.
+    /// Only one pass at a time: two concurrent sweeps would write
+    /// two marks and trample each other's trail.
     gate: Mutex<()>,
-    /// Cuanto vale un plano del dry-run: lo que mande la gracia, cortado
-    /// por el maximo. Con una gracia de milisegundos el plano no puede
-    /// valer mas que ella, porque envejece dentro de su propia ventana.
+    /// How long a dry-run plan is worth: whatever the grace period says, capped
+    /// at the maximum. With a grace of milliseconds the plan cannot be
+    /// worth more than it, because it ages inside its own window.
     plan_ttl: Duration,
-    /// El plano compartido. Se lee, se escribe y se tira sin sostener el
-    /// cerrojo a traves de un `await`: lo que tarda un censo se sostiene
-    /// con [`Self::plan_flight`], y aqui solo se mira y se publica.
+    /// The shared plan. It is read, written and dropped without holding the
+    /// lock across an `await`: what a census takes is held
+    /// with [`Self::plan_flight`], and here it is only looked at and published.
     plan_cache: Mutex<Option<CachedPlan>>,
-    /// El vuelo unico: quien calcula un censo lo sostiene; los demas
-    /// esperan aqui detras y entran al cache para recoger el resultado.
+    /// The single flight: whoever computes a census holds it; the others
+    /// wait behind it here and enter the cache to pick up the result.
     plan_flight: Mutex<()>,
-    /// La generacion del mundo. Cada mutacion que cambia lo que el plan
-    /// diria --retenciones, barridos-- la rompe, y un plano de una
-    /// generacion muerta no se sirve jamas.
+    /// The generation of the world. Every mutation that changes what the plan
+    /// would say --retentions, sweeps-- breaks it, and a plan from a
+    /// dead generation is never served.
     plan_generation: AtomicU64,
     /// Who this process is for the claim of a coordinated pass. Unique per
     /// process: two replicas exclude each other through the ledger, and a
@@ -138,7 +138,7 @@ pub struct GcService {
 }
 
 impl GcService {
-    /// Crea el servicio. Falla si el almacen no sabe reclamar.
+    /// Creates the service. Fails if the store cannot reclaim.
     pub fn new(
         ledger: Arc<dyn ContentLedger>,
         store: Arc<dyn BlobStore>,
@@ -160,7 +160,7 @@ impl GcService {
         })
     }
 
-    /// El periodo de gracia.
+    /// The grace period.
     pub fn grace(&self) -> Duration {
         self.grace
     }
@@ -185,7 +185,7 @@ impl GcService {
         self.store.reclaimer().ok_or(GcError::Unsupported)
     }
 
-    /// El plan de ahora: el dry-run. No escribe ni borra nada.
+    /// The plan as of now: the dry-run. It neither writes nor deletes anything.
     ///
     /// The plan is shared within a freshness window and computed by one
     /// census at a time: concurrent callers wait on the census instead of
@@ -226,19 +226,19 @@ impl GcService {
         }
     }
 
-    /// El censo y el plan que sale de el.
+    /// The census and the plan that comes out of it.
     ///
-    /// Devuelve tambien los blobs, porque el barrido necesita saber que
-    /// sigue en el almacen.
+    /// It also returns the blobs, because the sweep needs to know what
+    /// is still in the store.
     pub(crate) async fn census(&self) -> Result<(Plan, Vec<StoredBlob>), GcError> {
         self.census_with(ManifestReads::Strict).await
     }
 
-    /// Como [`Self::census`], con la politica de lectura de manifiestos.
+    /// Like [`Self::census`], with the manifest-reading policy.
     ///
-    /// `Lenient` es para el scrub: un manifiesto ausente o corrupto no
-    /// aborta el censo, porque eso es justo lo que el scrub tiene que
-    /// informar. Otros fallos de lectura siguen siendo estado desconocido.
+    /// `Lenient` is for the scrub: a missing or corrupt manifest does not
+    /// abort the census, because that is exactly what the scrub has to
+    /// report. Other read failures remain unknown state.
     pub(crate) async fn census_with(
         &self,
         reads: ManifestReads,
@@ -252,15 +252,15 @@ impl GcService {
                 GcError::Unknown(format!("the holds could not be read: {error}"))
             })?;
 
-        // Las aristas: lo que cada manifiesto vivo nombra. Se leen de
-        // los bytes del manifiesto, que es donde esta la verdad, y no
-        // se persisten: un indice aparte seria una segunda verdad.
+        // The edges: what each live manifest names. They are read from
+        // the manifest bytes, which is where the truth lives, and are not
+        // persisted: a separate index would be a second truth.
         let mut edges: HashMap<ContentDigest, Vec<ContentDigest>> = HashMap::new();
         let mut seen: HashSet<ContentDigest> = HashSet::new();
         for root in &roots {
-            // Un manifiesto OCI es el asset `manifests/<su digest>`. Una
-            // ruta cruda cualquiera que empiece por `manifests/` no lo es,
-            // y no puede dejar la recoleccion en estado desconocido.
+            // An OCI manifest is the asset `manifests/<its digest>`. Any raw
+            // path that starts with `manifests/` is not one,
+            // and cannot leave collection in unknown state.
             if root.kind != RootKind::Asset
                 || root.subject.strip_prefix("manifests/") != Some(root.digest.value.as_str())
             {
@@ -288,14 +288,14 @@ impl GcService {
                     )));
                 }
             };
-            // Las aristas son defensa en profundidad: cada capa y cada
-            // configuracion tiene ya su propia raiz `blobs/<digest>`, y
-            // cada hijo de un indice es un manifiesto con la suya. Un
-            // manifiesto que no se entiende (un fichero crudo con esa
-            // ruta, un tipo que el registro acepta y el censo no conoce)
-            // no aporta aristas, pero tampoco bloquea la recoleccion de
-            // todo el almacen: su propio contenido sigue protegido por la
-            // raiz que lo nombra.
+            // The edges are defense in depth: each layer and each
+            // config already has its own `blobs/<digest>` root, and
+            // each child of an index is a manifest with its own. A
+            // manifest that is not understood (a raw file with that
+            // path, a type the registry accepts and the census does not know)
+            // contributes no edges, but neither does it block collection of
+            // the whole store: its own content stays protected by the
+            // root that names it.
             match plan::manifest_edges(&bytes) {
                 Ok(children) => {
                     edges.insert(root.digest.clone(), children);
@@ -397,10 +397,10 @@ impl GcService {
         })
     }
 
-    /// Barre: marca lo reclamable y lo borra.
+    /// Sweeps: marks what is reclaimable and deletes it.
     ///
-    /// Si hay una pasada marcada sin completar --un corte entre la marca
-    /// y el barrido--, la **reanuda** en lugar de abrir otra.
+    /// If there is a marked pass that was not completed --a cut between the mark
+    /// and the sweep--, it **resumes** it instead of opening another.
     pub async fn sweep(&self, actor: &str, account: &str) -> Result<SweepReport, GcError> {
         let _single = self.gate.try_lock().map_err(|_| GcError::Busy)?;
         let reclaimer = self.reclaimer()?;
@@ -410,7 +410,7 @@ impl GcService {
         let run = match pending {
             Some(run) => run,
             None => {
-                // Primer escaneo: lo que se marca.
+                // First scan: what gets marked.
                 let (plan, _) = self.census().await?;
                 let candidates: Vec<RunCandidate> = plan
                     .reclaimable()
@@ -431,19 +431,19 @@ impl GcService {
                     deleted: 0,
                     bytes_freed: 0,
                     swept_at: None,
-                    // Modo legacy: sin scope ni generacion de claim.
+                    // Legacy mode: no scope or claim generation.
                     scope: None,
                     generation: None,
                 };
-                // La marca se escribe antes de tocar un byte.
+                // The mark is written before a byte is touched.
                 self.ledger.open_run(&run).await?;
                 run
             }
         };
 
-        // Segundo escaneo: lo marcado se reevalua con un censo fresco.
-        // Algo pudo publicarse, retenerse o rejuvenecer desde la marca;
-        // solo se borra lo que sigue siendo reclamable ahora.
+        // Second scan: what was marked is re-evaluated with a fresh census.
+        // Something may have been published, retained or become younger since the mark;
+        // only what is still reclaimable now is deleted.
         let (fresh, blobs) = self.census().await?;
         let reclaimable_now: HashSet<String> = fresh
             .entries
@@ -460,10 +460,10 @@ impl GcService {
             let mine = trace.filter(|trace| trace.run_id == run.id);
 
             match mine {
-                // Ya confirmado por esta pasada: no se repite.
+                // Already confirmed by this pass: not repeated.
                 Some(trace) if trace.state == DeletionState::Confirmed => continue,
-                // Se anoto la intencion y el blob ya no esta: el corte
-                // fue entre el borrado y la confirmacion.
+                // The intent was recorded and the blob is no longer there: the cut
+                // was between the deletion and the confirmation.
                 Some(trace) if !present.contains(&key) => {
                     self.confirm(&trace, candidate.length, account).await?;
                     continue;
@@ -484,7 +484,7 @@ impl GcService {
                 account: account.to_string(),
                 state: DeletionState::Intended,
                 at: Utc::now(),
-                // Modo legacy: el barrido no observa version de blob.
+                // Legacy mode: the sweep does not observe blob version.
                 marker: None,
             };
             self.ledger.record_deletion(&intended).await?;
@@ -497,8 +497,8 @@ impl GcService {
                     self.confirm(&intended, length, account).await?;
                 }
                 Ok(Reclaimed::Gone) => {
-                    // Se fue entre el censo y el borrado: no lo borramos
-                    // nosotros ahora, y no se cuenta como borrado nuestro.
+                    // It went away between the census and the deletion: we do not delete it
+                    // now, and it is not counted as our deletion.
                     skipped += 1;
                 }
                 Ok(Reclaimed::Fresh) => skipped += 1,
@@ -511,8 +511,8 @@ impl GcService {
             }
         }
 
-        // Los totales salen del rastro durable, no de esta ejecucion:
-        // una pasada reanudada cuenta lo que borro antes del corte.
+        // The totals come from the durable trail, not from this execution:
+        // a resumed pass counts what it deleted before the cut.
         let mut deleted = 0u64;
         let mut bytes_freed = 0u64;
         for candidate in &run.candidates {
@@ -558,12 +558,12 @@ impl GcService {
         Ok(())
     }
 
-    /// Las retenciones registradas.
+    /// The registered retentions.
     pub async fn holds(&self) -> Result<Vec<ContentHold>, GcError> {
         Ok(self.ledger.holds().await?)
     }
 
-    /// Pone una retencion.
+    /// Places a retention.
     pub async fn place_hold(
         &self,
         actor: &str,
@@ -592,7 +592,7 @@ impl GcService {
         Ok(hold)
     }
 
-    /// Libera una retencion. Devuelve si existia.
+    /// Releases a retention. Returns whether it existed.
     pub async fn release_hold(&self, id: &str) -> Result<bool, GcError> {
         let released = self.ledger.release_hold(id).await?;
         if released {
