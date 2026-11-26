@@ -22,25 +22,15 @@ import { Card, CardContent } from '@/components/ui/Card';
 import { Spinner } from '@/components/ui/Spinner';
 
 import { failureOf } from '../api/errors';
-import type { RepositoryMode, RepositorySummary, ServeChannel } from '../api/types';
+import type {
+  RepositoryMode,
+  RepositorySummary,
+  ServeChannel,
+} from '../api/types';
 import { useRepositories } from '../hooks/useConsole';
 import { FailureNotice } from './FailureNotice';
+import { formatLabel } from './formatLabels';
 import { RepositoryCreateDialog } from './RepositoryCreateDialog';
-
-/** The label of a format, as the console names it. */
-const FORMAT_LABELS: Record<string, string> = {
-  raw: 'Raw',
-  oci: 'OCI',
-  maven2: 'Maven 2',
-  npm: 'npm',
-  pypi: 'PyPI',
-  cargo: 'Cargo',
-  nuget: 'NuGet',
-  go: 'Go',
-  helm: 'Helm',
-  apt: 'APT',
-  rpm: 'RPM',
-};
 
 /** The label of a modality, as the console names it. */
 const MODE_LABELS: Record<RepositoryMode, string> = {
@@ -98,8 +88,8 @@ export const RepositoriesView = () => {
               There is no repository you may read
             </p>
             <p className="text-sm text-gray-500">
-              A repository that is not yours does not come here. Create one,
-              or ask for the permission to read the ones that already exist.
+              A repository that is not yours does not come here. Create one, or
+              ask for the permission to read the ones that already exist.
             </p>
           </CardContent>
         </Card>
@@ -111,7 +101,10 @@ export const RepositoriesView = () => {
         </ul>
       )}
 
-      <RepositoryCreateDialog open={creating} onClose={() => setCreating(false)} />
+      <RepositoryCreateDialog
+        open={creating}
+        onClose={() => setCreating(false)}
+      />
     </div>
   );
 };
@@ -141,13 +134,13 @@ const RepositoryCard = ({ repository }: RepositoryCardProps) => (
           <div className="rounded bg-gray-100 px-2 py-1">
             <dt className="inline text-gray-500">Format </dt>
             <dd className="inline font-medium text-gray-800">
-              {FORMAT_LABELS[repository.format] ?? repository.format}
+              {formatLabel(repository.format)}
             </dd>
           </div>
           <div className="rounded bg-gray-100 px-2 py-1">
             <dt className="inline text-gray-500">Modality </dt>
             <dd className="inline font-medium text-gray-800">
-              {MODE_LABELS[repository.mode]}
+              {MODE_LABELS[repository.mode] ?? repository.mode}
             </dd>
           </div>
         </dl>
