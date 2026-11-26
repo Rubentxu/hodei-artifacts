@@ -426,7 +426,7 @@ pipeline {
                 // report of a previous run is not evidence of this one: they are
                 // deleted before running, so that a suite that passes without
                 // writing them shows.
-                sh("rm -f target/uat/oci-index-conformity.md target/uat/doc9.md")
+                sh("rm -f target/uat/oci-index-conformity.md target/uat/doc9.md target/uat/oci-push-conformity.md")
                 sh(
                     "cargo test --workspace " + listOf(
                         "--test hsp118_bundle_contract",
@@ -438,6 +438,10 @@ pipeline {
                         "--test doc9_uat",
                         "--test oci_pull_contract",
                         "--test oci_index_contract",
+                        // HSP-314 P6: the OCI push contract, whose restart case
+                        // crosses a kill -9 of the service with a durable session
+                        // (HSP-201) and finishes the upload on the new process.
+                        "--test oci_push_contract",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
                 // La UAT de doc-9 trae sus dieciseis escenarios, cada uno
@@ -468,6 +472,23 @@ pipeline {
                 sh("cat target/uat/oci-index-conformity.md")
                 archiveArtifacts(
                     artifacts = "target/uat/oci-index-conformity.md",
+                    allowEmptyArchive = false,
+                )
+                // El informe del push OCI es la evidencia de la otra
+                // mitad de la distribucion, y es **otro** informe: el de
+                // la superficie cruda lo leen los gates de la
+                // conformidad RAW, y un caso de OCI en el no dice nada
+                // de lo que el gate cree.
+                sh(
+                    "if [ ! -f target/uat/oci-push-conformity.md ]; then " +
+                        "echo 'the OCI push report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                // Y el del push OCI, que dice que el protocolo se habla
+                // con un cliente de verdad.
+                sh("cat target/uat/oci-push-conformity.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/oci-push-conformity.md",
                     allowEmptyArchive = false,
                 )
                 // Y el de la UAT de doc-9, que es la evidencia de la
@@ -632,10 +653,6 @@ pipeline {
         // vive en exactamente una suite (tests/ci_suites.rs).
         stage("legacy (embedded engine)") {
             timestamps {
-                // El informe de una ejecucion anterior no es evidencia de esta:
-                // se borra antes de correr, para que una suite que pase sin
-                // escribirlo se note.
-                sh("rm -f target/uat/oci-push-conformity.md")
                 sh(
                     "cargo test --workspace --features legacy " + listOf(
                         "--test audit_events",
@@ -647,28 +664,7 @@ pipeline {
                         // concesiones del grafo.
                         "--test hsp113_search_e2e",
                         "--test hsp132_registry_list",
-                        // La sesion de subida OCI es durable en el perfil de grafo: el
-                        // caso del reinicio de esta suite asume una sesion en memoria
-                        // y no es portable sin una decision de producto.
-                        "--test oci_push_contract",
                     ).joinToString(" ")
-                )
-                // El informe del push OCI es la evidencia de la otra
-                // mitad de la distribucion, y es **otro** informe: el de
-                // la superficie cruda lo leen los gates de la
-                // conformidad RAW, y un caso de OCI en el no dice nada
-                // de lo que el gate cree.
-                sh(
-                    "if [ ! -f target/uat/oci-push-conformity.md ]; then " +
-                        "echo 'the OCI push report is missing: the suite did not write it' >&2; " +
-                        "exit 1; fi"
-                )
-                // Y el del push OCI, que dice que el protocolo se habla
-                // con un cliente de verdad.
-                sh("cat target/uat/oci-push-conformity.md")
-                archiveArtifacts(
-                    artifacts = "target/uat/oci-push-conformity.md",
-                    allowEmptyArchive = false,
                 )
             }
         }

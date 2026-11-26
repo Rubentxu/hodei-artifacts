@@ -178,6 +178,11 @@ pub struct ContentConfig {
     ///
     /// Minimum: 60 seconds. Below that the age stops being a margin.
     ///
+    /// The boot never applies a margin shorter than `oci_upload_ttl_secs`
+    /// plus a minute: a resumable OCI session (HSP-201) keeps its staging
+    /// for its whole TTL, and cleaning it earlier would break a session
+    /// the journal still serves.
+    ///
     /// Default: 3600 seconds.
     #[serde(default = "the_default_staging_max_age_secs")]
     pub staging_max_age_secs: u64,

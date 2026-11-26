@@ -668,7 +668,6 @@ path = "tests/oci_pull_contract.rs"
 [[test]]
 name = "oci_push_contract"
 path = "tests/oci_push_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "raw_conformity_uat"

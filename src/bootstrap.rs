@@ -509,14 +509,10 @@ async fn open_content_store(
 > {
     let (chosen, content_check) = the_content_store(config).await?;
     let content: Arc<dyn hodei_hub::blob::BlobStore> = chosen.as_blob();
+    let margin = Duration::from_secs(the_staging_margin_secs(config));
     let cleanup = match chosen {
-        ChosenContentStore::Filesystem(ref directory) => directory
-            .clean_expired_staging(Duration::from_secs(config.content.staging_max_age_secs)),
-        ChosenContentStore::S3(ref store) => {
-            store
-                .clean_staging(Duration::from_secs(config.content.staging_max_age_secs))
-                .await
-        }
+        ChosenContentStore::Filesystem(ref directory) => directory.clean_expired_staging(margin),
+        ChosenContentStore::S3(ref store) => store.clean_staging(margin).await,
     };
     match cleanup {
         Ok(cleanup) => {
@@ -548,6 +544,28 @@ async fn open_content_store(
         }
     }
     Ok((content, content_check))
+}
+
+/// The age past which the boot may remove an abandoned staging.
+///
+/// A resumable OCI session (HSP-201) outlives the process that wrote it: the
+/// journal keeps the session open for `oci_upload_ttl_secs` after its last
+/// chunk, and the staging is what the resume writes into. Removing a staging
+/// younger than that TTL breaks a session the journal still serves, so the
+/// margin is never shorter than the TTL plus a minute of slack (the journal
+/// stamps the session slightly after the chunk reached the file).
+fn the_staging_margin_secs(config: &AppConfig) -> u64 {
+    let configured = config.content.staging_max_age_secs;
+    let ttl = config.security.oci_upload_ttl_secs;
+    if configured < ttl {
+        warn!(
+            configured,
+            ttl,
+            "staging_max_age_secs is shorter than the OCI upload TTL: the boot cleanup keeps \
+             the staging of a session that is still resumable"
+        );
+    }
+    configured.max(ttl.saturating_add(60))
 }
 
 /// Bootstrap the deployment whose authority is the graph (HSP-209).
@@ -1440,6 +1458,22 @@ async fn register_iam_schema(
         .map_err(|e| BootstrapError::SchemaRegistration(e.to_string()))?;
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod staging_margin_tests {
+    use super::*;
+
+    /// The cleanup margin never undercuts the life of a resumable session.
+    #[test]
+    fn the_staging_margin_never_undercuts_the_upload_ttl() {
+        let mut config = AppConfig::default();
+        config.content.staging_max_age_secs = 3600;
+        config.security.oci_upload_ttl_secs = 86_400;
+        assert_eq!(the_staging_margin_secs(&config), 86_460);
+        config.security.oci_upload_ttl_secs = 600;
+        assert_eq!(the_staging_margin_secs(&config), 3600);
+    }
 }
 
 #[cfg(feature = "legacy")]
