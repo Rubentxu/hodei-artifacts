@@ -560,4 +560,29 @@ pub trait ContentLedger: Send + Sync {
             "complete_scoped_run: this ledger cannot fence a coordinated pass",
         ))
     }
+
+    /// Give the claim of `scope` back once its pass is over.
+    ///
+    /// A pass that finished has nothing left to protect: without this a
+    /// replacement process (a restart, another replica) would find the
+    /// scope held by the finished owner until the lease ran out. Fenced
+    /// like every other operation: only the live token releases. The
+    /// default is a no-op, the lease then simply expires.
+    async fn release_gc_lease(&self, scope: &str, lease: &GcLease) -> Result<(), CatalogError> {
+        let _ = (scope, lease);
+        Ok(())
+    }
+
+    /// The accounts whose roots make up the whole census of the store.
+    ///
+    /// The content store is shared by every account, so a platform-wide
+    /// collection pages the roots of each of them (`root_page` per
+    /// account) instead of asking for one global materialised census.
+    /// The answer is bounded by the number of accounts, never by the
+    /// number of roots.
+    async fn census_accounts(&self) -> Result<Vec<String>, CatalogError> {
+        Err(CatalogError::unavailable(
+            "census_accounts: this ledger cannot page the census",
+        ))
+    }
 }

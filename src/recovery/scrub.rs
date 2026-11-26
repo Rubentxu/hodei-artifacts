@@ -307,7 +307,6 @@ pub fn assess(evidence: &Evidence<'_>, elapsed: Duration) -> ScrubReport {
 
 /// El servicio de scrub: lee el almacen y el catalogo y arma el informe.
 pub struct Scrubber {
-    ledger: Arc<dyn ContentLedger>,
     store: Arc<dyn BlobStore>,
     gc: GcService,
     /// Un scrub lee todo el almacen: solo hay uno a la vez en el servicio.
@@ -324,7 +323,6 @@ impl Scrubber {
         let gc = GcService::new(ledger.clone(), store.clone(), grace)
             .map_err(|error| RecoveryError::Store(error.to_string()))?;
         Ok(Self {
-            ledger,
             store,
             gc,
             running: tokio::sync::Mutex::new(()),
@@ -359,8 +357,8 @@ impl Scrubber {
                 other => RecoveryError::Store(other.to_string()),
             })?;
         let roots = self
-            .ledger
-            .content_roots()
+            .gc
+            .census_roots()
             .await
             .map_err(|error| RecoveryError::Store(error.to_string()))?;
 

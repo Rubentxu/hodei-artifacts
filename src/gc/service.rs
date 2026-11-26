@@ -30,15 +30,25 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use hodei_catalog::{
-    CatalogError, ContentHold, ContentLedger, DeletionState, GcDeletion, GcRun, HoldScope,
-    RootKind, RunCandidate, RunState,
+    CatalogError, ContentHold, ContentLedger, ContentRoot, DeletionState, GcDeletion, GcRun,
+    HoldScope, RootKind, RunCandidate, RunState,
 };
 use hodei_evidence::ContentDigest;
 use hodei_hub::{BlobError, BlobReclaim, BlobStore, ReadPolicy, Reclaimed, StoredBlob};
 use serde::Serialize;
 use tokio::sync::Mutex;
 
+use super::pass::{CoordinatedPass, PassConfig, ROOT_PAGE_LIMIT};
 use super::plan::{self, EdgeError, Input, Plan, Verdict};
+
+/// The scope under which the platform-wide sweep of a fenced ledger claims
+/// its pass: the content store is shared by every account, so there is one
+/// collection per deployment, not one per account.
+const PLATFORM_SCOPE: &str = "platform";
+
+/// How long the claim of a platform sweep lives between renewals. The pass
+/// renews it before every candidate and releases it when it ends.
+const SWEEP_LEASE: Duration = Duration::from_secs(60);
 
 /// Por que una recoleccion no se hizo.
 #[derive(Debug, thiserror::Error)]
@@ -121,6 +131,10 @@ pub struct GcService {
     /// diria --retenciones, barridos-- la rompe, y un plano de una
     /// generacion muerta no se sirve jamas.
     plan_generation: AtomicU64,
+    /// Who this process is for the claim of a coordinated pass. Unique per
+    /// process: two replicas exclude each other through the ledger, and a
+    /// restarted process never mistakes itself for its dead predecessor.
+    pass_owner: String,
 }
 
 impl GcService {
@@ -142,6 +156,7 @@ impl GcService {
             plan_cache: Mutex::new(None),
             plan_flight: Mutex::new(()),
             plan_generation: AtomicU64::new(0),
+            pass_owner: format!("gc-{}", uuid::Uuid::new_v4().simple()),
         })
     }
 
@@ -231,10 +246,7 @@ impl GcService {
         let blobs = self.reclaimer()?.list_blobs().await.map_err(|error| {
             GcError::Unknown(format!("the store could not be listed: {error:?}"))
         })?;
-        let roots =
-            self.ledger.content_roots().await.map_err(|error| {
-                GcError::Unknown(format!("the roots could not be read: {error}"))
-            })?;
+        let roots = self.census_roots().await?;
         let holds =
             self.ledger.holds().await.map_err(|error| {
                 GcError::Unknown(format!("the holds could not be read: {error}"))
@@ -310,6 +322,79 @@ impl GcService {
             roots_are_complete: true,
         });
         Ok((plan, blobs))
+    }
+
+    /// Every root of the catalog, read the way the ledger can give them.
+    ///
+    /// A ledger that fences a coordinated pass has no global census (it
+    /// would materialise the whole graph): the roots come page by page,
+    /// account by account. Any other ledger answers with one read. A
+    /// failure is an unknown state, never a partial census.
+    pub(crate) async fn census_roots(&self) -> Result<Vec<ContentRoot>, GcError> {
+        let unknown = |error: &dyn std::fmt::Display| {
+            GcError::Unknown(format!("the roots could not be read: {error}"))
+        };
+        if !self.ledger.supports_fenced_pass() {
+            return self.ledger.content_roots().await.map_err(|e| unknown(&e));
+        }
+        self.platform_roots(ROOT_PAGE_LIMIT)
+            .await
+            .map(|(roots, _)| roots)
+            .map_err(|error| match error {
+                GcError::Ledger(error) => unknown(&error),
+                other => other,
+            })
+    }
+
+    /// The roots of every account, in pages of `page_limit`. Returns the
+    /// roots and how many pages were read.
+    pub(crate) async fn platform_roots(
+        &self,
+        page_limit: usize,
+    ) -> Result<(Vec<ContentRoot>, u64), GcError> {
+        let mut roots = Vec::new();
+        let mut pages = 0u64;
+        for account in self.ledger.census_accounts().await? {
+            let (account_roots, account_pages) =
+                scope_roots(&self.ledger, &account, page_limit).await?;
+            roots.extend(account_roots);
+            pages += account_pages;
+        }
+        Ok((roots, pages))
+    }
+
+    /// The sweep the API runs: the mode that fits the ledger.
+    ///
+    /// A ledger that fences gets one coordinated pass over the whole
+    /// platform, claimed durably, so the claim and the pending mark are
+    /// read by key and never by a global scan. Any other ledger gets the
+    /// single-process [`Self::sweep`].
+    pub async fn sweep_platform(
+        self: &Arc<Self>,
+        actor: &str,
+        account: &str,
+    ) -> Result<SweepReport, GcError> {
+        if self.ledger.supports_fenced_pass() {
+            self.sweep_fenced(actor).await
+        } else {
+            self.sweep(actor, account).await
+        }
+    }
+
+    async fn sweep_fenced(self: &Arc<Self>, actor: &str) -> Result<SweepReport, GcError> {
+        let config = PassConfig::new(PLATFORM_SCOPE, self.pass_owner.clone(), SWEEP_LEASE)
+            .across_accounts()
+            .on_behalf_of(actor);
+        let report = CoordinatedPass::new(Arc::clone(self), config).run().await?;
+        let removed = report.deleted + report.quarantined;
+        Ok(SweepReport {
+            run_id: report.run_id,
+            resumed: report.resumed,
+            marked: report.marked,
+            deleted: report.deleted,
+            bytes_freed: report.bytes_freed,
+            skipped: report.marked.saturating_sub(removed),
+        })
     }
 
     /// Barre: marca lo reclamable y lo borra.
@@ -514,6 +599,31 @@ impl GcService {
             self.invalidate_plan_cache();
         }
         Ok(released)
+    }
+}
+
+/// Pages the roots of one scope until the census is complete. Returns the
+/// roots and how many pages were read.
+pub(crate) async fn scope_roots(
+    ledger: &Arc<dyn ContentLedger>,
+    scope: &str,
+    page_limit: usize,
+) -> Result<(Vec<ContentRoot>, u64), GcError> {
+    let mut roots = Vec::new();
+    let mut pages = 0u64;
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = ledger.root_page(scope, cursor.as_deref(), page_limit).await?;
+        pages += 1;
+        let last = page.roots.last().map(|root| root.digest.to_string());
+        let has_more = page.has_more;
+        roots.extend(page.roots);
+        if !has_more {
+            return Ok((roots, pages));
+        }
+        cursor = Some(last.ok_or_else(|| {
+            GcError::Unknown("a full root page carried no cursor".to_string())
+        })?);
     }
 }
 

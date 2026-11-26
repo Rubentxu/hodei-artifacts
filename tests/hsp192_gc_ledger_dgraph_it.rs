@@ -32,12 +32,14 @@ use chrono::Utc;
 use hodei_artifacts_api::gc::{CoordinatedPass, GcService, PassAction, PassConfig};
 use hodei_catalog::{
     AllowAllAuthorizer, CatalogError, CatalogWriter, ContentLedger, DeletionState, DigestScope,
-    GcDeletion, GcRun, PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor,
+    ContentHold, GcDeletion, GcRun, HoldScope, PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, RootKind, RunCandidate, RunState, repository_hrn,
 };
 use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
-use hodei_graph_client::{GraphClient, GraphClientConfig};
+use hodei_graph_client::{
+    GraphClient, GraphClientConfig, GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction,
+};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 
 /// El directorio de evidencia de HSP-192: los object stores de prueba
@@ -729,4 +731,164 @@ async fn the_coordinated_pass_sweeps_the_orphan_and_leaves_the_referenced_alone(
     let second = pass.run().await.expect("the second pass");
     assert_eq!(second.marked, 0, "{second:?}");
     assert_eq!(second.deleted, 0);
+}
+
+/// A finished pass hands its claim back, so the next owner takes the scope
+/// without waiting for the lease to run out; a stale token cannot release.
+#[tokio::test]
+async fn a_released_claim_is_free_for_the_next_owner_and_only_the_live_token_releases() {
+    let Some(client) = fresh_client().await else {
+        return;
+    };
+    let store = open_store(client).await;
+    let scope = account("release");
+
+    let first = ledger(&store)
+        .claim_gc_pass(&scope, "worker-a", Duration::from_secs(300), Utc::now())
+        .await
+        .expect("the first claim");
+    let busy = ledger(&store)
+        .claim_gc_pass(&scope, "worker-b", Duration::from_secs(300), Utc::now())
+        .await;
+    assert!(matches!(busy, Err(CatalogError::Conflict { .. })), "{busy:?}");
+
+    let mut stale = first.clone();
+    stale.token = "not-the-live-token".to_string();
+    assert!(matches!(
+        ledger(&store).release_gc_lease(&scope, &stale).await,
+        Err(CatalogError::PreconditionFailed { .. })
+    ));
+
+    ledger(&store)
+        .release_gc_lease(&scope, &first)
+        .await
+        .expect("the live token releases");
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let next = ledger(&store)
+        .claim_gc_pass(&scope, "worker-b", Duration::from_secs(300), Utc::now())
+        .await
+        .expect("a released scope is free");
+    assert_eq!(next.generation, first.generation + 1, "a new generation");
+}
+
+/// The hold lifecycle on the graph: placing it, listing it, releasing it
+/// (once), and the account census that feeds the platform-wide sweep.
+#[tokio::test]
+async fn a_hold_is_released_once_and_the_census_lists_the_accounts_with_repositories() {
+    let Some(client) = fresh_client().await else {
+        return;
+    };
+    let store = open_store(client).await;
+    let owner = account("hold");
+
+    let hold = ContentHold {
+        id: format!("hold-{}", nonce()),
+        scope: HoldScope::Account {
+            account: owner.clone(),
+        },
+        reason: "release lifecycle".to_string(),
+        actor: "ops".to_string(),
+        created_at: Utc::now(),
+        expires_at: None,
+    };
+    ledger(&store).place_hold(&hold).await.expect("place");
+    assert!(
+        ledger(&store)
+            .holds()
+            .await
+            .expect("list")
+            .iter()
+            .any(|seen| seen.id == hold.id)
+    );
+    assert!(ledger(&store).release_hold(&hold.id).await.expect("release"));
+    assert!(
+        !ledger(&store).release_hold(&hold.id).await.expect("again"),
+        "releasing twice is not a second release"
+    );
+    assert!(
+        !ledger(&store)
+            .holds()
+            .await
+            .expect("list")
+            .iter()
+            .any(|seen| seen.id == hold.id)
+    );
+
+    store
+        .create_repository(&owner, a_descriptor(&owner, "raw"))
+        .await
+        .expect("the repository is created");
+    let accounts = ledger(&store).census_accounts().await.expect("accounts");
+    assert_eq!(
+        accounts.iter().filter(|seen| **seen == owner).count(),
+        1,
+        "one row per account, not per repository: {accounts:?}"
+    );
+}
+
+/// An account whose rows still root a digest but that has no repository row
+/// (a repository removed without cascade, a direct seed, a migration) is
+/// part of the census: its digest stays retained, never reclaimable.
+#[tokio::test]
+async fn an_account_with_roots_and_no_repository_row_still_retains_its_digest() {
+    let Some(client) = fresh_client().await else {
+        return;
+    };
+    let store = open_store(Arc::clone(&client)).await;
+    let owner = account("norepo");
+
+    let cas_root = std::path::Path::new(UAT_ROOT).join(format!("cas-{owner}"));
+    std::fs::create_dir_all(&cas_root).expect("the UAT evidence directory");
+    let content = Arc::new(FileBlobStore::new(&cas_root).expect("the file CAS"));
+
+    store
+        .create_repository(&owner, a_descriptor(&owner, "raw"))
+        .await
+        .expect("the repository");
+    let bytes = format!("rooted-without-repository-{owner}").into_bytes();
+    content.put(&bytes).await.expect("the blob");
+    store
+        .publish(&owner, a_publication(&owner, &bytes, "rooted"))
+        .await
+        .expect("the publication");
+
+    // Remove ONLY the repository row: the asset, version and reference rows
+    // of the account stay, as after a removal without cascade.
+    client
+        .upsert(GraphUpsertTransaction {
+            query: format!(
+                "{{ r as var(func: eq(hodei.catalog.repository.account, \"{owner}\")) }}"
+            ),
+            blocks: vec![GraphMutationBlock {
+                cond: Some("eq(len(r), 1)".to_owned()),
+                set_nquads: String::new(),
+                delete_nquads: "uid(r) * * .\n".to_owned(),
+            }],
+            commit_now: true,
+        })
+        .await
+        .expect("the repository row is removed");
+
+    let accounts = ledger(&store).census_accounts().await.expect("accounts");
+    assert!(
+        accounts.contains(&owner),
+        "the census must include an account that only has roots: {accounts:?}"
+    );
+
+    let service = GcService::new(
+        ledger(&store),
+        Arc::clone(&content) as Arc<dyn BlobStore>,
+        GRACE,
+    )
+    .expect("the file store reclaims");
+    let plan = serde_json::to_value(&*service.dry_run().await.expect("the dry-run"))
+        .expect("the plan serialises");
+    let digest = ContentDigest::of_bytes(&bytes).to_string();
+    let entry = plan["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["digest"] == digest.as_str())
+        .unwrap_or_else(|| panic!("the plan lists {digest}"));
+    assert_eq!(entry["verdict"], "retained", "{entry:#}");
 }
