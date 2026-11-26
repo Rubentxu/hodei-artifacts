@@ -1,6 +1,6 @@
 //! The reified graph projection, over the graph authority.
 //!
-//! This is the Dgraph port of [`crate::surreal::graph`]: the same
+//! This is the Dgraph port of the retired Surreal graph store: the same
 //! observable semantics — whole changesets, relations reified with
 //! supports, a relation whose last support was withdrawn reading as
 //! UNKNOWN — mapped onto the primitives the stack already proves.

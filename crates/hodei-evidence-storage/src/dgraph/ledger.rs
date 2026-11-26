@@ -1,6 +1,6 @@
 //! The ledger of events, over the graph authority.
 //!
-//! This is the Dgraph port of [`crate::surreal::ledger`]: the same
+//! This is the Dgraph port of the retired Surreal ledger: the same
 //! observable semantics — proven by the ledger contract — implemented on
 //! the store the graph-first deployment runs. What is ported is the
 //! SEMANTICS, not the file: the record-identity trick of the local

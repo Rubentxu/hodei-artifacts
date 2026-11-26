@@ -2,7 +2,7 @@
 name = "hodei-catalog-storage"
 version = "0.1.0"
 edition = "2024"
-description = "El adaptador SurrealDB del catalogo de artefactos de Hodei."
+description = "El adaptador Dgraph del catalogo de artefactos de Hodei."
 license = "MIT"
 
 [dependencies]
@@ -23,11 +23,6 @@ sha2 = { workspace = true }
 kernel = { path = "../kernel" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-# El suelo de este crate es 2.7, no el del workspace: la garantia de que
-# dos escritores concurrentes del mismo registro se arbitran entre si
-# depende del motor persistente, y eso se midio en 2.7. Con un motor
-# anterior, el perdedor no se pierde: el ultimo gana en silencio.
-surrealdb = { version = "2.7.0", features = ["kv-mem", "kv-rocksdb"], optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 # El aviso de que un evento de auditoría no se pudo escribir: perder el
@@ -35,17 +30,5 @@ tokio = { workspace = true }
 # callarse.
 tracing = { workspace = true }
 
-[features]
-default = ["legacy"]
-legacy = ["dep:surrealdb"]
-
-# La medicion de la busqueda escribe en el motor embebido.
-[[bin]]
-name = "search_benchmark"
-required-features = ["legacy"]
-
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
-# The measurement of the search seeds a hundred thousand assets in a
-# test database: it needs a directory to throw away when it is done.
-tempfile = { workspace = true }

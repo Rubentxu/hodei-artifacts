@@ -3,9 +3,8 @@
 //! Gated on HODEI_GRAPH_IT_ENDPOINT like every IT of the stack. What it
 //! proves, against the real engine:
 //!
-//! - PARITY: the bounded lineage and the bounded dependency traversal
-//!   say what the Surreal reference says for the same changesets (the
-//!   reference runs on an in-memory Surreal inside the test);
+//! - SHAPE: the bounded lineage and the bounded dependency traversal
+//!   say the expected things for a known changeset;
 //! - CYCLES: a graph with a cycle neither hangs the walk nor
 //!   duplicates a node in the answer;
 //! - RETIRED SUPPORTS: an edge whose last support was withdrawn is not
@@ -26,11 +25,8 @@ use hodei_evidence::domain::graph::NodeKind;
 use hodei_evidence::ports::graph::{BoundedGraphQuery, GraphQuery, GraphReadLimits, GraphWriter};
 use hodei_evidence::{EvidenceId, GraphChangeSet, GraphNode, GraphRelation, RelationType};
 use hodei_evidence_storage::DgraphGraphStore;
-use hodei_evidence_storage::surreal::SurrealGraphStore;
 use hodei_graph_client::{GraphClient, GraphClientConfig, schema::ensure_ready};
 use kernel::Hrn;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, Mem};
 
 fn config_from_env() -> Option<GraphClientConfig> {
     let endpoint = std::env::var("HODEI_GRAPH_IT_ENDPOINT").ok()?;
@@ -68,17 +64,6 @@ async fn connect() -> Option<Arc<GraphClient>> {
         report.decision, report.binary_version, report.stored_version, report.applied
     );
     Some(Arc::new(client))
-}
-
-/// The reference store, on an in-memory Surreal: the parity oracle of
-/// the bounded reads, with no dependency on any server.
-async fn reference_store() -> SurrealGraphStore<Db> {
-    let db = Arc::new(Surreal::new::<Mem>(()).await.expect("memory db"));
-    db.use_ns("hodei")
-        .use_db("hsp200")
-        .await
-        .expect("the namespace");
-    SurrealGraphStore::new(db)
 }
 
 fn nonce() -> String {
@@ -199,54 +184,34 @@ fn lineage_changeset(tenant: &Hrn) -> GraphChangeSet {
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// AC1 — the bounded lineage and the bounded traversal of the Dgraph
-/// port say what the reference says for the same changesets, and the
-/// bounded probe agrees with the unbounded read of the same store.
+/// port say the expected things for a known changeset.
 #[tokio::test]
-async fn bounded_reads_match_the_reference_and_the_unbounded_read() {
+async fn bounded_reads_say_the_expected_things() {
     let Some(client) = connect().await else {
         return;
     };
     let _guard = SERIAL.lock().await;
     let store = DgraphGraphStore::new(client.clone());
-    let reference = reference_store().await;
     let tenant = tenant(&format!("pr{}", &nonce()[..6]));
     let changes = lineage_changeset(&tenant);
     let artifact = hrn_of(&tenant, "Artifact", "a-1");
     let repository = hrn_of(&tenant, "Repository", "r-1");
 
     store
-        .apply(changes.clone())
-        .await
-        .expect("the changeset commits in Dgraph");
-    reference
         .apply(changes)
         .await
-        .expect("the changeset commits in the reference");
+        .expect("the changeset commits in Dgraph");
 
-    // PARITY: the bounded lineage of both ports, for the same changeset,
-    // says the same things.
+    // SHAPE: the bounded lineage of the changeset.
     let probe = GraphReadLimits::probe();
     let dgraph_lineage = store
         .bounded_lineage(&tenant, &artifact, &probe)
         .await
         .expect("the bounded lineage reads");
-    let reference_lineage = reference
-        .bounded_lineage(&tenant, &artifact, &probe)
-        .await
-        .expect("the reference lineage reads");
     assert!(
         !dgraph_lineage.trace.incomplete,
         "the probe bound does not truncate this graph: {:?}",
         dgraph_lineage.trace
-    );
-    assert!(
-        !reference_lineage.trace.incomplete,
-        "the probe bound does not truncate the reference either: {:?}",
-        reference_lineage.trace
-    );
-    assert_eq!(
-        dgraph_lineage.lineage, reference_lineage.lineage,
-        "the two ports answer the same lineage for the same changeset"
     );
     assert_eq!(
         dgraph_lineage.lineage.builds.len(),
@@ -291,40 +256,16 @@ async fn bounded_reads_match_the_reference_and_the_unbounded_read() {
         repository_artifacts
     );
 
-    // PARITY: the bounded dependency traversal agrees with the
-    // reference traversal on the nodes and edges it reached.
+    // SHAPE: the bounded dependency traversal reaches every edge.
     let dgraph_deps = store
         .bounded_dependencies(&tenant, &repository, &probe)
         .await
         .expect("the bounded traversal reads");
-    let reference_deps = reference
-        .bounded_dependencies(&tenant, &repository, &probe)
-        .await
-        .expect("the reference traversal reads");
-    let dgraph_node_ids: Vec<String> = dgraph_deps.nodes.iter().map(|n| n.id.to_string()).collect();
-    let reference_node_ids: Vec<String> = reference_deps
-        .nodes
-        .iter()
-        .map(|n| n.id.to_string())
-        .collect();
-    assert_eq!(
-        dgraph_node_ids, reference_node_ids,
-        "the two ports reach the same nodes"
-    );
     let dgraph_edge_pairs: Vec<String> = dgraph_deps
         .edges
         .iter()
         .map(|r| format!("{}|{}", r.from, r.to))
         .collect();
-    let reference_edge_pairs: Vec<String> = reference_deps
-        .edges
-        .iter()
-        .map(|r| format!("{}|{}", r.from, r.to))
-        .collect();
-    assert_eq!(
-        dgraph_edge_pairs, reference_edge_pairs,
-        "the two ports cross the same edges"
-    );
     assert_eq!(dgraph_edge_pairs.len(), 5, "every relation is crossed");
 
     // TRACEABILITY: the receipt explains the walk.
