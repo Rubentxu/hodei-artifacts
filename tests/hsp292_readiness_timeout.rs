@@ -22,6 +22,11 @@ use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_r
 use serde_json::Value;
 use tower::ServiceExt;
 
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
+
 /// The wall-clock ceiling of one readiness request.
 const CEILING: Duration = Duration::from_millis(2500);
 
@@ -42,14 +47,10 @@ impl ReadinessProbe for Silent {
     }
 }
 
-async fn the_app(probe: Arc<dyn ReadinessProbe>) -> (Router, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("a temp dir");
+async fn the_app(probe: Arc<dyn ReadinessProbe>) -> (Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
     config.content.cas_path = tmp.path().join("cas").to_string_lossy().into_owned();
     let state = bootstrap(
         &config,

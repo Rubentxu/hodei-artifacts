@@ -275,7 +275,90 @@ pipeline {
                         "--test hsp112_pypi_cli",
                         "--test admin_surface",
                         "--test iam_scope",
+                        // HSP-314 F4 S2b (A'): las suites en proceso (bootstrap con
+                        // `Workdir`) y la readiness con fakes.
+                        "--test capsule_read",
+                        "--test hsp222_search_cursor_surface",
+                        "--test hsp243_user_guides_recipes",
+                        "--test hsp292_readiness_timeout",
+                        "--test hsp237_graph_readiness",
+                        "--test iam_audit",
+                        "--test playground_isolation",
                     ).joinToString(" ") + " -- --test-threads=1"
+                )
+                // HSP-314 F4 S2b (lote A): el binario real sobre el perfil de grafo con
+                // los clientes de cada formato. Varios comandos para acotar el tiempo
+                // de cada uno (un namespace por despliegue: 1-3 s de alta).
+                // Maven, npm, PyPI, trust, proxy y migracion.
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp105_trust_e2e",
+                        "--test hsp106_proxy_e2e",
+                        "--test hsp109_maven_cli",
+                        "--test hsp109_maven_e2e",
+                        "--test hsp110_maven_cli",
+                        "--test hsp110_maven_remote_e2e",
+                        "--test hsp111_npm_cli",
+                        "--test hsp112_pypi_e2e",
+                        "--test hsp143_npm_namespaces_cli",
+                        "--test hsp123_migration_e2e",
+                        "--test hsp135_vigencia_e2e",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+                // Cargo, NuGet, Go, Helm, apt, yum, Terraform, Conan y Galaxy. Los
+                // clientes reales (dotnet, podman, helm, go, conan via CONAN_BIN,
+                // ansible-galaxy 2.19 via GALAXY_BIN) no se saltan: la suite hace
+                // assert de que existen y falla si faltan.
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp119_cargo_cli",
+                        "--test hsp119_cargo_e2e",
+                        "--test hsp120_dotnet_client",
+                        "--test hsp120_nuget_e2e",
+                        "--test hsp121_go_client",
+                        "--test hsp121_helm_oci",
+                        "--test hsp122_apt_client",
+                        "--test hsp122_apt_e2e",
+                        "--test hsp122_yum_client",
+                        "--test hsp122_yum_e2e",
+                        "--test hsp158_terraform_modules_client",
+                        "--test hsp159_conan_client",
+                        "--test hsp217_galaxy_client",
+                        "--test hsp232_go_group",
+                        "--test hsp235_rpm_proxy",
+                        "--test hsp300_go_sumdb",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+                // Registry lab, upstreams reales (red externa), OCI proxy/group, raw,
+                // guias nativas, auditoria de formatos y el informe de conformidad
+                // cruda (`raw_conformity_uat`).
+                sh("rm -f target/uat/raw-conformity.md")
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp223_registry_lab",
+                        "--test hsp224_maven_central_real",
+                        "--test hsp225_npm_registry_real",
+                        "--test hsp226_pypi_registry_real",
+                        "--test hsp227_raw_external",
+                        "--test hsp228_oci_proxy",
+                        "--test hsp229_oci_group",
+                        "--test hsp288_native_guides",
+                        "--test hsp296_formats_audit",
+                        "--test raw_conformity_uat",
+                        "--test raw_hosted_restart_contract",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+                sh(
+                    "if [ ! -f target/uat/raw-conformity.md ]; then " +
+                        "echo 'the conformity report is missing: the suite did not write it' >&2; " +
+                        "exit 1; fi"
+                )
+                // El informe se lee en la salida de la ejecución: una
+                // conformidad que nadie puede leer no es una conformidad.
+                sh("cat target/uat/raw-conformity.md")
+                archiveArtifacts(
+                    artifacts = "target/uat/raw-conformity.md",
+                    allowEmptyArchive = false,
                 )
             }
         }
@@ -433,118 +516,54 @@ pipeline {
                 // Los informes de una ejecucion anterior no son evidencia de esta:
                 // se borran antes de correr, para que una suite que pase sin
                 // escribirlos se note.
-                sh("rm -f target/uat/raw-conformity.md target/uat/oci-push-conformity.md target/uat/oci-index-conformity.md target/uat/doc9.md")
+                sh("rm -f target/uat/oci-push-conformity.md target/uat/oci-index-conformity.md target/uat/doc9.md")
                 sh(
                     "cargo test --workspace --features legacy " + listOf(
-                        "--test capsule_read",
                         "--test hsp118_bundle_contract",
                         "--test hsp126_capsule_oci",
                         "--test audit_events",
                         "--test http_contract",
-                        "--test iam_audit",
                         // La readiness y la liveness son dos preguntas
                         // distintas (HSP-237): con el almacen desconectado
                         // en caliente, la readiness deja de ser 200 y la
                         // liveness no. Arranca el motor embebido.
                         "--test hsp237_readiness",
                         "--test iam_policy_timestamps",
-                        "--test playground_isolation",
                         "--test policy_circuits",
                         "--test repository_create",
                         "--test repository_read",
                         "--test har04_raw_hosted_contract",
                         "--test hsp113_search_e2e",
-                        // La superficie HTTP del cursor keyset (HSP-222):
-                        // el contrato vive en el almacen (HSP-191) y los
-                        // IT de Dgraph lo ejercitan (HSP-147); lo que se
-                        // fija aqui es que /api/v1/search lo acepta, lo
-                        // propaga, lo echo, rechaza por su nombre el que
-                        // no se lee o el de otra cuenta y no degrada a
-                        // offset. Almacen falso in-process: lane rapida.
-                        "--test hsp222_search_cursor_surface",
                         "--test hsp114_console_contract",
                         "--test hsp132_registry_list",
                         "--test hsp88_investigation_query",
                         "--test hsp89_investigation_freshness",
                         "--test hsp134_risk_facts_e2e",
                         "--test hsp142_capability_matrix",
-                        "--test hsp243_user_guides_recipes",
-                        "--test hsp288_native_guides",
                         "--test bootstrap_integration",
                         "--test production_auth",
-                        "--test raw_hosted_restart_contract",
-                        "--test raw_conformity_uat",
                         "--test blob_integrity_contract",
                         "--test doc9_uat",
                         "--test oci_pull_contract",
                         "--test oci_push_contract",
                         "--test oci_index_contract",
                         "--test hsp104_gc_e2e",
-                        "--test hsp223_registry_lab",
-                        "--test hsp224_maven_central_real",
-                        "--test hsp225_npm_registry_real",
-                        "--test hsp226_pypi_registry_real",
-                        "--test hsp227_raw_external",
-                        "--test hsp228_oci_proxy",
-                        "--test hsp229_oci_group",
-                        "--test hsp105_trust_e2e",
-                        "--test hsp106_proxy_e2e",
                         "--test hsp107_proxy_cache_e2e",
                         "--test hsp108_group_e2e",
-                        "--test hsp109_maven_e2e",
-                        "--test hsp109_maven_cli",
-                        "--test hsp110_maven_remote_e2e",
-                        "--test hsp110_maven_cli",
                         "--test hsp111_npm_e2e",
-                        "--test hsp111_npm_cli",
-                        "--test hsp112_pypi_e2e",
                         // La direccion publica del despliegue (HSP-238): lo
                         // que el registro anuncia lo decide la
                         // configuracion y no la peticion.
                         "--test hsp238_public_url",
                         "--test hsp143_namespaces_e2e",
-                        "--test hsp143_npm_namespaces_cli",
-                        "--test hsp119_cargo_e2e",
-                        "--test hsp119_cargo_cli",
-                        "--test hsp120_dotnet_client",
-                        "--test hsp120_nuget_e2e",
-                        "--test hsp121_go_client",
                         "--test hsp121_go_e2e",
-                        "--test hsp232_go_group",
-                        // Modulo publico real a traves del group Go, verificado contra
-                        // sum.golang.org y un h1 fijado; muta el zip (HSP-300).
-                        "--test hsp300_go_sumdb",
-                        // La readiness del perfil de grafo (HSP-237): con un
-                        // Dgraph de mentira que cae y se recupera, la
-                        // readiness depende del alpha y la liveness no.
-                        "--test hsp237_graph_readiness",
-                        // El timeout HTTP de la readiness (HSP-292): un probe
-                        // que no contesta da 503 con timeout en menos de
-                        // 2,5 s, sin Dgraph ni S3.
-                        "--test hsp292_readiness_timeout",
-                        "--test hsp121_helm_oci",
-                        "--test hsp122_apt_client",
-                        "--test hsp122_apt_e2e",
-                        "--test hsp122_yum_client",
-                        "--test hsp122_yum_e2e",
-                        // El proxy rpm (HSP-235): el repodata del upstream se
-                        // sirve tal cual, con su checksum comprobado.
-                        "--test hsp235_rpm_proxy",
-                        // Los formatos adicionales: mirror y registry de
-                        // Terraform, Conan, Ansible Galaxy y Hugging Face.
-                        // Los clientes reales (terraform, conan,
-                        // ansible-galaxy, hf) NO se saltan: la suite hace
-                        // assert de que la herramienta existe y falla si
-                        // falta. El mirror de Terraform se prueba por
-                        // protocolo (curl y un upstream falso), no con el
-                        // cliente terraform.
+                        // Los formatos adicionales que siguen en el motor embebido:
+                        // mirror de Terraform (brecha medida: el bootstrap del
+                        // perfil de grafo no cablea `signing` ni `public_url`) y
+                        // Hugging Face (siembra HF sin portar).
                         "--test hsp157_terraform_mirror",
-                        "--test hsp296_formats_audit",
                         "--test hsp297_format_prefixes",
                         "--test hsp297_trusted_listings",
-                        "--test hsp158_terraform_modules_client",
-                        "--test hsp159_conan_client",
-                        "--test hsp217_galaxy_client",
                         "--test hsp218_hf_client",
                         // Residuales de la pila de formatos (HSP-304): terraform
                         // init real contra el mirror sobre https verificado
@@ -556,17 +575,10 @@ pipeline {
                         // ruta, repositorio, cuenta y expiracion; rotacion; falla
                         // cerrado sin clave; sin secretos en el log.
                         "--test hsp313_signed_archive_url",
-                        "--test hsp123_migration_e2e",
                         "--test hsp124_quota_e2e",
-                        "--test hsp135_vigencia_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",
                     ).joinToString(" ")
-                )
-                sh(
-                    "if [ ! -f target/uat/raw-conformity.md ]; then " +
-                        "echo 'the conformity report is missing: the suite did not write it' >&2; " +
-                        "exit 1; fi"
                 )
                 // El informe del push OCI es la evidencia de la otra
                 // mitad de la distribucion, y es **otro** informe: el de
@@ -594,13 +606,6 @@ pipeline {
                 // admite variables de shell en los literales, y una
                 // comprobacion con variables es lo que hace falta.
                 sh("bash scripts/check-doc9-uat.sh target/uat/doc9.md")
-                // El informe se lee en la salida de la ejecución: una
-                // conformidad que nadie puede leer no es una conformidad.
-                sh("cat target/uat/raw-conformity.md")
-                archiveArtifacts(
-                    artifacts = "target/uat/raw-conformity.md",
-                    allowEmptyArchive = false,
-                )
                 // Y el del push OCI, que dice que el protocolo se habla
                 // con un cliente de verdad.
                 sh("cat target/uat/oci-push-conformity.md")
@@ -664,7 +669,7 @@ pipeline {
                 // `sh` es una consola distinta: el veredicto se da al
                 // final, con la evidencia ya archivada.
                 sh(
-                    "cargo test --workspace --features legacy --test oci_e2e_contract -- --test-threads=1 " +
+                    "cargo test --workspace --test oci_e2e_contract -- --test-threads=1 " +
                         "> target/uat/oci-e2e.log 2>&1; echo $? > target/uat/oci-e2e.status"
                 )
                 // El log y el informe se leen **antes** de fallar: la

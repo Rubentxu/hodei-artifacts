@@ -407,12 +407,10 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp105_trust_e2e"
 path = "tests/hsp105_trust_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp106_proxy_e2e"
 path = "tests/hsp106_proxy_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp107_proxy_cache_e2e"
@@ -427,27 +425,22 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp109_maven_cli"
 path = "tests/hsp109_maven_cli.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp109_maven_e2e"
 path = "tests/hsp109_maven_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp110_maven_cli"
 path = "tests/hsp110_maven_cli.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp110_maven_remote_e2e"
 path = "tests/hsp110_maven_remote_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp111_npm_cli"
 path = "tests/hsp111_npm_cli.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp111_npm_e2e"
@@ -461,7 +454,6 @@ path = "tests/hsp112_pypi_cli.rs"
 [[test]]
 name = "hsp112_pypi_e2e"
 path = "tests/hsp112_pypi_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp113_search_e2e"
@@ -482,27 +474,22 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp119_cargo_cli"
 path = "tests/hsp119_cargo_cli.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp119_cargo_e2e"
 path = "tests/hsp119_cargo_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp120_dotnet_client"
 path = "tests/hsp120_dotnet_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp120_nuget_e2e"
 path = "tests/hsp120_nuget_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp121_go_client"
 path = "tests/hsp121_go_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp121_go_e2e"
@@ -512,32 +499,26 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp121_helm_oci"
 path = "tests/hsp121_helm_oci.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp122_apt_client"
 path = "tests/hsp122_apt_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp122_apt_e2e"
 path = "tests/hsp122_apt_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp122_yum_client"
 path = "tests/hsp122_yum_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp122_yum_e2e"
 path = "tests/hsp122_yum_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp123_migration_e2e"
 path = "tests/hsp123_migration_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp124_quota_e2e"
@@ -558,7 +539,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp135_vigencia_e2e"
 path = "tests/hsp135_vigencia_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp137_ciclo_cve_e2e"
@@ -583,7 +563,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp143_npm_namespaces_cli"
 path = "tests/hsp143_npm_namespaces_cli.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp157_terraform_mirror"
@@ -593,17 +572,14 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp158_terraform_modules_client"
 path = "tests/hsp158_terraform_modules_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp159_conan_client"
 path = "tests/hsp159_conan_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp217_galaxy_client"
 path = "tests/hsp217_galaxy_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp218_hf_client"
@@ -613,47 +589,38 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp223_registry_lab"
 path = "tests/hsp223_registry_lab.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp224_maven_central_real"
 path = "tests/hsp224_maven_central_real.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp225_npm_registry_real"
 path = "tests/hsp225_npm_registry_real.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp226_pypi_registry_real"
 path = "tests/hsp226_pypi_registry_real.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp227_raw_external"
 path = "tests/hsp227_raw_external.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp228_oci_proxy"
 path = "tests/hsp228_oci_proxy.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp229_oci_group"
 path = "tests/hsp229_oci_group.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp232_go_group"
 path = "tests/hsp232_go_group.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp235_rpm_proxy"
 path = "tests/hsp235_rpm_proxy.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp238_public_url"
@@ -663,12 +630,10 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp288_native_guides"
 path = "tests/hsp288_native_guides.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp296_formats_audit"
 path = "tests/hsp296_formats_audit.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp297_format_prefixes"
@@ -683,7 +648,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp300_go_sumdb"
 path = "tests/hsp300_go_sumdb.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp304_format_access"
@@ -720,7 +684,6 @@ required-features = ["legacy"]
 [[test]]
 name = "oci_e2e_contract"
 path = "tests/oci_e2e_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "oci_index_contract"
@@ -740,12 +703,10 @@ required-features = ["legacy"]
 [[test]]
 name = "raw_conformity_uat"
 path = "tests/raw_conformity_uat.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "raw_hosted_restart_contract"
 path = "tests/raw_hosted_restart_contract.rs"
-required-features = ["legacy"]
 
 
 
@@ -771,7 +732,6 @@ required-features = ["legacy"]
 [[test]]
 name = "capsule_read"
 path = "tests/capsule_read.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp132_registry_list"
@@ -781,7 +741,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp222_search_cursor_surface"
 path = "tests/hsp222_search_cursor_surface.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp237_readiness"
@@ -791,7 +750,6 @@ required-features = ["legacy"]
 [[test]]
 name = "hsp237_graph_readiness"
 path = "tests/hsp237_graph_readiness.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp241_community_quickstart"
@@ -804,12 +762,10 @@ path = "tests/hsp243_user_guides.rs"
 [[test]]
 name = "hsp243_user_guides_recipes"
 path = "tests/hsp243_user_guides_recipes.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp292_readiness_timeout"
 path = "tests/hsp292_readiness_timeout.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "http_contract"
@@ -819,7 +775,6 @@ required-features = ["legacy"]
 [[test]]
 name = "iam_audit"
 path = "tests/iam_audit.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "iam_scope"
@@ -828,7 +783,6 @@ path = "tests/iam_scope.rs"
 [[test]]
 name = "playground_isolation"
 path = "tests/playground_isolation.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "policy_circuits"

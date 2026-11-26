@@ -211,6 +211,9 @@ impl GraphTenant {
                 self.password.clone(),
             ),
             ("HODEI_CONTENT__BACKEND".into(), "filesystem".into()),
+            // `config/dgraph.toml` keeps interrupted uploads a day; the suites
+            // assume the default of the code (an hour), as on the embedded profile.
+            ("HODEI_CONTENT__STAGING_MAX_AGE_SECS".into(), "3600".into()),
         ]
     }
 

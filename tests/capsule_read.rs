@@ -26,8 +26,12 @@ use hodei_evidence::domain::evidence::{
 };
 use hodei_evidence::{ContentDigest, ContentRef};
 use kernel::Hrn;
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 struct TestAuthenticator;
 
@@ -173,15 +177,11 @@ use hodei_authz::AuthorizationRequest;
 async fn app_with_evidence(
     authorizer: Arc<dyn AuthorizerPort>,
     reader: Arc<dyn EvidenceReader>,
-) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,

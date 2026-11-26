@@ -19,6 +19,11 @@ use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_r
 use hodei_graph_client::{GraphClientError, GraphHealthPort, GraphReadiness};
 use tower::ServiceExt;
 
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
+
 /// What the fake alpha answers.
 #[derive(Clone, Copy)]
 enum Mode {
@@ -76,14 +81,10 @@ fn graph_probe(graph: Arc<FakeGraph>) -> ProfileProbe {
     ProfileProbe::new().with_graph(graph)
 }
 
-async fn app(probe: Arc<dyn ReadinessProbe>) -> (Router, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("a temp dir");
+async fn app(probe: Arc<dyn ReadinessProbe>) -> (Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
     config.content.cas_path = tmp.path().join("cas").to_string_lossy().into_owned();
     config.repository.durable = true;
     let state = bootstrap(
