@@ -41,6 +41,24 @@ export const theAudience = 'hodei-artifacts';
 /** The principal of the fixture. */
 export const theSubject = 'hrn:hodei:iam::acme:User/alice';
 
+/**
+ * The other principals of the account, for the Policy Studio.
+ *
+ * The studio separates duties: the author of a revision cannot approve it,
+ * so a lane that only had `alice` could save but never activate. The
+ * fixture signs the principals the Cedar bundle of the lane grants (or
+ * does not grant) differently:
+ *
+ * - `alice`: the editor. Everything the example bundle grants her.
+ * - `carol`: the approver, a different principal with the admin grant.
+ * - `viewer`: reads the studio and nothing else (no write, no move).
+ * - `bob`: no grants at all; the gate refuses the whole studio.
+ */
+export const theStudioPrincipals = ['carol', 'viewer', 'bob'];
+
+/** The HRN of a principal of the account. */
+export const subjectOf = name => `hrn:hodei:iam::acme:User/${name}`;
+
 /** The account of the fixture. */
 export const theAccount = 'acme';
 
@@ -53,12 +71,16 @@ const base64url = value => Buffer.from(value).toString('base64url');
  * The signature is computed over the header and the payload with the
  * shared secret, which is what the service verifies.
  */
-export const theToken = (expiresInSeconds = 3600) => {
+export const theToken = (expiresInSeconds = 3600) =>
+  aTokenFor(theSubject, expiresInSeconds);
+
+/** A token for a principal named, signed the same way. */
+export const aTokenFor = (subject, expiresInSeconds = 3600) => {
   const header = base64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const now = Math.floor(Date.now() / 1000);
   const payload = base64url(
     JSON.stringify({
-      sub: theSubject,
+      sub: subject,
       account: theAccount,
       iss: theIssuer,
       aud: theAudience,
@@ -84,3 +106,12 @@ export const theTokenPath = resolve(
   'e2e',
   'token.txt'
 );
+
+/**
+ * Where the fixture leaves the token of another principal.
+ *
+ * Same reason as above: the secret lives in the fixture, so the tests
+ * read the token from a file and do not sign one of their own.
+ */
+export const theTokenPathOf = name =>
+  resolve(repositoryRoot, 'target', 'e2e', `token-${name}.txt`);
