@@ -83,9 +83,50 @@ test.describe('the console with the keyboard', () => {
     await expect(page.getByRole('dialog')).toHaveCount(0);
   });
 
-  test('the repositories are reachable with the keyboard', async ({
+  test('the narrow-screen navigation dialog contains tab focus and restores its trigger', async ({
     page,
   }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/');
+
+    const trigger = page.getByRole('button', { name: 'Open navigation menu' });
+    await trigger.click();
+
+    const dialog = page.getByRole('dialog', { name: 'Mobile navigation menu' });
+    await expect(dialog).toBeVisible();
+    const links = dialog
+      .getByRole('navigation', {
+        name: 'Mobile primary navigation',
+      })
+      .getByRole('link');
+    const firstLink = links.nth(0);
+    await expect(firstLink).toBeFocused();
+
+    const secondLink = links.nth(1);
+    const thirdLink = links.nth(2);
+    const fourthLink = links.nth(3);
+    const logout = dialog.getByRole('button', { name: 'Logout' });
+    for (const next of [secondLink, thirdLink, fourthLink, logout]) {
+      await page.keyboard.press('Tab');
+      await expect(next).toBeFocused();
+    }
+
+    await page.keyboard.press('Tab');
+    const focusRemainsInDialog = await dialog.evaluate(
+      element =>
+        element.contains(document.activeElement) ||
+        document.activeElement === document.body
+    );
+    expect(focusRemainsInDialog).toBe(true);
+    await page.keyboard.press('Tab');
+    await expect(firstLink).toBeFocused();
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+
+  test('the repositories are reachable with the keyboard', async ({ page }) => {
     await page.goto('/console/repositories');
 
     const link = page.getByRole('link', { name: theRepository, exact: true });
