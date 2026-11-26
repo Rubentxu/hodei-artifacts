@@ -76,6 +76,12 @@ pub struct PassConfig {
     pub lease_for: Duration,
     /// La cota de paginas del censo.
     pub page_limit: usize,
+    /// Whether the census spans every account of the deployment (the
+    /// platform-wide sweep) instead of the one account the scope names.
+    pub all_accounts: bool,
+    /// The person on whose behalf the pass runs, recorded as the actor of
+    /// the run and of its deletions. Defaults to the owner.
+    pub actor: Option<String>,
 }
 
 impl PassConfig {
@@ -86,7 +92,26 @@ impl PassConfig {
             owner: owner.into(),
             lease_for,
             page_limit: ROOT_PAGE_LIMIT,
+            all_accounts: false,
+            actor: None,
         }
+    }
+
+    /// The census spans every account of the deployment: the content store
+    /// is shared, so a root of any account keeps a blob alive.
+    pub fn across_accounts(mut self) -> Self {
+        self.all_accounts = true;
+        self
+    }
+
+    /// Records `actor` as who asked for the pass.
+    pub fn on_behalf_of(mut self, actor: impl Into<String>) -> Self {
+        self.actor = Some(actor.into());
+        self
+    }
+
+    fn actor(&self) -> &str {
+        self.actor.as_deref().unwrap_or(&self.owner)
     }
 
     /// Cambia la cota de pagina (las pruebas la bajan para forzar el
@@ -274,31 +299,14 @@ impl CoordinatedPass {
                 GcError::Unknown(format!("the holds could not be read: {error}"))
             })?;
 
-        let mut roots = Vec::new();
-        let mut pages = 0u64;
-        let mut cursor: Option<String> = None;
-        let mut complete;
-        loop {
-            let page = self
-                .ledger()
-                .root_page(
-                    &self.config.scope,
-                    cursor.as_deref(),
-                    self.config.page_limit,
-                )
-                .await?;
-            pages += 1;
-            let last = page.roots.last().map(|root| root.digest.to_string());
-            let has_more = page.has_more;
-            roots.extend(page.roots);
-            complete = !has_more;
-            if complete {
-                break;
-            }
-            cursor = Some(last.ok_or_else(|| {
-                GcError::Unknown("a full root page carried no cursor".to_string())
-            })?);
-        }
+        let (roots, pages) = if self.config.all_accounts {
+            self.service.platform_roots(self.config.page_limit).await?
+        } else {
+            super::service::scope_roots(self.ledger(), &self.config.scope, self.config.page_limit)
+                .await?
+        };
+        // Reaching here means every page was read: a failure above aborts.
+        let complete = true;
 
         // Las aristas de manifiesto, sobre las raices ya paginadas.
         let mut edges: HashMap<ContentDigest, Vec<ContentDigest>> = HashMap::new();
@@ -371,7 +379,7 @@ impl CoordinatedPass {
                     id: format!("gc-{}", uuid::Uuid::new_v4().simple()),
                     state: RunState::Marked,
                     grace_secs: self.service.grace().as_secs(),
-                    actor: self.config.owner.clone(),
+                    actor: self.config.actor().to_string(),
                     candidates,
                     marked_at: Self::now(),
                     deleted: 0,
@@ -510,7 +518,7 @@ impl CoordinatedPass {
                 digest: candidate.digest.clone(),
                 length: candidate.length,
                 run_id: run.id.clone(),
-                actor: self.config.owner.clone(),
+                actor: self.config.actor().to_string(),
                 account: self.config.scope.clone(),
                 state: DeletionState::Intended,
                 at: Self::now(),
@@ -551,6 +559,16 @@ impl CoordinatedPass {
             .await
             .map_err(Self::busy_or_ledger)?;
         self.service.invalidate_plan_cache();
+        // The pass is over: hand the claim back so the next process does
+        // not wait for the lease to run out. A failure here is harmless,
+        // the lease expires by itself.
+        if let Err(error) = self
+            .ledger()
+            .release_gc_lease(&self.config.scope, &lease)
+            .await
+        {
+            tracing::warn!(%error, "the claim of the finished pass was not released");
+        }
 
         Ok(PassReport {
             run_id: run.id,
@@ -679,7 +697,7 @@ impl CoordinatedPass {
             digest: candidate.digest.clone(),
             length: candidate.length,
             run_id: run.id.clone(),
-            actor: self.config.owner.clone(),
+            actor: self.config.actor().to_string(),
             account: self.config.scope.clone(),
             state: DeletionState::Confirmed,
             at: Self::now(),

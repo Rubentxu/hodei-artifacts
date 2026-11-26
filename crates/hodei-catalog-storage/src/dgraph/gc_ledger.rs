@@ -772,6 +772,69 @@ impl DgraphCatalogStore {
         Ok(back)
     }
 
+    /// Gives the claim back when the pass is over: the lease expires now.
+    ///
+    /// Guarded by the live token, so a zombie cannot release the claim of
+    /// the new generation. Without it, the process that replaces the one
+    /// that finished (a restart, another replica) would find the scope
+    /// held until the lease ran out on its own.
+    pub async fn release_gc_lease_here(
+        &self,
+        scope: &str,
+        lease: &GcLease,
+    ) -> Result<(), CatalogError> {
+        let now = Utc::now();
+        self.the_fence(scope, lease, now).await?;
+        let transaction = GraphUpsertTransaction {
+            query: format!(
+                "{{ gl as var(func: eq(hodei.gc.lease.key, {})) \
+                 @filter(eq(hodei.gc.lease.token, {})) }}",
+                dql_string(&gc_lease_key(scope)),
+                dql_string(&lease.token),
+            ),
+            blocks: vec![GraphMutationBlock::set_if(
+                "eq(len(gl), 1)",
+                format!(
+                    "uid(gl) <hodei.gc.lease.lease_until> \"{until}\" .\n",
+                    until = stamp(now),
+                ),
+            )],
+            commit_now: true,
+        };
+        self.client
+            .upsert(transaction)
+            .await
+            .map(|_| ())
+            .map_err(graph_error)
+    }
+
+    /// The accounts that own repositories: the census of the store is the
+    /// union of the roots of each one.
+    ///
+    /// `@groupby` answers one row per account, not one per repository, so
+    /// the response is bounded by the number of accounts.
+    pub async fn census_accounts_here(&self) -> Result<Vec<String>, CatalogError> {
+        let query = "{ q(func: has(hodei.catalog.repository.key)) \
+             @groupby(hodei.catalog.repository.account) { count(uid) } }";
+        let json = self.execute_dql_row(query).await?;
+        let mut accounts: Vec<String> = json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|group| group.get("@groupby").and_then(serde_json::Value::as_array))
+            .flatten()
+            .filter_map(|row| {
+                row.get("hodei.catalog.repository.account")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect();
+        accounts.sort();
+        accounts.dedup();
+        Ok(accounts)
+    }
+
     /// Cierra la pasada bajo el claim vigente.
     pub async fn complete_scoped_run_here(
         &self,
@@ -1671,7 +1734,7 @@ impl ContentLedger for DgraphCatalogStore {
             blocks: vec![GraphMutationBlock {
                 cond: Some("eq(len(hl), 1)".to_owned()),
                 set_nquads: String::new(),
-                delete_nquads: "uid(hl) * .\n".to_owned(),
+                delete_nquads: "uid(hl) * * .\n".to_owned(),
             }],
             commit_now: true,
         };
@@ -1934,5 +1997,13 @@ impl ContentLedger for DgraphCatalogStore {
     ) -> Result<(), CatalogError> {
         self.complete_scoped_run_here(scope, lease, run_id, deleted, bytes_freed, at)
             .await
+    }
+
+    async fn release_gc_lease(&self, scope: &str, lease: &GcLease) -> Result<(), CatalogError> {
+        self.release_gc_lease_here(scope, lease).await
+    }
+
+    async fn census_accounts(&self) -> Result<Vec<String>, CatalogError> {
+        self.census_accounts_here().await
     }
 }

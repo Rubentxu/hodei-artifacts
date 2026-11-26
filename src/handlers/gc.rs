@@ -317,7 +317,7 @@ pub async fn sweep(
         let state = state.clone();
         let context = context.clone();
         tokio::spawn(async move {
-            match service.sweep(&actor, &account).await {
+            match service.sweep_platform(&actor, &account).await {
                 Ok(report) => {
                     audit(
                         &state,
