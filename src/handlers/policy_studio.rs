@@ -204,9 +204,40 @@ pub struct ActivationResponse {
     pub applied: bool,
 }
 
+/// The window of the history a caller asks for. The default and the cap
+/// keep one request from reading an unbounded set.
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    /// The policy set. Defaults to the one the deployment declares.
+    #[serde(default)]
+    pub policy_id: Option<String>,
+    /// How many items to skip, oldest first. Default 0.
+    #[serde(default)]
+    pub offset: Option<usize>,
+    /// How many items at most, per list. Default 50, capped at 200.
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+/// The default and the maximum size of one history window.
+pub const DEFAULT_HISTORY_LIMIT: usize = 50;
+/// The cap of one history window.
+pub const MAX_HISTORY_LIMIT: usize = 200;
+/// The largest request body any studio route reads (HTTP 413 above it): a
+/// policy document, or a simulation with its snapshots, is far smaller.
+pub const STUDIO_BODY_LIMIT: usize = 512 * 1024;
+
 /// The history and events of a policy set.
 #[derive(Debug, Serialize)]
 pub struct HistoryResponse {
+    /// The window skipped, in items.
+    pub offset: usize,
+    /// The window size that applied.
+    pub limit: usize,
+    /// Whether more revisions exist after this window.
+    pub revisions_truncated: bool,
+    /// Whether more events exist after this window.
+    pub events_truncated: bool,
     /// The policy set.
     pub policy_id: String,
     /// Every revision still held, oldest first.
@@ -283,6 +314,9 @@ impl From<LifecycleError> for StudioError {
             | LifecycleError::InvalidContext(..)
             | LifecycleError::SchemaMismatch(..)
             | LifecycleError::CorruptRevision(..) => Self::invalid(error.to_string()),
+            LifecycleError::RollbackToHead(..) => {
+                Self::new(StatusCode::CONFLICT, "rollback_to_head", error.to_string())
+            }
             LifecycleError::HistoryFull(_) => {
                 Self::new(StatusCode::CONFLICT, "history_full", error.to_string())
             }
@@ -677,14 +711,32 @@ pub async fn rollback(
 pub async fn history(
     State(state): State<AppState>,
     Extension(context): Extension<VerifiedContext>,
-    Query(query): Query<RevisionQuery>,
+    Query(query): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, StudioError> {
     let store = lifecycle(&state)?;
     let account = account_of(&context);
     let policy_id = studio_policy_id(&state, query.policy_id.as_deref());
-    let revisions = store.history(&account, &policy_id).await?;
-    let events = store.events(&account, &policy_id).await?;
+    let limit = query
+        .limit
+        .unwrap_or(DEFAULT_HISTORY_LIMIT)
+        .clamp(1, MAX_HISTORY_LIMIT);
+    let offset = query.offset.unwrap_or(0);
+    // One extra row says whether the window was cut, without a count.
+    let mut revisions = store
+        .history_page(&account, &policy_id, offset, limit + 1)
+        .await?;
+    let mut events = store
+        .events_page(&account, &policy_id, offset, limit + 1)
+        .await?;
+    let revisions_truncated = revisions.len() > limit;
+    let events_truncated = events.len() > limit;
+    revisions.truncate(limit);
+    events.truncate(limit);
     Ok(Json(HistoryResponse {
+        offset,
+        limit,
+        revisions_truncated,
+        events_truncated,
         policy_id,
         revisions: serde_json::to_value(&revisions)
             .map_err(|error| StudioError::unavailable(error.to_string()))?,

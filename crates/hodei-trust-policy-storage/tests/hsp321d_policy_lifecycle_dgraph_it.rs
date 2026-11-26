@@ -666,3 +666,205 @@ async fn shadow_evaluation_does_not_mutate_the_store() {
         events_before
     );
 }
+
+/// A rollback to the revision that already decides is a typed refusal and
+/// consumes no sequence.
+#[tokio::test]
+async fn a_rollback_to_the_head_is_refused_and_consumes_nothing() {
+    let store = store!();
+    let account = run_scope();
+    for version in ["1.0.0", "2.0.0"] {
+        store
+            .save(&account, policy("prod", version), "alice", "v", Utc::now())
+            .await
+            .expect("save");
+    }
+    store
+        .activate(&account, "prod", 2, None, "bob", "live", Utc::now())
+        .await
+        .expect("activate");
+    let error = store
+        .rollback(
+            &account,
+            "prod",
+            2,
+            Some(2),
+            &Actors::new("alice", "bob"),
+            "noop",
+            Utc::now(),
+        )
+        .await
+        .expect_err("the target is the head");
+    assert!(
+        matches!(error, LifecycleError::RollbackToHead(_, 2)),
+        "{error}"
+    );
+    assert_eq!(
+        store
+            .history(&account, "prod")
+            .await
+            .expect("history")
+            .len(),
+        2
+    );
+    assert_eq!(
+        store.events(&account, "prod").await.expect("events").len(),
+        3
+    );
+}
+
+/// The audit says who really asked for a rollback, not only the author of
+/// the restored content.
+#[tokio::test]
+async fn a_rollback_records_who_really_asked_for_it() {
+    let store = store!();
+    let account = run_scope();
+    for version in ["1.0.0", "2.0.0"] {
+        store
+            .save(&account, policy("prod", version), "alice", "v", Utc::now())
+            .await
+            .expect("save");
+    }
+    store
+        .activate(&account, "prod", 2, None, "bob", "live", Utc::now())
+        .await
+        .expect("activate");
+    store
+        .rollback(
+            &account,
+            "prod",
+            1,
+            Some(2),
+            &Actors::new("alice", "carol"),
+            "regression",
+            Utc::now(),
+        )
+        .await
+        .expect("rollback");
+    let revision = store
+        .revision(&account, "prod", 3)
+        .await
+        .expect("revision")
+        .expect("exists");
+    assert_eq!(revision.saved_by, "alice", "authorship of the content");
+    assert_eq!(revision.rolled_back_by.as_deref(), Some("carol"));
+    let plain = store
+        .revision(&account, "prod", 1)
+        .await
+        .expect("revision")
+        .expect("exists");
+    assert_eq!(plain.rolled_back_by, None);
+    let events = store.events(&account, "prod").await.expect("events");
+    let saved = events
+        .iter()
+        .find(|event| event.id == "saved:prod:3")
+        .expect("the saved event of the rollback");
+    assert_eq!(saved.actor, "carol", "the audit does not blame the author");
+    let rolled = events
+        .iter()
+        .find(|event| event.kind == "rolled_back")
+        .expect("the rolled_back event");
+    assert_eq!(rolled.rolled_back_by.as_deref(), Some("carol"));
+    assert_eq!(rolled.editor, "alice");
+    let page = store
+        .history_page(&account, "prod", 1, 1)
+        .await
+        .expect("a window");
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].sequence, 2, "offset skips, order is by sequence");
+    assert_eq!(
+        store
+            .events_page(&account, "prod", 0, 2)
+            .await
+            .expect("a window")
+            .len(),
+        2
+    );
+}
+
+/// A source revision whose content no longer hashes to its digest is never
+/// copied by a rollback.
+#[tokio::test]
+async fn a_rollback_never_copies_a_corrupt_source() {
+    use hodei_graph_client::port::{GraphMutationBlock, GraphUpsertTransaction};
+    use hodei_graph_client::schema::dql_string;
+    use hodei_graph_client::GraphMutationPort;
+
+    let Some(client) = fresh_client().await else {
+        return;
+    };
+    let store = DgraphLifecycleStore::open(client.clone(), SeparationPolicy::default())
+        .await
+        .expect("the store opens");
+    let account = run_scope();
+    for version in ["1.0.0", "2.0.0"] {
+        store
+            .save(&account, policy("prod", version), "alice", "v", Utc::now())
+            .await
+            .expect("save");
+    }
+    store
+        .activate(&account, "prod", 2, None, "bob", "live", Utc::now())
+        .await
+        .expect("activate");
+    // Tamper with revision 1 behind the store's back: new content, old digest.
+    let mut tampered = store
+        .revision(&account, "prod", 1)
+        .await
+        .expect("revision")
+        .expect("exists");
+    tampered.policy.version = "9.9.9-tampered".to_string();
+    let json = serde_json::to_string(&tampered).expect("json");
+    client
+        .upsert(GraphUpsertTransaction {
+            query: format!(
+                "{{ r as var(func: eq(hodei.policy.revision.policy_id, \"prod\")) \
+                 @filter(eq(hodei.policy.revision.tenant, {tenant}) AND \
+                 eq(hodei.policy.revision.sequence, 1)) }}",
+                tenant = dql_string(&account)
+            ),
+            blocks: vec![GraphMutationBlock::set_if(
+                "eq(len(r), 1)",
+                format!(
+                    "uid(r) <hodei.policy.revision.json> {} .\n",
+                    dql_string(&json)
+                ),
+            )],
+            commit_now: true,
+        })
+        .await
+        .expect("the tamper is written");
+    let error = store
+        .rollback(
+            &account,
+            "prod",
+            1,
+            Some(2),
+            &Actors::new("alice", "carol"),
+            "regression",
+            Utc::now(),
+        )
+        .await
+        .expect_err("the source is corrupt");
+    assert!(
+        matches!(error, LifecycleError::CorruptRevision(_, 1)),
+        "{error}"
+    );
+    assert_eq!(
+        store
+            .history(&account, "prod")
+            .await
+            .expect("history")
+            .len(),
+        2
+    );
+    assert_eq!(
+        store
+            .head(&account, "prod")
+            .await
+            .expect("head")
+            .expect("head")
+            .sequence,
+        2
+    );
+}

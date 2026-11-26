@@ -130,6 +130,26 @@ pub trait LifecycleStore: Send + Sync {
         policy_id: &str,
     ) -> Result<Vec<PolicyRevision>, LifecycleError>;
 
+    /// A bounded window of the history: at most `limit` revisions after
+    /// skipping `offset`, oldest first (a stable order by sequence).
+    async fn history_page(
+        &self,
+        account: &str,
+        policy_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<PolicyRevision>, LifecycleError>;
+
+    /// A bounded window of the audit events: at most `limit` after
+    /// skipping `offset`, in the order they happened.
+    async fn events_page(
+        &self,
+        account: &str,
+        policy_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<LifecycleEvent>, LifecycleError>;
+
     /// The head that decides for a policy set, if it was ever activated.
     async fn head(&self, account: &str, policy_id: &str) -> Result<Option<Head>, LifecycleError>;
 

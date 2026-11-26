@@ -620,10 +620,22 @@ impl LifecycleStore for DgraphLifecycleStore {
             if expected_head != Some(current) {
                 return Err(stale(policy_id, expected_head, Some(current)));
             }
+            if target == current {
+                return Err(LifecycleError::RollbackToHead(
+                    policy_id.to_string(),
+                    target,
+                ));
+            }
             let source = self
                 .revision(account, policy_id, target)
                 .await?
                 .ok_or_else(|| LifecycleError::RevisionNotFound(policy_id.to_string(), target))?;
+            if !source.digest_holds() {
+                return Err(LifecycleError::CorruptRevision(
+                    policy_id.to_string(),
+                    target,
+                ));
+            }
             self.separation.check_editor(editor)?;
             self.separation
                 .check_approver(policy_id, editor, approver)?;
@@ -640,7 +652,8 @@ impl LifecycleStore for DgraphLifecycleStore {
                 editor,
                 at,
                 format!("{ROLLBACK_PREFIX}{target} {reason}"),
-            );
+            )
+            .rolled_back_by(approver);
             let new_head = Head {
                 policy_id: policy_id.to_string(),
                 sequence: revision.sequence,
@@ -752,6 +765,62 @@ impl LifecycleStore for DgraphLifecycleStore {
         nodes
             .iter()
             .map(|node| parse_json(node, "hodei.policy.revision.json"))
+            .collect()
+    }
+
+    async fn history_page(
+        &self,
+        account: &str,
+        policy_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<PolicyRevision>, LifecycleError> {
+        let tenant = Self::tenant(account)?;
+        let query = format!(
+            "{{ q(func: eq(hodei.policy.revision.policy_id, {policy}), \
+             orderasc: hodei.policy.revision.sequence, first: {limit}, offset: {offset}) \
+             @filter(eq(hodei.policy.revision.tenant, {tenant})) \
+             {{ hodei.policy.revision.json }} }}",
+            policy = dql_string(policy_id),
+            tenant = dql_string(tenant.as_str()),
+        );
+        let nodes = rows(
+            &query_json(&self.client, &query)
+                .await
+                .map_err(unavailable)?,
+            "q",
+        );
+        nodes
+            .iter()
+            .map(|node| parse_json(node, "hodei.policy.revision.json"))
+            .collect()
+    }
+
+    async fn events_page(
+        &self,
+        account: &str,
+        policy_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<LifecycleEvent>, LifecycleError> {
+        let tenant = Self::tenant(account)?;
+        let query = format!(
+            "{{ q(func: eq(hodei.policy.event.policy_id, {policy}), \
+             orderasc: hodei.policy.event.order, first: {limit}, offset: {offset}) \
+             @filter(eq(hodei.policy.event.tenant, {tenant})) \
+             {{ hodei.policy.event.json }} }}",
+            policy = dql_string(policy_id),
+            tenant = dql_string(tenant.as_str()),
+        );
+        let nodes = rows(
+            &query_json(&self.client, &query)
+                .await
+                .map_err(unavailable)?,
+            "q",
+        );
+        nodes
+            .iter()
+            .map(|node| parse_json(node, "hodei.policy.event.json"))
             .collect()
     }
 

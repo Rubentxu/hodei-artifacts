@@ -46,6 +46,13 @@ use crate::POLICY_SCHEMA_VERSION;
 /// be written atomically with it.
 pub const MAX_REVISIONS: u64 = 1_000;
 
+/// How many requirements one policy set may carry.
+pub const MAX_REQUIREMENTS: usize = 64;
+/// How many accepted states one dimension requirement may list.
+pub const MAX_ACCEPTED_STATES: usize = 16;
+/// The longest identifier, version or exception name of a policy set.
+pub const MAX_NAME_LEN: usize = 256;
+
 /// The prefix that marks a revision's reason as a rollback.
 pub const ROLLBACK_PREFIX: &str = "rollback:";
 
@@ -74,6 +81,9 @@ pub enum LifecycleError {
     /// The revision expected as the head is not the head.
     #[error("the head of {0} is {2}, not the expected revision {1}")]
     StaleHead(String, u64, u64),
+    /// The rollback target is the revision that already decides.
+    #[error("revision {1} of the policy set {0} is already the head, so there is nothing to roll back to")]
+    RollbackToHead(String, u64),
     /// A policy has never been activated, so it has no head.
     #[error("the policy set {0} has never been activated")]
     NeverActivated(String),
@@ -94,6 +104,7 @@ impl LifecycleError {
                 | Self::InvalidContext(..)
                 | Self::SchemaMismatch(..)
                 | Self::CorruptRevision(..)
+                | Self::RollbackToHead(..)
                 | Self::HistoryFull(..)
         )
     }
@@ -209,6 +220,15 @@ pub struct PolicyRevision {
     pub saved_at: DateTime<Utc>,
     /// Why this revision exists, in the words of whoever saved it.
     pub reason: String,
+    /// For a rollback: who actually asked for it.
+    ///
+    /// `saved_by` of a rollback revision is the author of the content that
+    /// is restored, because the separation of editor and approver is
+    /// decided on the authorship of the content. That would make the audit
+    /// say the author saved the `-rbN` revision, so the real caller is
+    /// recorded here. It is not part of the digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolled_back_by: Option<String>,
 }
 
 impl PolicyRevision {
@@ -230,9 +250,16 @@ impl PolicyRevision {
             saved_by,
             saved_at,
             reason: reason.into(),
+            rolled_back_by: None,
         };
         revision.digest = revision.compute_digest();
         revision
+    }
+
+    /// Records who actually asked for this rollback revision.
+    pub fn rolled_back_by(mut self, caller: impl Into<String>) -> Self {
+        self.rolled_back_by = Some(caller.into());
+        self
     }
 
     /// The canonical bytes the digest is computed over: the fields that
@@ -285,6 +312,10 @@ pub struct LifecycleEvent {
     pub reason: String,
     /// When.
     pub at: DateTime<Utc>,
+    /// For the events of a rollback: who actually asked for it, which is
+    /// not `editor` (the author of the restored content).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rolled_back_by: Option<String>,
 }
 
 /// The pair of actors that carries an operation out.
@@ -364,8 +395,33 @@ pub fn validate_policy(policy: &TrustPolicy) -> Result<(), LifecycleError> {
         ));
     }
 
+    if policy.requirements.len() > MAX_REQUIREMENTS {
+        return Err(LifecycleError::InvalidPolicy(
+            policy.id.clone(),
+            format!("a policy set carries at most {MAX_REQUIREMENTS} requirements"),
+        ));
+    }
+    for (what, value) in [("identifier", &policy.id), ("version", &policy.version)] {
+        if value.len() > MAX_NAME_LEN {
+            return Err(LifecycleError::InvalidPolicy(
+                policy.id.chars().take(32).collect(),
+                format!("the {what} is longer than {MAX_NAME_LEN} bytes"),
+            ));
+        }
+    }
+
     let mut names = BTreeSet::new();
     for requirement in &policy.requirements {
+        if requirement
+            .overridable_by
+            .as_ref()
+            .is_some_and(|name| name.len() > MAX_NAME_LEN)
+        {
+            return Err(LifecycleError::InvalidPolicy(
+                policy.id.clone(),
+                format!("an exception name is longer than {MAX_NAME_LEN} bytes"),
+            ));
+        }
         let name = requirement.name();
         if !names.insert(name.clone()) {
             return Err(LifecycleError::InvalidPolicy(
@@ -384,6 +440,12 @@ pub fn validate_policy(policy: &TrustPolicy) -> Result<(), LifecycleError> {
                 return Err(LifecycleError::InvalidPolicy(
                     policy.id.clone(),
                     format!("the dimension {dimension} is not known to this schema"),
+                ));
+            }
+            if accepts.len() > MAX_ACCEPTED_STATES {
+                return Err(LifecycleError::InvalidPolicy(
+                    policy.id.clone(),
+                    format!("the requirement {name} lists more than {MAX_ACCEPTED_STATES} states"),
                 ));
             }
             if accepts.is_empty() {
@@ -471,10 +533,14 @@ pub fn saved_event(revision: &PolicyRevision, at: DateTime<Utc>) -> LifecycleEve
         digest: revision.digest.clone(),
         expected_head: None,
         new_head: revision.sequence,
-        actor: revision.saved_by.clone(),
+        actor: revision
+            .rolled_back_by
+            .clone()
+            .unwrap_or_else(|| revision.saved_by.clone()),
         editor: revision.saved_by.clone(),
         reason: revision.reason.clone(),
         at,
+        rolled_back_by: revision.rolled_back_by.clone(),
     }
 }
 
@@ -502,6 +568,7 @@ pub fn activation_event(
         editor: revision.saved_by.clone(),
         reason: reason.to_string(),
         at,
+        rolled_back_by: revision.rolled_back_by.clone(),
     }
 }
 
@@ -530,6 +597,7 @@ pub fn invalidation_event(
             rolled_back_to.sequence
         ),
         at,
+        rolled_back_by: rolled_back_to.rolled_back_by.clone(),
     }
 }
 
@@ -737,6 +805,12 @@ impl PolicyLifecycle {
                 current,
             ));
         }
+        if target == current {
+            return Err(LifecycleError::RollbackToHead(
+                policy_id.to_string(),
+                target,
+            ));
+        }
         let revisions = inner
             .revisions
             .get(policy_id)
@@ -751,6 +825,12 @@ impl PolicyLifecycle {
             .map(|revision| revision.digest.clone())
             .unwrap_or_default();
 
+        if !source.digest_holds() {
+            return Err(LifecycleError::CorruptRevision(
+                policy_id.to_string(),
+                target,
+            ));
+        }
         self.separation.check_editor(editor)?;
         self.separation
             .check_approver(policy_id, editor, approver)?;
@@ -767,7 +847,8 @@ impl PolicyLifecycle {
             editor,
             at,
             format!("{ROLLBACK_PREFIX}{target} {reason}"),
-        );
+        )
+        .rolled_back_by(approver);
         let head = Head {
             policy_id: policy_id.to_string(),
             sequence: revision.sequence,
@@ -1113,5 +1194,120 @@ mod tests {
         });
         assert_eq!(winners.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(lifecycle.head("prod").expect("a head").sequence, 1);
+    }
+
+    fn version_of(version: &str) -> TrustPolicy {
+        let mut policy = sound_policy();
+        policy.version = version.to_string();
+        policy
+    }
+
+    fn live_lifecycle() -> PolicyLifecycle {
+        let lifecycle = PolicyLifecycle::open();
+        for version in ["1.0.0", "2.0.0"] {
+            lifecycle
+                .save(version_of(version), "alice", "v", Utc::now())
+                .expect("save");
+        }
+        let id = sound_policy().id;
+        lifecycle
+            .activate(&id, 2, None, "bob", "live", Utc::now())
+            .expect("activate");
+        lifecycle
+    }
+
+    #[test]
+    fn a_policy_document_is_bounded() {
+        let mut many = sound_policy();
+        let requirement = many.requirements[0].clone();
+        many.requirements = (0..=MAX_REQUIREMENTS)
+            .map(|_| requirement.clone())
+            .collect();
+        let error = validate_policy(&many).expect_err("too many requirements");
+        assert!(error.to_string().contains("at most"), "{error}");
+
+        let mut long = sound_policy();
+        long.version = "v".repeat(MAX_NAME_LEN + 1);
+        assert!(validate_policy(&long).is_err(), "a version too long");
+
+        let mut states = sound_policy();
+        states.requirements = vec![Requirement::denying(RequirementKind::Dimension {
+            dimension: DimensionName::Integrity,
+            accepts: vec![DimensionState::Verified; MAX_ACCEPTED_STATES + 1],
+        })];
+        assert!(
+            validate_policy(&states).is_err(),
+            "too many accepted states"
+        );
+        assert!(validate_policy(&sound_policy()).is_ok());
+    }
+
+    #[test]
+    fn a_rollback_to_the_head_is_refused_and_consumes_no_sequence() {
+        let lifecycle = live_lifecycle();
+        let id = sound_policy().id;
+        let error = lifecycle
+            .rollback(
+                &id,
+                2,
+                Some(2),
+                &Actors::new("alice", "carol"),
+                "x",
+                Utc::now(),
+            )
+            .expect_err("the target is the head");
+        assert!(matches!(error, LifecycleError::RollbackToHead(_, 2)));
+        assert_eq!(lifecycle.history(&id).len(), 2);
+    }
+
+    #[test]
+    fn a_rollback_never_copies_a_corrupt_source() {
+        let lifecycle = live_lifecycle();
+        let id = sound_policy().id;
+        lifecycle.lock().revisions.get_mut(&id).expect("history")[0]
+            .policy
+            .version = "tampered".to_string();
+        let error = lifecycle
+            .rollback(
+                &id,
+                1,
+                Some(2),
+                &Actors::new("alice", "carol"),
+                "x",
+                Utc::now(),
+            )
+            .expect_err("the source is corrupt");
+        assert!(matches!(error, LifecycleError::CorruptRevision(_, 1)));
+        assert_eq!(lifecycle.history(&id).len(), 2, "nothing was copied");
+    }
+
+    #[test]
+    fn a_rollback_records_who_asked_for_it() {
+        let lifecycle = live_lifecycle();
+        let id = sound_policy().id;
+        lifecycle
+            .rollback(
+                &id,
+                1,
+                Some(2),
+                &Actors::new("alice", "carol"),
+                "x",
+                Utc::now(),
+            )
+            .expect("rollback");
+        let revision = lifecycle.revision(&id, 3).expect("the rollback revision");
+        assert_eq!(revision.saved_by, "alice");
+        assert_eq!(revision.rolled_back_by.as_deref(), Some("carol"));
+        let events = lifecycle.events();
+        let saved = events
+            .iter()
+            .find(|e| e.id == format!("saved:{id}:3"))
+            .expect("saved");
+        assert_eq!(saved.actor, "carol");
+        let rolled = events
+            .iter()
+            .find(|e| e.kind == "rolled_back")
+            .expect("rolled_back");
+        assert_eq!(rolled.rolled_back_by.as_deref(), Some("carol"));
     }
 }

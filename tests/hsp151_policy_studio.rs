@@ -496,6 +496,21 @@ async fn the_studio_edits_the_real_lifecycle_per_tenant() {
         status, 403,
         "a principal without the rollback grant cannot move the head"
     );
+    // Rolling back to the revision that already decides consumes nothing.
+    let before_noop = studio.state_of(&viewer);
+    let (status, body) = studio.call(
+        "POST",
+        "rollback",
+        &approver,
+        Some(&json!({ "target": v2_seq, "expected_head": v2_seq, "reason": "noop" })),
+    );
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(body["error"], "rollback_to_head", "{body}");
+    assert_eq!(
+        studio.state_of(&viewer),
+        before_noop,
+        "no sequence consumed"
+    );
     let (status, body) = studio.call(
         "POST",
         "rollback",
@@ -522,6 +537,79 @@ async fn the_studio_edits_the_real_lifecycle_per_tenant() {
     assert!(
         events.len() >= 4,
         "saves and activations are audited: {history}"
+    );
+    // The audit says who really asked for the rollback (the approver), not
+    // only the author of the restored content (the editor).
+    let rolled_revision = revisions.last().expect("the rollback revision");
+    assert_eq!(
+        rolled_revision["saved_by"]
+            .as_str()
+            .map(|u| u.ends_with("/editor")),
+        Some(true)
+    );
+    assert_eq!(
+        rolled_revision["rolled_back_by"]
+            .as_str()
+            .map(|u| u.ends_with("/approver")),
+        Some(true),
+        "{rolled_revision}"
+    );
+    let events = history["events"].as_array().expect("events");
+    let rolled_event = events
+        .iter()
+        .find(|event| event["kind"] == "rolled_back")
+        .expect("a rolled_back event");
+    assert_eq!(
+        rolled_event["rolled_back_by"]
+            .as_str()
+            .map(|u| u.ends_with("/approver")),
+        Some(true),
+        "{rolled_event}"
+    );
+
+    // The history is windowed: a default, a cap, a stable order and a mark.
+    assert_eq!(history["limit"], 50);
+    assert_eq!(history["revisions_truncated"], false);
+    let (status, page) = studio.call("GET", "history?limit=2", &viewer, None);
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["revisions"].as_array().map(Vec::len), Some(2));
+    assert_eq!(page["events"].as_array().map(Vec::len), Some(2));
+    assert_eq!(page["revisions_truncated"], true, "{page}");
+    assert_eq!(page["events_truncated"], true, "{page}");
+    let (_, next) = studio.call("GET", "history?limit=2&offset=2", &viewer, None);
+    assert_eq!(next["revisions"][0]["sequence"], 3, "{next}");
+    let (_, capped) = studio.call("GET", "history?limit=100000", &viewer, None);
+    assert_eq!(capped["limit"], 200, "the cap applies: {capped}");
+
+    // A policy document is bounded: an oversized body is 413 on every write
+    // route, and a policy with too many requirements is not valid.
+    let padding = "x".repeat(600 * 1024);
+    for route in ["validate", "revisions", "simulate"] {
+        let (status, _) = studio.call(
+            "POST",
+            route,
+            &editor,
+            Some(&json!({ "policy": v1, "reason": padding, "subjects": [] })),
+        );
+        assert_eq!(status, 413, "{route} refuses an oversized body");
+    }
+    let mut crowded = policy_json("crowd", &["COMPLETE"]);
+    let requirement = crowded["requirements"][0].clone();
+    crowded["requirements"] = json!(vec![requirement; 65]);
+    let (status, body) = studio.call(
+        "POST",
+        "validate",
+        &editor,
+        Some(&json!({ "policy": crowded })),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["valid"], false, "too many requirements: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("at most"),
+        "the bound is what refuses it: {body}"
     );
 
     // The other tenant is still untouched by all of it.
