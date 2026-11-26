@@ -335,3 +335,49 @@ async fn the_declared_seed_serves_only_accounts_without_a_head() {
         "a head always wins over the seed"
     );
 }
+
+/// The compare-and-set that guards publishing a grant is per account: a
+/// decision measured under version 1 is stale once ITS account activates
+/// version 2, and not before; another account's activation never makes it
+/// stale.
+///
+/// This exercises `TrustPlane::decision_is_current`, the exact check the
+/// promote handler runs between the decision and the publication of the
+/// grant (a 409 and no grant when it is false). It does not go through
+/// HTTP: provoking an activation inside that window over the wire would not
+/// be deterministic.
+#[tokio::test]
+async fn a_decision_goes_stale_only_when_its_own_account_activates_another_version() {
+    let Some((plane, decisions, lifecycle)) = plane_and_stores(PolicyRegistry::empty()).await
+    else {
+        return;
+    };
+    let a = run_scope("cas-a");
+    let b = run_scope("cas-b");
+    let head_a = save_and_activate(&lifecycle, &a, policy("1", false), None).await;
+    let head_b = save_and_activate(&lifecycle, &b, policy("1", false), None).await;
+
+    let (outcome, _) = decide(&plane, &decisions, &a, 1).await;
+    assert_eq!(outcome, Outcome::Allow);
+    let decision = decisions
+        .get(&DecisionId::new(format!("{a}-dec-1")))
+        .await
+        .expect("the ledger reads")
+        .expect("the decision was written");
+    assert_eq!(decision.trust.policy_version, "1");
+    assert!(plane.decision_is_current(&a, &decision).await, "fresh");
+
+    // B activating v2 must not make A's decision stale.
+    save_and_activate(&lifecycle, &b, policy("2", true), Some(head_b)).await;
+    assert!(
+        plane.decision_is_current(&a, &decision).await,
+        "another account's activation does not stale the decision"
+    );
+
+    // A activating v2 does.
+    save_and_activate(&lifecycle, &a, policy("2", true), Some(head_a)).await;
+    assert!(
+        !plane.decision_is_current(&a, &decision).await,
+        "the account's own activation stales the decision: no grant is published"
+    );
+}

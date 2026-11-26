@@ -144,6 +144,18 @@ impl TrustPlane {
             .map(|policy| policy.version)
     }
 
+    /// Whether `decision` was measured with the policy that still decides
+    /// for `account`.
+    ///
+    /// This is the compare-and-set that guards publishing a grant: if the
+    /// account activated another version between the decision and the
+    /// publication, the decision is stale and nothing is published. It is
+    /// per account: another account's activation never makes it stale.
+    pub async fn decision_is_current(&self, account: &str, decision: &PromotionDecision) -> bool {
+        self.active_policy_version_for(account).await.as_deref()
+            == Some(decision.trust.policy_version.as_str())
+    }
+
     /// The version of the policy that decides **now**.
     ///
     /// It is the second half of the promotion's compare-and-set: the
