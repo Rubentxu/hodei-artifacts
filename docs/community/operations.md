@@ -108,13 +108,14 @@ la plataforma de la imagen deben coincidir, y el verificador comprueba que el
 **Licencias.** `scripts/release-license-policy.json` es la política: un
 paquete con licencia `UNKNOWN` o fuera de la lista permitida (expresiones SPDX
 con `OR`, `AND`, `WITH`) hace fallar la generación y la verificación, salvo
-excepciones nombradas y justificadas (hoy `surrealdb` y `surrealdb-core`, con
-licencia BSL 1.1 sin expresión SPDX). La matriz registra el estado real de
-`surrealdb`: `present_in_cargo_toml`, `declared_by`, `rocksdb_in_resolved_graph`
-y `reachable_from_release_binary`. Mientras el binario enlace surrealdb/rocksdb,
-la afirmación «el SBOM OCI no contiene surrealdb ni rocksdb» queda como
-`NOT_RUN` con su motivo (la retirada, HSP-213, no está integrada en esta
-rama); cuando se integre, la comprobación pasa a verificar el SBOM de verdad.
+excepciones nombradas y justificadas (hoy ninguna: la política trae
+`exceptions: []` desde que `surrealdb` y `surrealdb-core`, con licencia BSL 1.1
+sin expresión SPDX, salieron del árbol con HSP-314 F4). La matriz sigue
+registrando el estado real de `surrealdb`: `present_in_cargo_toml`,
+`declared_by`, `rocksdb_in_resolved_graph` y `reachable_from_release_binary`.
+Con el motor embebido retirado, la afirmación «el SBOM OCI no contiene surrealdb
+ni rocksdb» se verifica contra el SBOM cuando se aporta (sin SBOM queda como `NOT_RUN`);
+un SBOM que los liste para un binario que no los enlaza falla.
 
 ### 1.3 Qué prueba la firma y qué no
 
@@ -364,8 +365,9 @@ Copia `compose.env.example` a `.env` y ajústalo antes de levantar nada.
   (`garage layout`, `garage bucket create`, `garage key create`); la cuenta
   `groot` del Alpha nace con la contraseña por defecto de Dgraph, cámbiala.
 
-Los ficheros ya no declaran el perfil embebido (RocksDB + CAS en volumen): la
-imagen se construye sin la feature `legacy` y lo rechaza. La investigación sigue
+Los ficheros no declaran perfil embebido (RocksDB + CAS en volumen): se retiró
+junto con la feature `legacy` y un despliegue sin `[graph]` se rechaza con
+`GRAPH_PROFILE_REQUIRED`. La investigación sigue
 cerrada en el perfil de grafo hasta HSP-314 F3; los hechos de riesgo y el
 reactor de CVE ya corren sobre Dgraph.
 

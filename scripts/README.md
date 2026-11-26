@@ -253,7 +253,7 @@ These can be customized by modifying the script or using environment variables.
 
 **Solutions:**
 - Check if port 3000 is already in use: `lsof -i :3000`
-- Verify RocksDB database isn't locked by another process
+- Verify the Dgraph Alpha (`HODEI_GRAPH__ENDPOINT`) and the S3 store are reachable; the service fails closed while they are not
 - Check server logs for configuration errors
 - Ensure `./data` directory is writable
 

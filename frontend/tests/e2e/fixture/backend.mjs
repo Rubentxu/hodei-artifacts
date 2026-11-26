@@ -15,6 +15,7 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
@@ -85,6 +86,91 @@ const theCargoTargetDirectory = () => {
   });
   if (result.status !== 0) return join(repositoryRoot, 'target');
   return JSON.parse(result.stdout).target_directory;
+};
+
+/**
+ * The Dgraph alpha the service runs on.
+ *
+ * The only profile of the service is the graph (`RUN_MODE=dgraph`), so the
+ * fixture needs a REAL alpha, with the same convention as the graph
+ * integration tests (`tests/support/graph_profile.rs`):
+ *
+ * - `HODEI_GRAPH_IT_ENDPOINT`: `host:port` of the gRPC listener (required).
+ * - `HODEI_GRAPH_IT_USER` / `HODEI_GRAPH_IT_PASSWORD`: the guardian of the
+ *   galaxy namespace, needed to create the namespace of the fixture (ACL is
+ *   mandatory).
+ * - `HODEI_GRAPH_IT_ADMIN`: `host:port` of the alpha HTTP port (default
+ *   `<host of the endpoint>:8080`).
+ *
+ * The fixture creates its own ACL namespace and deletes it when it stops, so
+ * it never sees (or leaves) data in the shared alpha.
+ */
+const theAlpha = () => {
+  const endpoint = process.env.HODEI_GRAPH_IT_ENDPOINT;
+  const user = process.env.HODEI_GRAPH_IT_USER;
+  const password = process.env.HODEI_GRAPH_IT_PASSWORD;
+  if (!endpoint || !user || !password) {
+    throw new Error(
+      'the fixture needs a Dgraph alpha: set HODEI_GRAPH_IT_ENDPOINT (host:port of the gRPC listener), HODEI_GRAPH_IT_USER and HODEI_GRAPH_IT_PASSWORD (the galaxy guardian), and optionally HODEI_GRAPH_IT_ADMIN (host:port of the HTTP port)'
+    );
+  }
+  const host = endpoint.includes(':')
+    ? endpoint.slice(0, endpoint.lastIndexOf(':'))
+    : endpoint;
+  const admin = process.env.HODEI_GRAPH_IT_ADMIN ?? `${host}:8080`;
+  return { endpoint, user, password, admin };
+};
+
+/** One GraphQL call to the `/admin` of the alpha. */
+const adminCall = async (alpha, query, token) => {
+  const response = await fetch(`http://${alpha.admin}/admin`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(token ? { 'X-Dgraph-AccessToken': token } : {}),
+    },
+    body: JSON.stringify({ query }),
+  });
+  const answer = await response.json();
+  if (answer.errors) {
+    throw new Error(`the alpha refused an admin call: ${JSON.stringify(answer.errors)}`);
+  }
+  return answer.data;
+};
+
+/** The guardian token of the galaxy namespace. */
+const galaxyToken = async alpha => {
+  const data = await adminCall(
+    alpha,
+    `mutation { login(userId: ${JSON.stringify(alpha.user)}, password: ${JSON.stringify(alpha.password)}, namespace: 0) { response { accessJWT } } }`
+  );
+  return data.login.response.accessJWT;
+};
+
+/** Creates the ACL namespace of this run, with a throwaway `groot`. */
+const createNamespace = async alpha => {
+  const password = randomBytes(18).toString('hex');
+  const token = await galaxyToken(alpha);
+  const data = await adminCall(
+    alpha,
+    `mutation { addNamespace(input: { password: ${JSON.stringify(password)} }) { namespaceId message } }`,
+    token
+  );
+  return { id: data.addNamespace.namespaceId, password };
+};
+
+/** Deletes the namespace of this run (best effort: it is isolated garbage). */
+const deleteNamespace = async (alpha, id) => {
+  try {
+    const token = await galaxyToken(alpha);
+    await adminCall(
+      alpha,
+      `mutation { deleteNamespace(input: { namespaceId: ${id} }) { namespaceId } }`,
+      token
+    );
+  } catch (error) {
+    console.error(`the namespace ${id} could not be deleted: ${error.message}`);
+  }
 };
 
 /** The answer of a request to the service. */
@@ -206,6 +292,8 @@ const main = async () => {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   mkdirSync(dirname(theTokenPath), { recursive: true });
+  const alpha = theAlpha();
+  const namespace = await createNamespace(alpha);
   const readiness = theReadiness();
   const service = spawn(binary, [], {
     cwd: repositoryRoot,
@@ -213,15 +301,21 @@ const main = async () => {
       ...process.env,
       HODEI_SERVER__HOST: '127.0.0.1',
       HODEI_SERVER__PORT: String(port),
-      HODEI_DATABASE__DB_TYPE: 'rocksdb',
-      HODEI_DATABASE__NAMESPACE: 'hodei',
-      HODEI_DATABASE__DATABASE: 'artifacts',
-      HODEI_SCHEMA__STORAGE_TYPE: 'rocksdb',
+      // The graph profile: `config/dgraph.toml` declares `[graph]`, and the
+      // alpha, the namespace and the credentials come from the environment.
+      RUN_MODE: 'dgraph',
+      HODEI_GRAPH__ENDPOINT: alpha.endpoint,
+      HODEI_GRAPH__TLS__ENABLED: 'false',
+      HODEI_GRAPH__TLS__CA_CERT_PATH: '',
+      HODEI_GRAPH__TLS__SERVER_NAME: '',
+      HODEI_GRAPH__NAMESPACE: String(namespace.id),
+      HODEI_GRAPH__CREDENTIALS__USERID: 'groot',
+      HODEI_GRAPH__CREDENTIALS__PASSWORD: namespace.password,
+      HODEI_CONTENT__BACKEND: 'filesystem',
       // The catalog lives in the durable store: the console reads the
       // repositories, the assets and the decisions from there, and the
       // in-memory slice has none of them.
       HODEI_REPOSITORY__DURABLE: 'true',
-      HODEI_ROCKSDB__PATH: join(directory, 'catalog.rocksdb'),
       HODEI_CONTENT__CAS_PATH: join(directory, 'cas'),
       HODEI_SECURITY__ADMIN_API_ENABLED: 'true',
       HODEI_SECURITY__RAW_API_ENABLED: 'true',
@@ -246,19 +340,18 @@ const main = async () => {
     stdio: ['ignore', 'inherit', 'inherit'],
   });
 
-  const stop = () => {
+  const stop = async () => {
     service.kill('SIGTERM');
     readiness.server.close();
     rmSync(directory, { recursive: true, force: true });
     rmSync(theTokenPath, { force: true });
+    await deleteNamespace(alpha, namespace.id);
   };
   process.on('SIGTERM', () => {
-    stop();
-    process.exit(0);
+    stop().finally(() => process.exit(0));
   });
   process.on('SIGINT', () => {
-    stop();
-    process.exit(0);
+    stop().finally(() => process.exit(0));
   });
   // A fixture that dies without being asked to stop still takes its data
   // and its token with it.

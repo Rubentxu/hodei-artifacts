@@ -57,18 +57,24 @@ grep -q 'mystery@1.0.0: UNKNOWN licence' "$WORK/err" || fail "wrong reason: $(ca
 [ ! -e "$WORK/o1.json" ] || fail "a matrix was written despite the violation"
 ok "an UNKNOWN licence fails the release and writes no matrix"
 
-# 3. A licence file without SPDX expression is UNKNOWN too (the surrealdb BSL case) ...
+# 3. A licence file without SPDX expression is UNKNOWN too (the former surrealdb BSL case) ...
 mutate lfile "$ADD_PKG"'add("bsl-crate", None, lf="LICENSE")'
 if gen --metadata "$WORK/lfile.json" --out "$WORK/o2.json" 2>/dev/null; then fail "accepted a licence_file-only package"; fi
 ok "a package with only a licence file is UNKNOWN and fails"
 
-# 4. ... unless it is a named, justified exception (surrealdb, with its reason recorded).
-mutate exc "$ADD_PKG"'add("surrealdb", None, lf="LICENSE")'
-gen --metadata "$WORK/exc.json" --out "$WORK/o3.json" || fail "the surrealdb exception must be honoured"
+# 4. ... unless it is a named, justified exception. The shipped policy carries none
+# (surrealdb left the tree with HSP-314 F4), so the mechanism is exercised with a policy copy.
+python3 -I - "$POLICY" "$WORK/policy-exc.json" <<'PY'
+import json, sys
+p = json.load(open(sys.argv[1]))
+p["exceptions"] = [{"name": "bsl-crate", "reason": "Business Source License 1.1 (test exception: license_file only, no SPDX expression)"}]
+json.dump(p, open(sys.argv[2], "w"))
+PY
+gen --metadata "$WORK/lfile.json" --out "$WORK/o3.json" --policy "$WORK/policy-exc.json" || fail "a named exception must be honoured"
 python3 -I - "$WORK/o3.json" <<'PY' || fail "exception not recorded"
 import json, sys
 m = json.load(open(sys.argv[1]))
-assert "surrealdb@1.0.0" in m["policy"]["exceptions_used"], m["policy"]
+assert "bsl-crate@1.0.0" in m["policy"]["exceptions_used"], m["policy"]
 assert any("Business Source License" in e["reason"] for e in m["policy"]["exceptions"])
 PY
 ok "a justified exception is honoured and recorded in the matrix"
@@ -106,7 +112,7 @@ ok "check re-evaluates the packages and rejects a widened allowlist"
 
 # 8. The surrealdb/rocksdb state is the real one, never a pinned constant.
 mutate surreal "$ADD_PKG"'
-s = add("surrealdb", None, lf="LICENSE")
+s = add("surrealdb", "Apache-2.0")
 r = add("surrealdb-rocksdb", "Apache-2.0")
 root["dependencies"].append({"name": "surrealdb"})
 '

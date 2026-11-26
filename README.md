@@ -17,7 +17,7 @@
 
 ## Production profile: Dgraph + S3 (HSP-314 F2)
 
-The default build and the release archive/OCI image are the **graph profile**: a Dgraph Alpha is the single metadata authority and the bytes live in S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). The embedded SurrealDB/RocksDB engine is opt-in (`--features legacy`) and is retired in HSP-314 F4. Deploy with [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (API only, bring your own Dgraph and S3) or the [Helm chart](charts/hodei-artifacts/README.md); see [`docs/community/operations.md`](docs/community/operations.md). The risk facts and the CVE reactor (`POST /api/v1/advisories/accept`) run over Dgraph (HSP-314 F3a/F3b-3); the investigation surface (`POST /api/v1/investigations` and its freshness check) also runs over Dgraph (HSP-314 F3c) once `investigation_api_enabled` is set; if the alpha does not answer it fails closed with a `503`, never an empty report.
+The default build and the release archive/OCI image are the **graph profile**: a Dgraph Alpha is the single metadata authority and the bytes live in S3 (`RUN_MODE=dgraph`, `config/dgraph.toml`). The embedded SurrealDB/RocksDB engine and the `legacy` feature were retired in HSP-314 F4: the graph is the only profile and a deployment without `[graph]` is refused with `GRAPH_PROFILE_REQUIRED`. Deploy with [`compose.external.yaml`](compose.external.yaml) (Dgraph + Garage + API), [`compose.yaml`](compose.yaml) (API only, bring your own Dgraph and S3) or the [Helm chart](charts/hodei-artifacts/README.md); see [`docs/community/operations.md`](docs/community/operations.md). The risk facts and the CVE reactor (`POST /api/v1/advisories/accept`) run over Dgraph (HSP-314 F3a/F3b-3); the investigation surface (`POST /api/v1/investigations` and its freshness check) also runs over Dgraph (HSP-314 F3c) once `investigation_api_enabled` is set; if the alpha does not answer it fails closed with a `503`, never an empty report.
 
 ## 60-Second Quickstart (No Rust Required)
 
@@ -109,29 +109,29 @@ cargo run --bin hodei-artifacts-api
 
 ### Workspace Architecture
 
-The active Rust workspace in [`Cargo.toml`](Cargo.toml) contains 26 members (25 crates under `crates/` plus the root API crate `.`). Nine legacy crates in `crates/` are excluded from the workspace (see [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)).
+The active Rust workspace in [`Cargo.toml`](Cargo.toml) contains 24 members (23 crates under `crates/` plus the root API crate `.`). The previous-generation crates that used to be excluded were removed (see [ARCHITECTURE_STATUS.md](ARCHITECTURE_STATUS.md)).
 
-- `.` — `hodei-artifacts-api` (Axum HTTP API, router, handlers, bootstrap, recovery CLI)
+- `.` — `hodei-artifacts-api` (Axum HTTP API, router, handlers, bootstrap)
 - `crates/kernel` — Shared kernel: HRN v2, domain primitives, ports
 - `crates/hodei-iam` — Identity & Access Management
 - `crates/hodei-policies` — Cedar policy engine: schema, validation, evaluation
 - `crates/hodei-evidence` — Evidence domain & verification
-- `crates/hodei-evidence-storage` — SurrealDB storage for evidence
+- `crates/hodei-evidence-storage` — Dgraph storage for evidence
 - `crates/hodei-trust-policy` — Trust policy & promotion gates
-- `crates/hodei-trust-policy-storage` — SurrealDB storage for trust policies
+- `crates/hodei-trust-policy-storage` — Dgraph storage for trust policies
 - `crates/hodei-risk` — Risk facts & evaluation
-- `crates/hodei-risk-storage` — SurrealDB storage for risk facts
+- `crates/hodei-risk-storage` — Dgraph storage for risk facts
 - `crates/hodei-reachability` — Reachability & lineage analysis
 - `crates/hodei-reactive` — Reactive event & lifecycle coordination
 - `crates/hodei-hub` — Content-addressed blob hub & integrity
 - `crates/hodei-hub-s3` — S3-compatible blob store adapter
 - `crates/hodei-catalog` — Repository catalog, conformance matrix, proxy/group rules
-- `crates/hodei-catalog-storage` — SurrealDB storage for the catalog
+- `crates/hodei-catalog-storage` — Dgraph storage for the catalog
 - `crates/hodei-audit` — Security audit event log
 - `crates/hodei-investigator` — Supply-chain investigation engine
-- `crates/hodei-investigator-storage` — SurrealDB storage for investigations
+- `crates/hodei-investigator-storage` — Dgraph storage for investigations
 - `crates/hodei-simulation` — Policy/graph simulation
-- `crates/hodei-simulation-storage` — SurrealDB storage for simulations
+- `crates/hodei-simulation-storage` — Dgraph storage for simulations
 - `crates/hodei-counterfactual` — Counterfactual policy evaluation
 - `crates/hodei-spike-ladybug` — Graph storage spike
 - `crates/hodei-graph-client` — Graph query client

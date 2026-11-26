@@ -2,11 +2,9 @@
 
 Esta página es la **referencia** (en el sentido de Diátaxis) de la
 configuración declarativa de `hodei-artifacts-api`: cada clave del
-perfil productivo [`config/dgraph.toml`](../../config/dgraph.toml) (sección 4)
-y, como referencia del motor embebido retirado,
-de [`config/standalone.toml`](../../config/standalone.toml) y
-[`config/external.toml`](../../config/external.toml), las variables de
-entorno y la diferencia entre un laboratorio y una producción. La fuente de
+perfil productivo [`config/dgraph.toml`](../../config/dgraph.toml) (secciones 3
+y 4), las variables de entorno y la diferencia entre un laboratorio y una
+producción. La fuente de
 verdad es [`src/config.rs`](../../src/config.rs); si algo de aquí discrepa del
 código, manda el código.
 
@@ -32,10 +30,10 @@ detiene el arranque con un mensaje que nombra la clave y la variable que la
 arregla (*verificado*, por ejemplo `Invalid log level 'loud'. Valid values:
 trace, debug, info, warn, error`).
 
-Cuando se usa `RUN_MODE=dgraph`, `standalone` o `external`, el fichero de perfil se
-**superpone** a `config/default.toml`: lo que el perfil no dice lo aporta el
-`default.toml`. Por eso `external.toml` no necesita su propia sección
-`[rocksdb]`, que sí es obligatoria en el conjunto.
+Cuando se usa `RUN_MODE=dgraph`, el fichero de perfil se **superpone** a
+`config/default.toml`: lo que el perfil no dice lo aporta el `default.toml`.
+El único perfil es el de grafo; un despliegue sin sección `[graph]` se rechaza
+con `GRAPH_PROFILE_REQUIRED` (sección 4).
 
 ## 2. Variables de entorno
 
@@ -51,14 +49,14 @@ Cuando se usa `RUN_MODE=dgraph`, `standalone` o `external`, el fichero de perfil
 
 ```bash
 HODEI_SERVER__PORT=8080
-HODEI_ROCKSDB__PATH=/app/data/hodei.rocksdb
+HODEI_GRAPH__ENDPOINT=dgraph-alpha:9080          # clave de [graph]
 HODEI_CONTENT__S3__BUCKET=hodei-content          # tabla anidada [content.s3]
 HODEI_SECURITY__CORS_ALLOWED_ORIGINS=https://app.example,https://admin.example
 ```
 
 Una variable con el prefijo mal escrito se **descarta sin error**: comprueba
 siempre en el log de arranque que el valor llegó (el servicio imprime
-`Server:` y `RocksDB path:`).
+`Server:` y `Schema storage:`).
 
 ### 2.2 Variables que no siguen la regla
 
@@ -70,19 +68,12 @@ siempre en el log de arranque que el valor llegó (el servicio imprime
 | Variable nombrada en `credential_ref = "env:NOMBRE"` | `src/proxy/fetch.rs` | Credencial de un upstream de proxy. Solo se lee si `NOMBRE` está en `proxy.allowed_credentials`. |
 | Credenciales de S3 | SDK de AWS | No hay clave de credencial en el TOML: salen de la cadena estándar del SDK (entorno, configuración compartida, rol de identidad). |
 
-## 3. Claves de `standalone.toml` (motor embebido, solo `legacy`)
+## 3. Claves comunes del perfil de grafo
 
-> **Retirado del build por defecto (HSP-314 F2).** El perfil embebido
-> (SurrealDB sobre RocksDB) solo existe con la feature `legacy`, que ya no es
-> la predeterminada. El binario y la imagen productivos se construyen sin ella
-> y rechazan un perfil sin `[graph]` con el mensaje de migración. Esta sección
-> y la siguiente se conservan como referencia del motor embebido hasta que
-> HSP-314 F4 lo borre; para desplegar, usa el perfil de grafo (sección 4, «Perfil `dgraph.toml`»).
-
-Perfil `RUN_MODE=standalone`: RocksDB embebido para los metadatos y
-almacén de contenido en el sistema de ficheros bajo `/app/data`, pensado para
-un rootfs de solo lectura con un volumen escribible en `/app/data`. No
-contiene secretos.
+Claves de `config/default.toml` y `config/dgraph.toml` que no son de `[graph]`.
+El perfil productivo declara `content.backend = "s3"`; `server.*`
+y `server.max_body_size` toman los valores de `dgraph.toml` (`0.0.0.0`, 50 MiB).
+Los valores de la tabla son los de `default.toml`.
 
 | Clave | Valor en el perfil | Variable de entorno | Qué hace |
 | --- | --- | --- | --- |
@@ -90,18 +81,11 @@ contiene secretos.
 | `server.port` | `3000` | `HODEI_SERVER__PORT` | Puerto, 1-65535 (0 se rechaza). |
 | `server.request_timeout_secs` | `30` | `HODEI_SERVER__REQUEST_TIMEOUT_SECS` | Tiempo máximo de una petición; debe ser mayor que 0. |
 | `server.max_body_size` | `10485760` | `HODEI_SERVER__MAX_BODY_SIZE` | Tamaño máximo del cuerpo, en bytes (10 MiB); mayor que 0. |
-| `database.db_type` | `"rocksdb"` | `HODEI_DATABASE__DB_TYPE` | Único valor aceptado hoy: `rocksdb`. |
 | `database.namespace` | `"hodei"` | `HODEI_DATABASE__NAMESPACE` | No puede estar vacío. |
 | `database.database` | `"artifacts"` | `HODEI_DATABASE__DATABASE` | No puede estar vacío. |
 | `database.pool_size` | `10` | `HODEI_DATABASE__POOL_SIZE` | Mayor que 0. |
-| `rocksdb.path` | `"/app/data/hodei.rocksdb"` | `HODEI_ROCKSDB__PATH` | Directorio de la base. |
-| `rocksdb.create_if_missing` | `true` | `HODEI_ROCKSDB__CREATE_IF_MISSING` | Crea la base si no existe. |
-| `rocksdb.compression` | `true` | `HODEI_ROCKSDB__COMPRESSION` | Compresión de RocksDB. |
-| `rocksdb.max_open_files` | `1000` | `HODEI_ROCKSDB__MAX_OPEN_FILES` | Mayor que 0. |
-| `rocksdb.write_buffer_size` | `67108864` | `HODEI_ROCKSDB__WRITE_BUFFER_SIZE` | Bytes (64 MiB); mayor que 0. |
 | `schema.register_iam_on_startup` | `false` | `HODEI_SCHEMA__REGISTER_IAM_ON_STARTUP` | Registra el esquema IAM al arrancar. |
 | `schema.validate` | `true` | `HODEI_SCHEMA__VALIDATE` | Valida los esquemas tras construirlos. |
-| `schema.storage_type` | `"rocksdb"` | `HODEI_SCHEMA__STORAGE_TYPE` | Almacén de esquemas. |
 | `security.admin_api_enabled` | `false` | `HODEI_SECURITY__ADMIN_API_ENABLED` | Abre `/api/v1`; con `false` toda ruta administrativa responde `403`. Abrirla exige además autenticador y autorizador. |
 | `security.raw_api_enabled` | `false` | `HODEI_SECURITY__RAW_API_ENABLED` | Superficie de contenido crudo (`/repository/...`). |
 | `security.cors_allowed_origins` | `[]` | `HODEI_SECURITY__CORS_ALLOWED_ORIGINS` | Vacío = sin acceso entre orígenes. Se rechaza `*`, mayúsculas, fragmentos y puertos por defecto (`:80`, `:443`). |
@@ -114,18 +98,14 @@ contiene secretos.
 | `content.staging_max_age_secs` | `3600` | `HODEI_CONTENT__STAGING_MAX_AGE_SECS` | Edad a partir de la cual se limpia una subida interrumpida. Mínimo 60. |
 | `content.backend` | `"filesystem"` | `HODEI_CONTENT__BACKEND` | `filesystem` o `s3`. No hay *fallback* entre ambos. |
 
-*(verificado con `--features legacy`)* El perfil `standalone` arranca con
-`RUN_MODE=standalone` y responde `{"status":"healthy",...}` en `/health`. El
-binario sin `legacy` lo rechaza.
+`content.cas_path` solo se usa con `content.backend = "filesystem"`; con `s3`
+no se escribe ningún byte en él.
 
-## 4. Claves de `external.toml`
+## 4. Backend de contenido S3 y perfil de grafo
 
-Perfil `RUN_MODE=external`: declara metadatos en Dgraph externo y contenido
-en un almacén compatible con S3. Las claves `server.*`, `database.namespace`,
-`database.database`, `database.pool_size`, `schema.register_iam_on_startup`,
-`schema.validate`, `security.*`, `logging.*` y `repository.durable` tienen el
-mismo significado y los mismos valores que en `standalone.toml` (tabla de la
-sección 3). Lo que difiere:
+`RUN_MODE=dgraph` declara los metadatos en un Alpha de Dgraph y el contenido en
+un almacén compatible con S3. Las claves que lo distinguen del resto de la
+sección 3:
 
 | Clave | Valor en el perfil | Variable de entorno | Qué hace |
 | --- | --- | --- | --- |
@@ -137,13 +117,15 @@ sección 3). Lo que difiere:
 | `content.s3.region` | `"eu-west-1"` | `HODEI_CONTENT__S3__REGION` | Región del *bucket*. Por defecto la resuelve el SDK. |
 | `content.s3.tls` | `false` | `HODEI_CONTENT__S3__TLS` | Habla TLS con el endpoint. Por defecto `true`. |
 
-### Estado: `external` queda sustituido por el perfil de grafo
+### Estado: el único perfil es el de grafo
 
-`config/external.toml` declara `database.db_type = "dgraph"` sin `[graph]` y el
-servicio lo rechaza: la autoridad de metadatos del perfil de grafo es la sección
-`[graph]` de `config/dgraph.toml` (siguiente apartado), no `database.db_type`. Usa
-`RUN_MODE=dgraph`. Los valores `endpoint = "127.0.0.1:4566"` y `tls = false` del
-fichero son los de un almacén local de pruebas, no los de producción (sección 6).
+Los perfiles `standalone` (RocksDB embebido) y `external` ya no existen: se
+retiraron con el motor embebido (HSP-314 F4) y `config/` solo trae
+`default.toml`, `dgraph.toml` y `release.toml`. La autoridad de metadatos es la
+sección `[graph]` de `config/dgraph.toml` (siguiente apartado), no
+`database.db_type`. Los valores `endpoint = "127.0.0.1:4566"` y `tls = false`
+de la tabla son los de un almacén local de pruebas, no los de producción
+(sección 6).
 
 ### Perfil `dgraph.toml`
 
@@ -165,8 +147,8 @@ Lo que el perfil declara:
   `[graph.tls]` (`enabled`, `ca_cert_path`, `server_name`) y
   `[graph.credentials]` con `userid`. La contraseña no va en el fichero: se
   inyecta con `HODEI_GRAPH__CREDENTIALS__PASSWORD`.
-- `[database] db_type = "dgraph"`, que declara el grafo y evita reclamar el
-  motor embebido.
+- `[database] db_type = "dgraph"`, que declara el grafo (cualquier otro valor
+  se rechaza).
 - `[content] backend = "s3"` con su tabla `[content.s3]`: los bytes no viven
   en el grafo.
 
@@ -287,24 +269,19 @@ se entra como anónimo. Todo lo que no se declara es un error tipado.
 completo (`userid` y `password`). Sin él, el cliente no intenta ningún login y
 toda llamada autenticada falla de forma explícita si el servidor lo exige.
 
-#### Incompatibilidad con el motor embebido
+#### Sin `[graph]` no hay perfil
 
-Con `[graph]` presente, el grafo es la **única autoridad** y el motor embebido
-(SurrealDB sobre RocksDB) se **rechaza**; sin `[graph]`, el servicio corre sobre
-el motor embebido como siempre. No hay *fallback* entre ambas autoridades:
-metadatos que viven en dos sitios son metadatos en los que ninguna
-restauración se puede confiar.
+El grafo es la **única autoridad** de los metadatos. El motor embebido
+(SurrealDB sobre RocksDB) y la feature `legacy` se retiraron (HSP-213,
+HSP-314 F4); no hay *fallback* entre autoridades: metadatos que viven en dos
+sitios son metadatos en los que ninguna restauración se puede confiar.
 
-- Si `[graph]` está presente y `database.db_type = "rocksdb"`, el arranque
-  termina con este error (extraído de `DatabaseConfig::validate_without_engine`):
-
-  ```text
-  the Dgraph profile refuses the embedded RocksDB engine: [graph] declares the authority, so [database] db_type = "rocksdb" would claim a second one. There is no fallback between the two authorities (HSP-209)
-  ```
-
-- Con `[graph]` presente no se valida ni se prepara `[rocksdb]`: su ruta no se
-  crea, no se abre y no se toca. El resto de claves de `[database]`
-  (`namespace`, `database`, `pool_size`) se siguen validando.
+- Si falta `[graph]`, el arranque termina con `GRAPH_PROFILE_REQUIRED`
+  (`src/config.rs`), que indica declarar `[graph]` y usar `RUN_MODE=dgraph`; un
+  almacén local de una versión anterior hay que migrarlo con una versión que
+  aún traía las herramientas de operador.
+- Un `database.db_type` distinto de `dgraph` (por ejemplo `rocksdb`) se rechaza
+  con `Unsupported database type '<valor>'. Only 'dgraph' is supported`.
 - Si `[graph]` es inválido (por ejemplo, endpoint con esquema o TLS sin CA), el
   arranque falla con el error tipado del cliente de grafo, sin conectarse.
 
@@ -402,7 +379,7 @@ ella dejan de verificar en el siguiente reinicio, sin esperar al TTL.
 | Secreto JWT | Aleatorio y efímero (`openssl rand`), vive en el directorio temporal del laboratorio y por variable de entorno | Gestionado por quien despliega; mejor `auth_jwks_path` que un secreto compartido |
 | Clave de firma APT/RPM | Efímera (se genera en cada arranque) | `HODEI_METADATA_SIGNER_ARMOR` persistente |
 | Datos | Directorio temporal que se borra | Volumen persistente con copias de seguridad |
-| Perfil de configuración | Perfil que genera `scripts/community-quickstart.sh` + variables | `config/dgraph.toml` + variables o secretos montados (el perfil embebido solo existe con `legacy`) |
+| Perfil de configuración | Perfil que genera `scripts/community-quickstart.sh` + variables | `config/dgraph.toml` + variables o secretos montados |
 
 ### 6.1 TLS
 
@@ -416,16 +393,16 @@ HTTP en claro. En producción:
    cabeceras reenviadas.
 3. Hacia el almacén de objetos, deja `content.s3.tls = true` (el valor por
    defecto). `tls = false` envía las credenciales del SDK en claro y solo es
-   aceptable contra un almacén local de pruebas, como el `127.0.0.1:4566` del
-   fichero `external.toml`.
+   aceptable contra un almacén local de pruebas, como el `127.0.0.1:4566` de
+   los ejemplos de la sección 4.
 4. Los clientes de paquetes usan siempre URL `https://` en producción; no
    desactives la verificación de certificados ni de firmas en ningún cliente
    (ver [`ecosystems.md`](ecosystems.md)).
 
 ### 6.2 Secretos
 
-- **Nunca en un fichero versionado.** Ni `dgraph.toml` ni `external.toml`
-  llevan secretos, y `scripts/community-quickstart.sh` comprueba que el perfil
+- **Nunca en un fichero versionado.** `dgraph.toml` no
+  lleva secretos, y `scripts/community-quickstart.sh` comprueba que el perfil
   de producción no declare `auth_jwt_secret`.
 - Pasa `auth_jwt_secret` con `HODEI_SECURITY__AUTH_JWT_SECRET`, o monta un
   JWKS y apunta `auth_jwks_path` a él (`HODEI_SECURITY__AUTH_JWKS_PATH`).

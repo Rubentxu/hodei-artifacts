@@ -15,8 +15,9 @@ limpieza borra ese directorio y nada más.
 > OCI se construyen **sin** el motor embebido (SurrealDB/RocksDB), y el
 > laboratorio de este tutorial corre sobre ese mismo perfil: levanta un Dgraph y
 > un S3 desechables con Podman (o usa los tuyos) y los retira al terminar. El
-> motor embebido solo existe con `--features legacy` hasta que HSP-314 F4 lo
-> retire.
+> motor embebido y la feature `legacy` se retiraron (HSP-314 F4): el grafo es el
+> único perfil y un despliegue sin `[graph]` se rechaza con
+> `GRAPH_PROFILE_REQUIRED`.
 >
 > La investigación (`POST /api/v1/investigations` y su comprobación de frescura),
 > los hechos de riesgo y el reactor de CVE corren sobre Dgraph (HSP-314 F3). La

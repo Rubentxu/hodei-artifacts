@@ -21,14 +21,5 @@
     "bzip2-1.0.6"
   ],
   "first_party_undeclared_allowed": true,
-  "exceptions": [
-    {
-      "name": "surrealdb",
-      "reason": "Business Source License 1.1 (license_file LICENSE, no SPDX expression). Direct dependency kept while the Graph-First chain (HSP-213 removal) is not integrated; the use is not a Database Service. Remove this exception when surrealdb leaves the resolved graph."
-    },
-    {
-      "name": "surrealdb-core",
-      "reason": "Business Source License 1.1 (license_file LICENSE, no SPDX expression); transitive of surrealdb. Remove together with the surrealdb exception."
-    }
-  ]
+  "exceptions": []
 }
