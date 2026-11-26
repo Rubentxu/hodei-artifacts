@@ -276,6 +276,8 @@ pub async fn create_repository(
     // Tags feed tag-based policies: declaring them needs its own action,
     // which `CreateRepository` never implies (HSP-321).
     require_tag_management(&state, &context, &hrn, &config, &correlation)?;
+    // Admission names an external provider: its own action and the egress check (HSP-153).
+    require_admission_management(&state, &context, &hrn, &config, &correlation)?;
 
     let writer = state
         .catalog_writer
@@ -346,10 +348,72 @@ pub(crate) fn require_tag_management(
     {
         return Ok(());
     }
+    require_scoped_action(
+        state,
+        context,
+        hrn,
+        config,
+        correlation,
+        crate::actions::manage_repository_tags(),
+    )
+}
+
+/// Gate the declaration of evidence admission behind `ManageRepositoryAdmission`
+/// and check the provider against the administrator's egress allow-list **at
+/// declaration time** (HSP-153). `CreateRepository` never implies the action:
+/// the declaration names a URL the service will call out to.
+///
+/// The Cedar decision comes first (403); an unusable declaration or a provider
+/// outside the allow-list is a 400, and nothing is created.
+pub(crate) fn require_admission_management(
+    state: &AppState,
+    context: &VerifiedContext,
+    hrn: &Hrn,
+    config: &RepositoryConfig,
+    correlation: &str,
+) -> Result<(), CatalogRepositoryError> {
+    if config.config_settings.get("admission").is_none() {
+        return Ok(());
+    }
+    require_scoped_action(
+        state,
+        context,
+        hrn,
+        config,
+        correlation,
+        crate::actions::manage_repository_admission(),
+    )?;
+    let declared = crate::admission::AdmissionConfig::from_settings(&config.config_settings)
+        .map_err(CatalogRepositoryError::BadRequest)?;
+    if let Some(provider) = declared.and_then(|declared| declared.provider) {
+        let allowed = state
+            .proxy_plane
+            .as_ref()
+            .is_some_and(|plane| plane.fetcher.check_destination(&provider.url).is_ok());
+        if !allowed {
+            return Err(CatalogRepositoryError::BadRequest(
+                "the admission provider is not in the egress allow-list of this service"
+                    .to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The Cedar decision of `action` over the repository being declared, with its
+/// proposed settings as the resource scope. A denial or an undecidable outcome
+/// is a 403 (fail closed) and is audited.
+fn require_scoped_action(
+    state: &AppState,
+    context: &VerifiedContext,
+    hrn: &Hrn,
+    config: &RepositoryConfig,
+    correlation: &str,
+    action: hodei_authz::ActionId,
+) -> Result<(), CatalogRepositoryError> {
     let account = context.account().as_str();
     let scope = crate::authorization::repository_scope(account, &config.config_settings)
         .map_err(|error| CatalogRepositoryError::BadRequest(error.to_string()))?;
-    let action = crate::actions::manage_repository_tags();
     let outcome = state
         .authorize_resource
         .execute_canonical_scoped(context.clone(), action.clone(), hrn, scope)
@@ -424,6 +488,18 @@ fn the_config(body: &CreateRepositoryBody) -> Result<RepositoryConfig, CatalogRe
             ));
         }
         config.config_settings = settings.clone();
+    }
+    // Admission (HSP-153) gates the hosted raw publication only. A declaration
+    // anywhere else would look gated and not be, so it is refused up front, and
+    // so is one that cannot be read (never interpreted generously).
+    if config.config_settings.get("admission").is_some() {
+        if body.mode != RepositoryMode::Hosted || body.format != RepositoryFormat::Raw {
+            return Err(CatalogRepositoryError::BadRequest(
+                "admission is only supported on hosted raw repositories".to_string(),
+            ));
+        }
+        crate::admission::AdmissionConfig::from_settings(&config.config_settings)
+            .map_err(CatalogRepositoryError::BadRequest)?;
     }
     match body.mode {
         RepositoryMode::Hosted => Ok(config),

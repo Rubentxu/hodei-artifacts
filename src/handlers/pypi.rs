@@ -168,6 +168,7 @@ impl Failure {
                 ),
                 RawApiError::Offline(reason) => (StatusCode::SERVICE_UNAVAILABLE, (*reason).into()),
                 RawApiError::ReservedNamespace(reason) => (StatusCode::FORBIDDEN, reason.clone()),
+                RawApiError::Admission(_) => error.the_verdict(),
                 RawApiError::Internal => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "the service failed to answer".into(),

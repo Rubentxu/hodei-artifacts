@@ -214,6 +214,8 @@ pipeline {
                         "--test hsp321g_policy_applied_dgraph_it",
                         // HSP-321 tramo h: ABAC por etiquetas de recurso en los puntos de decision reales + ManageRepositoryTags.
                         "--test hsp321h_abac_wired_dgraph_it",
+                        // HSP-321 tramo i: admision de evidencias en la publicacion (HSP-153) por el router real.
+                        "--test hsp321i_admission_dgraph_it",
                         "--test hsp314_f3b3_reactor_wiring_it",
                         "--test hsp323_reaction_status_it",
                         // HSP-151 / HSP-321: the Policy Studio API over the real binary and Dgraph.

@@ -357,6 +357,21 @@ pub async fn import(
     let (destinations, descriptors) =
         the_destinations(&state, &context, &assets, &request.destinations).await?;
     let plans = plan_assets(&assets, &destinations);
+    // Migration publishes straight to the catalog and does not run the
+    // admission gate (HSP-153). A destination that declares admission would
+    // look gated and not be, so the run is refused before anything is read or
+    // published, dry run included.
+    for plan in &plans {
+        if let AssetPlan::Import { destination } = plan
+            && descriptors
+                .get(destination)
+                .is_some_and(crate::admission::is_declared)
+        {
+            return Err(RawApiError::NotImplemented(
+                "migration into a repository that declares admission is not supported",
+            ));
+        }
+    }
     let correlation = correlation_id(&headers, &state.identity);
 
     let mut skipped: Vec<serde_json::Value> = Vec::new();

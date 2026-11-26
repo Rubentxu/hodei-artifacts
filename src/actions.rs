@@ -38,6 +38,16 @@ pub fn manage_repository_tags() -> ActionId {
     ActionId::new("artifacts", "ManageRepositoryTags").expect("a valid action")
 }
 
+/// Declaring evidence admission on a repository (HSP-153).
+///
+/// The admission declaration names the provider the service will call out to,
+/// so it is its own action: `CreateRepository` never implies it. Admission is
+/// **self-declared** by whoever may manage it; it is a gate for the artifacts
+/// published into that repository, not a boundary against its own owner.
+pub fn manage_repository_admission() -> ActionId {
+    ActionId::new("artifacts", "ManageRepositoryAdmission").expect("a valid action")
+}
+
 /// Reading the trust capsule of a release.
 ///
 /// The capsule is a read: it is a view of the evidence that is there, and
@@ -101,6 +111,7 @@ pub fn all() -> Vec<ActionId> {
         read_repository(),
         create_repository(),
         manage_repository_tags(),
+        manage_repository_admission(),
         read_capsule(),
         access_admin_api(),
         upload_asset(),
@@ -187,6 +198,7 @@ pub fn check_service_declared(
     check_declared(schema, &read_capsule())?;
     check_declared(schema, &create_repository())?;
     check_declared(schema, &manage_repository_tags())?;
+    check_declared(schema, &manage_repository_admission())?;
     check_scope_attributes_declared(schema)?;
     check_declared(schema, &download_asset())?;
     if admin_enabled {
@@ -270,6 +282,8 @@ mod scope_tests {
             let schema = schema_of(text);
             check_scope_attributes_declared(&schema).expect("scope attributes declared");
             check_declared(&schema, &manage_repository_tags()).expect("tag action declared");
+            check_declared(&schema, &manage_repository_admission())
+                .expect("admission action declared");
         }
     }
 
