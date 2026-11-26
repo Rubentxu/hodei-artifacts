@@ -636,8 +636,13 @@ async fn group(
         }
         GroupRoute::RepomdSignature => {
             the_decision(state, context, crate::actions::download_asset(), repository)?;
-            let snapshot =
-                build_and_publish_group_snapshot(state, context, repository, correlation).await?;
+            let snapshot = match cached_group_snapshot(state, context, repository).await? {
+                Some(snapshot) => snapshot,
+                None => {
+                    build_and_publish_group_snapshot(state, context, repository, correlation)
+                        .await?
+                }
+            };
             Ok(serve_system_bytes(
                 snapshot.repomd_asc,
                 "application/pgp-signature",
@@ -672,6 +677,34 @@ async fn group(
     }
 }
 
+async fn cached_group_snapshot(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+) -> Result<Option<GroupSnapshot>, Failure> {
+    let account = context.account().as_str();
+    let leaves = match super::raw_group::the_leaves(state, context, repository).await {
+        Ok(leaves) => leaves,
+        Err(error) => {
+            invalidate_group_snapshot(state, account, &repository.repo_key).await;
+            return Err(error.into());
+        }
+    };
+    let member_keys: Vec<String> = leaves
+        .iter()
+        .map(|member| member.repo_key.clone())
+        .collect();
+    let cache = state.yum_group_snapshots.read().await;
+    Ok(cache
+        .get(&(account.to_string(), repository.repo_key.clone()))
+        .and_then(|entry| entry.current.as_ref())
+        .filter(|snapshot| {
+            snapshot.config_version == repository.config.version
+                && snapshot.member_keys == member_keys
+        })
+        .cloned())
+}
+
 async fn invalidate_group_snapshot(state: &AppState, account: &str, group_key: &str) {
     let mut cache = state.yum_group_snapshots.write().await;
     cache.remove(&(account.to_string(), group_key.to_string()));
@@ -693,7 +726,7 @@ async fn build_and_publish_group_snapshot(
     };
     let member_keys: Vec<String> = leaves.iter().map(|m| m.repo_key.clone()).collect();
     let mut member_entries = Vec::with_capacity(leaves.len());
-    let mut max_timestamp = epoch_moment().timestamp() as u64;
+    let mut max_timestamp = repository.created_at.timestamp().max(0) as u64;
 
     for member in &leaves {
         let collected = match member.mode {
@@ -907,6 +940,40 @@ async fn collect_proxy_entries(
         .get(&repomd_served.asset.digest)
         .await
         .map_err(|error| the_blob_error(&error))?;
+    let upstream_key = upstream.gpg_key_armor.as_deref().ok_or_else(|| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the upstream signing key is not configured",
+        )
+    })?;
+    let signature_path = "repodata/repomd.xml.asc";
+    let signature_url = upstream
+        .target(signature_path)
+        .ok_or(RawApiError::NotFound)?;
+    let signature_served = super::raw::the_proxy_asset_at(
+        state,
+        context,
+        member,
+        signature_path,
+        Some(signature_url),
+        Some("application/pgp-signature"),
+        correlation,
+    )
+    .await?;
+    crate::trust::admit(state, account, member, &signature_served.asset.digest)
+        .await
+        .map_err(the_admission_error)?;
+    let signature_bytes = store
+        .get(&signature_served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    crate::openpgp::MetadataSigner::verify_detached(&repomd_bytes, &signature_bytes, upstream_key)
+        .map_err(|_| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "the upstream repomd.xml signature is invalid",
+            )
+        })?;
     let repomd_str = String::from_utf8(repomd_bytes.to_vec()).map_err(|_| {
         Failure::plain(
             StatusCode::BAD_GATEWAY,

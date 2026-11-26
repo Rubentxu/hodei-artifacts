@@ -16,6 +16,7 @@ use std::io::{Read as _, Write as _};
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Barrier};
 
 use hodei_artifacts_api::openpgp::MetadataSigner;
 use hodei_catalog::yum;
@@ -296,6 +297,25 @@ fn ac1_real_dnf_installs_hosted_and_proxy_packages_through_group_with_hodei_sign
         None,
     );
     assert_eq!(repomd_ans.status, 200);
+    let primary_decl = yum::declared_primary(&String::from_utf8_lossy(&repomd_ans.body))
+        .expect("group repomd declares primary metadata");
+    let primary_ans = call(
+        port,
+        "GET",
+        &format!("/yum/rpm-group/{}", primary_decl.location),
+        &token,
+        None,
+    );
+    assert_eq!(primary_ans.status, 200);
+    let primary_xml = gunzip(&primary_ans.body);
+    assert!(
+        primary_xml.contains(&sha256_of(&hosted_rpm)),
+        "primary metadata must declare the exact hosted RPM checksum"
+    );
+    assert!(
+        primary_xml.contains(&sha256_of(&proxy_rpm)),
+        "primary metadata must declare the exact proxied RPM checksum"
+    );
     let sig_ans = call(
         port,
         "GET",
@@ -443,6 +463,18 @@ fn ac2_nevra_collision_precedence_and_generation_coherence() {
         None,
     );
     assert_eq!(repomd1.status, 200);
+    let repomd1_repeat = call(
+        port,
+        "GET",
+        "/yum/group-hosted-first/repodata/repomd.xml",
+        &token,
+        None,
+    );
+    assert_eq!(repomd1_repeat.status, 200);
+    assert_eq!(
+        repomd1_repeat.body, repomd1.body,
+        "an unchanged group state has a deterministic metadata snapshot"
+    );
     let primary1_decl =
         yum::declared_primary(&String::from_utf8_lossy(&repomd1.body)).expect("primary1");
     let primary1 = call(
@@ -489,19 +521,59 @@ fn ac2_nevra_collision_precedence_and_generation_coherence() {
     assert!(xml_pf.contains(&sha256_of(&proxy_rpm)));
     assert!(!xml_pf.contains(&sha256_of(&hosted_rpm)));
 
-    // 3. Concurrent revision: upload extra-pkg to rpm-hosted; fetching generation 1's
-    // primary.xml.gz by its content-addressed checksum still returns generation 1!
-    assert_eq!(
+    // A concurrent publication cannot replace the immutable primary that
+    // this already-issued repomd references.
+    let primary1_path = format!("/yum/group-hosted-first/{}", primary1_decl.location);
+    let start = Arc::new(Barrier::new(5));
+    let mut readers = Vec::new();
+    for _ in 0..4 {
+        let start = Arc::clone(&start);
+        let path = primary1_path.clone();
+        let token = token.clone();
+        let expected = primary1_decl.checksum.clone();
+        readers.push(std::thread::spawn(move || {
+            start.wait();
+            for _ in 0..4 {
+                let answer = call(port, "GET", &path, &token, None);
+                assert_eq!(answer.status, 200);
+                assert_eq!(sha256_of(&answer.body), expected);
+            }
+        }));
+    }
+    let publish_start = Arc::clone(&start);
+    let publish_token = token.clone();
+    let publish_body = extra_rpm.clone();
+    let publisher = std::thread::spawn(move || {
+        publish_start.wait();
         call(
             port,
             "PUT",
             "/yum/rpm-hosted/pool/extra-pkg-2.0.0-1.x86_64.rpm",
-            &token,
-            Some(&extra_rpm),
+            &publish_token,
+            Some(&publish_body),
         )
-        .status,
+        .status
+    });
+    for reader in readers {
+        reader.join().expect("a concurrent reader finishes");
+    }
+    assert_eq!(
+        publisher.join().expect("the concurrent publisher finishes"),
         200
     );
+
+    let hub_key_asc = hub_signer.key_asc().expect("hub key_asc");
+    let sig1 = call(
+        port,
+        "GET",
+        "/yum/group-hosted-first/repodata/repomd.xml.asc",
+        &token,
+        None,
+    );
+    assert_eq!(sig1.status, 200);
+    MetadataSigner::verify_detached(&repomd1.body, &sig1.body, &hub_key_asc)
+        .expect("the old signature remains paired with the downloaded repomd after publication");
+
     let gen1_again = call(
         port,
         "GET",
@@ -529,7 +601,6 @@ fn ac2_nevra_collision_precedence_and_generation_coherence() {
         None,
     );
     assert_eq!(sig2.status, 200);
-    let hub_key_asc = hub_signer.key_asc().expect("hub key_asc");
     MetadataSigner::verify_detached(&repomd2.body, &sig2.body, &hub_key_asc)
         .expect("generation 2 signature verifies");
     let primary2_decl =
@@ -582,10 +653,9 @@ fn ac3_unavailable_origin_fails_closed_never_exposing_partial_index() {
         &token,
         None,
     );
-    assert!(
-        repomd.status >= 500 || repomd.status == 404,
-        "unavailable origin must fail closed, got {}",
-        repomd.status
+    assert_eq!(
+        repomd.status, 502,
+        "an unavailable origin must return BAD_GATEWAY, not a partial index"
     );
     let sig = call(
         port,
@@ -594,12 +664,226 @@ fn ac3_unavailable_origin_fails_closed_never_exposing_partial_index() {
         &token,
         None,
     );
-    assert!(
-        sig.status >= 500 || sig.status == 404,
-        "unavailable origin signature must fail closed, got {}",
-        sig.status
+    assert_eq!(
+        sig.status, 502,
+        "an unavailable origin signature must return BAD_GATEWAY"
     );
 
+    support::stop(&mut service);
+}
+
+#[test]
+fn ac3_upstream_key_rotation_invalidates_old_snapshot_fail_closed() {
+    let upstream = support::lab::Upstream::start();
+    let old_signer =
+        MetadataSigner::generate("Old upstream <old-upstream@example.local>").expect("old signer");
+    let replacement_signer = MetadataSigner::generate("Replacement <replacement@example.local>")
+        .expect("replacement signer");
+    let hub_signer = MetadataSigner::generate("Hodei Hub <hub@hodei.local>")
+        .expect("hub signer");
+    let hub_armor = hub_signer.to_armor().expect("hub armor");
+    let primary_xml = yum::primary_document(&[]).into_bytes();
+    let primary_gz = gzip(&primary_xml);
+    let gz_sha = sha256_of(&primary_gz);
+    let xml_sha = sha256_of(&primary_xml);
+    let primary_loc = yum::primary_location(&gz_sha);
+    let repomd = yum::repomd_document(
+        1_700_000_301,
+        &[yum::RepodataEntry {
+            kind: "primary",
+            location: &primary_loc,
+            checksum: &gz_sha,
+            size: primary_gz.len() as u64,
+            open_checksum: &xml_sha,
+            open_size: primary_xml.len() as u64,
+            timestamp: 1_700_000_301,
+        }],
+    )
+    .into_bytes();
+    let signature = old_signer
+        .sign_detached(&repomd)
+        .expect("old upstream key signs repomd");
+    upstream.put("repodata/repomd.xml", &repomd, Some("\"up-repomd\""));
+    upstream.put(
+        "repodata/repomd.xml.asc",
+        &signature,
+        Some("\"up-signature\""),
+    );
+    upstream.put(&primary_loc, &primary_gz, Some("\"up-primary\""));
+
+    let deployment = Deployment::new();
+    deployment.seed_yum(&[("rpm-hosted", Value::Null)]);
+    deployment.seed_yum_proxies(
+        &[],
+        &[(
+            "rpm-proxy-rotating-key",
+            proxy_config(&upstream, old_signer.key_asc().expect("old key")),
+        )],
+    );
+    deployment.seed_yum_group(
+        "rpm-group-rotating-key",
+        &["rpm-hosted", "rpm-proxy-rotating-key"],
+    );
+
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let allowed = format!("127.0.0.1:{};private;http", upstream.port());
+    let mut service = deployment.start(&[
+        ("HODEI_PROXY__ALLOWED_HOSTS", &allowed),
+        ("HODEI_METADATA_SIGNER_ARMOR", &hub_armor),
+    ]);
+    let first = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-rotating-key/repodata/repomd.xml",
+        &token,
+        None,
+    );
+    assert_eq!(first.status, 200, "the original upstream key is accepted");
+    let first_signature = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-rotating-key/repodata/repomd.xml.asc",
+        &token,
+        None,
+    );
+    assert_eq!(first_signature.status, 200);
+    MetadataSigner::verify_detached(&first.body, &first_signature.body, &hub_signer.key_asc().unwrap())
+        .expect("the initial generation is signed by Hodei");
+    support::stop(&mut service);
+
+    deployment.reconfigure_proxy(
+        "rpm-proxy-rotating-key",
+        proxy_config(&upstream, replacement_signer.key_asc().expect("replacement key")),
+    );
+    let mut service = deployment.start(&[
+        ("HODEI_PROXY__ALLOWED_HOSTS", &allowed),
+        ("HODEI_METADATA_SIGNER_ARMOR", &hub_armor),
+    ]);
+    let repomd_answer = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-rotating-key/repodata/repomd.xml",
+        &token,
+        None,
+    );
+    assert_eq!(
+        repomd_answer.status, 502,
+        "a snapshot signed by a replaced upstream key must not be served"
+    );
+    let signature_answer = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-rotating-key/repodata/repomd.xml.asc",
+        &token,
+        None,
+    );
+    assert_eq!(
+        signature_answer.status, 502,
+        "the signature route must fail closed after upstream key rotation"
+    );
+    support::stop(&mut service);
+}
+
+#[test]
+fn ac3_hodei_signing_key_revocation_fails_closed_after_rotation() {
+    let gnupg = tempfile::tempdir().expect("gnupg home");
+    let keygen = Command::new("gpg")
+        .env("GNUPGHOME", gnupg.path())
+        .args([
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "locked-test-passphrase",
+            "--quick-generate-key",
+            "Revoked Signer <revoked@hodei.local>",
+            "ed25519",
+            "sign",
+            "never",
+        ])
+        .output()
+        .expect("gpg keygen");
+    assert!(
+        keygen.status.success(),
+        "gpg keygen failed: {}",
+        String::from_utf8_lossy(&keygen.stderr)
+    );
+    let export = Command::new("gpg")
+        .env("GNUPGHOME", gnupg.path())
+        .args([
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "locked-test-passphrase",
+            "--export-secret-keys",
+            "--armor",
+            "revoked@hodei.local",
+        ])
+        .output()
+        .expect("gpg export");
+    assert!(
+        export.status.success(),
+        "gpg export failed: {}",
+        String::from_utf8_lossy(&export.stderr)
+    );
+    let revoked_armor = String::from_utf8(export.stdout).expect("utf8 armor");
+
+    let deployment = Deployment::new();
+    deployment.seed_yum(&[("rpm-hosted", Value::Null)]);
+    deployment.seed_yum_group("rpm-group-hodei-key-rotation", &["rpm-hosted"]);
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let healthy_signer = MetadataSigner::generate("Hodei Hub <hub@hodei.local>")
+        .expect("healthy Hodei signer");
+    let healthy_armor = healthy_signer.to_armor().expect("healthy signer armor");
+    let mut service = deployment.start(&[("HODEI_METADATA_SIGNER_ARMOR", &healthy_armor)]);
+    let first = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-hodei-key-rotation/repodata/repomd.xml",
+        &token,
+        None,
+    );
+    assert_eq!(first.status, 200);
+    let first_signature = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-hodei-key-rotation/repodata/repomd.xml.asc",
+        &token,
+        None,
+    );
+    assert_eq!(first_signature.status, 200);
+    MetadataSigner::verify_detached(
+        &first.body,
+        &first_signature.body,
+        &healthy_signer.key_asc().expect("healthy public key"),
+    )
+    .expect("the initial snapshot has a valid Hodei signature");
+    support::stop(&mut service);
+
+    let mut service = deployment.start(&[("HODEI_METADATA_SIGNER_ARMOR", &revoked_armor)]);
+    let repomd = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-hodei-key-rotation/repodata/repomd.xml",
+        &token,
+        None,
+    );
+    assert_eq!(
+        repomd.status, 500,
+        "a new generation must not be served after the Hodei signing key is revoked"
+    );
+    let signature = call(
+        service.port,
+        "GET",
+        "/yum/rpm-group-hodei-key-rotation/repodata/repomd.xml.asc",
+        &token,
+        None,
+    );
+    assert_eq!(
+        signature.status, 500,
+        "the old snapshot signature must not be served after key rotation"
+    );
     support::stop(&mut service);
 }
 
