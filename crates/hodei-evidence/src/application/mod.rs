@@ -3,6 +3,7 @@
 pub mod capsule;
 pub mod delta;
 pub mod ingestion;
+pub mod metrics;
 pub mod projection;
 pub mod projector;
 pub mod rebuild;

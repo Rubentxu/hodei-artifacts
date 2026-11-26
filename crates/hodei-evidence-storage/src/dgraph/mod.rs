@@ -24,4 +24,7 @@ pub use graph::{
     ACTIVE_PROJECTION, DgraphGraphStore, GRAPH_NODE_TYPE, GRAPH_RELATION_TYPE, GRAPH_SUPPORT_TYPE,
     STATUS_ASSERTED, STATUS_UNKNOWN,
 };
-pub use ledger::{DgraphEventLedger, DgraphLedgerError, LEDGER_EVENT_TYPE, LedgerEventRecord};
+pub use ledger::{
+    DgraphEventLedger, DgraphLedgerError, LEDGER_EVENT_TYPE, LedgerEventRecord,
+    MeteredDgraphEventLedger,
+};
