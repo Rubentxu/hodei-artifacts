@@ -1,37 +1,37 @@
-//! La resolucion de un repositorio de grupo en la superficie OCI.
+//! Resolution of a group repository on the OCI surface.
 //!
-//! Un grupo OCI no guarda nada: es una **lista ordenada** de repositorios
-//! del mismo formato, y la precedencia la da el orden en que estan
-//! configurados. Gana el primer miembro que tiene la referencia; no hay
-//! fusion, ni votacion, ni "el mas reciente": dos lecturas de la misma
-//! referencia con la misma configuracion dan la misma fuente.
+//! An OCI group stores nothing: it is an **ordered list** of repositories
+//! of the same format, and precedence is given by the order in which they are
+//! configured. The first member that has the reference wins; there is no
+//! merging, no voting, and no "the most recent": two reads of the same
+//! reference with the same configuration give the same source.
 //!
-//! # MISS y ERROR no son lo mismo
+//! # MISS and ERROR are not the same
 //!
-//! - **MISS**: el miembro dice con certeza que no lo tiene (no tiene esa
-//!   etiqueta, o su fila de asset no esta). Se sigue con el siguiente.
-//! - **ERROR**: cualquier otra cosa (el catalogo no responde, el libro de
-//!   confianza falla, los bytes no estan donde la fila los dice). La
-//!   resolucion se **detiene** y se contesta ese error. Saltar al siguiente
-//!   miembro serviria un contenido que quiza no es el que el primero habria
-//!   dado: un fallo transitorio cambiaria en silencio lo que se descarga.
+//! - **MISS**: the member says with certainty that it does not have it (it has no such
+//!   tag, or its asset row is not there). Resolution continues with the next one.
+//! - **ERROR**: anything else (the catalog does not respond, the trust
+//!   ledger fails, the bytes are not where the row says they are). Resolution
+//!   **stops** and that error is returned. Skipping to the next
+//!   member would serve content that perhaps is not what the first one would have
+//!   given: a transient failure would silently change what is downloaded.
 //!
-//! # Coherencia y procedencia
+//! # Coherence and provenance
 //!
-//! Un manifiesto se sirve **entero** de un solo miembro, y los blobs van
-//! direccionados por su digest: solo se sirven despues de comprobar que los
-//! bytes **son** el digest pedido. Toda respuesta de un grupo dice que
-//! miembro la sirvio (`X-Hodei-Resolved-From`) y en que version de la
-//! configuracion del grupo se resolvio (`X-Hodei-Group-Version`).
+//! A manifest is served **whole** from a single member, and blobs are
+//! addressed by their digest: they are only served after checking that the
+//! bytes **are** the requested digest. Every group response says which
+//! member served it (`X-Hodei-Resolved-From`) and in which version of the
+//! group configuration it was resolved (`X-Hodei-Group-Version`).
 //!
-//! # Permisos y confianza
+//! # Permissions and trust
 //!
-//! Cedar decide sobre el grupo **y sobre cada miembro**: un miembro que el
-//! principal no puede leer se omite sin decir que existe. La compuerta de
-//! confianza se aplica al digest del **miembro que gano**: si lo oculta, el
-//! resultado es un "no existe" y el grupo **no** pasa al siguiente miembro,
-//! porque entonces la revocacion de un digest haria aparecer otro contenido
-//! en su lugar.
+//! Cedar decides on the group **and on each member**: a member the
+//! principal cannot read is omitted without saying it exists. The trust
+//! gate is applied to the digest of the **member that won**: if it hides it, the
+//! result is a "does not exist" and the group does **not** move on to the next member,
+//! because then the revocation of a digest would make other content appear
+//! in its place.
 
 use std::collections::HashMap;
 
@@ -46,29 +46,29 @@ use crate::app_state::AppState;
 use crate::oci::failure::OciFailure;
 use crate::oci::target::the_digest_of_reference;
 
-/// Lo que gano una resolucion de grupo.
+/// What a group resolution won.
 pub struct Won {
-    /// El miembro hoja que sirvio el contenido.
+    /// The leaf member that served the content.
     pub member: RepositoryDescriptor,
-    /// El digest del contenido servido.
+    /// The digest of the served content.
     pub digest: ContentDigest,
-    /// Los bytes del contenido.
+    /// The bytes of the content.
     pub bytes: Vec<u8>,
 }
 
-/// Como acaba la consulta a un miembro.
+/// How the query to a member ends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Step {
-    /// El miembro tenia la referencia.
+    /// The member had the reference.
     Hit,
-    /// El miembro dijo con certeza que no la tiene.
+    /// The member said with certainty that it does not have it.
     Miss,
-    /// El miembro fallo: la resolucion se detuvo ahi.
+    /// The member failed: resolution stopped there.
     Error,
 }
 
 impl Step {
-    /// El paso, en una linea.
+    /// The step, in one line.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Hit => "hit",
@@ -78,16 +78,16 @@ impl Step {
     }
 }
 
-/// La resolucion: lo que gano (o el error) y el orden de lo consultado.
+/// The resolution: what won (or the error) and the order of what was queried.
 pub struct Resolution {
-    /// El resultado.
+    /// The result.
     pub outcome: Result<Won, OciFailure>,
-    /// Cada miembro consultado, en orden, con su resultado.
+    /// Each queried member, in order, with its result.
     pub trail: Vec<(String, Step)>,
 }
 
 impl Resolution {
-    /// El rastro en una linea: `first:miss,second:hit`.
+    /// The trail in one line: `first:miss,second:hit`.
     pub fn trail_line(&self) -> String {
         self.trail
             .iter()
@@ -97,19 +97,19 @@ impl Resolution {
     }
 }
 
-/// Un error de configuracion de grupo, traducido al dialecto de la
-/// distribucion.
+/// A group configuration error, translated to the distribution
+/// dialect.
 ///
-/// Los miembros se validaron al guardar el grupo; si ahora no cuadran (se
-/// reconfiguro otro grupo, un miembro ya no existe) el grupo esta mal
-/// configurado y no se resuelve a medias.
+/// Members were validated when the group was saved; if they no longer add up (
+/// another group was reconfigured, a member no longer exists) the group is badly
+/// configured and is not resolved halfway.
 fn the_group_failure(error: GroupError) -> OciFailure {
     tracing::warn!(error = %error, "an oci group does not resolve");
     OciFailure::unavailable("the group is not well configured")
 }
 
-/// Si el principal puede leer este repositorio. Es la decision de Cedar
-/// sobre su HRN, la misma que aplica su ruta directa.
+/// Whether the principal can read this repository. It is the Cedar decision
+/// on its HRN, the same one its direct route applies.
 fn can_read(
     state: &AppState,
     context: &VerifiedContext,
@@ -126,8 +126,8 @@ fn can_read(
         .map_err(|_| OciFailure::unavailable("the authorization engine is not available"))
 }
 
-/// Lee los repositorios que alcanza el grupo y dice cuales puede leer el
-/// principal.
+/// Reads the repositories the group reaches and says which ones the
+/// principal can read.
 async fn the_members(
     state: &AppState,
     context: &VerifiedContext,
@@ -156,8 +156,8 @@ async fn the_members(
             return Err(the_group_failure(GroupError::TooManyNodes));
         }
         let lookup = match reader.repository(account, &key).await {
-            // Un miembro de otra cuenta no existe para esta: se omite
-            // como si no existiera, sin decir que existe en otro sitio.
+            // A member of another account does not exist for this one: it is omitted
+            // as if it did not exist, without saying it exists elsewhere.
             Err(CatalogError::Missing { .. }) => Lookup::Missing,
             Err(CatalogError::Denied { .. }) => Lookup::Hidden,
             Err(_) => return Err(OciFailure::unavailable("the catalog is not available")),
@@ -193,8 +193,8 @@ async fn the_members(
     Ok((known, found))
 }
 
-/// Los miembros hoja de un grupo, en el orden en que se consultan, ya
-/// leidos y filtrados por lo que el principal puede leer.
+/// The leaf members of a group, in the order they are queried, already
+/// read and filtered by what the principal can read.
 pub async fn the_leaves(
     state: &AppState,
     context: &VerifiedContext,
@@ -222,21 +222,21 @@ pub async fn the_leaves(
         .collect()
 }
 
-/// Lo que un grupo deja pasar de sus hojas para **una ruta**: las hojas que
-/// se consultan y los miembros proxy que la reserva de namespaces del grupo
-/// denego.
+/// What a group lets through from its leaves for **one path**: the leaves that
+/// are queried and the proxy members that the group's namespace
+/// reservation denied.
 ///
-/// La reserva vive en la configuracion del grupo y se consulta siempre,
-/// antes de mirar que tiene cada miembro: una ruta reservada no se sirve
-/// desde ningun upstream publico del grupo, y un upstream caido no la
-/// convierte en fallback. Los miembros hosted son la fuente interna y no
-/// los toca la reserva.
+/// The reservation lives in the group configuration and is always consulted,
+/// before looking at what each member has: a reserved path is not served
+/// from any public upstream of the group, and a down upstream does not
+/// turn it into a fallback. Hosted members are the internal source and
+/// the reservation does not touch them.
 ///
-/// El juicio es sobre el **nombre del repositorio** del miembro: en OCI el
-/// namespace es el nombre del repositorio (`team/demo`), no la ruta del
-/// asset (`manifests/<digest>`). Un juicio sobre la ruta del asset era
-/// inerte: el primer segmento de la ruta es siempre `manifests`, `blobs` o
-/// `tags`, y solo casaria con una reserva llamada asi.
+/// The judgment is on the member's **repository name**: in OCI the
+/// namespace is the repository name (`team/demo`), not the asset
+/// path (`manifests/<digest>`). A judgment on the asset path was
+/// inert: the first segment of the path is always `manifests`, `blobs` or
+/// `tags`, and would only match a reservation called that.
 pub async fn the_governed_leaves(
     state: &AppState,
     context: &VerifiedContext,
@@ -253,7 +253,7 @@ pub async fn the_governed_leaves(
     let mut consulted = Vec::with_capacity(leaves.len());
     let mut denied = Vec::new();
     for member in leaves {
-        // La reserva se juzga por el nombre del repositorio del miembro.
+        // The reservation is judged by the member's repository name.
         let judgement = policy.judge(group.format, &member.repo_key);
         if judgement.is_reserved() && member.mode == RepositoryMode::Proxy {
             denied.push(member.repo_key.clone());
@@ -264,22 +264,22 @@ pub async fn the_governed_leaves(
     Ok((consulted, denied))
 }
 
-/// Si el fallo de un miembro es un **MISS**.
+/// Whether a member's failure is a **MISS**.
 ///
-/// Un MISS es lo que el miembro dice con certeza que no tiene: un
-/// manifiesto o un blob que no existen. Lo demas --un upstream caido, un
-/// catalogo que no responde, una confianza que no se puede leer-- es un
-/// ERROR, y el ERROR **detiene** la resolucion: un fallo transitorio no
-/// puede cambiar en silencio lo que se descarga.
+/// A MISS is what the member says with certainty it does not have: a
+/// manifest or a blob that do not exist. Everything else --a down upstream, a
+/// catalog that does not respond, a trust ledger that cannot be read-- is an
+/// ERROR, and the ERROR **stops** resolution: a transient failure cannot
+/// silently change what is downloaded.
 fn is_a_miss(failure: &OciFailure) -> bool {
     matches!(failure.the_code(), "MANIFEST_UNKNOWN" | "BLOB_UNKNOWN")
 }
 
-/// El digest al que apunta una referencia en un miembro.
+/// The digest a reference points to in a member.
 ///
-/// Una referencia con algoritmo es un digest; una referencia sin el es una
-/// etiqueta, y la etiqueta es la referencia mutable que el catalogo
-/// resuelve a las coordenadas del asset.
+/// A reference with an algorithm is a digest; a reference without it is a
+/// tag, and the tag is the mutable reference the catalog
+/// resolves to the asset's coordinates.
 async fn the_digest_of(
     reader: &dyn hodei_catalog::CatalogReader,
     account: &str,
@@ -293,8 +293,8 @@ async fn the_digest_of(
         .tag(account, member, reference)
         .await
         .map_err(|error| match error {
-            // El miembro dice con certeza que no tiene esa etiqueta: es un
-            // MISS, y se sigue con el siguiente.
+            // The member says with certainty it does not have that tag: it is a
+            // MISS, and resolution continues with the next one.
             CatalogError::Missing { .. } => OciFailure::manifest_unknown("unknown"),
             _other => OciFailure::unavailable("the catalog is not available"),
         })?
@@ -303,10 +303,10 @@ async fn the_digest_of(
     the_digest_of_reference(&format!("sha256:{tag}"))
 }
 
-/// La fila del asset que sirve el contenido de un miembro.
+/// The asset row that serves a member's content.
 ///
-/// `Ok(None)` es un MISS: el miembro no tiene esa referencia. Un error es
-/// un ERROR: la resolucion se detiene.
+/// `Ok(None)` is a MISS: the member does not have that reference. An error is
+/// an ERROR: resolution stops.
 async fn the_asset(
     reader: &dyn hodei_catalog::CatalogReader,
     account: &str,
@@ -320,10 +320,10 @@ async fn the_asset(
     }
 }
 
-/// La fila del asset del digest pedido.
+/// The asset row of the requested digest.
 ///
-/// La fila dice **que** hay y el digest pedido dice **que** se pide: si no
-/// coinciden, el miembro no tiene lo pedido, y es un MISS.
+/// The row says **what** there is and the requested digest says **what** is asked for: if they do
+/// not match, the member does not have what was asked for, and it is a MISS.
 fn the_asset_of(
     asset: hodei_catalog::AssetRecord,
     digest: &str,
@@ -335,12 +335,12 @@ fn the_asset_of(
     }
 }
 
-/// Los bytes que la fila referencia.
+/// The bytes the row references.
 ///
-/// El digest de la URL dice **que** se pide; la fila dice **que** hay. Si
-/// se sirvieran los bytes del digest de la URL, una fila que solo nombra
-/// una ruta serviria el contenido de otro blob, que puede ser de otra
-/// cuenta: el CAS es un arbol comun.
+/// The URL digest says **what** is asked for; the row says **what** there is. If
+/// the bytes of the URL digest were served, a row that only names
+/// a path would serve the content of another blob, which may belong to another
+/// account: the CAS is a shared tree.
 async fn the_bytes(
     state: &AppState,
     asset: &hodei_catalog::AssetRecord,
@@ -352,11 +352,11 @@ async fn the_bytes(
         .map_err(|_| OciFailure::unavailable("the catalog and the store disagree"))
 }
 
-/// Un manifiesto del grupo, por digest o por etiqueta.
+/// A manifest of the group, by digest or by tag.
 ///
-/// Recorre los miembros en el orden configurado y gana el primero que
-/// tiene la referencia. Un MISS sigue al siguiente; un ERROR detiene la
-/// resolucion.
+/// It walks the members in the configured order and the first one that
+/// has the reference wins. A MISS continues to the next; an ERROR stops
+/// resolution.
 pub async fn the_manifest(
     state: &AppState,
     context: &VerifiedContext,
@@ -383,15 +383,15 @@ async fn resolve_manifest(
         .ok_or_else(|| OciFailure::unavailable("the catalog is not wired"))?;
     let account = context.account().as_str();
 
-    // La reserva se consulta antes que los miembros: una ruta reservada no
-    // se sirve desde los miembros publicos del grupo.
+    // The reservation is consulted before the members: a reserved path is not
+    // served from the group's public members.
     let (leaves, _denied) = the_governed_leaves(state, context, group).await?;
 
     for member in leaves {
         let key = member.repo_key.clone();
-        // Un miembro **proxy** no tiene filas en el catalogo: lo que tiene
-        // lo resuelve su upstream, y lo resuelve con el **nombre del
-        // miembro**: el grupo no renombra a su miembro.
+        // A **proxy** member has no rows in the catalog: what it has
+        // is resolved by its upstream, and it is resolved with the **member's
+        // name**: the group does not rename its member.
         if member.mode == RepositoryMode::Proxy {
             let resolved = match crate::oci::proxy::the_resolved_manifest(
                 state, context, &member, &key, reference, headers,
@@ -400,11 +400,11 @@ async fn resolve_manifest(
             {
                 Ok(resolved) => resolved,
                 Err(failure) => {
-                    // Un upstream que dice con certeza que no lo tiene es
-                    // un MISS, y se sigue. Un upstream caido es un ERROR, y
-                    // la resolucion se detiene: no se salta al siguiente
-                    // miembro, porque el fallo cambiaria en silencio lo que
-                    // se descarga.
+                    // An upstream that says with certainty it does not have it is
+                    // a MISS, and resolution continues. A down upstream is an ERROR, and
+                    // resolution stops: it does not skip to the next
+                    // member, because the failure would silently change what
+                    // is downloaded.
                     if is_a_miss(&failure) {
                         trail.push((key, Step::Miss));
                         continue;
@@ -413,9 +413,9 @@ async fn resolve_manifest(
                     return Err(failure);
                 }
             };
-            // La compuerta de confianza se aplica al digest del **miembro
-            // que gano**: si lo oculta, el resultado es un "no existe" y el
-            // grupo **no** pasa al siguiente miembro.
+            // The trust gate is applied to the digest of the **member
+            // that won**: if it hides it, the result is a "does not exist" and the
+            // group does **not** move on to the next member.
             if let Err(admission) =
                 crate::trust::admit(state, account, &member, &resolved.asset.digest).await
             {
@@ -429,8 +429,8 @@ async fn resolve_manifest(
                     }
                 });
             }
-            // Los bytes se leen **despues** de la compuerta: lo que no se
-            // puede servir no se materializa.
+            // The bytes are read **after** the gate: what cannot
+            // be served is not materialized.
             let bytes = match crate::oci::proxy::the_bytes(state, &resolved.asset).await {
                 Ok(bytes) => bytes,
                 Err(failure) => {
@@ -445,15 +445,15 @@ async fn resolve_manifest(
                 bytes,
             });
         }
-        // El digest se resuelve **dentro** del namespace del miembro: cada
-        // miembro tiene sus propias etiquetas y sus propios digest.
+        // The digest is resolved **within** the member's namespace: each
+        // member has its own tags and its own digests.
         let digest = match the_digest_of(reader.as_ref(), account, &key, reference).await {
             Ok(digest) => digest,
             Err(failure) => {
-                // El error de la etiqueta puede ser un MISS (el miembro no
-                // tiene esa etiqueta) o un ERROR (el catalogo no responde).
-                // El dialecto lo dice: `manifest_unknown` es un MISS, y
-                // cualquier otra cosa detiene la resolucion.
+                // The tag error may be a MISS (the member does not
+                // have that tag) or an ERROR (the catalog does not respond).
+                // The dialect says so: `manifest_unknown` is a MISS, and
+                // anything else stops resolution.
                 if failure.the_code() == "MANIFEST_UNKNOWN" {
                     trail.push((key, Step::Miss));
                     continue;
@@ -481,10 +481,10 @@ async fn resolve_manifest(
             trail.push((key, Step::Miss));
             continue;
         };
-        // La compuerta de confianza se aplica al digest del **miembro que
-        // gano**: si lo oculta, no se busca en el siguiente miembro, porque
-        // entonces la revocacion de un digest haria aparecer otro contenido
-        // en su lugar.
+        // The trust gate is applied to the digest of the **member that
+        // won**: if it hides it, the next member is not searched, because
+        // then the revocation of a digest would make other content appear
+        // in its place.
         if let Err(admission) = crate::trust::admit(state, account, &member, &asset.digest).await {
             trail.push((key, Step::Error));
             return Err(match admission {
@@ -515,10 +515,10 @@ async fn resolve_manifest(
     )))
 }
 
-/// Un blob del grupo, por su digest.
+/// A blob of the group, by its digest.
 ///
-/// El blob va direccionado por digest: se sirve solo tras comprobar que los
-/// bytes **son** el digest pedido.
+/// The blob is addressed by digest: it is only served after checking that the
+/// bytes **are** the requested digest.
 pub async fn the_blob(
     state: &AppState,
     context: &VerifiedContext,
@@ -549,8 +549,8 @@ async fn resolve_blob(
 
     for member in leaves {
         let key = member.repo_key.clone();
-        // Un miembro **proxy** resuelve el blob en su upstream, con el
-        // nombre del miembro y no con el del grupo.
+        // A **proxy** member resolves the blob in its upstream, with the
+        // member's name and not the group's.
         if member.mode == RepositoryMode::Proxy {
             let resolved = match crate::oci::proxy::the_resolved_blob(
                 state, context, &member, &key, digest, headers,
@@ -580,8 +580,8 @@ async fn resolve_blob(
                     }
                 });
             }
-            // Los bytes se leen **despues** de la compuerta: lo que no se
-            // puede servir no se materializa.
+            // The bytes are read **after** the gate: what cannot
+            // be served is not materialized.
             let bytes = match crate::oci::proxy::the_bytes(state, &resolved.asset).await {
                 Ok(bytes) => bytes,
                 Err(failure) => {
@@ -639,18 +639,18 @@ async fn resolve_blob(
     )))
 }
 
-/// Las etiquetas del grupo: la **union** de las de sus miembros.
+/// The tags of the group: the **union** of those of its members.
 ///
-/// Una entrada por nombre: si dos miembros tienen la misma etiqueta, la
-/// del primero en el orden de precedencia es la que cuenta, y la que se
-/// resuelve al descargar. Y el listado del grupo **no se sirve parcial**: si
-/// la lista de un miembro no se puede obtener, el listado entero es un
-/// error, porque una lista a medias parece completa y no lo es.
+/// One entry per name: if two members have the same tag, the one
+/// from the first in the order of precedence is the one that counts, and the one that
+/// is resolved on download. And the group listing **is not served partially**: if
+/// a member's list cannot be obtained, the whole listing is an
+/// error, because a half list looks complete and is not.
 ///
-/// Un miembro **proxy** aporta las etiquetas de su **upstream**: en un proxy
-/// la etiqueta es un puntero, no una fila del catalogo, asi que la unica
-/// lista que hay es la del upstream. Se pregunta con el nombre del **miembro**,
-/// que es el nombre que el upstream conoce.
+/// A **proxy** member contributes the tags of its **upstream**: in a proxy
+/// the tag is a pointer, not a catalog row, so the only
+/// list there is is the upstream's. It is asked with the **member's** name,
+/// which is the name the upstream knows.
 pub async fn the_tags(
     state: &AppState,
     context: &VerifiedContext,
@@ -665,9 +665,9 @@ pub async fn the_tags(
     let (leaves, _denied) = the_governed_leaves(state, context, group).await?;
     let mut names: Vec<(String, String)> = Vec::new();
     for member in leaves {
-        // Un miembro **proxy** no tiene filas de etiqueta en el catalogo: su
-        // lista vive en el upstream, y se pregunta con el nombre del
-        // miembro.
+        // A **proxy** member has no tag rows in the catalog: its
+        // list lives in the upstream, and is asked with the member's
+        // name.
         if member.mode == RepositoryMode::Proxy {
             let listed = crate::oci::proxy::the_resolved_tags(
                 state,
@@ -676,25 +676,25 @@ pub async fn the_tags(
                 headers,
             )
             .await
-            // El listado del grupo **no se sirve parcial**: si la lista de un
-            // miembro no se puede obtener --un upstream caido, una credencial
-            // que no se puede usar-- el listado entero es un error. Una
-            // lista a medias parece completa y no lo es.
+                        // The group listing **is not served partially**: if a member's
+                        // list cannot be obtained --a down upstream, a credential
+                        // that cannot be used-- the whole listing is an error. A
+                        // half list looks complete and is not.
             ?;
             let crate::oci::proxy::TheUpstreamTags::Listed(tags) = listed else {
-                // El upstream no se puede preguntar por su lista: es un
-                // miembro que **no puede enumerar**, no un fallo. No aporta
-                // etiquetas y los demas miembros se listan igual.
+                // The upstream cannot be asked for its list: it is a
+                // member that **cannot enumerate**, not a failure. It contributes no
+                // tags and the other members are listed anyway.
                 continue;
             };
-            // El filtro de confianza no se puede aplicar por etiqueta: la
-            // lista del upstream son nombres, no digest. La compuerta se
-            // aplica al **contenido**, en la resolucion, que es donde se
-            // decide si los bytes se pueden servir.
+            // The trust filter cannot be applied per tag: the
+            // upstream's list is names, not digests. The gate is
+            // applied to the **content**, at resolution, which is where it is
+            // decided whether the bytes can be served.
             for tag in tags {
-                // Una entrada por nombre: el primer miembro que tiene la
-                // etiqueta es el que gana, y es el que la resuelve al
-                // descargar.
+                // One entry per name: the first member that has the
+                // tag is the one that wins, and the one that resolves it on
+                // download.
                 if !names.iter().any(|(name, _)| *name == tag) {
                     names.push((tag, member.repo_key.clone()));
                 }
@@ -705,8 +705,8 @@ pub async fn the_tags(
             .tags(account, &member.repo_key)
             .await
             .map_err(|_| OciFailure::unavailable("the catalog is not available"))?;
-        // El filtro de confianza es por miembro: una etiqueta hacia un
-        // digest no concedido delataria que existe.
+        // The trust filter is per member: a tag towards an
+        // ungranted digest would reveal that it exists.
         let servable = crate::trust::servable(state, account, &member)
             .await
             .map_err(|_| OciFailure::unavailable("the trust ledger is not available"))?;
@@ -716,8 +716,8 @@ pub async fn the_tags(
             {
                 continue;
             }
-            // Una entrada por nombre: el primer miembro que tiene la
-            // etiqueta es el que gana.
+            // One entry per name: the first member that has the
+            // tag is the one that wins.
             if !names.iter().any(|(name, _)| *name == tag.tag_name) {
                 names.push((tag.tag_name, member.repo_key.clone()));
             }

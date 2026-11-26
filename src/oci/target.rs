@@ -1,73 +1,73 @@
-//! El reparto del path de OCI, y las reglas del nombre y del digest.
+//! The OCI path split, and the rules for the name and the digest.
 //!
-//! El path de la distribucion se lee **en crudo**, del URI como llego:
-//! `/v2/<name>/blobs/<digest>`, `/v2/<name>/manifests/<referencia>`,
+//! The distribution path is read **raw**, from the URI as it arrived:
+//! `/v2/<name>/blobs/<digest>`, `/v2/<name>/manifests/<reference>`,
 //! `/v2/<name>/blobs/uploads/<uuid>`.
 //!
-//! Y hay un detalle que el protocolo deja claro y que muchas
-//! implementaciones no cumplen: el nombre del repositorio puede
-//! contener `/`. Un repositorio se llama `team/demo`, y su path es
+//! And there is a detail the protocol makes clear and that many
+//! implementations do not honor: the repository name may
+//! contain `/`. A repository is called `team/demo`, and its path is
 //! `/v2/team/demo/blobs/sha256:...`.
 //!
-//! Por eso el reparto no busca el **primer** `blobs` o `manifests`, sino el
-//! **ultimo**: lo que va antes de el es el nombre, y lo que va despues es
-//! la clase de recurso y la referencia. Un repositorio que se llamara
-//! `blobs/app` seguiria siendo un nombre valido, no una clase de
-//! recurso.
+//! That is why the split does not look for the **first** `blobs` or `manifests`, but the
+//! **last**: what comes before it is the name, and what comes after is
+//! the resource class and the reference. A repository named
+//! `blobs/app` would still be a valid name, not a resource
+//! class.
 //!
-//! El path se lee en crudo a proposito: un `%2e%2e` ya decodificado no
-//! se puede refutar con un extractor que decodifica, y un traversal es un
+//! The path is read raw on purpose: an already-decoded `%2e%2e` cannot
+//! be refuted with an extractor that decodes, and a traversal is a
 //! traversal.
 
 use crate::oci::failure::OciFailure;
 
-/// Lo que el path nombra.
+/// What the path names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    /// Un blob del repositorio, por digest.
+    /// A blob of the repository, by digest.
     Blob {
-        /// El nombre del repositorio.
+        /// The repository name.
         name: String,
-        /// La referencia: el digest, con su algoritmo.
+        /// The reference: the digest, with its algorithm.
         reference: String,
     },
-    /// Un manifiesto del repositorio, por digest o por etiqueta.
+    /// A manifest of the repository, by digest or by tag.
     Manifest {
-        /// El nombre del repositorio.
+        /// The repository name.
         name: String,
-        /// La referencia: el digest o la etiqueta.
+        /// The reference: the digest or the tag.
         reference: String,
     },
-    /// La lista de etiquetas del repositorio: `<name>/tags/list`.
+    /// The repository's tag list: `<name>/tags/list`.
     Tags {
-        /// El nombre del repositorio.
+        /// The repository name.
         name: String,
     },
-    /// Los referrers de un manifiesto: `<name>/referrers/<digest>`.
+    /// The referrers of a manifest: `<name>/referrers/<digest>`.
     Referrers {
-        /// El nombre del repositorio.
+        /// The repository name.
         name: String,
-        /// El digest del manifiesto al que se pregunta.
+        /// The digest of the manifest being asked about.
         digest: String,
     },
-    /// El **inicio** de una subida: `<name>/blobs/uploads/`.
+    /// The **start** of an upload: `<name>/blobs/uploads/`.
     ///
-    /// Aqui no hay sesion todavia: este path es el que abre una.
+    /// There is no session here yet: this path is the one that opens one.
     UploadStart {
-        /// El nombre del repositorio.
+        /// The repository name.
         name: String,
     },
-    /// Una **sesion** de subida en curso: `<name>/blobs/uploads/<uuid>`.
+    /// An upload **session** in progress: `<name>/blobs/uploads/<uuid>`.
     UploadSession {
-        /// El nombre del repositorio.
+        /// The repository name.
         name: String,
-        /// El identificador opaco de la sesion.
+        /// The opaque session identifier.
         session: String,
     },
 }
 
 impl Target {
-    /// El nombre del repositorio, sea cual sea la clase de recurso.
+    /// The repository name, whatever the resource class.
     pub fn the_name(&self) -> &str {
         match self {
             Self::Blob { name, .. }
@@ -80,33 +80,33 @@ impl Target {
     }
 }
 
-/// El prefijo que lleva la superficie de distribucion.
+/// The prefix the distribution surface carries.
 const PREFIX: &str = "/v2/";
 
-/// Lo que el path nombra, sin el prefijo de la superficie.
+/// What the path names, without the surface prefix.
 ///
-/// El prefijo se quita y el resto se parte en niveles. Un nivel vacio al
-/// final es la barra final de `/blobs/uploads/`, y no es un nivel.
+/// The prefix is removed and the rest is split into levels. An empty level at
+/// the end is the trailing slash of `/blobs/uploads/`, and is not a level.
 fn the_levels(path: &str) -> Option<Vec<&str>> {
     let rest = path.strip_prefix(PREFIX)?;
     let mut levels: Vec<&str> = rest.split('/').collect();
-    // La barra final no es un nivel: `/blobs/uploads/` y `/blobs/uploads`
-    // son la misma peticion.
+    // The trailing slash is not a level: `/blobs/uploads/` and `/blobs/uploads`
+    // are the same request.
     while levels.last().is_some_and(|level| level.is_empty()) {
         levels.pop();
     }
     if levels.iter().any(|level| level.is_empty()) {
-        // Un nivel vacio en medio (`team//demo`) no es un nombre.
+        // An empty level in the middle (`team//demo`) is not a name.
         return None;
     }
     Some(levels)
 }
 
-/// El indice del nivel que nombra la clase de recurso.
+/// The index of the level that names the resource class.
 ///
-/// Es el **ultimo** nivel que sea `blobs`, `manifests`, `tags` o
-/// `referrers` y que tenga algo detras: lo que va despues de el es la
-/// referencia.
+/// It is the **last** level that is `blobs`, `manifests`, `tags` or
+/// `referrers` and has something after it: what comes after it is the
+/// reference.
 fn the_kind_index(levels: &[&str]) -> Option<usize> {
     levels
         .iter()
@@ -119,10 +119,10 @@ fn the_kind_index(levels: &[&str]) -> Option<usize> {
         .map(|(index, _)| index)
 }
 
-/// Lo que el path nombra.
+/// What the path names.
 ///
-/// El nombre se valida ANTES de mirar el catalogo: un `..` no llega a
-/// ser una consulta, y un nombre mal formado es un error del cliente.
+/// The name is validated BEFORE looking at the catalog: a `..` does not get to
+/// be a query, and a malformed name is a client error.
 pub fn the_target(path: &str) -> Result<Target, OciFailure> {
     let levels = the_levels(path)
         .ok_or_else(|| OciFailure::name_invalid("the path is not an OCI resource path"))?;
@@ -143,9 +143,9 @@ pub fn the_target(path: &str) -> Result<Target, OciFailure> {
             }
             Ok(Target::Manifest { name, reference })
         }
-        // La lista de etiquetas: `<name>/tags/list`. El `list` es parte
-        // del protocolo y no un nombre de recurso, asi que sin el no es
-        // la lista de etiquetas: es un path que no nombra nada.
+        // The tag list: `<name>/tags/list`. The `list` is part
+        // of the protocol and not a resource name, so without it this is not
+        // the tag list: it is a path that names nothing.
         "tags" => {
             if rest != ["list"] {
                 return Err(OciFailure::name_invalid(
@@ -154,19 +154,19 @@ pub fn the_target(path: &str) -> Result<Target, OciFailure> {
             }
             Ok(Target::Tags { name })
         }
-        // Los referrers: `<name>/referrers/<digest>`. El digest se
-        // comprueba aqui, con la misma regla que el de un blob: un
-        // digest con otra sintaxis es un error del cliente, y no una
-        // busqueda sin resultado.
+        // The referrers: `<name>/referrers/<digest>`. The digest is
+        // checked here, with the same rule as a blob's: a
+        // digest with another syntax is a client error, and not a
+        // search with no result.
         "referrers" => {
             if rest.len() != 1 {
                 return Err(OciFailure::name_invalid(
                     "the path does not name a manifest to ask the referrers of",
                 ));
             }
-            // La sintaxis se comprueba aqui: un digest con otra sintaxis
-            // es un error del cliente, y el protocolo lo dice con un
-            // `400`, no con una lista vacia.
+            // The syntax is checked here: a digest with another syntax
+            // is a client error, and the protocol says so with a
+            // `400`, not with an empty list.
             the_digest_of_reference(rest[0])?;
             Ok(Target::Referrers {
                 name,
@@ -174,8 +174,8 @@ pub fn the_target(path: &str) -> Result<Target, OciFailure> {
             })
         }
         "blobs" => {
-            // La superficie de subida vive bajo `blobs/uploads`: es lo
-            // que dice que esto no es un blob que se llama `uploads`.
+            // The upload surface lives under `blobs/uploads`: that is what
+            // says this is not a blob called `uploads`.
             if rest.first() == Some(&"uploads") {
                 return match rest.len() {
                     1 => Ok(Target::UploadStart { name }),
@@ -205,22 +205,22 @@ pub fn the_target(path: &str) -> Result<Target, OciFailure> {
     }
 }
 
-/// El identificador de una sesion de subida.
+/// The identifier of an upload session.
 ///
-/// Es un UUID: el cliente lo recibe en el `Location` y lo devuelve tal
-/// cual. Que sea un UUID no es un capricho: es lo que hace que el
-/// identificador **no se pueda adivinar**, y una sesion que se puede
-/// adivinar es una sesion que otro puede escribir.
+/// It is a UUID: the client receives it in the `Location` and returns it as
+/// is. That it is a UUID is not a whim: it is what makes the
+/// identifier **unguessable**, and a session that can be
+/// guessed is a session that someone else can write to.
 ///
-/// Y lo que no se puede adivinar tampoco se puede colar: un
-/// identificador que no es un UUID no es una sesion, y se responde como
-/// si no existiera.
+/// And what cannot be guessed cannot be smuggled in either: an
+/// identifier that is not a UUID is not a session, and is answered as
+/// if it did not exist.
 pub fn the_session_id(session: &str) -> Result<(), OciFailure> {
     let parsed = uuid::Uuid::parse_str(session)
         .map_err(|_| OciFailure::blob_upload_unknown("the upload session does not exist"))?;
-    // El UUID canonico es el que se devuelve: un cliente que manda la
-    // version en mayusculas o con corchetes recibe el mismo error que uno
-    // que manda cualquier otra cosa.
+    // The canonical UUID is the one returned: a client that sends the
+    // uppercase version or with braces receives the same error as one
+    // that sends anything else.
     if parsed.hyphenated().to_string() != session {
         return Err(OciFailure::blob_upload_unknown(
             "the upload session does not exist",
@@ -229,11 +229,11 @@ pub fn the_session_id(session: &str) -> Result<(), OciFailure> {
     Ok(())
 }
 
-/// El nombre del repositorio, con sus reglas.
+/// The repository name, with its rules.
 ///
-/// Un nombre OCI es minusculas, digitos y separadores, con niveles
-/// separados por barra. Un `..` no es un nivel: es un traversal, y se
-/// rechaza antes de mirar el catalogo.
+/// An OCI name is lowercase letters, digits and separators, with levels
+/// separated by a slash. A `..` is not a level: it is a traversal, and is
+/// rejected before looking at the catalog.
 pub fn the_name(name: &str) -> Result<(), OciFailure> {
     if name.is_empty() || name.len() > 255 {
         return Err(OciFailure::name_invalid(
@@ -268,16 +268,16 @@ pub fn the_name(name: &str) -> Result<(), OciFailure> {
     Ok(())
 }
 
-/// El digest que la referencia nombra.
+/// The digest the reference names.
 ///
-/// Una referencia de blob o de manifest por digest lleva el algoritmo y
-/// el hexadecimal (`sha256:<64 hex>`). Sin el prefijo, la referencia es
-/// una **etiqueta**, que es mutable: el digest pelado no se acepta como
-/// digest, porque un cliente que cree que pide por digest y recibe
-/// contenido mutable se lleva un manifiesto que puede haber cambiado
-/// entre la peticion y el uso.
+/// A blob or manifest reference by digest carries the algorithm and
+/// the hexadecimal (`sha256:<64 hex>`). Without the prefix, the reference is
+/// a **tag**, which is mutable: the bare digest is not accepted as a
+/// digest, because a client that believes it asks by digest and receives
+/// mutable content gets a manifest that may have changed
+/// between the request and the use.
 ///
-/// Lo que no cuadre es un error del cliente, y el codigo OCI lo dice.
+/// Whatever does not fit is a client error, and the OCI code says so.
 pub fn the_digest_of_reference(reference: &str) -> Result<String, OciFailure> {
     if !reference.starts_with("sha256:") {
         return Err(OciFailure::digest_invalid(format!(
@@ -294,25 +294,25 @@ pub fn the_digest_of_reference(reference: &str) -> Result<String, OciFailure> {
     Ok(digest)
 }
 
-/// Si la referencia es un digest o una etiqueta.
+/// Whether the reference is a digest or a tag.
 ///
-/// Una referencia con `:` es un digest (el algoritmo lo lleva); sin el,
-/// es una etiqueta, que es mutable.
+/// A reference with `:` is a digest (the algorithm carries it); without it,
+/// it is a tag, which is mutable.
 pub fn is_a_digest(reference: &str) -> bool {
     reference.contains(':')
 }
 
-/// El nombre de una etiqueta, con sus reglas.
+/// The name of a tag, with its rules.
 ///
-/// El protocolo dice que una etiqueta es una palabra: empieza por un
-/// alfanumerico o un guion bajo, y sigue con alfanumericos, puntos,
-/// guiones y guiones bajos, hasta 128 caracteres.
+/// The protocol says a tag is a word: it starts with an
+/// alphanumeric or an underscore, and continues with alphanumerics, dots,
+/// hyphens and underscores, up to 128 characters.
 ///
-/// La regla no es un capricho: la etiqueta es una **clave** en el
-/// catalogo, y una clave con barras, espacios o caracteres de control no
-/// es una etiqueta: es una ruta que nadie ha pedido. Y el nombre que se
-/// acepta es el que el protocolo acepta, para que un cliente real no
-/// tenga que aprender dos reglas.
+/// The rule is not a whim: the tag is a **key** in the
+/// catalog, and a key with slashes, spaces or control characters is not
+/// a tag: it is a route nobody asked for. And the name that is
+/// accepted is the one the protocol accepts, so that a real client does not
+/// have to learn two rules.
 pub fn the_tag_name(tag: &str) -> Result<(), OciFailure> {
     let mut characters = tag.chars();
     let first = characters
@@ -343,8 +343,8 @@ pub fn the_tag_name(tag: &str) -> Result<(), OciFailure> {
 mod tests {
     use super::*;
 
-    /// El nombre puede tener niveles: el ultimo `blobs` o `manifests` es
-    /// el que manda, no el primero.
+    /// The name may have levels: the last `blobs` or `manifests` is
+    /// the one that rules, not the first.
     #[test]
     fn the_last_kind_wins_and_the_name_keeps_its_levels() {
         let target = the_target("/v2/team/demo/blobs/sha256:abc").expect("the target");
@@ -356,7 +356,7 @@ mod tests {
             }
         );
 
-        // Un repositorio que se llama `blobs/app` sigue siendo un nombre.
+        // A repository called `blobs/app` is still a name.
         let target = the_target("/v2/blobs/app/manifests/v1").expect("the target");
         assert_eq!(
             target,
@@ -366,7 +366,7 @@ mod tests {
             }
         );
 
-        // Y el ultimo manda cuando los dos aparecen.
+        // And the last one rules when both appear.
         let target = the_target("/v2/team/manifests/blobs/sha256:abc").expect("the target");
         assert_eq!(
             target,
@@ -377,7 +377,7 @@ mod tests {
         );
     }
 
-    /// La superficie de subida distingue el inicio de la sesion.
+    /// The upload surface distinguishes the start of the session.
     #[test]
     fn the_upload_path_tells_the_start_from_the_session() {
         let start = the_target("/v2/team/demo/blobs/uploads/").expect("the start");
@@ -388,7 +388,7 @@ mod tests {
             }
         );
 
-        // Sin la barra final es la misma peticion.
+        // Without the trailing slash it is the same request.
         let start = the_target("/v2/team/demo/blobs/uploads").expect("the start");
         assert_eq!(
             start,
@@ -409,7 +409,7 @@ mod tests {
         );
     }
 
-    /// Un identificador de sesion que no es un UUID no es una sesion.
+    /// A session identifier that is not a UUID is not a session.
     #[test]
     fn a_session_id_that_is_not_a_uuid_is_not_a_session() {
         let error = the_target("/v2/team/demo/blobs/uploads/..%2Fetc%2Fpasswd")
@@ -417,14 +417,14 @@ mod tests {
         assert_eq!(error.the_code(), "BLOB_UPLOAD_UNKNOWN");
     }
 
-    /// El traversal se rechaza antes de tocar el catalogo.
+    /// The traversal is rejected before touching the catalog.
     #[test]
     fn a_traversal_name_is_refused_before_anything_else() {
         let error = the_target("/v2/..%2Fescape/manifests/v1").expect_err("the traversal");
         assert_eq!(error.the_code(), "NAME_INVALID");
     }
 
-    /// Un digest sin su algoritmo no es un digest.
+    /// A digest without its algorithm is not a digest.
     #[test]
     fn a_digest_without_its_algorithm_is_refused() {
         let error = the_digest_of_reference("not-a-digest").expect_err("the digest");

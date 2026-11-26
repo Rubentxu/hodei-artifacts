@@ -1,37 +1,38 @@
-//! El endpoint de token: la puerta por la que entran los clientes Docker.
+//! The token endpoint: the door through which Docker clients enter.
 //!
-//! El protocolo de Docker no manda el token de la plataforma: manda unas
-//! credenciales y recibe un token. Cuando un cliente real (`podman`,
-//! `oras`, el `docker` de la CLI) llega a un registro, lo primero que
-//! hace es **preguntar como autenticarse**: un `GET /v2/` sin
-//! credencial, y leer el `WWW-Authenticate` de la respuesta. Si la
-//! respuesta dice `Bearer realm="..."`, el cliente va a ese `realm` con
-//! sus credenciales y recibe un token que usa en las peticiones que
-//! siguen.
+//! The Docker protocol does not send the platform token: it sends some
+//! credentials and receives a token. When a real client (`podman`,
+//! `oras`, the CLI `docker`) reaches a registry, the first thing it does
+//! is **ask how to authenticate**: a `GET /v2/` without a credential,
+//! and read the `WWW-Authenticate` of the response. If the response says
+//! `Bearer realm="..."`, the client goes to that `realm` with its
+//! credentials and receives a token that it uses in the requests that
+//! follow.
 //!
-//! Sin ese endpoint, un cliente de Docker no sabe como hablar con el
-//! registro: no es que el registro no acepte el token, es que el cliente
-//! nunca se entera de que hay que mandarlo.
+//! Without that endpoint, a Docker client does not know how to talk to
+//! the registry: it is not that the registry does not accept the token,
+//! it is that the client never finds out that it has to send it.
 //!
-//! # Que es y que no es el token que devuelve
+//! # What the returned token is and is not
 //!
-//! El registro **no emite** tokens: lo que devuelve es **la credencial de
-//! la plataforma**, verificada en la puerta. El cliente la presenta como
-//! `Bearer` en cada peticion, y es la misma credencial que la que el
-//! cliente ya tenia.
+//! The registry **does not issue** tokens: what it returns is **the
+//! platform credential**, verified at the door. The client presents it
+//! as `Bearer` in each request, and it is the same credential the
+//! client already had.
 //!
-//! Y lo que decide que puede hacer el cliente **no es el token**: es
-//! Cedar, en cada peticion y sobre el recurso concreto. Un token de este
-//! registro no lleva permisos dentro: lleva una identidad, y los
-//! permisos se deciden con el bundle, como en el resto de la plataforma.
-//! Pretender lo contrario --emitir tokens con permisos dentro-- seria
-//! tener dos autoridades, y la que no se consulta es la que miente.
+//! And what decides what the client can do **is not the token**: it is
+//! Cedar, on every request and on the specific resource. A token from
+//! this registry carries no permissions inside: it carries an identity,
+//! and permissions are decided with the bundle, as in the rest of the
+//! platform. Pretending otherwise --issuing tokens with permissions
+//! inside-- would mean having two authorities, and the one that is not
+//! consulted is the one that lies.
 //!
-//! # El secreto
+//! # The secret
 //!
-//! La credencial viaja como la **contrasena** de unas credenciales basicas,
-//! que es como el protocolo Docker las lleva. El usuario es informativo:
-//! lo que se verifica es la contrasena.
+//! The credential travels as the **password** of basic credentials,
+//! which is how the Docker protocol carries them. The user is
+//! informative: what is verified is the password.
 
 use axum::extract::State;
 use axum::http::{HeaderMap, header};
@@ -42,33 +43,33 @@ use crate::app_state::AppState;
 use crate::oci::failure::OciFailure;
 use crate::public_url::TheOrigin;
 
-/// El nombre del servicio en el reto de autenticacion.
+/// The service name in the authentication challenge.
 ///
-/// El protocolo lo usa para que el cliente sepa a que registro esta
-/// hablando. Es el nombre del producto, y no dice nada de quien pregunta.
+/// The protocol uses it so the client knows which registry it is
+/// talking to. It is the product name, and says nothing about who asks.
 pub const SERVICE_NAME: &str = "hodei";
 
-/// La ruta del endpoint de token.
+/// The path of the token endpoint.
 ///
-/// Es la convencion del protocolo, y por eso se usa: un cliente que
-/// ignore el `realm` que anuncia el registro la encuentra igual.
+/// It is the protocol convention, and that is why it is used: a client
+/// that ignores the `realm` the registry announces finds it anyway.
 pub const TOKEN_PATH: &str = "/token";
 
-/// Cuanto tiempo le decimos al cliente que use el token antes de pedir
-/// otro.
+/// How long we tell the client to use the token before asking for
+/// another.
 ///
-/// Es una **pista de cache**, no una caducidad: el token que se devuelve
-/// es la credencial de la plataforma, y su caducidad es la que ella
-/// tenga. Lo que se le dice al cliente es cada cuanto conviene renovarlo,
-/// y renovarlo es volver a este endpoint con las mismas credenciales.
+/// It is a **cache hint**, not an expiry: the returned token is the
+/// platform credential, and its expiry is whatever it has. What the
+/// client is told is how often it is advisable to renew it, and
+/// renewing it means going back to this endpoint with the same credentials.
 const REFRESH_SECONDS: i64 = 300;
 
-/// El endpoint de token.
+/// The token endpoint.
 ///
-/// Las credenciales llegan en la cabecera `Authorization` en forma basica:
-/// el usuario es informativo y la contrasena es la credencial de la
-/// plataforma. Sin credencial no hay token, y lo que se responde es el
-/// mismo reto que el cliente ya conoce.
+/// Credentials arrive in the `Authorization` header in basic form:
+/// the user is informative and the password is the platform
+/// credential. Without a credential there is no token, and what is
+/// returned is the same challenge the client already knows.
 pub async fn token(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -78,9 +79,9 @@ pub async fn token(
         return Err(OciFailure::unauthorized().with_challenge(the_realm(&origin)));
     };
 
-    // La contrasena es la credencial de la plataforma, y se verifica
-    // como se verifica en cualquier otra peticion: con el mismo
-    // autenticador y el mismo camino.
+    // The password is the platform credential, and it is verified the
+    // same way as in any other request: with the same authenticator and
+    // the same path.
     if hodei_authz::verify_principal(
         state.authenticator.as_ref(),
         &hodei_authz::Credentials::bearer(credentials.password.clone()),
@@ -95,9 +96,9 @@ pub async fn token(
         "token": credentials.password,
         "expires_in": REFRESH_SECONDS,
         "issued_at": chrono::Utc::now().to_rfc3339(),
-        // El alcance que el cliente pide, y el alcance que tiene. El
-        // registro no lo recorta: lo que decide que puede hacer el
-        // cliente es Cedar, en cada peticion.
+        // The scope the client asks for, and the scope it has. The
+        // registry does not trim it: what decides what the client can do
+        // is Cedar, on every request.
         "scope": "repository:*:pull,push",
     });
 
@@ -109,20 +110,20 @@ pub async fn token(
     Ok(response)
 }
 
-/// Las credenciales basicas de la peticion.
+/// The basic credentials of the request.
 ///
-/// El protocolo Docker las manda en la cabecera `Authorization`. La
-/// contrasena es la credencial de la plataforma; el usuario es
-/// informativo, y por eso no decide nada.
+/// The Docker protocol sends them in the `Authorization` header. The
+/// password is the platform credential; the user is informative, and
+/// therefore decides nothing.
 struct BasicCredentials {
-    /// El nombre de usuario que manda el cliente.
+    /// The user name the client sends.
     #[allow(dead_code)]
     user: String,
-    /// La credencial de la plataforma.
+    /// The platform credential.
     password: String,
 }
 
-/// Las credenciales basicas de la cabecera, si las hay.
+/// The basic credentials from the header, if there are any.
 fn the_basic_credentials(headers: &HeaderMap) -> Option<BasicCredentials> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let (scheme, encoded) = value.split_once(' ')?;
@@ -143,18 +144,18 @@ fn the_basic_credentials(headers: &HeaderMap) -> Option<BasicCredentials> {
     })
 }
 
-/// El realm del endpoint de token, tal y como lo ve el cliente.
+/// The realm of the token endpoint, as the client sees it.
 ///
-/// Es la direccion **publica** del despliegue, la que decide su
-/// configuracion: la que el cliente uso para llegar y la unica que puede
-/// usar. No la decide la peticion, porque el `Host` y el
-/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
-/// un reto que apunta a otro sitio es una credencial que se pide en otro
-/// sitio.
+/// It is the **public** address of the deployment, the one its
+/// configuration decides: the one the client used to arrive and the only
+/// one it can use. The request does not decide it, because the `Host` and
+/// `X-Forwarded-Proto` of a request can be written by anyone, and a
+/// challenge pointing elsewhere is a credential asked for somewhere
+/// else.
 ///
-/// Cuando el despliegue no dice donde vive y la peticion no trae una
-/// autoridad valida, el reto dice `localhost`: es la direccion que el
-/// propio servicio declara cuando no sabe de otra.
+/// When the deployment does not say where it lives and the request does
+/// not carry a valid authority, the challenge says `localhost`: it is
+/// the address the service itself declares when it knows of no other.
 pub fn the_realm(origin: &TheOrigin) -> String {
     origin.url_or(TOKEN_PATH, "http://localhost/token")
 }
@@ -163,11 +164,11 @@ pub fn the_realm(origin: &TheOrigin) -> String {
 mod tests {
     use super::*;
 
-    /// El reto dice donde esta el endpoint de token y de que servicio
-    /// se trata.
+    /// The challenge says where the token endpoint is and which service
+    /// it is about.
     ///
-    /// El realm es la direccion que el despliegue declara, no la que la
-    /// peticion escribe: un `Host` hostil no llega al reto.
+    /// The realm is the address the deployment declares, not the one the
+    /// request writes: a hostile `Host` does not reach the challenge.
     #[test]
     fn the_challenge_names_the_realm_and_the_service() {
         let origin = TheOrigin::default();
@@ -179,7 +180,7 @@ mod tests {
         assert_eq!(the_realm(&origin), "https://artifacts.example/token");
     }
 
-    /// Las credenciales basicas se leen, y lo que no son no se leen.
+    /// Basic credentials are read, and what is not them is not read.
     #[test]
     fn the_basic_credentials_are_read_when_they_are_there() {
         let mut headers = HeaderMap::new();

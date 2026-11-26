@@ -1,33 +1,33 @@
-//! El journal durable de las sesiones de subida (HSP-201).
+//! The durable journal of upload sessions (HSP-201).
 //!
-//! El mapa de [`super::uploads::UploadRegistry`] es el cache local de lo
-//! que aqui es la autoridad: la sesion de una subida vive **entre
-//! peticiones**, y en un despliegue con dos réplicas una peticion cae en
-//! cualquiera de las dos. Lo que tiene que sobrevivir al proceso es
-//! minimo y cerrado: el identificador, la cuenta y el repositorio a los
-//! que pertenece, el offset de bytes que lleva escritos, el handle del
-//! staging del almacén, la version de revision para el CAS y la fecha de
-//! su ultimo contacto para el TTL. Lo que **no** se guarda aqui son los
-//! bytes: esos viven en el CAS, y el handle es la unica manera de volver
-//! a ellos.
+//! The map of [`super::uploads::UploadRegistry`] is the local cache of what
+//! is the authority here: an upload's session lives **between
+//! requests**, and in a deployment with two replicas a request lands on
+//! either of the two. What has to survive the process is
+//! minimal and closed: the identifier, the account and the repository it
+//! belongs to, the byte offset written so far, the store's staging
+//! handle, the revision version for the CAS and the date of
+//! its last contact for the TTL. What is **not** stored here are the
+//! bytes: those live in the CAS, and the handle is the only way back
+//! to them.
 //!
-//! El CAS de offset es lo que hace segura la reanudacion: cada avance
-//! exige la revision que el escritor leyó y deja un **marcador de
-//! revision** bajo la clave `@upsert` `{clave}#v{revision}`. Dos
-//! escritores concurrentes pelean por el mismo marcador; el servidor
-//! arbitra, el perdedor no escribe nada, relee el offset real y el
-//! protocolo responde el `416` que dice por donde seguir. Con eso, el
-//! replay de un trozo que ya entro no duplica parte alguna.
+//! The offset CAS is what makes resumption safe: each advance
+//! requires the revision the writer read and leaves a **revision
+//! marker** under the `@upsert` key `{key}#v{revision}`. Two
+//! concurrent writers fight for the same marker; the server
+//! arbitrates, the loser writes nothing, rereads the real offset and the
+//! protocol answers the `416` that says where to continue. With that, the
+//! replay of a chunk that already went in duplicates no part.
 //!
-//! Las implementaciones:
+//! The implementations:
 //!
-//! - [`MemoryJournal`] —la autoridad compartida entre dos registros del
-//!   mismo proceso: el seam con el que el protocolo de dos réplicas se
-//!   prueba sin servidor.
-//! - [`DgraphJournal`] —la autoridad sobre el grafo, con esquema
-//!   **aditivo** propio (`hodei.upload.session.*`) y el mismo CAS que el
-//!   libro mayor de cuota (HSP-198) usa: el marcador de revision es la
-//!   condicion, no un aviso del cliente.
+//! - [`MemoryJournal`] —the authority shared between two registries of the
+//!   same process: the seam with which the two-replica protocol is
+//!   tested without a server.
+//! - [`DgraphJournal`] —the authority on the graph, with its own **additive**
+//!   schema (`hodei.upload.session.*`) and the same CAS the quota
+//!   ledger (HSP-198) uses: the revision marker is the
+//!   condition, not a client notice.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,73 +39,73 @@ use hodei_graph_client::{
 };
 use serde_json::Value;
 
-/// Por que el journal no pudo hacer lo que se le pedia.
+/// Why the journal could not do what it was asked.
 #[derive(Debug, thiserror::Error)]
 pub enum JournalError {
-    /// La sesion no existe, esta cerrada o el avance choco con un
-    /// cierre: en los tres casos la respuesta del protocolo es la
-    /// misma —una sesion que no esta—.
+    /// The session does not exist, is closed, or the advance collided with a
+    /// close: in all three cases the protocol's response is the
+    /// same —a session that is not there—.
     #[error("the upload session '{id}' does not exist")]
     NoSuchSession {
-        /// El identificador pedido.
+        /// The requested identifier.
         id: String,
     },
-    /// Otro avance gano el CAS. El registro relee el offset real y el
-    /// protocolo responde el `416` con el `Range` que dice por donde
-    /// seguir.
+    /// Another advance won the CAS. The registry rereads the real offset and the
+    /// protocol answers the `416` with the `Range` that says where to
+    /// continue.
     #[error("the upload session '{id}' moved: it is at offset {offset} revision {revision}")]
     Conflict {
-        /// El identificador de la sesion.
+        /// The session identifier.
         id: String,
-        /// El offset actual segun la autoridad.
+        /// The current offset according to the authority.
         offset: u64,
-        /// La revision actual segun la autoridad.
+        /// The current revision according to the authority.
         revision: u64,
     },
-    /// El journal no respondio.
+    /// The journal did not respond.
     #[error("the session journal is not available: {0}")]
     Unavailable(String),
 }
 
-/// Lo que el journal recuerda de una sesion.
+/// What the journal remembers about a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionRecord {
-    /// El identificador opaco de la sesion.
+    /// The opaque session identifier.
     pub id: String,
-    /// La cuenta que la abrio: una sesion de otra cuenta no existe.
+    /// The account that opened it: a session of another account does not exist.
     pub account: String,
-    /// El repositorio al que sube.
+    /// The repository it uploads to.
     pub repository: String,
-    /// Los bytes que lleva escritos —el offset de la subida—.
+    /// The bytes written so far —the upload's offset—.
     pub offset: u64,
-    /// El handle del staging del almacén; vacio si el almacén no
-    /// reanuda escrituras.
+    /// The store's staging handle; empty if the store does not
+    /// resume writes.
     pub handle: String,
-    /// La revision del journal para el CAS: cada avance la sube de una
-    /// en una y el escritor asume la que leyó.
+    /// The journal revision for the CAS: each advance raises it by
+    /// one and the writer assumes the one it read.
     pub version: u64,
-    /// Cerrada: commiteada, abortada o caducada. Una sesion cerrada no
-    /// se reanuda.
+    /// Closed: committed, aborted or expired. A closed session is not
+    /// resumed.
     pub closed: bool,
-    /// El ultimo contacto en millis desde el epoch: el TTL durable se
-    /// cuenta desde aqui.
+    /// The last contact in millis since the epoch: the durable TTL is
+    /// counted from here.
     pub touched_at_millis: u64,
 }
 
-/// El journal de sesiones: la autoridad que sobrevive al proceso.
+/// The session journal: the authority that survives the process.
 #[async_trait]
 pub trait SessionJournal: Send + Sync {
-    /// Registra una sesion abierta.
+    /// Records an open session.
     async fn open(&self, record: &SessionRecord) -> Result<(), JournalError>;
 
-    /// La sesion por su identificador, abierta o cerrada.
+    /// The session by its identifier, open or closed.
     async fn get(&self, id: &str) -> Result<Option<SessionRecord>, JournalError>;
 
-    /// Avanza el offset **con CAS**: `expected_version` es la revision
-    /// que el escritor leyó; si la autoridad esta en otra, el avance no
-    /// escribe nada y devuelve [`JournalError::Conflict`] con el offset
-    /// real. El éxito sube la revision de una en una y refresca el TTL
-    /// con `touched_at_millis`.
+    /// Advances the offset **with CAS**: `expected_version` is the revision
+    /// the writer read; if the authority is at another, the advance
+    /// writes nothing and returns [`JournalError::Conflict`] with the real
+    /// offset. Success raises the revision by one and refreshes the TTL
+    /// with `touched_at_millis`.
     async fn advance(
         &self,
         id: &str,
@@ -114,16 +114,16 @@ pub trait SessionJournal: Send + Sync {
         touched_at_millis: u64,
     ) -> Result<u64, JournalError>;
 
-    /// Cierra una sesion. Idempotente: cerrar algo ya cerrado es un
-    /// no-op verdadero —la publicacion y el barrido compiten, y el que
-    /// llega primero dice—.
+    /// Closes a session. Idempotent: closing something already closed is a
+    /// true no-op —publication and the sweep compete, and whoever
+    /// arrives first decides—.
     async fn close(&self, id: &str) -> Result<(), JournalError>;
 
-    /// El barrido del TTL: las sesiones abiertas cuyo ultimo contacto
-    /// pasa de la gracia se marcan cerradas y se devuelven **con su
-    /// registro** para que el dueño del journal aborte el staging que
-    /// dejaron. Sin esto, un crash deja sesiones abiertas y subidas
-    /// multiples huerfanas para siempre.
+    /// The TTL sweep: open sessions whose last contact
+    /// exceeds the grace are marked closed and returned **with their
+    /// record** so that the journal's owner aborts the staging they
+    /// left behind. Without this, a crash leaves open sessions and orphaned
+    /// multipart uploads forever.
     async fn sweep_expired(
         &self,
         now_millis: u64,
@@ -138,17 +138,17 @@ fn now_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// La autoridad en memoria, compartida entre dos registros del mismo
-/// proceso: el seam con el que el protocolo de dos réplicas se prueba
-/// sin servidor. El CAS es un bloqueo sobre la tabla; el de Dgraph es
-/// el servidor.
+/// The in-memory authority, shared between two registries of the same
+/// process: the seam with which the two-replica protocol is tested
+/// without a server. The CAS is a lock on the table; Dgraph's is
+/// the server.
 #[derive(Default)]
 pub struct MemoryJournal {
     records: std::sync::Mutex<HashMap<String, SessionRecord>>,
 }
 
 impl MemoryJournal {
-    /// Un journal vacio.
+    /// An empty journal.
     pub fn new() -> Self {
         Self::default()
     }
@@ -234,14 +234,14 @@ impl SessionJournal for MemoryJournal {
     }
 }
 
-/// El tipo aditivo del journal.
+/// The journal's additive type.
 pub const SESSION_TYPE: &str = "HodeiUploadSession";
 
-/// La DDL **aditiva** del journal: predicates propios, un indice
-/// `@upsert` sobre la clave —que es lo que serializa las mutaciones de
-/// una sesion y hace que la revalidacion del filtro dentro de cada
-/// transaccion sea el CAS—, y un tipo nuevo. No redeclara nada que otro
-/// slice sea dueño.
+/// The journal's **additive** DDL: its own predicates, an `@upsert`
+/// index on the key —which is what serializes a session's mutations and
+/// makes the revalidation of the filter within each transaction be the
+/// CAS—, and a new type. It redeclares nothing that another slice
+/// owns.
 pub const SESSION_SCHEMA_DQL: &str = "
 hodei.upload.session.key: string @index(exact) @upsert .
 hodei.upload.session.account: string @index(exact) .
@@ -265,10 +265,10 @@ type HodeiUploadSession {
 }
 ";
 
-/// La autoridad sobre el grafo: el mismo CAS del libro mayor de cuota,
-/// arbitrado por el servidor. Clonable y ligero —el cliente es un `Arc`
-/// y el inquilino un nombre—, porque dos escritores de la misma sesion
-/// son dos tenedores del mismo journal.
+/// The authority on the graph: the same CAS as the quota ledger,
+/// arbitrated by the server. Cloneable and light —the client is an `Arc`
+/// and the tenant a name—, because two writers of the same session
+/// are two holders of the same journal.
 #[derive(Clone)]
 pub struct DgraphJournal {
     client: Arc<GraphClient>,
@@ -276,7 +276,7 @@ pub struct DgraphJournal {
 }
 
 impl DgraphJournal {
-    /// Abre el journal sobre el grafo, aplicando su DDL aditiva.
+    /// Opens the journal on the graph, applying its additive DDL.
     pub async fn open(client: Arc<GraphClient>, tenant: &str) -> Result<Self, JournalError> {
         if tenant.is_empty()
             || !tenant
@@ -294,16 +294,16 @@ impl DgraphJournal {
         })
     }
 
-    /// La clave de una sesion. El tenant esta validado y el id es un
-    /// UUID: ninguna de las dos partes introduce el separador, y la
-    /// clave es estable para dos escritores del mismo id.
+    /// The key of a session. The tenant is validated and the id is a
+    /// UUID: neither part introduces the separator, and the
+    /// key is stable for two writers of the same id.
     fn key_of(&self, id: &str) -> String {
         format!("upload-session/{}/{}", self.tenant, id)
     }
 
-    /// La clave del marcador de una revision: el ancla de conflicto del
-    /// CAS, creada solo si falta —que es lo que fuerza a dos escritores
-    /// de la misma revision a pelear por la misma clave `@upsert`.
+    /// The key of a revision's marker: the CAS conflict anchor,
+    /// created only if missing —which is what forces two writers
+    /// of the same revision to fight for the same `@upsert` key.
     fn marker_key(&self, id: &str, revision: u64) -> String {
         format!("{}#v{revision}", self.key_of(id))
     }
@@ -410,13 +410,13 @@ impl SessionJournal for DgraphJournal {
     ) -> Result<u64, JournalError> {
         let key = self.key_of(id);
         let marker = self.marker_key(id, expected_version + 1);
-        // La transaccion: la sesion revalidada EN SU PROPIA SNAPSHOT en
-        // la revision que el escritor asumio y sin cerrar, y el
-        // marcador de la siguiente revision AUN SIN EXISTIR. El filtro
-        // se re-evalua bajo la serializacion del indice `@upsert` de la
-        // clave, de modo que dos avances de la misma revision no pueden
-        // casar los dos: el segundo ve la revision movida o el marcador
-        // puesto, su bloque no escribe nada y pierde.
+        // The transaction: the session revalidated IN ITS OWN SNAPSHOT at
+        // the revision the writer assumed and not closed, and the
+        // marker of the next revision STILL NONEXISTENT. The filter
+        // is re-evaluated under the serialization of the `@upsert` index of the
+        // key, so that two advances of the same revision cannot
+        // both match: the second sees the moved revision or the marker
+        // set, its block writes nothing and it loses.
         let transaction = GraphUpsertTransaction {
             query: format!(
                 "{{\n  s as var(func: eq(hodei.upload.session.key, {key})) \
@@ -443,15 +443,15 @@ impl SessionJournal for DgraphJournal {
             )],
             commit_now: true,
         };
-        // Dos transacciones concurrentes sobre el mismo `@upsert` pueden
-        // terminar en **abort por serializacion** del servidor, no en
-        // "perdi el CAS": el abort se reintenta —la revalidacion del
-        // filtro dira luego quien gano—; un fallo que no es abort es el
-        // journal no respondiendo. El veredicto no se lee de la respuesta
-        // del upsert —los `as var` no se proyectan—: se relee el estado
-        // DESPUES del commit, la misma regla probada del libro mayor de
-        // cuota (HSP-171): la transaccion gano si la revision que ella
-        // escribio es la que esta.
+        // Two concurrent transactions on the same `@upsert` may
+        // end in a server **serialization abort**, not in
+        // "I lost the CAS": the abort is retried —the filter's
+        // revalidation will then say who won—; a failure that is not an abort is the
+        // journal not responding. The verdict is not read from the upsert's
+        // response —`as var`s are not projected—: the state is reread
+        // AFTER the commit, the same proven rule as the quota
+        // ledger (HSP-171): the transaction won if the revision it
+        // wrote is the one that is there.
         for attempt in 1..=3 {
             match self.client.upsert(transaction.clone()).await {
                 Err(error) => {
@@ -478,9 +478,9 @@ impl SessionJournal for DgraphJournal {
                         {
                             Ok(expected_version + 1)
                         }
-                        // Mi transaccion no escribio o alguien movio la
-                        // autoridad: el `416` del protocolo lleva el
-                        // offset y la revision de verdad.
+                        // My transaction did not write or someone moved the
+                        // authority: the protocol's `416` carries the real
+                        // offset and revision.
                         Some(record) => Err(JournalError::Conflict {
                             id: id.to_owned(),
                             offset: record.offset,
@@ -490,9 +490,9 @@ impl SessionJournal for DgraphJournal {
                 }
             }
         }
-        // El servidor no dejo de abortar: otro escritor tiene la sesion
-        // en una revision que este no alcanzo. Se relee una ultima vez
-        // para decir cuanto.
+        // The server did not stop aborting: another writer holds the session
+        // at a revision this one did not reach. It is reread one last time
+        // to say how much.
         match self.read(id).await? {
             None => Err(JournalError::NoSuchSession { id: id.to_owned() }),
             Some(record) => Err(JournalError::Conflict {
@@ -530,10 +530,10 @@ impl SessionJournal for DgraphJournal {
         ttl_millis: u64,
     ) -> Result<Vec<SessionRecord>, JournalError> {
         let deadline = now.saturating_sub(ttl_millis);
-        // El barrido esta **acotado al inquilino**: sobre un alpha
-        // compartido, un censo global de sesiones abiertas cerrarlas
-        // sesiones de otros —eso esta prohibido por el contrato del
-        // entorno—. La llave `tenant` es la frontera.
+        // The sweep is **scoped to the tenant**: on a shared
+        // alpha, a global census of open sessions would close the
+        // sessions of others —that is forbidden by the environment's
+        // contract—. The `tenant` key is the boundary.
         let response = self
             .client
             .execute_dql(&format!(
@@ -566,11 +566,11 @@ impl SessionJournal for DgraphJournal {
                 .get("hodei.upload.session.version")
                 .and_then(Value::as_u64)
                 .unwrap_or(0);
-            // La marca de cierre se apoya en la version leida: si alguien
-            // reanudo y avanzo la sesion entre el listado y la marca, el
-            // filtro no casa, el barrido no la toca y decide la proxima
-            // pasada. Cerrar no sube la version —no hay CAS que perder:
-            // dos cierres del mismo estado son el mismo hecho—.
+            // The close mark relies on the version read: if someone
+            // resumed and advanced the session between the listing and the mark, the
+            // filter does not match, the sweep does not touch it and the next
+            // pass decides. Closing does not raise the version —there is no CAS to lose:
+            // two closes of the same state are the same fact—.
             let closed = self
                 .client
                 .upsert(GraphUpsertTransaction {
@@ -589,11 +589,11 @@ impl SessionJournal for DgraphJournal {
                 .await
                 .map_err(|error| JournalError::Unavailable(error.to_string()))?;
             require_no_errors(&closed.json)?;
-            // El veredicto se relee, no se lee de la respuesta: el
-            // servidor no proyecta las variables `as var` del upsert.
-            // Una sesion que sigue abierta es una sesion que otro
-            // escritor movio —el filtro no casa— y la decide la proxima
-            // pasada.
+            // The verdict is reread, not read from the response: the
+            // server does not project the `as var` variables of the upsert.
+            // A session that is still open is a session that another
+            // writer moved —the filter does not match— and the next
+            // pass decides it.
             let id = key.rsplit('/').next().unwrap_or(&key).to_owned();
             let marked = match self.read(&id).await? {
                 Some(record) if record.closed => record,
@@ -614,9 +614,9 @@ impl SessionJournal for DgraphJournal {
     }
 }
 
-/// La DDL del journal es aditiva e idempotente; dos aperturas
-/// simultaneas alteran el mismo slice y el servidor puede rechazar una
-/// mientras asienta los indices: se reintenta poco y se falla tarde.
+/// The journal's DDL is additive and idempotent; two simultaneous
+/// openings alter the same slice and the server may reject one
+/// while it settles the indexes: it is retried a little and fails late.
 async fn apply_session_schema(client: &GraphClient) -> Result<(), JournalError> {
     let mut last = String::new();
     for attempt in 1..=3 {
@@ -634,8 +634,8 @@ async fn apply_session_schema(client: &GraphClient) -> Result<(), JournalError> 
     )))
 }
 
-/// Los errores que el alambre trae dentro del JSON nunca se leen como
-/// exito.
+/// Errors that the wire carries inside the JSON are never read as
+/// success.
 fn require_no_errors(json: &Value) -> Result<(), JournalError> {
     let empty: Vec<Value> = Vec::new();
     let errors = json
@@ -663,8 +663,8 @@ fn text_of(node: &Value, predicate: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// El reloj del journal: millis desde el epoch, la misma unidad que las
-/// fechas del grafo.
+/// The journal clock: millis since the epoch, the same unit as the
+/// graph's dates.
 pub fn journal_now() -> u64 {
     now_millis()
 }

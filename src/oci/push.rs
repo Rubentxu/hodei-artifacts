@@ -1,23 +1,23 @@
-//! El push de OCI Distribution 1.1: las sesiones de subida y el manifiesto.
+//! OCI Distribution 1.1 push: upload sessions and the manifest.
 //!
-//! El protocolo de push tiene dos piezas y una regla:
+//! The push protocol has two pieces and one rule:
 //!
-//! 1. **Las sesiones de subida**: un `POST` abre una, un `PATCH` (o
-//!    varios) la llenan, un `GET` dice cuanto lleva, un `PUT` la cierra
-//!    con el digest y un `DELETE` la cancela.
-//! 2. **El manifiesto**: un `PUT` a `/v2/<name>/manifests/<referencia>`
-//!    publica los bytes del manifiesto y, si la referencia es una
-//!    etiqueta, la etiqueta apunta a ellos.
+//! 1. **Upload sessions**: a `POST` opens one, a `PATCH` (or
+//!    several) fills it, a `GET` says how much it holds, a `PUT` closes it
+//!    with the digest and a `DELETE` cancels it.
+//! 2. **The manifest**: a `PUT` to `/v2/<name>/manifests/<reference>`
+//!    publishes the manifest bytes and, if the reference is a
+//!    tag, the tag points to them.
 //!
-//! Y la regla es la que separa un registro de un almacen: **lo que se
-//! publica es exactamente lo que el cliente dijo que era**. El digest
-//! que el cliente declara se comprueba contra los bytes que han llegado,
-//! y si no coinciden no se publica nada: ni el blob, ni el manifiesto, ni
-//! la etiqueta.
+//! And the rule is the one that separates a registry from a store: **what is
+//! published is exactly what the client said it was**. The digest
+//! the client declares is checked against the bytes that arrived,
+//! and if they do not match nothing is published: not the blob, nor the manifest, nor
+//! the tag.
 //!
-//! El contenido se escribe **por trozos** en el almacen de contenido, y
-//! el commit es lo unico que publica: un blob a medio escribir nunca es
-//! visible, ni para el que sube ni para el que descarga.
+//! The content is written **in chunks** to the content store, and
+//! the commit is the only thing that publishes: a half-written blob is never
+//! visible, neither to the one uploading nor to the one downloading.
 
 use axum::body::Body;
 use axum::extract::OriginalUri;
@@ -38,46 +38,46 @@ use crate::oci::{
     the_catalog, the_catalog_error, the_content_store, the_context, the_decision, the_repository,
 };
 
-/// La cabecera que anuncia la version de la API de distribucion.
+/// The header that announces the distribution API version.
 const API_VERSION_HEADER: &str = "Docker-Distribution-API-Version";
 
-/// La cabecera con el identificador de la sesion de subida.
+/// The header with the upload session identifier.
 ///
-/// No la pide el protocolo de OCI (es de Docker), pero la usan los
-/// clientes que la conocen, y no cuesta nada llevarla.
+/// The OCI protocol does not require it (it is Docker's), but the clients that
+/// know it use it, and it costs nothing to carry it.
 const UPLOAD_UUID_HEADER: &str = "Docker-Upload-UUID";
 
-/// La cabecera con el digest del contenido.
+/// The header with the content digest.
 const CONTENT_DIGEST_HEADER: &str = "Docker-Content-Digest";
 
-/// La cabecera con las etiquetas que el manifiesto acepta.
+/// The header with the tags the manifest accepts.
 const OCI_TAG_HEADER: &str = "OCI-Tag";
 
-/// La cabecera con el `subject` del manifiesto.
+/// The header with the manifest's `subject`.
 ///
-/// El protocolo dice que la respuesta al push **puede** llevar el
-/// `subject` del manifiesto publicado, y lo lleva: es lo que le dice al
-/// cliente a que manifiesto se ha colgado lo que ha subido.
+/// The protocol says the push response **may** carry the published
+/// manifest's `subject`, and it does: it is what tells the
+/// client which manifest what it uploaded has been hung from.
 const OCI_SUBJECT_HEADER: &str = "OCI-Subject";
 
-/// Los parametros de la peticion que el protocolo usa.
+/// The request parameters the protocol uses.
 #[derive(Debug, Default)]
 struct TheQuery {
-    /// El digest que el cliente declara.
+    /// The digest the client declares.
     digest: Option<String>,
-    /// El digest que el cliente quiere montar desde otro repositorio.
+    /// The digest the client wants to mount from another repository.
     mount: Option<String>,
-    /// El repositorio de origen del montaje.
+    /// The source repository of the mount.
     from: Option<String>,
-    /// Las etiquetas que el manifiesto acepta.
+    /// The tags the manifest accepts.
     tags: Vec<String>,
 }
 
-/// Los parametros de la peticion.
+/// The request parameters.
 ///
-/// El query se lee a mano y no con un extractor: los parametros que
-/// importan son pocos, y el que se repite (`tag`) tiene que repetirse
-/// sin que un extractor se queje.
+/// The query is read by hand and not with an extractor: the parameters that
+/// matter are few, and the one that repeats (`tag`) has to repeat
+/// without an extractor complaining.
 fn the_query(uri: &OriginalUri) -> TheQuery {
     let mut query = TheQuery::default();
     for (key, value) in url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes()) {
@@ -92,12 +92,12 @@ fn the_query(uri: &OriginalUri) -> TheQuery {
     query
 }
 
-/// El punto de entrada de la superficie de escritura.
+/// The entry point of the write surface.
 ///
-/// El metodo y el path dicen que operacion es, y cada operacion tiene sus
-/// reglas. Lo que **no** hay es una operacion "generica": una peticion
-/// que no sea una de las del protocolo se rechaza con el error del
-/// protocolo, no con un 404 de router que confunde la ausencia con el
+/// The method and the path say which operation it is, and each operation has its
+/// rules. What there is **not** is a "generic" operation: a request
+/// that is not one of the protocol's is rejected with the protocol's
+/// error, not with a router 404 that confuses absence with
 /// error.
 pub async fn mutate(
     state: AppState,
@@ -120,8 +120,8 @@ pub async fn mutate(
 
 /// `POST /v2/<name>/blobs/uploads/`
 ///
-/// Abre una sesion de subida, o monta un blob que ya esta en otro
-/// repositorio, o publica el blob entero si el cliente declara su digest.
+/// Opens an upload session, or mounts a blob that is already in another
+/// repository, or publishes the whole blob if the client declares its digest.
 async fn start_upload(
     state: AppState,
     uri: OriginalUri,
@@ -136,9 +136,9 @@ async fn start_upload(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
-    // Un grupo no guarda nada: escribir contra el se rechaza con el
-    // error del dialecto que la distribucion reserva para lo que no se
-    // puede hacer en un repositorio de solo lectura.
+    // A group stores nothing: writing against it is rejected with the
+    // dialect error that the distribution reserves for what cannot be
+    // done on a read-only repository.
     crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
@@ -149,9 +149,9 @@ async fn start_upload(
 
     let query = the_query(&uri);
 
-    // El montaje: el blob ya esta en otro repositorio de la MISMA cuenta.
-    // Si no se puede montar, se cae a una subida normal: es lo que hace
-    // un registro que no monta, y el cliente sube los bytes.
+    // The mount: the blob is already in another repository of the SAME account.
+    // If it cannot be mounted, it falls back to a normal upload: it is what
+    // a registry that does not mount does, and the client uploads the bytes.
     if let Some(mount) = query.mount.as_deref()
         && let Some(response) = the_mount(
             &state,
@@ -166,7 +166,7 @@ async fn start_upload(
         return Ok(response);
     }
 
-    // La subida monolitica: el cuerpo entero, con su digest.
+    // The monolithic upload: the whole body, with its digest.
     if let Some(digest) = query.digest.as_deref() {
         return the_monolithic(
             &state,
@@ -179,13 +179,13 @@ async fn start_upload(
         .await;
     }
 
-    // La sesion: el cliente recibe el `Location` y sigue escribiendo en
-    // el.
+    // The session: the client receives the `Location` and keeps writing to
+    // it.
     //
-    // La cuota admite la sesion **antes** de que exista: abrir una
-    // subida cuando la cuenta ya tiene las que puede tener es un no sin
-    // tocar el disco. El ticket vive con la sesion, y la reserva vuelve
-    // al libro mayor si la sesion muere sin commitear.
+    // The quota admits the session **before** it exists: opening an
+    // upload when the account already has all it can have is a no without
+    // touching the disk. The ticket lives with the session, and the reservation returns
+    // to the ledger if the session dies without committing.
     let ticket = state
         .quota
         .begin(context.account().as_str(), None)
@@ -208,8 +208,8 @@ async fn start_upload(
         header::LOCATION,
         HeaderValue::from_str(&location).expect("the location is a header value"),
     );
-    // Una subida que no tiene bytes todavia: el rango es `0-0`, que es
-    // lo que dice el protocolo y lo que espera el cliente.
+    // An upload that has no bytes yet: the range is `0-0`, which is
+    // what the protocol says and what the client expects.
     headers.insert(header::RANGE, HeaderValue::from_static("0-0"));
     headers.insert(
         UPLOAD_UUID_HEADER,
@@ -219,13 +219,13 @@ async fn start_upload(
     Ok(response)
 }
 
-/// El montaje de un blob que ya esta en otro repositorio.
+/// The mount of a blob that is already in another repository.
 ///
-/// Solo monta un blob de la **misma cuenta**: un repositorio de otra
-/// cuenta no existe para esta, y un montaje desde el otro lado
-/// copiaria bytes de una cuenta a otra. Y lo que no se puede montar no
-/// se dice: la peticion cae a una subida normal, que es lo que hace un
-/// registro que no monta.
+/// It only mounts a blob of the **same account**: a repository of another
+/// account does not exist for this one, and a mount from the other side would
+/// copy bytes from one account to another. And what cannot be mounted is not
+/// said: the request falls back to a normal upload, which is what a
+/// registry that does not mount does.
 async fn the_mount(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -234,18 +234,18 @@ async fn the_mount(
     from: Option<&str>,
     headers: &HeaderMap,
 ) -> Result<Option<Response>, OciFailure> {
-    // El digest que se quiere montar tiene que ser un digest: un
-    // montaje con un digest mal formado es un error del cliente, y no un
-    // montaje que no se puede hacer.
+    // The digest to be mounted has to be a digest: a mount with a
+    // malformed digest is a client error, and not a mount
+    // that cannot be done.
     let digest = the_digest_of_reference(mount)?;
 
-    // El repositorio de origen: el mismo, si el cliente no dice otro.
+    // The source repository: the same one, if the client does not say another.
     let source = from.unwrap_or(name);
     let Ok(source_repository) = the_repository(state, context, source).await else {
         return Ok(None);
     };
-    // Y el principal tiene que poder leer de el: un montaje es una
-    // lectura de un repositorio y una escritura en otro.
+    // And the principal has to be able to read from it: a mount is a
+    // read from one repository and a write to another.
     if the_decision(
         state,
         context,
@@ -269,19 +269,19 @@ async fn the_mount(
     let Some(asset) = asset else {
         return Ok(None);
     };
-    // Y los bytes tienen que estar en el almacen: una fila que apunta a
-    // un blob que no esta es una fila rota, y montar un blob roto es
-    // publicar un blob roto.
+    // And the bytes have to be in the store: a row that points to a
+    // blob that is not there is a broken row, and mounting a broken blob is
+    // publishing a broken blob.
     let store = the_content_store(state)?;
     if !store.exists(&asset.digest).await.unwrap_or(false) {
         return Ok(None);
     }
 
-    // Montar es leer del origen: si el origen es un canal trusted, el
-    // digest tiene que estar concedido alli. Si no, el blob en cuarentena
-    // saldria a un repositorio abierto sin promoverse nunca. Lo no
-    // admitido cae a una subida normal, igual que lo que no existe: ni el
-    // 201 ni el 202 dicen si el digest esta en cuarentena.
+    // Mounting is reading from the source: if the source is a trusted channel, the
+    // digest has to be granted there. Otherwise, the quarantined blob
+    // would leave for an open repository without ever being promoted. What is not
+    // admitted falls back to a normal upload, just like what does not exist: neither
+    // the 201 nor the 202 say whether the digest is in quarantine.
     if crate::trust::admit(
         state,
         context.account().as_str(),
@@ -294,9 +294,9 @@ async fn the_mount(
         return Ok(None);
     }
 
-    // El montaje no copia bytes: el CAS es un arbol comun y el contenido
-    // ya esta. Lo que se escribe es la referencia del repositorio
-    // destino, que es lo que hace que el blob sea de ese repositorio.
+    // The mount copies no bytes: the CAS is a shared tree and the content
+    // is already there. What is written is the reference of the destination
+    // repository, which is what makes the blob belong to that repository.
     publish_blob(
         state,
         context,
@@ -322,11 +322,11 @@ async fn the_mount(
     Ok(Some(response))
 }
 
-/// La subida monolitica: el cuerpo entero y su digest.
+/// The monolithic upload: the whole body and its digest.
 ///
-/// El protocolo la define como un `POST` con `?digest=` y el contenido
-/// entero. El servidor comprueba que lo que ha llegado es lo que el
-/// cliente declaro, y si no, no publica nada.
+/// The protocol defines it as a `POST` with `?digest=` and the whole
+/// content. The server checks that what arrived is what the
+/// client declared, and if not, publishes nothing.
 async fn the_monolithic(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -355,16 +355,16 @@ async fn the_monolithic(
 
     let found = writer.the_digest();
     if found.value != declared {
-        // El cliente dijo que mandaba otra cosa: se aborta la escritura
-        // y no queda ni un byte en el almacen.
+        // The client said it was sending something else: the write is aborted
+        // and not a byte remains in the store.
         let _ = writer.abort().await;
         return Err(OciFailure::digest_invalid(
             "the content does not match the declared digest",
         ));
     }
-    // Lo que el almacén gana es lo que la cuenta paga: un blob que ya
-    // estaba no añade ni un byte. Se mira antes del commit, porque
-    // después del commit siempre está.
+    // What the store gains is what the account pays for: a blob that was already
+    // there adds not a byte. It is looked at before the commit, because
+    // after the commit it is always there.
     let already_had = store
         .exists(&found)
         .await
@@ -398,7 +398,7 @@ async fn the_monolithic(
 
 /// `PATCH /v2/<name>/blobs/uploads/<uuid>`
 ///
-/// Anade un trozo a la sesion.
+/// Appends a chunk to the session.
 async fn append_chunk(
     state: AppState,
     uri: OriginalUri,
@@ -413,9 +413,9 @@ async fn append_chunk(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
-    // Un grupo no guarda nada: escribir contra el se rechaza con el
-    // error del dialecto que la distribucion reserva para lo que no se
-    // puede hacer en un repositorio de solo lectura.
+    // A group stores nothing: writing against it is rejected with the
+    // dialect error that the distribution reserves for what cannot be
+    // done on a read-only repository.
     crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
@@ -424,11 +424,11 @@ async fn append_chunk(
         &repository,
     )?;
 
-    // La sesion puede estar **en cualquier réplica**: el cache local va
-    // primero; si aqui no existe —o existe con el mango soltado—, la
-    // autoridad del journal dice su offset y el almacen de contenido
-    // reabre el staging por su handle. Un `404` solo cuando la sesion
-    // tampoco existe para la autoridad.
+    // The session may be **on any replica**: the local cache goes
+    // first; if it does not exist here —or exists with the handle released—, the
+    // journal authority says its offset and the content store
+    // reopens the staging by its handle. A `404` only when the session
+    // does not exist for the authority either.
     let store = the_content_store(&state)?;
     let shared = state
         .uploads
@@ -441,7 +441,7 @@ async fn append_chunk(
         .the_local_offset()
         .expect("a resumed session has its writer");
 
-    // Un rango que no se puede leer no se comprueba: se rechaza.
+    // A range that cannot be read is not checked: it is rejected.
     if the_range_is_malformed(&headers) {
         return Err(OciFailure::blob_upload_range_mismatch(
             "the chunk declares a range that cannot be read",
@@ -449,10 +449,10 @@ async fn append_chunk(
         .with_range(the_range_header(written)));
     }
 
-    // El rango que declara el cliente y la longitud de su cuerpo tienen
-    // que cuadrar: el protocolo dice que el `Content-Range` es el rango
-    // del trozo, y un trozo que dice una cosa y mide otra es un cliente
-    // que no sabe donde esta.
+    // The range the client declares and the length of its body have to
+    // match: the protocol says the `Content-Range` is the range
+    // of the chunk, and a chunk that says one thing and measures another is a client
+    // that does not know where it is.
     if let Some((start, end)) = the_range_does_not_match_the_length(&headers) {
         return Err(OciFailure::blob_upload_range_mismatch(format!(
             "the chunk declares the range {start}-{end} and a body of another length"
@@ -460,21 +460,21 @@ async fn append_chunk(
         .with_range(the_range_header(written)));
     }
 
-    // El rango, si el cliente lo manda. El protocolo dice que los trozos
-    // van en orden y que un trozo que no encaja recibe un 416: el
-    // cliente recupera el offset con un `GET` y sigue. Con journal, el
-    // offset **es el de la autoridad**: el mango recien reabierto ya
-    // esta en él, y un trozo que llega a destiempo —otro escritor gano
-    // el CAS, o el cliente reenvia lo ya escrito— cae en el mismo 416
-    // con el `Range` de seguir, que es lo que hace que el replay no
-    // duplique parte alguna.
+    // The range, if the client sends it. The protocol says chunks
+    // go in order and a chunk that does not fit gets a 416: the
+    // client recovers the offset with a `GET` and continues. With a journal, the
+    // offset **is the authority's**: the freshly reopened handle is
+    // already at it, and a chunk that arrives late —another writer won
+    // the CAS, or the client resends what is already written— falls into the same 416
+    // with the `Range` to continue from, which is what makes the replay not
+    // duplicate any part.
     if let Some(range) = the_content_range(&headers)
         && range.0 != written
     {
-        // El estado es el `416` que el protocolo dice para un rango
-        // que no se puede satisfacer, y el `Range` de la respuesta
-        // dice por donde seguir: el cliente recupera el offset y
-        // continua.
+        // The status is the `416` the protocol specifies for a range
+        // that cannot be satisfied, and the response's `Range`
+        // says where to continue: the client recovers the offset and
+        // continues.
         return Err(OciFailure::blob_upload_range_mismatch(format!(
             "the chunk starts at {} and the upload is at {written}",
             range.0
@@ -493,14 +493,14 @@ async fn append_chunk(
     )
     .await?;
 
-    // El avance lo arbitra la autoridad: el journal solo admite el
-    // offset de lo que ya es **durable** en el almacén —lo escrito en
-    // el fichero sincronizado; en el multipart, lo confirmado por el
-    // servidor—, nunca lo que lleva el buffer del mango. Si otro
-    // escritor gano el CAS, este `PATCH` responde el `416` con el
-    // `Range` real: el trozo escrito por delante de la autoridad no se
-    // publica —se recorta al reabrir, o se queda fuera del complete—,
-    // y el cliente lo reenvia desde el offset declarado.
+    // The advance is arbitrated by the authority: the journal only admits the
+    // offset of what is already **durable** in the store —what is written in
+    // the synced file; in multipart, what is confirmed by the
+    // server—, never what the handle's buffer holds. If another
+    // writer won the CAS, this `PATCH` answers the `416` with the real
+    // `Range`: the chunk written ahead of the authority is not
+    // published —it is trimmed on reopening, or left out of the complete—,
+    // and the client resends it from the declared offset.
     let durable = session
         .flush_durable()
         .await
@@ -512,24 +512,24 @@ async fn append_chunk(
     {
         crate::oci::uploads::Advance::Admitted(version) => {
             session.set_journal_version(version);
-            // Con journal y handle, el mango se suelta: la proxima
-            // peticion —aqui o en otra réplica— lo retoma por el
-            // handle. Un multipart con bytes en el buffer no suelta;
-            // el registro lo sabe.
+            // With a journal and handle, the handle is released: the next
+            // request —here or on another replica— resumes it through the
+            // handle. A multipart with bytes in the buffer does not release;
+            // the registry knows.
             session.release_writer_when_possible();
-            // El progreso que se anuncia es el cursor de **este**
-            // mango: lo que el cliente debe seguir enviando desde
-            // aqui. El journal declara el offset durable —por debajo
-            // en el multipart—, y ese es el que dira el `Range` si el
-            // proceso muere con el buffer: el cliente reenvia desde lo
-            // confirmado, y lo confirmado es lo unico que se publica.
+            // The progress that is announced is the cursor of **this**
+            // handle: what the client must keep sending from
+            // here. The journal declares the durable offset —lower
+            // in multipart—, and that is the one the `Range` will say if the
+            // process dies with the buffer: the client resends from what is
+            // confirmed, and what is confirmed is the only thing that is published.
             Ok(the_upload_progress(&name, &id, written + length))
         }
         crate::oci::uploads::Advance::Conflict(offset) => {
-            // La autoridad ya tiene otro offset: lo que este mango
-            // escribio por delante no es de esta sesion. Se suelta el
-            // mango sin publicar —el resume recorta lo que sobre—, y
-            // el 416 dice por donde seguir.
+            // The authority already has another offset: what this handle
+            // wrote ahead is not of this session. The handle is released
+            // without publishing —the resume trims the excess—, and
+            // the 416 says where to continue.
             session.release_writer_when_possible();
             Err(OciFailure::blob_upload_range_mismatch(
                 "another writer advanced this session; the chunk was not admitted",
@@ -547,7 +547,7 @@ async fn append_chunk(
 
 /// `GET /v2/<name>/blobs/uploads/<uuid>`
 ///
-/// Dice cuanto lleva la sesion.
+/// Says how much the session holds.
 pub async fn upload_status(
     state: AppState,
     uri: OriginalUri,
@@ -561,9 +561,9 @@ pub async fn upload_status(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
-    // Un grupo no guarda nada: escribir contra el se rechaza con el
-    // error del dialecto que la distribucion reserva para lo que no se
-    // puede hacer en un repositorio de solo lectura.
+    // A group stores nothing: writing against it is rejected with the
+    // dialect error that the distribution reserves for what cannot be
+    // done on a read-only repository.
     crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
@@ -572,21 +572,21 @@ pub async fn upload_status(
         &repository,
     )?;
 
-    // El estado puede consultarse **desde cualquier réplica**: si el
-    // cache local no tiene la sesion escrita, la autoridad del journal
-    // dice el offset sin reabrir el almacén —consultar cuanto lleva
-    // una subida no necesita tomar el mango ni excluir a quien lo
-    // tiene—. Un `GET` que no reanudara no podria decir el progreso de
-    // una sesion abierta en otra réplica, y el cliente perderia el
-    // `Range` de reanudar.
+    // The status can be queried **from any replica**: if the
+    // local cache does not have the session written, the journal authority
+    // says the offset without reopening the store —querying how much
+    // an upload holds does not need to take the handle nor exclude whoever
+    // has it—. A `GET` that did not resume could not say the progress of
+    // a session opened on another replica, and the client would lose the
+    // `Range` to resume.
     let written = match state.uploads.find(context.account().as_str(), &name, &id) {
         Some(shared) => {
             let mut session = shared.lock().await;
             session.touch();
             match session.the_local_offset() {
                 Some(offset) => offset,
-                // El mango esta soltado: la autoridad dice el offset
-                // durable, que es el `Range` de seguir.
+                // The handle is released: the authority says the durable
+                // offset, which is the `Range` to continue from.
                 None => state
                     .uploads
                     .the_journal_offset(context.account().as_str(), &name, &id)
@@ -623,7 +623,7 @@ pub async fn upload_status(
 
 /// `DELETE /v2/<name>/blobs/uploads/<uuid>`
 ///
-/// Cancela la sesion: lo que se habia escrito no se publica nunca.
+/// Cancels the session: what had been written is never published.
 async fn cancel_upload(
     state: AppState,
     uri: OriginalUri,
@@ -637,9 +637,9 @@ async fn cancel_upload(
         ));
     };
     let repository = the_repository(&state, &context, &name).await?;
-    // Un grupo no guarda nada: escribir contra el se rechaza con el
-    // error del dialecto que la distribucion reserva para lo que no se
-    // puede hacer en un repositorio de solo lectura.
+    // A group stores nothing: writing against it is rejected with the
+    // dialect error that the distribution reserves for what cannot be
+    // done on a read-only repository.
     crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
@@ -648,13 +648,13 @@ async fn cancel_upload(
         &repository,
     )?;
 
-    // Cancelar es abortar la subida **segun la autoridad**: la sesion
-    // puede estar abierta en otra réplica, y un DELETE que solo mirase
-    // el cache local no podria cancelar nunca lo que otro proceso
-    // escribio. El reavivamiento toma el mango —el bloqueo advisory
-    // excluye a la réplica que lo sostiene, y ese DELETE se responde
-    // 503 con reintento—; lo que se aborta es el staging del almacén,
-    // y la autoridad se cierra con el.
+    // Cancelling is aborting the upload **according to the authority**: the session
+    // may be open on another replica, and a DELETE that only looked at
+    // the local cache could never cancel what another process
+    // wrote. Revival takes the handle —the advisory lock
+    // excludes the replica that holds it, and that DELETE is answered
+    // 503 with retry—; what is aborted is the store's staging,
+    // and the authority is closed with it.
     let store = the_content_store(&state)?;
     let shared = state
         .uploads
@@ -663,9 +663,9 @@ async fn cancel_upload(
         .ok_or_else(|| OciFailure::blob_upload_unknown("the upload session does not exist"))?;
     {
         let mut session = shared.lock().await;
-        // El abort de la escritura cierra el staging sin publicar: un
-        // fichero de staging se borra, un multipart se aborta en el
-        // object store. La cuota se suelta con la reserva del mango.
+        // The write abort closes the staging without publishing: a staging
+        // file is deleted, a multipart is aborted in the
+        // object store. The quota is released with the handle's reservation.
         if let Some(writer) = session.the_writer() {
             let _ = writer.abort().await;
         }
@@ -675,7 +675,7 @@ async fn cancel_upload(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-/// `PUT`: o se cierra una sesion de subida, o se publica un manifiesto.
+/// `PUT`: either an upload session is closed, or a manifest is published.
 async fn put(
     state: AppState,
     uri: OriginalUri,
@@ -696,8 +696,8 @@ async fn put(
 
 /// `PUT /v2/<name>/blobs/uploads/<uuid>?digest=<digest>`
 ///
-/// Cierra la sesion: comprueba el digest, publica el blob y devuelve el
-/// sitio donde esta.
+/// Closes the session: checks the digest, publishes the blob and returns the
+/// place where it is.
 async fn close_upload(
     state: AppState,
     uri: OriginalUri,
@@ -708,9 +708,9 @@ async fn close_upload(
 ) -> Result<Response, OciFailure> {
     let context = the_context(&state, &headers).await?;
     let repository = the_repository(&state, &context, &name).await?;
-    // Un grupo no guarda nada: escribir contra el se rechaza con el
-    // error del dialecto que la distribucion reserva para lo que no se
-    // puede hacer en un repositorio de solo lectura.
+    // A group stores nothing: writing against it is rejected with the
+    // dialect error that the distribution reserves for what cannot be
+    // done on a read-only repository.
     crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
@@ -727,10 +727,10 @@ async fn close_upload(
     };
     let declared = the_digest_of_reference(declared)?;
 
-    // La sesion que cierra puede estar en **cualquier réplica**: se
-    // reanima por el handle de la autoridad, se escriben los bytes que
-    // aun falten y se comprueba contra lo declarado. El mango que
-    // cierra no es dueno de la verdad del offset: lo es el journal.
+    // The session being closed may be on **any replica**: it is
+    // revived through the authority's handle, the bytes still missing are
+    // written and it is checked against what was declared. The handle that
+    // closes is not the owner of the truth of the offset: the journal is.
     let store = the_content_store(&state)?;
     let shared = state
         .uploads
@@ -740,17 +740,17 @@ async fn close_upload(
     let mut session = shared.lock().await;
     session.touch();
 
-    // Lo que ya lleva la sesion: el `PUT` que cierra puede no traer
-    // cuerpo (es lo que hacen los clientes que suben por trozos), y lo
-    // que se declara es el **blob entero**, no el ultimo trozo. Con
-    // journal, ademas, el mango puede venir reabierto en frio: los
-    // primeros bytes los escribio otra réplica, y este solo ha visto
-    // los que faltaban.
+    // What the session already holds: the closing `PUT` may carry no
+    // body (it is what clients that upload in chunks do), and what
+    // is declared is the **whole blob**, not the last chunk. With a
+    // journal, moreover, the handle may come reopened cold: the
+    // first bytes were written by another replica, and this one has only seen
+    // the missing ones.
     let already = session
         .the_local_offset()
         .expect("a resumed session has its writer");
 
-    // Un rango que no se puede leer no se comprueba: se rechaza.
+    // A range that cannot be read is not checked: it is rejected.
     if the_range_is_malformed(&headers) {
         return Err(OciFailure::blob_upload_range_mismatch(
             "the chunk declares a range that cannot be read",
@@ -758,8 +758,8 @@ async fn close_upload(
         .with_range(the_range_header(already)));
     }
 
-    // El rango que declara el cliente y la longitud de su cuerpo tienen
-    // que cuadrar, por la misma razon que en el `PATCH`.
+    // The range the client declares and the length of its body have to
+    // match, for the same reason as in the `PATCH`.
     if let Some((start, end)) = the_range_does_not_match_the_length(&headers) {
         return Err(OciFailure::blob_upload_range_mismatch(format!(
             "the chunk declares the range {start}-{end} and a body of another length"
@@ -767,11 +767,11 @@ async fn close_upload(
         .with_range(the_range_header(already)));
     }
 
-    // El rango, si el cliente lo manda. El protocolo dice que los trozos
-    // van en orden: un `PUT` que cierra con un trozo que no encaja recibe
-    // el mismo `416` que recibe un `PATCH` que no encaja, con el `Range`
-    // que dice por donde seguir. Un `400` aqui diria "algo va mal" sin
-    // decir donde esta el desfase.
+    // The range, if the client sends it. The protocol says chunks
+    // go in order: a closing `PUT` with a chunk that does not fit gets
+    // the same `416` that a `PATCH` that does not fit gets, with the `Range`
+    // that says where to continue. A `400` here would say "something is wrong" without
+    // saying where the offset mismatch is.
     if let Some(range) = the_content_range(&headers)
         && range.0 != already
     {
@@ -782,7 +782,7 @@ async fn close_upload(
         .with_range(the_range_header(already)));
     }
 
-    // El ultimo trozo puede venir en el `PUT` que cierra.
+    // The last chunk may come in the closing `PUT`.
     let (writer, ticket) = session
         .the_writer_and_ticket()
         .expect("a session with an offset has its writer");
@@ -795,17 +795,17 @@ async fn close_upload(
     .await?;
     let length = already + last;
 
-    // El digest declarado: lo que el cliente dice que es el blob entero.
-    // El commit del almacén lo comprueba contra el staging completo —
-    // sea cual sea el mango que cierra—; la comprobacion local de aqui
-    // es una优化 barata para el mango que paso por todos los bytes.
+    // The declared digest: what the client says the whole blob is.
+    // The store's commit checks it against the complete staging —
+    // whatever handle closes—; the local check here
+    // is a cheap optimization for the handle that went through all the bytes.
     let expectation = ContentDigest::sha256(declared.clone());
 
-    // Antes de publicar, la autoridad tiene que admitir el offset: un
-    // cierre que publicase por delante de ella publicaria bytes que
-    // nadie declaro. El journal admite hasta lo **durable** del mango;
-    // un `416` aqui dice que otro escritor gano y este cierre no
-    // publica nada.
+    // Before publishing, the authority has to admit the offset: a
+    // close that published ahead of it would publish bytes that
+    // nobody declared. The journal admits up to the handle's **durable** part;
+    // a `416` here says that another writer won and this close
+    // publishes nothing.
     let durable = session
         .flush_durable()
         .await
@@ -843,11 +843,11 @@ async fn close_upload(
             .expect("a session that covers all has its writer")
             .the_digest();
         if found.value != declared {
-            // El digest no cuadra: la subida se descarta y no queda
-            // ninguna referencia visible. Un blob con un digest que no
-            // es el suyo no es un blob. El cierre explicito quita
-            // tambien la autoridad: una sesion rechazada no queda
-            // reanudable.
+            // The digest does not match: the upload is discarded and no
+            // visible reference remains. A blob with a digest that is not
+            // its own is not a blob. The explicit close removes
+            // the authority too: a rejected session is not left
+            // resumable.
             let _ = session.the_writer().expect("the writer").abort().await;
             drop(session);
             let _ = state.uploads.close(&id).await;
@@ -856,10 +856,10 @@ async fn close_upload(
             ));
         }
     }
-    // Lo que el almacén gana es lo que la cuenta paga: una capa que ya
-    // estaba empujada por otro no añade bytes. Se mira antes del
-    // commit, y se asienta en cuanto el blob existe: lo que el catálogo
-    // publique después es otra transacción, y los bytes ya están.
+    // What the store gains is what the account pays for: a layer that was already
+    // pushed by someone else adds no bytes. It is looked at before the
+    // commit, and settled as soon as the blob exists: what the catalog
+    // publishes afterwards is another transaction, and the bytes are already there.
     let already_had = the_content_store(&state)?
         .exists(&expectation)
         .await
@@ -875,9 +875,9 @@ async fn close_upload(
     let digest = match commit {
         Ok(digest) => digest,
         Err(error) => {
-            // El commit rechazo el contenido —o el almacén fallo—: la
-            // autoridad de la sesion deja de existir. Un staging no
-            // verificado no es una sesion reanudable.
+            // The commit rejected the content —or the store failed—: the
+            // session's authority ceases to exist. An unverified staging
+            // is not a resumable session.
             drop(session);
             let _ = state.uploads.close(&id).await;
             return Err(the_blob_error(&error));
@@ -885,13 +885,12 @@ async fn close_upload(
     };
     session.settle(if already_had { 0 } else { length });
     drop(session);
-    // La autoridad se cierra con el blob ya publicado: lo que el
-    // journal declaraba es exactamente lo que el almacén verifico. Si
-    // el cierre falla, el blob **esta** publicado —la promesa del
-    // commit es mas fuerte que la marca del journal—: se quita el
-    // asiento local y la bandera de abierta la resuelve el barrido por
-    // TTL, cuyo resume del staging ya consumido no publica nada. El
-    // cliente recibe su 201.
+    // The authority is closed with the blob already published: what the
+    // journal declared is exactly what the store verified. If
+    // the close fails, the blob **is** published —the commit's promise
+    // is stronger than the journal's mark—: the local seat is removed
+    // and the open flag is resolved by the TTL sweep, whose resume of the
+    // already consumed staging publishes nothing. The client receives its 201.
     if let Err(error) = state.uploads.close(&id).await {
         state.uploads.remove(&id);
         let _ = error;
@@ -915,13 +914,13 @@ async fn close_upload(
     Ok(response)
 }
 
-/// `PUT /v2/<name>/manifests/<referencia>`
+/// `PUT /v2/<name>/manifests/<reference>`
 ///
-/// Publica el manifiesto.
+/// Publishes the manifest.
 ///
-/// Lo que se guarda son **los bytes exactos** que envio el cliente: el
-/// manifiesto es la verdad de que es, y un manifiesto reescrito es un
-/// manifiesto con otro digest.
+/// What is stored are the **exact bytes** the client sent: the
+/// manifest is the truth of what it is, and a rewritten manifest is a
+/// manifest with another digest.
 async fn put_manifest(
     state: AppState,
     uri: OriginalUri,
@@ -932,9 +931,9 @@ async fn put_manifest(
 ) -> Result<Response, OciFailure> {
     let context = the_context(&state, &headers).await?;
     let repository = the_repository(&state, &context, &name).await?;
-    // Un grupo no guarda nada: escribir contra el se rechaza con el
-    // error del dialecto que la distribucion reserva para lo que no se
-    // puede hacer en un repositorio de solo lectura.
+    // A group stores nothing: writing against it is rejected with the
+    // dialect error that the distribution reserves for what cannot be
+    // done on a read-only repository.
     crate::oci::the_writable(&repository)?;
     the_decision(
         &state,
@@ -943,22 +942,22 @@ async fn put_manifest(
         &repository,
     )?;
 
-    // La cuota decide antes de leer: un manifiesto que no cabe no se
-    // lee siquiera. Si el cliente no declaro longitud, el cuerpo se
-    // pincha contra el libro mayor en cuanto llega entero.
+    // The quota decides before reading: a manifest that does not fit is not
+    // even read. If the client did not declare a length, the body is
+    // charged against the ledger as soon as it arrives whole.
     let mut ticket = state
         .quota
         .begin(context.account().as_str(), the_declared_size(&headers))
         .map_err(the_quota_refusal)?;
 
-    // Los bytes del manifiesto, tal cual.
+    // The manifest bytes, as they are.
     let body = read_the_body(request.into_body(), state.max_body_size as u64).await?;
     if let Err(refusal) = ticket.admit(body.len() as u64) {
         return Err(the_quota_refusal(refusal));
     }
 
-    // El tipo de medio lo declara la cabecera, y tiene que ser del
-    // subconjunto que este registro publica.
+    // The media type is declared by the header, and it has to be from the
+    // subset this registry publishes.
     let declared_type = headers
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
@@ -970,17 +969,17 @@ async fn put_manifest(
             "the manifest must declare its media type",
         ));
     }
-    // La clase del manifiesto dice que descriptors hay que exigir, y un
-    // tipo que este registro no habla no se publica.
+    // The manifest class says which descriptors to require, and a
+    // type this registry does not speak is not published.
     let Some(kind) = hodei_hub::oci::the_kind_of(&declared_type) else {
         return Err(OciFailure::manifest_invalid(format!(
             "the registry does not publish manifests of type {declared_type}"
         )));
     };
 
-    // Y la cabecera tiene que coincidir con el `mediaType` del cuerpo
-    // cuando el cuerpo lo lleva: el manifiesto dice de que es, y la
-    // cabecera es lo que el cliente pidio.
+    // And the header has to match the body's `mediaType`
+    // when the body carries it: the manifest says what it is, and the
+    // header is what the client asked for.
     let manifest = serde_json::from_slice::<serde_json::Value>(&body).map_err(|error| {
         OciFailure::manifest_invalid(format!("the manifest is not readable: {error}"))
     })?;
@@ -990,17 +989,17 @@ async fn put_manifest(
                 "the manifest declares {declared} and the request declares {declared_type}"
             )));
         }
-        // El media-spec permite **omitir** el `mediaType` y heredarlo de
-        // la cabecera: `helm push` lo omite. La cabecera ya se exijo
-        // arriba y ya se compruebo que es un tipo que este registro
-        // publica, asi que el manifiesto si declara su tipo: lo declara
-        // en la peticion. Un `helm pull` posterior lo confirma.
+        // The media-spec allows **omitting** the `mediaType` and inheriting it from
+        // the header: `helm push` omits it. The header was already required
+        // above and already checked to be a type this registry
+        // publishes, so the manifest does declare its type: it declares it
+        // in the request. A later `helm pull` confirms it.
         None | Some(_) => {}
     }
 
-    // El digest: si la referencia es un digest, tiene que ser el de los
-    // bytes que han llegado. Si no, no se publica nada y la etiqueta no
-    // se crea.
+    // The digest: if the reference is a digest, it has to be that of the
+    // bytes that arrived. If not, nothing is published and the tag is not
+    // created.
     let digest = ContentDigest::of_bytes(&body);
     if is_a_digest(&reference) {
         let expected = the_digest_of_reference(&reference)?;
@@ -1011,13 +1010,13 @@ async fn put_manifest(
         }
     }
 
-    // Las referencias exigidas: lo que el manifiesto nombra tiene que
-    // estar en el repositorio. Un manifiesto que apunta a algo que no
-    // esta es un manifiesto que no se puede descargar.
+    // The required references: what the manifest names has to be
+    // in the repository. A manifest that points to something that is not
+    // there is a manifest that cannot be downloaded.
     //
-    // El `subject` **no** se exige: el protocolo dice que un manifiesto
-    // cuyo `subject` todavia no esta se acepta, porque un cliente puede
-    // subir el referrer antes que el sujeto.
+    // The `subject` is **not** required: the protocol says a manifest
+    // whose `subject` is not yet there is accepted, because a client can
+    // upload the referrer before the subject.
     let required = the_required_digests(&manifest, kind)?;
     let subject = the_subject_of(&manifest)?;
     let (reader, _) = the_catalog(&state)?;
@@ -1028,9 +1027,9 @@ async fn put_manifest(
         };
         let asset = reader.asset(context.account().as_str(), &name, &path).await;
         if let Err(error) = asset {
-            // Lo que **no** esta es un error del cliente: el manifiesto
-            // nombra algo que el repositorio no tiene. Lo que el
-            // catalogo no sabe es otra cosa, y se dice como lo que es.
+            // What is **not** there is a client error: the manifest
+            // names something the repository does not have. What the
+            // catalog does not know is another matter, and is said as what it is.
             return Err(match error {
                 hodei_catalog::CatalogError::Missing { .. } => {
                     OciFailure::manifest_blob_unknown(format!(
@@ -1043,8 +1042,8 @@ async fn put_manifest(
         }
     }
 
-    // Los bytes, tal cual. Lo que el almacén gana es lo que la cuenta
-    // paga: el mismo manifiesto dos veces no ocupa dos veces.
+    // The bytes, as they are. What the store gains is what the account
+    // pays for: the same manifest twice does not take up space twice.
     let store = the_content_store(&state)?;
     let already_had = store
         .exists(&digest)
@@ -1056,8 +1055,8 @@ async fn put_manifest(
         .map_err(|error| the_blob_error(&error))?;
     ticket.settle(if already_had { 0 } else { body.len() as u64 });
 
-    // La etiqueta: la referencia es una etiqueta, o el cliente pide
-    // etiquetas con `?tag=`. Las dos cosas pueden a la vez.
+    // The tag: the reference is a tag, or the client asks for
+    // tags with `?tag=`. Both can happen at once.
     let mut tags = Vec::new();
     if !is_a_digest(&reference) {
         tags.push(reference.clone());
@@ -1078,20 +1077,20 @@ async fn put_manifest(
         coordinates: coordinates.clone(),
         digest: digest.clone(),
         size_bytes: body.len() as u64,
-        // Las etiquetas **no** van en la publicacion: una etiqueta es
-        // mutable en el protocolo, y la publicacion crea la etiqueta
-        // una vez. Reetiquetar es moverla, que es otra operacion.
+        // Tags are **not** part of the publication: a tag is
+        // mutable in the protocol, and the publication creates the tag
+        // once. Retagging is moving it, which is another operation.
         tags: Vec::new(),
         actor: context.principal().subject().as_str().to_string(),
         correlation_id: correlation_id(&headers, &state.identity),
-        // La sustitucion la decide el **repositorio**, no el cliente: un
-        // manifiesto publicado no se reescribe, y lo que hay detras de
-        // una etiqueta que se mueve sigue declarado con su digest.
+        // Replacement is decided by the **repository**, not the client: a
+        // published manifest is not rewritten, and what is behind
+        // a tag that moves stays declared with its digest.
         overwrite: true,
         precondition: None,
-        // El `subject` va en la publicacion, y con ella se escribe: un
-        // referrer visible a medias seria un referrer que existe cuando
-        // no existe.
+        // The `subject` goes in the publication, and is written with it: a
+        // half-visible referrer would be a referrer that exists when
+        // it does not exist.
         subject: subject.clone(),
     };
     let (_, writer) = the_catalog(&state)?;
@@ -1100,15 +1099,15 @@ async fn put_manifest(
         .await
         .map_err(|error| the_catalog_error(&error))?;
 
-    // Las etiquetas se **mueven**. El protocolo dice que una etiqueta es
-    // mutable: publicar un manifiesto con el nombre de una etiqueta que
-    // ya existe repointa la etiqueta, y lo que hay detras de la
-    // anterior sigue publicado con su digest.
+    // Tags **move**. The protocol says a tag is
+    // mutable: publishing a manifest with the name of a tag that
+    // already exists repoints the tag, and what is behind the
+    // previous one stays published with its digest.
     //
-    // Es lo que distingue a un registro de un almacen: en un almacen el
-    // nombre es la cosa, y en un registro la etiqueta es una referencia
-    // que se puede mover. Moverla no toca los bytes de ninguno de los
-    // dos manifiestos.
+    // It is what distinguishes a registry from a store: in a store the
+    // name is the thing, and in a registry the tag is a reference
+    // that can be moved. Moving it touches the bytes of neither of the
+    // two manifests.
     for tag in &tags {
         writer
             .move_tag(context.account().as_str(), &name, tag, coordinates.clone())
@@ -1139,16 +1138,16 @@ async fn put_manifest(
         HeaderValue::from_str(&format!("sha256:{}", digest.value))
             .expect("the digest is a header value"),
     );
-    // Las etiquetas que el manifiesto ha aceptado: el cliente las pide
-    // con `?tag=` y el registro las dice una a una.
+    // The tags the manifest accepted: the client asks for them
+    // with `?tag=` and the registry says them one by one.
     for tag in &tags {
         if let Ok(value) = HeaderValue::from_str(tag) {
             headers.append(OCI_TAG_HEADER, value);
         }
     }
-    // El `subject` del manifiesto, si lo tiene: el protocolo dice que la
-    // respuesta puede decirlo, y lo dice porque el cliente que sube un
-    // referrer quiere saber a que cuelga.
+    // The manifest's `subject`, if it has one: the protocol says the
+    // response may state it, and it does so because the client uploading a
+    // referrer wants to know what it hangs from.
     if let Some(subject) = &subject
         && let Ok(value) = HeaderValue::from_str(&subject.to_string())
     {
@@ -1158,20 +1157,20 @@ async fn put_manifest(
     Ok(response)
 }
 
-/// Los digests que el manifiesto exige que esten en el repositorio.
+/// The digests the manifest requires to be in the repository.
 ///
-/// La clase del manifiesto dice **que** se exige:
+/// The manifest class says **what** is required:
 ///
-/// - Un **manifiesto de imagen** exige su configuracion y sus capas.
-/// - Un **indice** exige sus hijos, que son manifiestos.
-/// - Un **manifiesto de artefacto** no exige nada: su configuracion y sus
-///   blobs son opcionales, y lo que nombra tiene que estar.
+/// - An **image manifest** requires its config and its layers.
+/// - An **index** requires its children, which are manifests.
+/// - An **artifact manifest** requires nothing: its config and its
+///   blobs are optional, and what it names has to be there.
 ///
-/// El digest se devuelve **sin el algoritmo**, que es como lo nombra el
-/// catalogo: un blob vive en `blobs/<digest>`, y el prefijo `sha256:`
-/// pertenece a la referencia OCI, no a la ruta del asset. Un digest que
-/// no lo lleva no es un digest, y un manifiesto que lo nombra no se
-/// puede comprobar.
+/// The digest is returned **without the algorithm**, which is how the
+/// catalog names it: a blob lives at `blobs/<digest>`, and the `sha256:` prefix
+/// belongs to the OCI reference, not to the asset path. A digest that
+/// does not carry it is not a digest, and a manifest that names it cannot be
+/// checked.
 fn the_required_digests(
     manifest: &serde_json::Value,
     kind: ManifestKind,
@@ -1186,11 +1185,11 @@ fn the_required_digests(
                 .ok_or_else(|| {
                     OciFailure::manifest_invalid("the manifest does not name a config")
                 })?;
-            // El descriptor **vacio** no se exige: dice "esta imagen no
-            // tiene configuracion", y un registro que lo exigiera en el
-            // almacen rechazaria un manifiesto que el protocolo dice que
-            // es valido. Un cliente que lo manda en linea --con su
-            // `data`-- nunca lo sube.
+            // The **empty** descriptor is not required: it says "this image has no
+            // config", and a registry that required it in the
+            // store would reject a manifest the protocol says
+            // is valid. A client that sends it inline --with its
+            // `data`-- never uploads it.
             if !the_empty_descriptor(manifest.get("config")) {
                 required.push((the_hexadecimal_digest(config)?, TheClass::Blob));
             }
@@ -1205,10 +1204,10 @@ fn the_required_digests(
                     if the_empty_descriptor(Some(layer)) {
                         continue;
                     }
-                    // Una capa **extranjera**--la que declara sus `urls`--
-                    // no esta en el almacen: el cliente la baja de donde
-                    // el manifiesto dice. Exigirla seria rechazar un
-                    // manifiesto que el protocolo dice que es valido.
+                    // A **foreign** layer --one that declares its `urls`--
+                    // is not in the store: the client downloads it from where
+                    // the manifest says. Requiring it would be rejecting a
+                    // manifest the protocol says is valid.
                     if the_foreign_descriptor(Some(layer)) {
                         if !the_foreign_urls_are_admisible(layer) {
                             return Err(OciFailure::manifest_invalid(
@@ -1238,13 +1237,13 @@ fn the_required_digests(
             }
         }
         ManifestKind::Artifact => {
-            // La configuracion de un artefacto es opcional, y sus blobs
-            // tambien: lo que no se nombra no se exige.
+            // An artifact's config is optional, and so are its blobs:
+            // what is not named is not required.
             //
-            // Y lo que se nombra con el descriptor **vacio** no se
-            // exige tampoco: ese descriptor dice "no hay configuracion",
-            // y un registro que lo exigiera en el almacen rechazaria un
-            // manifiesto que el protocolo dice que es valido.
+            // And what is named with the **empty** descriptor is not
+            // required either: that descriptor says "there is no config",
+            // and a registry that required it in the store would reject a
+            // manifest the protocol says is valid.
             if let Some(config) = manifest.get("config") {
                 let Some(digest) = config.get("digest").and_then(|digest| digest.as_str()) else {
                     return Err(OciFailure::manifest_invalid(
@@ -1262,11 +1261,11 @@ fn the_required_digests(
                             "a blob of the artifact does not name a digest",
                         ));
                     };
-                    // La capa extranjera--la no distribuible-- tampoco se
-                    // exige en el almacen: el criterio es el mismo que en
-                    // las capas de una imagen, y una exencion que depende
-                    // de la forma del manifiesto es una exencion que se
-                    // olvida.
+                    // The foreign layer --the non-distributable one-- is not
+                    // required in the store either: the criterion is the same as for
+                    // an image's layers, and an exemption that depends
+                    // on the shape of the manifest is an exemption that
+                    // gets forgotten.
                     if the_foreign_descriptor(Some(blob)) {
                         if !the_foreign_urls_are_admisible(blob) {
                             return Err(OciFailure::manifest_invalid(
@@ -1283,13 +1282,13 @@ fn the_required_digests(
     Ok(required)
 }
 
-/// Si un descriptor es el descriptor **vacio**.
+/// Whether a descriptor is the **empty** descriptor.
 ///
-/// El descriptor vacio dice "esto no hay": un manifiesto de artefacto
-/// sin configuracion, o una imagen sin configuracion. Los bytes que
-/// nombra son un `{}` de dos bytes, y un cliente puede mandarlos en
-/// linea --con su `data`-- sin subirlos nunca al almacen. Un registro
-/// que los exigiera en el almacen rechazaria un manifiesto valido.
+/// The empty descriptor says "there is nothing here": an artifact manifest
+/// without config, or an image without config. The bytes it
+/// names are a two-byte `{}`, and a client can send them inline
+/// --with its `data`-- without ever uploading them to the store. A registry
+/// that required them in the store would reject a valid manifest.
 fn the_empty_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
     let Some(descriptor) = descriptor else {
         return false;
@@ -1305,20 +1304,20 @@ fn the_empty_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
     hodei_hub::oci::is_the_empty_descriptor(media_type, digest)
 }
 
-/// Si un descriptor es el de una capa **extranjera**.
+/// Whether a descriptor is that of a **foreign** layer.
 ///
-/// La capa extranjera es la **no distribuible**: su tipo de medio lo dice
-/// (`application/vnd.oci.image.layer.nondistributable.v1.tar`, con o sin
-/// `+gzip`), y sus `urls` dicen de donde se baja. El registro no la tiene
-/// ni la tiene que tener, y un manifiesto que la nombra es un manifiesto
-/// valido: exigir la capa seria rechazar un manifiesto que el protocolo
-/// dice que es valido.
+/// The foreign layer is the **non-distributable** one: its media type says so
+/// (`application/vnd.oci.image.layer.nondistributable.v1.tar`, with or without
+/// `+gzip`), and its `urls` say where it is downloaded from. The registry does not have it
+/// nor has to have it, and a manifest that names it is a valid
+/// manifest: requiring the layer would be rejecting a manifest the protocol
+/// says is valid.
 ///
-/// La exencion es **exactamente** la de la capa no distribuible, y no la
-/// de cualquier descriptor con `urls`: un descriptor que declara `urls` y
-/// un tipo de medio cualquiera es una capa normal con una pista, y
-/// eximirla seria dejar de exigir en el almacen un contenido que el
-/// manifiesto nombra. El tipo de medio es lo que la distingue.
+/// The exemption is **exactly** that of the non-distributable layer, and not
+/// that of any descriptor with `urls`: a descriptor that declares `urls` and
+/// any media type is a normal layer with a hint, and
+/// exempting it would mean no longer requiring in the store content that the
+/// manifest names. The media type is what distinguishes it.
 fn the_foreign_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
     let Some(descriptor) = descriptor else {
         return false;
@@ -1335,18 +1334,18 @@ fn the_foreign_descriptor(descriptor: Option<&serde_json::Value>) -> bool {
         .is_some_and(|urls| !urls.is_empty())
 }
 
-/// Si las `urls` de una capa no distribuible son admisibles.
+/// Whether the `urls` of a non-distributable layer are admissible.
 ///
-/// La capa se baja de donde el manifiesto dice, y ese "donde" lo decide
-/// quien publica: un `http` a una direccion interna--la de las
-/// credenciales de la nube-- es un cliente que va a pedir las
-/// credenciales de la maquina que tira de la imagen. Por eso solo se
-/// admiten `https`: el protocolo permite cualquier URI, y una plataforma
-/// de cadena de suministro no puede ir publicando direcciones que el
-/// cliente va a seguir.
+/// The layer is downloaded from where the manifest says, and that "where" is decided by
+/// whoever publishes: an `http` to an internal address --that of the cloud
+/// credentials-- is a client that is going to ask for the
+/// credentials of the machine that pulls the image. That is why only
+/// `https` is admitted: the protocol allows any URI, and a supply-chain
+/// platform cannot go publishing addresses that the
+/// client is going to follow.
 ///
-/// La exencion de la capa es necesaria--el protocolo la tiene--, pero la
-/// exencion no tiene por que ser una puerta abierta.
+/// The layer's exemption is necessary --the protocol has it--, but the
+/// exemption does not have to be an open door.
 fn the_foreign_urls_are_admisible(descriptor: &serde_json::Value) -> bool {
     let Some(urls) = descriptor.get("urls").and_then(|urls| urls.as_array()) else {
         return false;
@@ -1355,30 +1354,30 @@ fn the_foreign_urls_are_admisible(descriptor: &serde_json::Value) -> bool {
         .all(|url| url.as_str().is_some_and(|url| url.starts_with("https://")))
 }
 
-/// Los tipos de medio de una capa **no distribuible**.
+/// The media types of a **non-distributable** layer.
 ///
-/// Son los que define la especificacion de imagen, y son los unicos que
-/// se eximen de estar en el almacen.
+/// They are the ones defined by the image specification, and they are the only ones
+/// exempted from being in the store.
 const THE_FOREIGN_MEDIA_TYPES: [&str; 2] = [
     "application/vnd.oci.image.layer.nondistributable.v1.tar",
     "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip",
 ];
 
-/// La clase de lo que un manifiesto nombra.
+/// The class of what a manifest names.
 ///
-/// Un blob vive en `blobs/<digest>` y un manifiesto en
-/// `manifests/<digest>`: son rutas distintas, y un manifiesto que exige
-/// uno no puede servir el otro.
+/// A blob lives at `blobs/<digest>` and a manifest at
+/// `manifests/<digest>`: they are different paths, and a manifest that requires
+/// one cannot serve the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TheClass {
-    /// Un blob del repositorio.
+    /// A blob of the repository.
     Blob,
-    /// Un manifiesto del repositorio.
+    /// A manifest of the repository.
     Manifest,
 }
 
 impl TheClass {
-    /// El nombre de la clase, para el mensaje del error.
+    /// The class name, for the error message.
     fn as_str(&self) -> &'static str {
         match self {
             Self::Blob => "blob",
@@ -1387,12 +1386,12 @@ impl TheClass {
     }
 }
 
-/// El `subject` del manifiesto, si lo tiene.
+/// The manifest's `subject`, if it has one.
 ///
-/// Es el digest del manifiesto al que este cuelga, y **no** se exige que
-/// exista: el protocolo dice que un registro tiene que aceptar un
-/// manifiesto cuyo `subject` todavia no esta, porque un cliente puede
-/// subir el referrer antes que el sujeto.
+/// It is the digest of the manifest this one hangs from, and it is **not** required to
+/// exist: the protocol says a registry has to accept a
+/// manifest whose `subject` is not yet there, because a client can
+/// upload the referrer before the subject.
 fn the_subject_of(manifest: &serde_json::Value) -> Result<Option<ContentDigest>, OciFailure> {
     let Some(subject) = manifest.get("subject") else {
         return Ok(None);
@@ -1405,11 +1404,11 @@ fn the_subject_of(manifest: &serde_json::Value) -> Result<Option<ContentDigest>,
     Ok(Some(ContentDigest::sha256(the_hexadecimal_digest(digest)?)))
 }
 
-/// El hexadecimal de un digest, sin su algoritmo.
+/// The hexadecimal of a digest, without its algorithm.
 ///
-/// Un digest sin el prefijo `sha256:` no es un digest: el manifiesto
-/// tiene que nombrar el contenido de la forma que lo nombra el
-/// protocolo, y un digest a medio escribir no se puede comprobar.
+/// A digest without the `sha256:` prefix is not a digest: the manifest
+/// has to name the content the way the protocol names it, and a half-written
+/// digest cannot be checked.
 fn the_hexadecimal_digest(digest: &str) -> Result<String, OciFailure> {
     let Some((algorithm, hexadecimal)) = digest.split_once(':') else {
         return Err(OciFailure::manifest_invalid(format!(
@@ -1424,11 +1423,11 @@ fn the_hexadecimal_digest(digest: &str) -> Result<String, OciFailure> {
             "the digest {digest:?} is not one this registry understands"
         )));
     }
-    // Y tiene que ser **un** digest: un hexadecimal a medio escribir no
-    // nombra un contenido, y un manifiesto que lo nombra no se puede
-    // comprobar. Sin esta comprobacion, un `subject` a medio escribir
-    // se guardaria en el catalogo y el manifiesto que lo declaraba
-    // quedaria publicado y ilegible para siempre.
+    // And it has to be **a** digest: a half-written hexadecimal does not
+    // name a content, and a manifest that names it cannot be
+    // checked. Without this check, a half-written `subject`
+    // would be stored in the catalog and the manifest that declared it
+    // would be left published and unreadable forever.
     let candidate = ContentDigest::sha256(hexadecimal);
     if !candidate.is_well_formed() {
         return Err(OciFailure::manifest_invalid(format!(
@@ -1438,16 +1437,16 @@ fn the_hexadecimal_digest(digest: &str) -> Result<String, OciFailure> {
     Ok(candidate.value)
 }
 
-/// Escribe el cuerpo en la sesion de escritura.
+/// Writes the body into the write session.
 ///
-/// Los bytes van **por trozos**, y el digest se calcula mientras pasan:
-/// el cliente puede declarar cual va a ser, y si no declara ninguno, el
-/// servidor lo calcula sobre lo que llega. En los dos casos, el commit
-/// comprueba que lo publicado es exactamente lo declarado.
+/// The bytes go **in chunks**, and the digest is computed as they pass:
+/// the client may declare what it will be, and if it declares none, the
+/// server computes it over what arrives. In both cases, the commit
+/// checks that what is published is exactly what was declared.
 ///
-/// Cada trozo se pincha en el libro mayor **antes** de escribirse, sobre
-/// el total acumulado de la sesion: la cuota se aplica antes de
-/// almacenar, no despues de haber almacenado ya lo que sobraba.
+/// Each chunk is charged to the ledger **before** it is written, over
+/// the session's accumulated total: the quota is applied before
+/// storing, not after having already stored the excess.
 async fn write_the_body(
     writer: &mut dyn BlobWriteSession,
     body: Body,
@@ -1462,9 +1461,9 @@ async fn write_the_body(
             chunk.map_err(|_| OciFailure::blob_upload_invalid("the body could not be read"))?;
         length = length.saturating_add(chunk.len() as u64);
         if length > limit {
-            // El contenido es mas grande de lo que se admite: se
-            // aborta la escritura y se dice, en vez de aceptarlo y
-            // fallar mas tarde por disco.
+            // The content is larger than what is admitted: the
+            // write is aborted and it is said, instead of accepting it and
+            // failing later because of disk.
             let _ = writer.abort().await;
             return Err(OciFailure::size_invalid(format!(
                 "the content is larger than the {limit} bytes this service accepts"
@@ -1482,11 +1481,11 @@ async fn write_the_body(
     Ok(length)
 }
 
-/// La longitud que declaro el cliente, si declaro alguna.
+/// The length the client declared, if it declared one.
 ///
-/// Es el `Content-Length`, y solo vale si es un numero: una cabecera
-/// rara no es una promesa, es ruido, y el libro mayor se queda sin
-/// declarado y pincha el cuerpo trozo a trozo.
+/// It is the `Content-Length`, and it only counts if it is a number: a
+/// strange header is not a promise, it is noise, and the ledger is left without a
+/// declared length and charges the body chunk by chunk.
 fn the_declared_size(headers: &HeaderMap) -> Option<u64> {
     headers
         .get(header::CONTENT_LENGTH)?
@@ -1496,7 +1495,7 @@ fn the_declared_size(headers: &HeaderMap) -> Option<u64> {
         .ok()
 }
 
-/// La negativa de la cuota, dicha en el dialecto de la distribucion.
+/// The quota's refusal, stated in the distribution dialect.
 fn the_quota_refusal(refusal: crate::quota::QuotaRefusal) -> OciFailure {
     match refusal {
         crate::quota::QuotaRefusal::StorageOver { .. } => OciFailure::storage_over_quota(
@@ -1511,11 +1510,11 @@ fn the_quota_refusal(refusal: crate::quota::QuotaRefusal) -> OciFailure {
     }
 }
 
-/// Lee el cuerpo entero.
+/// Reads the whole body.
 ///
-/// El manifiesto es un documento: se lee entero para poder compararlo con
-/// su tipo de medio y para saber que digests exige. El limite es el
-/// mismo que el de cualquier otra escritura.
+/// The manifest is a document: it is read whole to be able to compare it with
+/// its media type and to know which digests it requires. The limit is the
+/// same as that of any other write.
 async fn read_the_body(body: Body, limit: u64) -> Result<Vec<u8>, OciFailure> {
     let mut bytes = Vec::new();
     let mut stream = body.into_data_stream();
@@ -1532,45 +1531,45 @@ async fn read_the_body(body: Body, limit: u64) -> Result<Vec<u8>, OciFailure> {
     Ok(bytes)
 }
 
-/// El rango que el cliente declara en el `Content-Range`.
+/// The range the client declares in the `Content-Range`.
 ///
-/// El protocolo dice que el rango es `inicio-fin`, con los dos
-/// extremos incluidos, y que el primer trozo tiene que empezar en 0.
+/// The protocol says the range is `start-end`, with both
+/// ends included, and that the first chunk has to start at 0.
 fn the_content_range(headers: &HeaderMap) -> Option<(u64, u64)> {
     let value = headers
         .get("content-range")
         .and_then(|value| value.to_str().ok())?
         .trim();
-    // HTTP escribe el rango con unidad y con total (`bytes 0-99/200`), y
-    // el protocolo de OCI lo escribe desnudo (`0-99`). Las dos se leen.
+    // HTTP writes the range with a unit and a total (`bytes 0-99/200`), and
+    // the OCI protocol writes it bare (`0-99`). Both are read.
     let value = value.strip_prefix("bytes ").unwrap_or(value).trim();
-    // El total no dice donde va el trozo: se ignora.
+    // The total does not say where the chunk goes: it is ignored.
     let value = value.split('/').next().unwrap_or(value).trim();
     let (start, end) = value.split_once('-')?;
     Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
 }
 
-/// Si el rango que declara el cliente esta **mal formado**.
+/// Whether the range the client declares is **malformed**.
 ///
-/// El protocolo dice que el rango tiene que estar bien formado, y un
-/// cliente que lo manda mal no puede escribir donde quiere: un rango que
-/// no se entiende es un rango que no se puede satisfacer. Sin esta
-/// comprobacion, un `Content-Range` que no se sabe leer se pasa por alto y
-/// el trozo se acepta sin comprobar nada.
+/// The protocol says the range has to be well formed, and a
+/// client that sends it wrong cannot write where it wants: a range that
+/// is not understood is a range that cannot be satisfied. Without this
+/// check, a `Content-Range` that cannot be read is overlooked and
+/// the chunk is accepted without checking anything.
 fn the_range_is_malformed(headers: &HeaderMap) -> bool {
     headers.get("content-range").is_some() && the_content_range(headers).is_none()
 }
 
-/// Si el rango que declara el cliente no cuadra con la longitud de su
-/// cuerpo.
+/// Whether the range the client declares does not match the length of its
+/// body.
 ///
-/// El protocolo dice que el `Content-Range` es el rango del trozo y que el
-/// `Content-Length` es la longitud del trozo: los dos dicen lo mismo. Un
-/// cliente que declara una cosa y manda otra no sabe donde esta, y la
-/// respuesta es la misma que recibe el trozo fuera de orden: un `416` con
-/// el `Range` que dice por donde seguir.
+/// The protocol says the `Content-Range` is the chunk's range and the
+/// `Content-Length` is the chunk's length: the two say the same. A
+/// client that declares one thing and sends another does not know where it is, and the
+/// response is the same one an out-of-order chunk receives: a `416` with
+/// the `Range` that says where to continue.
 ///
-/// Sin `Content-Range` no hay nada que comparar: el rango es opcional.
+/// Without `Content-Range` there is nothing to compare: the range is optional.
 fn the_range_does_not_match_the_length(headers: &HeaderMap) -> Option<(u64, u64)> {
     let (start, end) = the_content_range(headers)?;
     let length: u64 = headers
@@ -1586,10 +1585,10 @@ fn the_range_does_not_match_the_length(headers: &HeaderMap) -> Option<(u64, u64)
     None
 }
 
-/// El `Range` que dice cuanto lleva la subida.
+/// The `Range` that says how much the upload holds.
 ///
-/// El protocolo lo expresa como `0-<ultimo byte recibido>`, y una
-/// subida que no tiene bytes se dice `0-0`.
+/// The protocol expresses it as `0-<last byte received>`, and an
+/// upload with no bytes says `0-0`.
 fn the_range_header(written: u64) -> String {
     if written == 0 {
         "0-0".to_string()
@@ -1598,7 +1597,7 @@ fn the_range_header(written: u64) -> String {
     }
 }
 
-/// La respuesta de una subida que sigue en curso.
+/// The response of an upload that is still in progress.
 fn the_upload_progress(name: &str, id: &str, written: u64) -> Response {
     let mut response = StatusCode::ACCEPTED.into_response();
     let headers = response.headers_mut();
@@ -1619,25 +1618,25 @@ fn the_upload_progress(name: &str, id: &str, written: u64) -> Response {
     response
 }
 
-/// El sitio de un blob.
+/// The location of a blob.
 fn the_location_of_blob(name: &str, digest: &str) -> String {
     format!("/v2/{name}/blobs/sha256:{digest}")
 }
 
-/// El sitio de un manifiesto.
+/// The location of a manifest.
 fn the_location_of_manifest(name: &str, digest: &str) -> String {
     format!("/v2/{name}/manifests/sha256:{digest}")
 }
 
-/// El sitio de una sesion de subida.
+/// The location of an upload session.
 fn the_location_of_upload(name: &str, session: &str) -> String {
     format!("/v2/{name}/blobs/uploads/{session}")
 }
 
-/// Publica un blob como asset del repositorio.
+/// Publishes a blob as an asset of the repository.
 ///
-/// El blob es un asset en `blobs/<digest>`: la fila es lo que hace que
-/// los bytes sean **de este repositorio**, y lo que autoriza a servirlos.
+/// The blob is an asset at `blobs/<digest>`: the row is what makes
+/// the bytes **belong to this repository**, and what authorizes serving them.
 async fn publish_blob(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1659,8 +1658,8 @@ async fn publish_blob(
         tags: Vec::new(),
         actor: context.principal().subject().as_str().to_string(),
         correlation_id: correlation_id(headers, &state.identity),
-        // El camino lleva el digest: republicar el mismo blob es lo
-        // mismo, y no hay nada que sustituir.
+        // The path carries the digest: republishing the same blob is the
+        // same, and there is nothing to replace.
         overwrite: true,
         precondition: None,
         subject: None,
@@ -1673,19 +1672,19 @@ async fn publish_blob(
     Ok(())
 }
 
-/// Un error del almacen de contenido, traducido al dialecto.
+/// An error of the content store, translated to the dialect.
 pub(crate) fn the_blob_error(error: &BlobError) -> OciFailure {
     match error {
         BlobError::NotFound => OciFailure::blob_unknown("the content is not there"),
-        // El contenido no es el que se declaro: es un error del
-        // cliente, y lo dice el codigo del cliente.
+        // The content is not what was declared: it is a client
+        // error, and the client code says so.
         BlobError::DigestMismatch { .. } => {
             OciFailure::digest_invalid("the content does not match the declared digest")
         }
         BlobError::LengthMismatch { .. } => {
             OciFailure::size_invalid("the content does not have the declared length")
         }
-        // El almacen esta roto: no es culpa del cliente.
+        // The store is broken: it is not the client's fault.
         BlobError::Corrupted { .. } => {
             OciFailure::unavailable("the content store is not available")
         }
@@ -1701,8 +1700,8 @@ pub(crate) fn the_blob_error(error: &BlobError) -> OciFailure {
 mod tests {
     use super::*;
 
-    /// Un digest de verdad: los tests no tienen que medir la longitud
-    /// del digest, tienen que medir **que** digest se exige.
+    /// A real digest: the tests do not have to measure the digest's
+    /// length, they have to measure **which** digest is required.
     const A_DIGEST: &str =
         "sha256:1111111111111111111111111111111111111111111111111111111111111111";
     const B_DIGEST: &str =
@@ -1710,14 +1709,14 @@ mod tests {
     const C_DIGEST: &str =
         "sha256:3333333333333333333333333333333333333333333333333333333333333333";
 
-    /// El hexadecimal de un digest de verdad.
+    /// The hexadecimal of a real digest.
     fn the_hexadecimal(digest: &str) -> &str {
         digest
             .strip_prefix("sha256:")
             .expect("the digest carries its algorithm")
     }
 
-    /// El rango que el cliente declara se lee con sus dos extremos.
+    /// The range the client declares is read with both of its ends.
     #[test]
     fn the_content_range_is_read_with_both_ends() {
         let mut headers = HeaderMap::new();
@@ -1731,10 +1730,10 @@ mod tests {
         assert_eq!(the_content_range(&headers), None);
     }
 
-    /// El rango declarado y la longitud del cuerpo tienen que cuadrar.
+    /// The declared range and the body length have to match.
     ///
-    /// El protocolo dice que el `Content-Range` es el rango del trozo y
-    /// que el `Content-Length` es su longitud: los dos dicen lo mismo.
+    /// The protocol says the `Content-Range` is the chunk's range and
+    /// the `Content-Length` is its length: the two say the same.
     #[test]
     fn a_range_that_does_not_match_the_length_is_a_mismatch() {
         let mut headers = HeaderMap::new();
@@ -1742,18 +1741,18 @@ mod tests {
         headers.insert("content-length", "100".parse().expect("a header"));
         assert_eq!(the_range_does_not_match_the_length(&headers), None);
 
-        // El mismo rango con un cuerpo de otra longitud.
+        // The same range with a body of another length.
         headers.insert("content-length", "3".parse().expect("a header"));
         assert_eq!(the_range_does_not_match_the_length(&headers), Some((0, 99)));
 
-        // Un rango al reves: el final es anterior al inicio.
+        // A reversed range: the end is before the start.
         headers.insert("content-range", "99-0".parse().expect("a header"));
         headers.insert("content-length", "100".parse().expect("a header"));
         assert_eq!(the_range_does_not_match_the_length(&headers), Some((99, 0)));
     }
 
-    /// Sin `Content-Range` no hay nada que comparar: el rango es
-    /// opcional, y el `Content-Length` solo no dice nada.
+    /// Without `Content-Range` there is nothing to compare: the range is
+    /// optional, and the `Content-Length` alone says nothing.
     #[test]
     fn without_a_range_there_is_nothing_to_compare() {
         let mut headers = HeaderMap::new();
@@ -1761,9 +1760,9 @@ mod tests {
         assert_eq!(the_range_does_not_match_the_length(&headers), None);
     }
 
-    /// La capa **no distribuible** es la que se exime de estar en el
-    /// almacen: su tipo de medio lo dice, y sus `urls` dicen de donde se
-    /// baja.
+    /// The **non-distributable** layer is the one exempted from being in the
+    /// store: its media type says so, and its `urls` say where it is
+    /// downloaded from.
     #[test]
     fn a_foreign_layer_is_the_one_that_is_not_distributed() {
         let layer = serde_json::json!({
@@ -1781,8 +1780,8 @@ mod tests {
         assert!(!the_foreign_descriptor(Some(&layer)));
     }
 
-    /// Una capa normal sin `urls` no es extranjera: se exige en el
-    /// almacen, como cualquier otra.
+    /// A normal layer without `urls` is not foreign: it is required in the
+    /// store, like any other.
     #[test]
     fn a_normal_layer_is_not_foreign() {
         let layer = serde_json::json!({
@@ -1792,8 +1791,8 @@ mod tests {
         assert!(!the_foreign_descriptor(Some(&layer)));
     }
 
-    /// El rango se lee en las dos grafias: la del protocolo (`0-99`) y la
-    /// de HTTP (`bytes 0-99/200`).
+    /// The range is read in both spellings: the protocol's (`0-99`) and
+    /// HTTP's (`bytes 0-99/200`).
     #[test]
     fn the_content_range_is_read_in_both_spellings() {
         let mut headers = HeaderMap::new();
@@ -1804,8 +1803,8 @@ mod tests {
         assert_eq!(the_content_range(&headers), Some((100, 199)));
     }
 
-    /// Un rango que esta y no se puede leer es un rango mal formado: no
-    /// se pasa por alto.
+    /// A range that is there and cannot be read is a malformed range: it is
+    /// not overlooked.
     #[test]
     fn a_range_that_cannot_be_read_is_malformed() {
         let mut headers = HeaderMap::new();
@@ -1815,12 +1814,12 @@ mod tests {
         headers.insert("content-range", "0-99".parse().expect("a header"));
         assert!(!the_range_is_malformed(&headers));
 
-        // Sin cabecera no hay nada mal formado: el rango es opcional.
+        // Without a header there is nothing malformed: the range is optional.
         assert!(!the_range_is_malformed(&HeaderMap::new()));
     }
 
-    /// Las `urls` de la capa no distribuible tienen que ser `https`: el
-    /// cliente va a seguirlas, y quien publica decide a donde va.
+    /// The `urls` of the non-distributable layer have to be `https`: the
+    /// client is going to follow them, and whoever publishes decides where it goes.
     #[test]
     fn the_urls_of_a_foreign_layer_have_to_be_https() {
         let layer = serde_json::json!({
@@ -1845,7 +1844,7 @@ mod tests {
         assert!(!the_foreign_urls_are_admisible(&layer));
     }
 
-    /// El rango que dice la subida es `0-<ultimo byte>`.
+    /// The range the upload states is `0-<last byte>`.
     #[test]
     fn the_range_of_the_upload_is_the_last_byte() {
         assert_eq!(the_range_header(0), "0-0");
@@ -1853,11 +1852,11 @@ mod tests {
         assert_eq!(the_range_header(100), "0-99");
     }
 
-    /// Las referencias exigidas de un manifiesto de imagen son su config
-    /// y sus capas, y nada mas.
+    /// The required references of an image manifest are its config
+    /// and its layers, and nothing else.
     ///
-    /// El digest se queda **sin el algoritmo**: es como lo nombra el
-    /// catalogo, que guarda el blob en `blobs/<digest>`.
+    /// The digest stays **without the algorithm**: it is how the
+    /// catalog names it, which stores the blob at `blobs/<digest>`.
     #[test]
     fn the_required_digests_are_the_config_and_the_layers() {
         let manifest = serde_json::json!({
@@ -1877,8 +1876,8 @@ mod tests {
         );
     }
 
-    /// Un digest sin su algoritmo no es un digest, y un manifiesto que lo
-    /// nombra no se puede comprobar.
+    /// A digest without its algorithm is not a digest, and a manifest that
+    /// names it cannot be checked.
     #[test]
     fn a_required_digest_without_its_algorithm_is_refused() {
         let manifest = serde_json::json!({
@@ -1902,7 +1901,7 @@ mod tests {
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
     }
 
-    /// Un manifiesto sin configuracion no es un manifiesto de imagen.
+    /// A manifest without config is not an image manifest.
     #[test]
     fn a_manifest_without_a_config_is_not_publishable() {
         let manifest = serde_json::json!({
@@ -1915,7 +1914,7 @@ mod tests {
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
     }
 
-    /// Un indice exige sus hijos, que son **manifiestos** y no blobs.
+    /// An index requires its children, which are **manifests** and not blobs.
     #[test]
     fn an_index_requires_its_children_as_manifests() {
         let manifest = serde_json::json!({
@@ -1935,7 +1934,7 @@ mod tests {
             ]
         );
 
-        // Un indice sin hijos no es un indice.
+        // An index without children is not an index.
         let manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.index.v1+json",
@@ -1945,7 +1944,7 @@ mod tests {
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
     }
 
-    /// Un manifiesto de artefacto no exige nada, y lo que nombra son
+    /// An artifact manifest requires nothing, and what it names are
     /// blobs.
     #[test]
     fn an_artifact_manifest_requires_nothing_and_names_blobs() {
@@ -1962,7 +1961,7 @@ mod tests {
             vec![(the_hexadecimal(A_DIGEST).to_string(), TheClass::Blob)]
         );
 
-        // Sin blobs ni configuracion, un artefacto no exige nada.
+        // Without blobs or config, an artifact requires nothing.
         let manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
@@ -1973,8 +1972,8 @@ mod tests {
         assert!(required.is_empty());
     }
 
-    /// El `subject` se lee, y **no** se exige que exista: el protocolo
-    /// dice que un manifiesto cuyo `subject` todavia no esta se acepta.
+    /// The `subject` is read, and it is **not** required to exist: the protocol
+    /// says a manifest whose `subject` is not yet there is accepted.
     #[test]
     fn the_subject_is_read_and_not_required_to_exist() {
         let manifest = serde_json::json!({
@@ -1989,16 +1988,16 @@ mod tests {
             Some(the_hexadecimal(A_DIGEST).to_string())
         );
 
-        // Sin subject, no hay subject.
+        // Without a subject, there is no subject.
         let manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.manifest.v1+json",
         });
         assert!(the_subject_of(&manifest).expect("no subject").is_none());
 
-        // Y un subject que **no** es un digest no es un subject: un
-        // digest a medio escribir se guardaria en el catalogo y dejaria
-        // el manifiesto publicado y ilegible.
+        // And a subject that is **not** a digest is not a subject: a
+        // half-written digest would be stored in the catalog and would leave
+        // the manifest published and unreadable.
         let manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.artifact.manifest.v1+json",
@@ -2007,7 +2006,7 @@ mod tests {
         let error = the_subject_of(&manifest).expect_err("the subject is not a digest");
         assert_eq!(error.the_code(), "MANIFEST_INVALID");
 
-        // Un subject sin digest no es un subject.
+        // A subject without a digest is not a subject.
         let manifest = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.artifact.manifest.v1+json",

@@ -1,35 +1,35 @@
-//! El pull de un repositorio OCI **proxy**.
+//! The pull of an OCI **proxy** repository.
 //!
-//! Un repositorio OCI en modo proxy no guarda lo que se publico en el:
-//! resuelve contra un **upstream** de distribucion y conserva lo que baja.
-//! Y lo hace por la **superficie de la distribucion**, no por la cruda: un
-//! manifiesto se pide en `/v2/<nombre>/manifests/<referencia>` y un blob en
-//! `/v2/<nombre>/blobs/<digest>`, con el reto de autenticacion y el
-//! `Docker-Content-Digest` que el protocolo dice.
+//! An OCI repository in proxy mode does not store what was published to it:
+//! it resolves against a distribution **upstream** and keeps what it downloads.
+//! And it does so through the **distribution surface**, not the raw one: a
+//! manifest is requested at `/v2/<name>/manifests/<reference>` and a blob at
+//! `/v2/<name>/blobs/<digest>`, with the authentication challenge and the
+//! `Docker-Content-Digest` the protocol specifies.
 //!
-//! # Lo que garantiza
+//! # What it guarantees
 //!
-//! - **La identidad es el digest.** Un manifiesto pedido por `sha256:...`
-//!   que llega con otros bytes no es el que se pidio: se retiene y no se
-//!   sirve. Un blob igual. Lo que se sirve es lo que se calculo, no lo que
-//!   el upstream dijo de si mismo.
-//! - **La etiqueta se mueve; el digest no.** Una etiqueta es una referencia
-//!   mutable: cuando el upstream la mueve, el contenido nuevo se publica y
-//!   la etiqueta se mueve con ella, y lo que habia detras sigue publicado
-//!   con su digest. Un digest no se mueve nunca.
-//! - **El reto no decide a donde va la credencial.** El realm que nombra el
-//!   reto tiene que ser el que declara la configuracion: un upstream que
-//!   invente un realm no recibe ninguna credencial, ni la peticion.
-//! - **Sin red, solo lo integro y con recibo.** Un contenido cacheado sin
-//!   procedencia no se sirve, y el que no esta integro tampoco.
+//! - **Identity is the digest.** A manifest requested by `sha256:...`
+//!   that arrives with other bytes is not the one that was asked for: it is held and not
+//!   served. A blob likewise. What is served is what was computed, not what
+//!   the upstream said about itself.
+//! - **The tag moves; the digest does not.** A tag is a mutable
+//!   reference: when the upstream moves it, the new content is published and
+//!   the tag moves with it, and what was behind it stays published
+//!   with its digest. A digest never moves.
+//! - **The challenge does not decide where the credential goes.** The realm the
+//!   challenge names has to be the one the configuration declares: an upstream that
+//!   invents a realm receives no credential, nor the request.
+//! - **Offline, only what is intact and has a receipt.** Cached content without
+//!   provenance is not served, and neither is what is not intact.
 //!
-//! # Lo que se reusa
+//! # What is reused
 //!
-//! La salida a la red es la de las demas superficies --la politica de
-//! ejection, los limites, la cola--, y la verificacion del contenido es la
-//! de la superficie cruda: [`crate::proxy::resolution`]. Aqui solo se anade
-//! lo que es propio de la distribucion: el camino del upstream, el reto,
-//! el digest que es la identidad, y la etiqueta que se mueve.
+//! The network egress is that of the other surfaces --the ejection
+//! policy, the limits, the queue--, and content verification is that
+//! of the raw surface: [`crate::proxy::resolution`]. Only what is specific to
+//! distribution is added here: the upstream path, the challenge,
+//! the digest that is the identity, and the tag that moves.
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -47,47 +47,47 @@ use crate::oci::{the_catalog, the_content_store};
 use crate::proxy::fetch::{FetchError, Fetched};
 use crate::proxy::resolution::{self, Outcome};
 
-/// El prefijo de la ruta del asset de un manifiesto.
+/// The prefix of a manifest's asset path.
 const MANIFESTS: &str = "manifests";
 
-/// El prefijo de la ruta del asset de un blob.
+/// The prefix of a blob's asset path.
 const BLOBS: &str = "blobs";
 
-/// El prefijo de la ruta del puntero de una etiqueta.
+/// The prefix of a tag pointer's path.
 ///
-/// Una etiqueta es una referencia **mutable**: el mismo nombre puede
-/// apuntar a otro contenido. El catálogo no mueve las etiquetas de un
-/// repositorio proxy --un proxy no acepta escrituras de un cliente--, asi
-/// que el puntero se guarda como lo que es: un asset mas, en
-/// `manifests/tag/<etiqueta>`, que apunta al digest.
+/// A tag is a **mutable** reference: the same name can
+/// point to other content. The catalog does not move the tags of a
+/// proxy repository --a proxy accepts no writes from a client--, so
+/// the pointer is stored as what it is: one more asset, at
+/// `manifests/tag/<tag>`, that points to the digest.
 ///
-/// Y el **recibo** va siempre a la ruta del digest (`manifests/<digest>`):
-/// la procedencia del contenido es una sola, se haya pedido por etiqueta o
-/// por digest.
+/// And the **receipt** always goes to the digest path (`manifests/<digest>`):
+/// the provenance of the content is a single one, whether it was requested by tag or
+/// by digest.
 const TAGS: &str = "manifests/tag";
 
-/// El camino de la lista de etiquetas en la superficie de la distribucion.
+/// The path of the tag list on the distribution surface.
 ///
-/// `v2/<nombre>/tags/list`: la lista de lo que el upstream tiene.
+/// `v2/<name>/tags/list`: the list of what the upstream has.
 const TAGS_LIST: &str = "tags/list";
 
-/// Los recibos que se leen para saber si un contenido tiene procedencia.
+/// The receipts read to know whether a content has provenance.
 const RECEIPTS_READ_ON_THE_HOT_PATH: usize = 4;
 
 /// Media types accepted when fetching an OCI or Docker manifest from an upstream registry.
 const OCI_MANIFEST_ACCEPT: &str = "application/vnd.oci.image.manifest.v1+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v1+json";
 
-/// Que se pide al upstream.
+/// What is requested from the upstream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TheKind {
-    /// Un manifiesto, por etiqueta o por digest.
+    /// A manifest, by tag or by digest.
     Manifest,
-    /// Un blob, siempre por digest.
+    /// A blob, always by digest.
     Blob,
 }
 
 impl TheKind {
-    /// El prefijo de la ruta del asset en el catalogo.
+    /// The asset path prefix in the catalog.
     fn the_prefix(self) -> &'static str {
         match self {
             TheKind::Manifest => MANIFESTS,
@@ -95,7 +95,7 @@ impl TheKind {
         }
     }
 
-    /// La palabra del camino del upstream.
+    /// The upstream path word.
     fn the_upstream_word(self) -> &'static str {
         match self {
             TheKind::Manifest => "manifests",
@@ -103,7 +103,7 @@ impl TheKind {
         }
     }
 
-    /// El error que se responde cuando el upstream no lo tiene.
+    /// The error returned when the upstream does not have it.
     fn the_unknown(self, reference: &str) -> OciFailure {
         match self {
             TheKind::Manifest => {
@@ -114,9 +114,9 @@ impl TheKind {
     }
 }
 
-/// Un manifiesto del upstream, por etiqueta o por digest.
+/// A manifest from the upstream, by tag or by digest.
 ///
-/// `GET /v2/<nombre>/manifests/<referencia>`
+/// `GET /v2/<name>/manifests/<reference>`
 pub async fn the_manifest(
     state: &AppState,
     context: &VerifiedContext,
@@ -139,9 +139,9 @@ pub async fn the_manifest(
     .await
 }
 
-/// Un blob del upstream, por digest.
+/// A blob from the upstream, by digest.
 ///
-/// `GET /v2/<nombre>/blobs/<digest>`
+/// `GET /v2/<name>/blobs/<digest>`
 pub async fn the_blob(
     state: &AppState,
     context: &VerifiedContext,
@@ -164,35 +164,35 @@ pub async fn the_blob(
     .await
 }
 
-/// Lo que el upstream responde cuando se le pregunta por sus etiquetas.
+/// What the upstream answers when asked for its tags.
 ///
-/// La distincion es la que decide si el listado de un grupo se sirve: un
-/// upstream que **responde** con su lista aporta etiquetas, y un upstream que
-/// no se puede preguntar por la lista --su ambito no la cubre-- es un
-/// miembro que no puede enumerar, no un fallo.
+/// The distinction is what decides whether a group's listing is served: an
+/// upstream that **responds** with its list contributes tags, and an upstream that
+/// cannot be asked for the list --its scope does not cover it-- is a
+/// member that cannot enumerate, not a failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TheUpstreamTags {
-    /// El upstream dio la lista de sus etiquetas.
+    /// The upstream gave the list of its tags.
     Listed(Vec<String>),
-    /// El upstream **no** se puede preguntar por su lista.
+    /// The upstream **cannot** be asked for its list.
     NotInScope,
 }
 
-/// Las etiquetas que el upstream del proxy tiene.
+/// The tags the proxy's upstream has.
 ///
-/// `GET /v2/<nombre>/tags/list` en el upstream del **miembro**: el grupo no
-/// renombra a su miembro, y el nombre que se pregunta es el del miembro.
+/// `GET /v2/<name>/tags/list` on the **member's** upstream: the group does not
+/// rename its member, and the name that is asked is the member's.
 ///
-/// Es el camino de la resolucion **sin** la respuesta: lo que un grupo OCI
-/// consulta en un miembro proxy para enumerar lo que hay. Un proxy no tiene
-/// filas de etiqueta en el catalogo --su etiqueta es un puntero que solo
-/// existe si alguien ya la pidio--, asi que la lista del proxy vive en su
+/// It is the resolution path **without** the response: what an OCI group
+/// queries on a proxy member to enumerate what is there. A proxy has no
+/// tag rows in the catalog --its tag is a pointer that only
+/// exists if someone already asked for it--, so the proxy's list lives in its
 /// upstream.
 ///
-/// La lista es **metadata**, no contenido: no se guarda, no se publica como
-/// asset del miembro y no se sirve. Lo que se comprueba es lo de siempre: la
-/// salida a la red, el ambito del upstream y la credencial, que solo viaja al
-/// origen declarado.
+/// The list is **metadata**, not content: it is not stored, not published as
+/// an asset of the member and not served. What is checked is the usual: the
+/// network egress, the upstream's scope and the credential, which only travels to the
+/// declared origin.
 pub async fn the_resolved_tags(
     state: &AppState,
     repository: &RepositoryDescriptor,
@@ -205,9 +205,9 @@ pub async fn the_resolved_tags(
         .ok_or_else(|| OciFailure::unavailable("this service has no egress for remote proxies"))?;
     let correlation = crate::handlers::correlation_id(headers, &state.identity);
 
-    // La configuracion del upstream. Una configuracion que no se entiende no
-    // se sustituye por un valor por defecto: un ajuste de salida a la red
-    // ilegible no puede degradar a "permitido".
+    // The upstream configuration. A configuration that is not understood is not
+    // replaced by a default value: an unreadable network egress setting
+    // cannot degrade to "allowed".
     let upstream = match UpstreamConfig::of(&repository.config) {
         Ok(Some(upstream)) => upstream,
         Ok(None) => return Err(OciFailure::unavailable("the proxy is not configured")),
@@ -221,12 +221,12 @@ pub async fn the_resolved_tags(
     // Upstream path: if upstream.base already targets a repository under /v2/<repo>/,
     // append only `tags/list`; otherwise use `v2/<name>/tags/list`.
     let upstream_path = upstream_oci_path(&upstream, name, TAGS_LIST);
-    // Lo que no cae en un scope no se pide al upstream: un upstream que no
-    // cubre el listado es un miembro que no puede enumerar.
+    // What does not fall in a scope is not requested from the upstream: an upstream that does not
+    // cover the listing is a member that cannot enumerate.
     //
-    // La decision se deja **vista**: el miembro no aporta etiquetas al
-    // listado del grupo, y sin una traza el cliente veria un listado mas
-    // corto, que es indistinguible de "este miembro no tiene etiquetas".
+    // The decision is left **visible**: the member contributes no tags to the
+    // group's listing, and without a trace the client would see a shorter
+    // listing, which is indistinguishable from "this member has no tags".
     let Some(url) = the_listed_url(&upstream, &upstream_path) else {
         tracing::warn!(
             target: "hodei_artifacts::oci",
@@ -237,7 +237,7 @@ pub async fn the_resolved_tags(
         return Ok(TheUpstreamTags::NotInScope);
     };
 
-    // El token: el que el upstream ya pidio, si sigue valiendo.
+    // The token: the one the upstream already requested, if it is still valid.
     let token_key = format!("{}|{}", repository.repo_key, upstream.origin());
     let mut token = plane.tokens.get(&token_key);
     let mut challenged = false;
@@ -249,15 +249,15 @@ pub async fn the_resolved_tags(
             .await;
         match fetched {
             Ok(Fetched::Content(opened)) => {
-                // Una lista **paginada** no se sirve como si fuera la lista
-                // entera: el upstream lo dice con la cabecera `Link`, y lo
-                // que se tiene es la primera pagina. Servirla seria un
-                // listado parcial presentado como completo.
+                // A **paginated** list is not served as if it were the whole
+                // list: the upstream says so with the `Link` header, and what
+                // we have is the first page. Serving it would be a
+                // partial listing presented as complete.
                 //
-                // El listado **no se sirve**. El camino de resolucion ya
-                // tiene su cache y su presupuesto, y una paginacion mal
-                // seguida --un cursor que decide el upstream-- es peor que
-                // un listado que se niega a servirse.
+                // The listing **is not served**. The resolution path already
+                // has its cache and its budget, and a badly followed pagination
+                // --a cursor the upstream decides-- is worse than
+                // a listing that refuses to be served.
                 if opened.link().is_some() {
                     tracing::warn!(
                         target: "hodei_artifacts::oci",
@@ -271,9 +271,9 @@ pub async fn the_resolved_tags(
                 }
                 break the_body(*opened).await?;
             }
-            // El upstream pide una credencial: se resuelve el reto y se
-            // reintenta **una** vez. Un reto que no se puede satisfacer es un
-            // upstream que no sirve, no un bucle.
+            // The upstream asks for a credential: the challenge is resolved and
+            // retried **once**. A challenge that cannot be satisfied is an
+            // upstream that does not serve, not a loop.
             Ok(Fetched::Unauthorized { challenge }) => {
                 if challenged {
                     return Err(OciFailure::unavailable(
@@ -295,8 +295,8 @@ pub async fn the_resolved_tags(
                     "the upstream answered a conditional question that was not asked",
                 ));
             }
-            // Un upstream que no tiene ese repositorio no tiene etiquetas:
-            // es un miembro sin nada que enumerar, no un fallo.
+            // An upstream that does not have that repository has no tags:
+            // it is a member with nothing to enumerate, not a failure.
             Err(FetchError::NotFound) => return Ok(TheUpstreamTags::Listed(Vec::new())),
             Err(error) => return Err(the_fetch_failure(error)),
         }
@@ -326,10 +326,10 @@ fn upstream_oci_path(upstream: &UpstreamConfig, name: &str, suffix: &str) -> Str
     }
 }
 
-/// La URL del listado, si el ambito del upstream la cubre.
+/// The listing URL, if the upstream's scope covers it.
 ///
-/// Lo que no cae en el ambito no se pide: un upstream que no cubre el
-/// listado es un miembro que **no puede enumerar**, no un fallo.
+/// What does not fall in the scope is not requested: an upstream that does not cover the
+/// listing is a member that **cannot enumerate**, not a failure.
 fn the_listed_url(upstream: &UpstreamConfig, path: &str) -> Option<Url> {
     if !upstream.in_scope(path) {
         return None;
@@ -337,11 +337,11 @@ fn the_listed_url(upstream: &UpstreamConfig, path: &str) -> Option<Url> {
     upstream.target(path)
 }
 
-/// Los bytes del cuerpo de la respuesta del upstream.
+/// The bytes of the upstream response body.
 ///
-/// Los bytes se leen con el guardian de siempre: el presupuesto del cliente
-/// y el checksum que el upstream declare. Lo que no se declara no se exige:
-/// una lista de etiquetas es metadata, y el protocolo no le pide un digest.
+/// The bytes are read with the usual guardian: the client's budget
+/// and the checksum the upstream declares. What is not declared is not required:
+/// a tag list is metadata, and the protocol does not ask it for a digest.
 async fn the_body(mut opened: crate::proxy::fetch::Opened) -> Result<Vec<u8>, OciFailure> {
     let mut guard = opened.guard(false);
     let mut body = Vec::new();
@@ -362,22 +362,22 @@ async fn the_body(mut opened: crate::proxy::fetch::Opened) -> Result<Vec<u8>, Oc
     Ok(body)
 }
 
-/// Los nombres de etiqueta de la lista del upstream.
+/// The tag names of the upstream's list.
 ///
-/// La lista de la distribucion es `{"name": ..., "tags": [...]}`. Lo que
-/// importa son los nombres: una lista sin `tags` es una lista vacia, y un
-/// nombre que no es texto no es una etiqueta.
+/// The distribution list is `{"name": ..., "tags": [...]}`. What
+/// matters are the names: a list without `tags` is an empty list, and a
+/// name that is not text is not a tag.
 ///
-/// El listado solo anuncia **lo que se puede descargar**: un nombre se
-/// filtra por la misma regla que usa la resolucion ([`the_tag_name`]), de
-/// modo que la lista y la resolucion cuentan la misma historia. Un nombre que
-/// la resolucion rechaza --una barra, un caracter de control, mas de 128
-/// caracteres-- se descarga con un `400` que **detiene** la resolucion del
-/// grupo entero, asi que anunciarlo seria prometer algo que no se puede
-/// pedir.
+/// The listing only announces **what can be downloaded**: a name is
+/// filtered by the same rule that resolution uses ([`the_tag_name`]), so
+/// that the list and the resolution tell the same story. A name that
+/// resolution rejects --a slash, a control character, more than 128
+/// characters-- is downloaded with a `400` that **stops** the resolution of the
+/// whole group, so announcing it would be promising something that cannot be
+/// requested.
 ///
-/// No es un fallo: un upstream puede tener basura en su lista, y el listado
-/// no se rompe por eso. Lo que no se puede descargar no se anuncia.
+/// It is not a failure: an upstream may have garbage in its list, and the listing
+/// does not break because of it. What cannot be downloaded is not announced.
 fn the_tag_names(body: &[u8]) -> Result<Vec<String>, OciFailure> {
     let answer: serde_json::Value = serde_json::from_slice(body)
         .map_err(|_| OciFailure::unavailable("the tag list of the upstream is not readable"))?;
@@ -392,10 +392,10 @@ fn the_tag_names(body: &[u8]) -> Result<Vec<String>, OciFailure> {
         .collect())
 }
 
-/// El fallo de la salida a la red, en el dialecto de la distribucion.
+/// The network egress failure, in the distribution dialect.
 ///
-/// Lo que el cliente ve no dice ni la URL del upstream ni el motivo exacto:
-/// el upstream es la red interna del servicio.
+/// What the client sees says neither the upstream URL nor the exact reason:
+/// the upstream is the service's internal network.
 fn the_fetch_failure(error: FetchError) -> OciFailure {
     match error {
         FetchError::Unauthorized(_) => {
@@ -408,27 +408,27 @@ fn the_fetch_failure(error: FetchError) -> OciFailure {
     }
 }
 
-/// El contenido que el upstream resuelve, con su procedencia.
+/// The content the upstream resolves, with its provenance.
 ///
-/// Es la resolucion **sin** la respuesta HTTP: el camino de un grupo OCI
-/// necesita el digest que gano un miembro proxy, no una `Response` que ya
-/// sabe servir. La procedencia es la del recibo que deja el resolvedor, y el
-/// contenido se publica en el namespace del **miembro**, no en el de quien
-/// pregunta.
+/// It is the resolution **without** the HTTP response: an OCI group's path
+/// needs the digest a proxy member won, not a `Response` that already
+/// knows how to serve. The provenance is that of the receipt the resolver leaves, and the
+/// content is published in the **member's** namespace, not in that of whoever
+/// asks.
 ///
-/// Los bytes **no** vienen aqui: se leen despues de la compuerta de
-/// confianza, que es la que decide si lo que se resolvedo se puede servir.
-/// Leerlos antes seria materializar lo que todavia no se puede servir, y
-/// hacer pagar al camino condicional una lectura que no necesita.
+/// The bytes do **not** come here: they are read after the trust
+/// gate, which decides whether what was resolved can be served.
+/// Reading them earlier would materialize what cannot yet be served, and
+/// make the conditional path pay for a read it does not need.
 pub struct Resolved {
-    /// La fila del asset, en el namespace del repositorio resuelto.
+    /// The asset row, in the namespace of the resolved repository.
     pub asset: hodei_catalog::AssetRecord,
 }
 
-/// El manifiesto que el upstream resuelve, con su procedencia.
+/// The manifest the upstream resolves, with its provenance.
 ///
-/// Es el camino de [`the_manifest`] sin la respuesta: lo que un grupo OCI
-/// consulta en un miembro proxy.
+/// It is the path of [`the_manifest`] without the response: what an OCI group
+/// queries on a proxy member.
 pub async fn the_resolved_manifest(
     state: &AppState,
     context: &VerifiedContext,
@@ -449,10 +449,10 @@ pub async fn the_resolved_manifest(
     .await
 }
 
-/// El blob que el upstream resuelve, con su procedencia.
+/// The blob the upstream resolves, with its provenance.
 ///
-/// Es el camino de [`the_blob`] sin la respuesta: lo que un grupo OCI
-/// consulta en un miembro proxy.
+/// It is the path of [`the_blob`] without the response: what an OCI group
+/// queries on a proxy member.
 pub async fn the_resolved_blob(
     state: &AppState,
     context: &VerifiedContext,
@@ -473,18 +473,18 @@ pub async fn the_resolved_blob(
     .await
 }
 
-/// El contenido del upstream, resuelto y verificado.
+/// The upstream's content, resolved and verified.
 ///
-/// El camino es el mismo que el de un repositorio **hosted**: la cuenta
-/// viene del principal verificado, Cedar decide sobre el repositorio, y
-/// la compuerta de confianza decide sobre el **digest** que se va a servir.
-/// Lo que cambia es de donde salen los bytes: de un upstream, y con las
-/// reglas de la distribucion por delante.
+/// The path is the same as that of a **hosted** repository: the account
+/// comes from the verified principal, Cedar decides on the repository, and
+/// the trust gate decides on the **digest** that is going to be served.
+/// What changes is where the bytes come from: an upstream, and with the
+/// distribution rules in front.
 ///
-/// La resolucion va aparte de la respuesta: quien necesita el contenido
-/// --un grupo OCI, que consulta a un miembro proxy-- no quiere una
-/// `Response`, sino la fila del asset con su digest. La respuesta se arma
-/// despues, con lo que la resolucion devuelve.
+/// Resolution is separate from the response: whoever needs the content
+/// --an OCI group, which queries a proxy member-- does not want a
+/// `Response`, but the asset row with its digest. The response is assembled
+/// afterwards, with what the resolution returns.
 #[allow(clippy::too_many_arguments)]
 async fn the_content(
     state: &AppState,
@@ -509,17 +509,17 @@ async fn the_content(
     .await
 }
 
-/// La resolucion del contenido del upstream, con su procedencia.
+/// The resolution of the upstream's content, with its provenance.
 ///
-/// Es el cuerpo del camino: el mismo que el de un repositorio **hosted**,
-/// con la cuenta del principal verificado y la compuerta de confianza
-/// aplicada al digest que se va a servir. Lo que cambia es de donde salen
-/// los bytes: de un upstream, y con las reglas de la distribucion por
-/// delante.
+/// It is the body of the path: the same as that of a **hosted** repository,
+/// with the verified principal's account and the trust gate
+/// applied to the digest that is going to be served. What changes is where
+/// the bytes come from: an upstream, and with the distribution rules in
+/// front.
 ///
-/// El contenido se publica en el namespace del **repositorio** al que se
-/// pregunta --el miembro, cuando quien pregunta es un grupo-- y el recibo
-/// que lo respalda va con el.
+/// The content is published in the namespace of the **repository** that is
+/// asked --the member, when whoever asks is a group-- and the receipt
+/// that backs it goes with it.
 async fn the_resolved(
     state: &AppState,
     context: &VerifiedContext,
@@ -535,9 +535,9 @@ async fn the_resolved(
         .ok_or_else(|| OciFailure::unavailable("this service has no egress for remote proxies"))?;
     let correlation = crate::handlers::correlation_id(headers, &state.identity);
 
-    // La configuracion del upstream. Una configuracion que no se entiende no
-    // se sustituye por un valor por defecto: un ajuste de salida a la red
-    // ilegible no puede degradar a "permitido".
+    // The upstream configuration. A configuration that is not understood is not
+    // replaced by a default value: an unreadable network egress setting
+    // cannot degrade to "allowed".
     let upstream = match UpstreamConfig::of(&repository.config) {
         Ok(Some(upstream)) => upstream,
         Ok(None) => return Err(OciFailure::unavailable("the proxy is not configured")),
@@ -548,15 +548,15 @@ async fn the_resolved(
         }
     };
 
-    // La referencia: un digest (inmutable) o una etiqueta (mutable).
+    // The reference: a digest (immutable) or a tag (mutable).
     //
-    // El camino del upstream lleva el digest **con su algoritmo** --la
-    // distribucion lo pide asi-- y la ruta del catalogo lleva el
-    // hexadecimal pelado.
+    // The upstream path carries the digest **with its algorithm** --the
+    // distribution asks for it that way-- and the catalog path carries the
+    // bare hexadecimal.
     let (requested, upstream_reference) = match kind {
         TheKind::Blob => {
-            // La referencia de un blob llega ya validada y en hexadecimal:
-            // el camino del upstream lo pide con su algoritmo.
+            // A blob reference arrives already validated and in hexadecimal:
+            // the upstream path asks for it with its algorithm.
             let digest = reference.to_string();
             (Some(digest.clone()), format!("sha256:{digest}"))
         }
@@ -566,7 +566,7 @@ async fn the_resolved(
         }
         TheKind::Manifest => (None, reference.to_string()),
     };
-    // Una etiqueta tiene reglas: no es cualquier palabra.
+    // A tag has rules: it is not just any word.
     if kind == TheKind::Manifest && requested.is_none() {
         the_tag_name(reference)?;
     }
@@ -578,7 +578,7 @@ async fn the_resolved(
         name,
         &format!("{}/{upstream_reference}", kind.the_upstream_word()),
     );
-    // Lo que no cae en un scope no se pide al upstream.
+    // What does not fall in a scope is not requested from the upstream.
     if !upstream.in_scope(&upstream_path) {
         return Err(kind.the_unknown(reference));
     }
@@ -586,15 +586,15 @@ async fn the_resolved(
         return Err(kind.the_unknown(reference));
     };
 
-    // El digest que se sirve: el que se pide, o el al que apunta la
-    // etiqueta. Una etiqueta que no se conoce todavia no tiene digest: hay
-    // que ir a buscarlo.
+    // The digest that is served: the one requested, or the one the
+    // tag points to. A tag not yet known has no digest: it has
+    // to be fetched.
     let (reader, writer) = the_catalog(state)?;
     let account = context.account().as_str();
     let resolved = match requested.clone() {
         Some(digest) => Some(digest),
-        // La etiqueta se resuelve por su puntero: el asset que dice a que
-        // digest apunta.
+        // The tag is resolved by its pointer: the asset that says which
+        // digest it points to.
         None => reader
             .asset(account, name, &format!("{TAGS}/{reference}"))
             .await
@@ -605,7 +605,7 @@ async fn the_resolved(
         .as_ref()
         .map(|digest| format!("{}/{digest}", kind.the_prefix()));
 
-    // La clase de la ruta: un digest no se mueve, una etiqueta si.
+    // The path class: a digest does not move, a tag does.
     let cache_kind = match kind {
         TheKind::Blob => hodei_catalog::proxy_cache::CacheKind::Content,
         TheKind::Manifest => match requested {
@@ -614,7 +614,7 @@ async fn the_resolved(
         },
     };
 
-    // Lo que hay hoy del contenido, con la procedencia que lo respalda.
+    // What exists today of the content, with the provenance that backs it.
     let current = match asset_path.as_deref() {
         Some(path) => reader.asset(account, name, path).await.ok(),
         None => None,
@@ -663,8 +663,8 @@ async fn the_resolved(
             let asset = current.ok_or_else(|| {
                 OciFailure::unavailable("the catalog and the cache disagree about the content")
             })?;
-            // Sin red no hay quien corrija un blob dañado: se comprueba
-            // antes de servirlo.
+            // Offline there is nobody to fix a damaged blob: it is checked
+            // before serving it.
             let store = the_content_store(state)?;
             if store.verify(&asset.digest).await.is_err() {
                 plane.metrics.record_offline_miss();
@@ -691,7 +691,7 @@ async fn the_resolved(
         CacheDecision::Revalidate(known) => Some(known),
     };
 
-    // Lo que se trae del upstream, con la identidad que se espera.
+    // What is fetched from the upstream, with the identity that is expected.
     let fetched = the_fetched(
         state,
         plane,
@@ -707,7 +707,7 @@ async fn the_resolved(
     )
     .await?;
 
-    // El digest que se sirve: el que se calculo, no el que dijo el upstream.
+    // The digest that is served: the one that was computed, not the one the upstream said.
     let digest = match &fetched {
         Outcome::Stored(resolved) => resolved.digest.clone(),
         Outcome::Unchanged(receipt) => ContentDigest::sha256(receipt.digest.value.clone()),
@@ -718,10 +718,10 @@ async fn the_resolved(
         }
     };
 
-    // El contenido se publica en el catalogo: un manifiesto es un asset en
-    // `manifests/<digest>` y un blob en `blobs/<digest>`, igual que en un
-    // repositorio hosted. Sin publicar, el digest no es contenido de este
-    // repositorio y no se puede servir.
+    // The content is published in the catalog: a manifest is an asset at
+    // `manifests/<digest>` and a blob at `blobs/<digest>`, just as in a
+    // hosted repository. Without publishing, the digest is not content of this
+    // repository and cannot be served.
     if let Outcome::Stored(resolved) = &fetched {
         let fetched_size = resolved.size_bytes;
         let publication = Publication {
@@ -736,8 +736,8 @@ async fn the_resolved(
             tags: Vec::new(),
             actor: context.principal().subject().as_str().to_string(),
             correlation_id: correlation.to_string(),
-            // El camino lleva el digest: republicar el mismo contenido es lo
-            // mismo, y no hay nada que sustituir.
+            // The path carries the digest: republishing the same content is the
+            // same, and there is nothing to replace.
             overwrite: true,
             precondition: None,
             subject: None,
@@ -755,11 +755,11 @@ async fn the_resolved(
                 crate::oci::the_catalog_error(&error)
             })?;
 
-        // La etiqueta se **mueve**: el protocolo dice que una etiqueta es
-        // mutable, y lo que hay detras de la anterior sigue publicado con
-        // su digest. El puntero es un asset mas, porque el catalogo no
-        // mueve las etiquetas de un proxy: eso es de un cliente, y un
-        // proxy no acepta escrituras de un cliente.
+        // The tag **moves**: the protocol says a tag is
+        // mutable, and what is behind the previous one stays published with
+        // its digest. The pointer is one more asset, because the catalog does not
+        // move a proxy's tags: that belongs to a client, and a
+        // proxy accepts no writes from a client.
         if kind == TheKind::Manifest && requested.is_none() {
             let pointer = Publication {
                 repository: repository.repo_key.clone(),
@@ -773,8 +773,8 @@ async fn the_resolved(
                 tags: Vec::new(),
                 actor: context.principal().subject().as_str().to_string(),
                 correlation_id: correlation.to_string(),
-                // El puntero se mueve: es una referencia mutable, y lo que
-                // hay detras sigue publicado con su digest.
+                // The pointer moves: it is a mutable reference, and what
+                // is behind it stays published with its digest.
                 overwrite: true,
                 precondition: None,
                 subject: None,
@@ -791,7 +791,7 @@ async fn the_resolved(
         }
     }
 
-    // Y se sirve lo que hay en el catalogo, por el camino de siempre.
+    // And what is in the catalog is served, by the usual path.
     let (reader, _) = the_catalog(state)?;
     let asset = reader
         .asset(
@@ -804,12 +804,12 @@ async fn the_resolved(
     Ok(Resolved { asset })
 }
 
-/// Los bytes que la fila del asset referencia.
+/// The bytes the asset row references.
 ///
-/// Los bytes son los de la fila, no los que dice la peticion: la fila es la
-/// referencia de lo que el repositorio tiene. Y se leen **despues** de la
-/// compuerta de confianza: lo que no se puede servir no se materializa, y
-/// el camino condicional no paga una lectura que no necesita.
+/// The bytes are those of the row, not those the request states: the row is the
+/// reference of what the repository has. And they are read **after** the
+/// trust gate: what cannot be served is not materialized, and
+/// the conditional path does not pay for a read it does not need.
 pub async fn the_bytes(
     state: &AppState,
     asset: &hodei_catalog::AssetRecord,
@@ -821,12 +821,12 @@ pub async fn the_bytes(
         .map_err(|_| OciFailure::unavailable("the content is not in the store"))
 }
 
-/// El contenido que se trae del upstream, verificado y con recibo.
+/// The content fetched from the upstream, verified and with a receipt.
 ///
-/// El camino es el de la superficie cruda --traer, comprobar, guardar y
-/// dejar constancia-- con dos reglas de la distribucion por delante: el
-/// **digest esperado** (la identidad del contenido) y el **token** que el
-/// upstream puede pedir en su reto.
+/// The path is that of the raw surface --fetch, check, store and
+/// record-- with two distribution rules in front: the
+/// **expected digest** (the content's identity) and the **token** the
+/// upstream may ask for in its challenge.
 #[allow(clippy::too_many_arguments)]
 async fn the_fetched(
     state: &AppState,
@@ -866,9 +866,9 @@ async fn the_fetched(
     {
         Ok(outcome) => outcome,
         Err(error) => {
-            // El upstream pide una credencial: se resuelve el reto y se
-            // reintenta **una** vez. Un reto que no se puede satisfacer es
-            // un upstream que no sirve, no un bucle.
+            // The upstream asks for a credential: the challenge is resolved and
+            // retried **once**. A challenge that cannot be satisfied is
+            // an upstream that does not serve, not a loop.
             let Some(challenge) = the_challenge(&error) else {
                 return Err(the_failure(error));
             };
@@ -900,18 +900,18 @@ async fn the_fetched(
         }
     };
 
-    // Un token que el upstream rechazo no se reusa.
+    // A token the upstream rejected is not reused.
     if matches!(outcome, Outcome::Quarantined(_)) {
         plane.tokens.forget(&token_key);
     }
     Ok(outcome)
 }
 
-/// La peticion de resolucion, con las reglas de la distribucion.
+/// The resolution request, with the distribution rules.
 ///
-/// Lo que se pide por digest tiene que ser lo que llega, y el recibo va a
-/// la ruta del digest: un recibo en la ruta de una etiqueta no respalda el
-/// contenido que hay.
+/// What is requested by digest has to be what arrives, and the receipt goes to
+/// the digest path: a receipt on a tag's path does not back the
+/// content that is there.
 #[allow(clippy::too_many_arguments)]
 fn the_request<'a>(
     context: &'a VerifiedContext,
@@ -941,10 +941,10 @@ fn the_request<'a>(
     }
 }
 
-/// El reto de un upstream que pide un token.
+/// The challenge of an upstream that asks for a token.
 ///
-/// El texto del reto es el que el upstream mando: `WWW-Authenticate`. De
-/// el se lee el realm, el servicio y el alcance.
+/// The challenge text is the one the upstream sent: `WWW-Authenticate`. From
+/// it the realm, the service and the scope are read.
 fn the_challenge(error: &resolution::ResolveError) -> Option<String> {
     match error {
         resolution::ResolveError::Fetch(FetchError::Unauthorized(challenge)) => {
@@ -974,12 +974,12 @@ async fn resolve_challenge_token(
     the_token(plane, upstream, challenge, credential.as_ref()).await
 }
 
-/// El token del realm, si el realm es el que la configuracion declara.
+/// The realm's token, if the realm is the one the configuration declares.
 ///
-/// El realm del reto lo dice el upstream, y un upstream puede decir
-/// cualquier cosa: la credencial solo se pide si el realm del reto **es**
-/// el realm declarado, con el mismo origen y el mismo camino. Un realm
-/// distinto no recibe ni la peticion.
+/// The challenge's realm is stated by the upstream, and an upstream can say
+/// anything: the credential is only requested if the challenge's realm **is**
+/// the declared realm, with the same origin and the same path. A different
+/// realm receives not even the request.
 async fn the_token(
     plane: &crate::proxy::ProxyPlane,
     upstream: &UpstreamConfig,
@@ -1007,8 +1007,8 @@ async fn the_token(
         ));
     }
 
-    // La peticion del token: al realm declarado, con la credencial del
-    // upstream y solo a el.
+    // The token request: to the declared realm, with the upstream's
+    // credential and only to it.
     let mut url = declared.realm.clone();
     {
         let mut query = url.query_pairs_mut();
@@ -1053,11 +1053,11 @@ async fn the_token(
         .ok_or_else(|| OciFailure::unavailable("the answer of the token endpoint has no token"))
 }
 
-/// El reto `Bearer` de una cabecera `WWW-Authenticate`.
+/// The `Bearer` challenge of a `WWW-Authenticate` header.
 ///
-/// El formato es `Bearer realm="...",service="...",scope="..."`. Solo se
-/// entiende el reto `Bearer`: es el que dice el protocolo de la
-/// distribucion, y un reto en otro dialecto no se adivina.
+/// The format is `Bearer realm="...",service="...",scope="..."`. Only the
+/// `Bearer` challenge is understood: it is the one the distribution protocol
+/// specifies, and a challenge in another dialect is not guessed.
 fn the_bearer_challenge(header: &str) -> Option<TheChallenge> {
     let rest = header.trim();
     let rest = rest
@@ -1086,21 +1086,21 @@ fn the_bearer_challenge(header: &str) -> Option<TheChallenge> {
     })
 }
 
-/// El reto de autenticacion de un upstream.
+/// The authentication challenge of an upstream.
 #[derive(Debug, Clone)]
 struct TheChallenge {
-    /// Donde se pide el token.
+    /// Where the token is requested.
     realm: Url,
-    /// El servicio que se pide, si el reto lo nombra.
+    /// The service that is requested, if the challenge names it.
     service: Option<String>,
-    /// El alcance que se pide, si el reto lo nombra.
+    /// The scope that is requested, if the challenge names it.
     scope: Option<String>,
 }
 
-/// El fallo de la resolucion, en el dialecto de la distribucion.
+/// The resolution failure, in the distribution dialect.
 ///
-/// Lo que el cliente ve no dice ni la URL del upstream ni el motivo exacto:
-/// el upstream es la red interna del servicio.
+/// What the client sees says neither the upstream URL nor the exact reason:
+/// the upstream is the service's internal network.
 fn the_failure(error: resolution::ResolveError) -> OciFailure {
     match error {
         resolution::ResolveError::Fetch(FetchError::NotFound) => {
@@ -1121,12 +1121,12 @@ fn the_failure(error: resolution::ResolveError) -> OciFailure {
     }
 }
 
-/// El contenido que se sirve, con las cabeceras de la distribucion.
+/// The content that is served, with the distribution headers.
 ///
-/// La compuerta de confianza va **antes** de las condiciones de lectura: un
-/// `304` o un `412` dirian que el contenido existe. Y los bytes se leen
-/// **despues** de las dos: lo que no se puede servir no se materializa, y
-/// un `304` no paga la lectura del blob.
+/// The trust gate goes **before** the read conditions: a
+/// `304` or a `412` would say the content exists. And the bytes are read
+/// **after** both: what cannot be served is not materialized, and
+/// a `304` does not pay for the blob read.
 async fn the_served(
     state: &AppState,
     context: &VerifiedContext,
@@ -1175,23 +1175,23 @@ async fn the_served(
         crate::raw::conditional::ReadOutcome::Serve => {}
     }
 
-    // Los bytes se leen aqui, y no antes: la compuerta ya ha dicho que este
-    // contenido se puede servir, y el camino condicional no ha pagado la
-    // lectura.
+    // The bytes are read here, and not earlier: the gate has already said this
+    // content can be served, and the conditional path has not paid for the
+    // read.
     let bytes = the_bytes(state, asset).await?;
 
-    // El tipo de medio lo dice el manifiesto, no el cliente: el manifiesto
-    // es la verdad de que es. Y son los mismos tipos que el registro
-    // sirve en un repositorio hosted: un proxy no sirve lo que el
-    // registro no sirve.
+    // The media type is stated by the manifest, not the client: the manifest
+    // is the truth of what it is. And they are the same types the registry
+    // serves in a hosted repository: a proxy does not serve what the
+    // registry does not serve.
     let media_type = match kind {
         TheKind::Blob => "application/octet-stream".to_string(),
         TheKind::Manifest => crate::handlers::oci::the_declared_media_type(&bytes)?,
     };
 
-    // Y la negociacion es la misma: un cliente que solo nombra tipos que
-    // este registro no sirve recibe el error de manifiesto desconocido, no
-    // una respuesta que finge ser lo que pidio.
+    // And the negotiation is the same: a client that only names types that
+    // this registry does not serve receives the unknown-manifest error, not
+    // a response that pretends to be what it asked for.
     if kind == TheKind::Manifest {
         crate::handlers::oci::the_negotiation(headers, &media_type)?;
     }
@@ -1246,13 +1246,13 @@ mod tests {
         assert!(the_bearer_challenge("Basic realm=\"registry\"").is_none());
         assert!(the_bearer_challenge("Bearer").is_none());
         assert!(the_bearer_challenge("").is_none());
-        // Un realm que no es una URL no es un realm.
+        // A realm that is not a URL is not a realm.
         assert!(the_bearer_challenge("Bearer realm=\"not a url\"").is_none());
     }
 
     #[test]
     fn the_kind_of_a_route_says_what_moves_and_what_does_not() {
-        // Un digest no se mueve; una etiqueta si.
+        // A digest does not move; a tag does.
         assert_eq!(
             TheKind::Manifest.the_prefix(),
             MANIFESTS,
