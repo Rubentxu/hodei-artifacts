@@ -1290,16 +1290,11 @@ impl Deployment {
                 self.schema_path(),
             )
             .env("RUST_LOG", "info");
-        match &self.graph {
-            // The graph profile: the production binary on `RUN_MODE=dgraph`
-            // against the tenant of this deployment.
-            Some(tenant) => {
-                for (name, value) in tenant.service_environment() {
-                    command.env(name, value);
-                }
-            }
-            None => {
-                command.env("HODEI_ROCKSDB__PATH", &self.db);
+        // The graph profile: the production binary on `RUN_MODE=dgraph`
+        // against the tenant of this deployment.
+        if let Some(tenant) = &self.graph {
+            for (name, value) in tenant.service_environment() {
+                command.env(name, value);
             }
         }
         command

@@ -101,16 +101,16 @@ MACHINE="$(iso_podman run --rm --platform linux/arm64 --entrypoint /bin/sh "$IMA
 [ "$MACHINE" = "b700" ] || fail "binary ELF e_machine is '$MACHINE', expected b700 (AArch64)"
 ok "the shipped archive loads as linux/arm64 and its binary is an AArch64 ELF"
 
-PORT="$(python3 -I -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
-mkdir -p "$WORK/data" && chmod 0777 "$WORK/data"
-iso_podman run -d --name "$CONTAINER" --platform linux/arm64 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
-  -v "$WORK/data:/app/data:rw,Z" -p "127.0.0.1:$PORT:3000" -e RUN_MODE=standalone "$IMAGE" >/dev/null
-healthy=""
-for _ in $(seq 1 240); do
-  if [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/health/live" 2>/dev/null || true)" = "200" ]; then healthy=1; break; fi
-  sleep 0.5
-done
-[ -n "$healthy" ] || { iso_podman logs "$CONTAINER" >&2 || true; fail "the aarch64 service did not answer /health/live under emulation"; }
-ok "the aarch64 service answers /health/live (qemu-user emulation)"
+# The embedded profile is retired (HSP-314 F4): without a [graph] section the
+# service refuses to start. Under emulation that refusal is the proof that the
+# AArch64 binary executes and reaches its own configuration check; a full boot
+# needs a Dgraph, which this emulated test does not carry.
+set +e
+OUT="$(iso_podman run --rm --platform linux/arm64 --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m "$IMAGE" 2>&1)"
+STATUS=$?
+set -e
+[ "$STATUS" -ne 0 ] || fail "the aarch64 service started without a [graph] section"
+printf '%s' "$OUT" | grep -q '\[graph\]' || { printf '%s\n' "$OUT" >&2; fail "the aarch64 service did not refuse with the graph-profile message"; }
+ok "the aarch64 service runs under qemu-user emulation and refuses a deployment without [graph]"
 
 echo "aarch64 release test passed in $(( $(date +%s) - STARTED ))s"
