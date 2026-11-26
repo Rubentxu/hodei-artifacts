@@ -76,12 +76,20 @@ const THE_CASES: &[(&str, &str)] = &[
         "ac3-the-count-does-not-lie",
         "without opt-in the lab report is not green and never claims a false PASS",
     ),
+    (
+        "ac2-helm-pull-through-a-multi-segment-upstream-prefix",
+        "helm pull through a single-segment Hodei repository whose upstream base already names a /v2/<repository>/ prefix",
+    ),
 ];
 
 const IMAGE_PROXY_REPO: &str = "oci-image-proxy";
 const IMAGE_GROUP_REPO: &str = "oci-image-group";
 const HELM_PROXY_REPO: &str = "helm-chart-proxy";
 const HELM_GROUP_REPO: &str = "helm-chart-group";
+
+const PREFIXED_HELM_PROXY_REPO: &str = "helm-prefixed-proxy";
+/// The repository path that the upstream base of the prefixed proxy names.
+const PREFIXED_UPSTREAM_REPO: &str = "charts-lab";
 
 const REAL_IMAGE_REPO: &str = "pause";
 const REAL_IMAGE_TAG: &str = "3.9";
@@ -1150,6 +1158,115 @@ fn ac2_helm_pull_oci_chart_through_proxy_and_group() {
                 THE_CASES[2].1,
             )
             .command("helm pull oci://... through Hodei OCI proxy & OCI group")
+            .origin(&upstream.base())
+            .sha256(&helm.tgz_digest)
+            .passed()
+        },
+    );
+}
+
+#[test]
+fn ac2_helm_pull_through_a_multi_segment_upstream_prefix() {
+    the_report();
+    run_registry_lab_case(
+        THE_CASES,
+        "ac2-helm-pull-through-a-multi-segment-upstream-prefix",
+        THE_CASES[7].1,
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let deployment = Deployment::new();
+            let clients = IsolatedClients::new(deployment.directory.path());
+            require_native_tools(&clients.podman_root, &clients.podman_runroot);
+
+            let image = build_multiarch_image_fixture();
+            let helm = build_helm_chart_fixture(&clients);
+            let upstream = LocalOciUpstream::start(Some("anon-lab-token"), None);
+            seed_local_lab(&deployment, &upstream, &image, &helm);
+            // The chart lives under the repository path that the proxy base names,
+            // not under the key of the Hodei repository.
+            upstream.publish_manifest(
+                PREFIXED_UPSTREAM_REPO,
+                "0.1.0",
+                "application/vnd.oci.image.manifest.v1+json",
+                helm.manifest_bytes.clone(),
+            );
+            deployment.seed_repositories(&[json!({
+                "key": PREFIXED_HELM_PROXY_REPO,
+                "format": "oci",
+                "proxy": {
+                    "upstream": {
+                        "id": "lab-helm-prefixed",
+                        "url": format!("{}v2/{PREFIXED_UPSTREAM_REPO}/", upstream.base()),
+                        "scopes": ["manifests/", "blobs/"],
+                        "auth": {
+                            "realm": upstream.token_realm(),
+                            "service": "lab-oci"
+                        },
+                        "redirects": { "max": 3, "cross_origin": true }
+                    },
+                    "cache": {
+                        "ttl": { "content_secs": 3600, "metadata_secs": 3600 },
+                        "negative_secs": 0
+                    }
+                }
+            })]);
+
+            let allowed = format!("127.0.0.1:{};private;http", upstream.port);
+            let service = deployment.start(&[("HODEI_PROXY__ALLOWED_HOSTS", &allowed)]);
+            let token = support::token(FIRST_ACCOUNT, "alice");
+            let registry = format!("127.0.0.1:{}", service.port);
+
+            let login = clients.helm(
+                &[
+                    "registry",
+                    "login",
+                    &registry,
+                    "-u",
+                    "alice",
+                    "--password-stdin",
+                    "--plain-http",
+                ],
+                Some(&token),
+            );
+            assert!(login.ok, "helm registry login failed: {}", login.combined());
+
+            let destination = clients.helm_work.join("pull-prefixed");
+            std::fs::create_dir_all(&destination).expect("prefixed pull dir");
+            let pulled = clients.helm(
+                &[
+                    "pull",
+                    &format!("oci://{registry}/{PREFIXED_HELM_PROXY_REPO}"),
+                    "--version",
+                    "0.1.0",
+                    "--destination",
+                    "pull-prefixed",
+                    "--plain-http",
+                ],
+                None,
+            );
+            assert!(
+                pulled.ok,
+                "helm pull through the prefixed upstream failed: {}",
+                pulled.combined()
+            );
+            let tgz = destination.join(format!("{PREFIXED_HELM_PROXY_REPO}-0.1.0.tgz"));
+            assert_eq!(
+                sha256_hex(&std::fs::read(&tgz).expect("prefixed tgz")),
+                helm.tgz_sha256,
+                "helm chart SHA256 mismatch through the prefixed upstream"
+            );
+            let doubled = format!("/v2/{PREFIXED_UPSTREAM_REPO}/v2/");
+            assert!(
+                upstream.hits().iter().all(|hit| !hit.path.contains(&doubled)),
+                "the proxy must not repeat the /v2/ prefix the upstream base already carries"
+            );
+
+            LabCase::new(
+                "ac2-helm-pull-through-a-multi-segment-upstream-prefix",
+                THE_CASES[7].1,
+            )
+            .command("helm pull oci://... through a Hodei OCI proxy over /v2/<repository>/")
             .origin(&upstream.base())
             .sha256(&helm.tgz_digest)
             .passed()
