@@ -39,6 +39,7 @@ pub mod standards;
 pub use application::capsule::{CapsuleAssembler, FreshnessThreshold};
 pub use application::delta::{SupportSnapshot, relation_deltas};
 pub use application::ingestion::{EvidenceIngestion, IngestionError, IngestionRequest};
+pub use application::metrics::{LedgerMetrics, LedgerMetricsSnapshot, MeteredLedger};
 pub use application::projection::{
     ProjectionCheckpoints, ProjectionDelivery, ProjectionError, ProjectionFrontier,
     ProjectionReceipt, ProjectionReport, project_stream, project_stream_via_frontier,

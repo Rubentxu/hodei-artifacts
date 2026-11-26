@@ -122,6 +122,7 @@ pipeline {
                         "--test test_affected_selection",
                         "--test evidence_contract",
                         "--test graph_projection",
+                        "--test ledger_metrics",
                         "--test hrn_migration",
                         "--test hrn_parity",
                         "--test module_tree",

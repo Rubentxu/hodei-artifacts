@@ -50,7 +50,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use hodei_evidence::{
     EventEnvelope, EventId, EventLedger, EventPage, ExpectedVersion, IdempotencyKey, LedgerCursor,
-    LedgerError, Producer, SchemaVersion,
+    LedgerError, MeteredLedger, Producer, SchemaVersion,
 };
 use hodei_graph_client::{
     GraphClient, GuardError, GuardKind, GuardScope, GuardStore, GuardedEffect, OperationId,
@@ -99,7 +99,21 @@ pub struct DgraphEventLedger {
     tenant: Tenant,
 }
 
+/// The Dgraph ledger with write and replay counters
+/// (see `hodei_evidence::LedgerMetrics`; observable in-process only).
+pub type MeteredDgraphEventLedger = MeteredLedger<DgraphEventLedger>;
+
 impl DgraphEventLedger {
+    /// Opens the ledger wrapped with write and replay counters. The
+    /// counters are read through `MeteredLedger::metrics().snapshot()`.
+    #[allow(clippy::result_large_err)]
+    pub async fn open_metered(
+        client: Arc<GraphClient>,
+        tenant: &str,
+    ) -> Result<MeteredDgraphEventLedger, DgraphLedgerError> {
+        Ok(MeteredLedger::new(Self::open(client, tenant).await?))
+    }
+
     /// Opens the ledger on a connected client for one tenant namespace.
     ///
     /// The setup error carries the guard's closed failure, which is a
