@@ -702,3 +702,24 @@ fn the_bundle_must_declare_the_management_action_when_publishers_are_mounted() {
     let schema = cedar_policy::Schema::from_json_str(&without).unwrap();
     assert!(check_publishers_declared(&schema).is_err());
 }
+
+#[tokio::test]
+async fn the_real_user_authenticator_rejects_a_publisher_credential() {
+    use hodei_artifacts_api::auth::JwtAuthenticator;
+    use hodei_authz::{Credentials, PrincipalAuthenticator};
+    let rig = rig().await;
+    let credential = credential(&rig).await;
+    // The worst case: the user authenticator is configured with the SAME
+    // secret, and the issuer and audience the credential carries.
+    let user = JwtAuthenticator::new(
+        SECRET.to_string(),
+        "hodei-publishers".to_string(),
+        "hodei-artifacts".to_string(),
+    );
+    assert!(
+        user.authenticate(&Credentials::bearer(&credential))
+            .await
+            .is_err(),
+        "a publisher credential is not a user credential"
+    );
+}
