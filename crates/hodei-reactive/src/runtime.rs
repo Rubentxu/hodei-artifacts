@@ -266,10 +266,10 @@ impl ReactiveRuntime {
 
     /// Delivers an event to the behaviours that PLAN.
     ///
-    /// The order is the seam: **plan, record, then touch**. The planner
+    /// The order is the seam: **plan, say, record, then touch**. The planner
     /// reads through its authorized scope and returns intents; the intents
-    /// are written down in the execution record BEFORE they are carried
-    /// through the outbox: said first, done after. The outbox is where an
+    /// are said to the outbox BEFORE the plan is recorded as Completed, and
+    /// carried through the outbox after: said first, done after. The outbox is where an
     /// intent waits between being said and being done, and the executor is
     /// the only one that touches -- its receipt says what became of the
     /// effect, and the outbox keeps the receipt.
@@ -393,20 +393,19 @@ impl ReactiveRuntime {
                         for caused in &plan.events {
                             record = record.note(format!("caused:{}", caused.id), now);
                         }
-                        record = record.finished(ExecutionOutcome::Completed, now);
-
-                        // The plan is recorded BEFORE anything touches:
-                        // said first, done after.
-                        self.store.put(record.clone()).await;
-                        report.executions.push(record);
-
-                        // EVERY intent of the plan is said FIRST: a
-                        // crash halfway leaves EVERYTHING said in
-                        // the outbox, and the recovery does not lose any
-                        // piece of the plan.
+                        // EVERY intent of the plan is said FIRST, and the
+                        // plan is closed as Completed only AFTER they are
+                        // durable. The other order loses the effect for
+                        // good: a crash between the plan record and the
+                        // outbox leaves a Completed plan with no intents,
+                        // and the repeated event answers `duplicate`.
+                        // Saying is idempotent by intent key, so replanning
+                        // after a crash never duplicates what was said.
+                        let mut unsaid = false;
                         for intent in &plan.intents {
                             if let Err(reason) = outbox.put_pending(intent).await {
-                                let record = ExecutionRecord::new(
+                                unsaid = true;
+                                let failed = ExecutionRecord::new(
                                     format!("deliver:{}", intent.identity),
                                     "runtime",
                                     current.id.clone(),
@@ -424,10 +423,19 @@ impl ReactiveRuntime {
                                     },
                                     now,
                                 );
-                                self.store.put(record.clone()).await;
-                                report.executions.push(record);
+                                self.store.put(failed.clone()).await;
+                                report.executions.push(failed);
                             }
                         }
+                        if unsaid {
+                            // The plan is NOT recorded: a repeated event
+                            // plans again and says what is missing.
+                            continue;
+                        }
+
+                        record = record.finished(ExecutionOutcome::Completed, now);
+                        self.store.put(record.clone()).await;
+                        report.executions.push(record);
 
                         // And then the intents are WORKED, one by one,
                         // each through its claim and its receipt.
