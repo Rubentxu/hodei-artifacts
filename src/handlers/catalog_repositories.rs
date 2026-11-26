@@ -273,6 +273,10 @@ pub async fn create_repository(
         return Err(CatalogRepositoryError::Forbidden);
     }
 
+    // Tags feed tag-based policies: declaring them needs its own action,
+    // which `CreateRepository` never implies (HSP-321).
+    require_tag_management(&state, &context, &hrn, &config, &correlation)?;
+
     let writer = state
         .catalog_writer
         .as_ref()
@@ -317,6 +321,53 @@ pub async fn create_repository(
     Ok((StatusCode::CREATED, Json(summary_of(&created))))
 }
 
+/// Gate every write of repository tags behind `ManageRepositoryTags`.
+///
+/// It is a no-op when the settings declare no tags. Invalid tags are a bad
+/// request; a denial or an undecidable outcome is a 403 (fail closed). Any
+/// future endpoint that changes the tags of an existing repository must call
+/// this same gate with the new configuration.
+pub(crate) fn require_tag_management(
+    state: &AppState,
+    context: &VerifiedContext,
+    hrn: &Hrn,
+    config: &RepositoryConfig,
+    correlation: &str,
+) -> Result<(), CatalogRepositoryError> {
+    if config
+        .config_settings
+        .get(crate::authorization::REPOSITORY_TAGS_SETTING)
+        .is_none()
+    {
+        return Ok(());
+    }
+    let account = context.account().as_str();
+    let scope = crate::authorization::repository_scope(account, &config.config_settings)
+        .map_err(|error| CatalogRepositoryError::BadRequest(error.to_string()))?;
+    let action = crate::actions::manage_repository_tags();
+    let outcome = state
+        .authorize_resource
+        .execute_canonical_scoped(context.clone(), action.clone(), hrn, scope)
+        .map_err(|_| CatalogRepositoryError::Internal)?;
+    if outcome.allows_access() {
+        return Ok(());
+    }
+    let result = match outcome {
+        AuthorizationOutcome::Indeterminate(_) => AuditResult::Failed,
+        _ => AuditResult::Denied,
+    };
+    record_audit(
+        state,
+        context.principal().subject().as_str(),
+        account,
+        &action.to_string(),
+        &hrn.to_string(),
+        result,
+        correlation,
+    );
+    Err(CatalogRepositoryError::Forbidden)
+}
+
 /// The repositories the principal may read.
 ///
 /// Cedar decides one by one. A denial is a decision and the repository
@@ -330,9 +381,14 @@ fn the_permitted(
     let action = crate::actions::read_repository();
     let mut permitted = Vec::with_capacity(repositories.len());
     for repository in repositories {
+        let scope = crate::authorization::repository_scope(
+            &repository.account,
+            &repository.config.config_settings,
+        )
+        .map_err(|_| CatalogRepositoryError::Internal)?;
         let outcome = state
             .authorize_resource
-            .execute_canonical(context.clone(), action.clone(), &repository.hrn)
+            .execute_canonical_scoped(context.clone(), action.clone(), &repository.hrn, scope)
             .map_err(|_| CatalogRepositoryError::Internal)?;
         match outcome {
             AuthorizationOutcome::Permit => permitted.push(repository),

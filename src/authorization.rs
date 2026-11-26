@@ -218,6 +218,59 @@ impl ResourceScope {
     }
 }
 
+/// The key under `config_settings` that holds the tags of a repository.
+pub const REPOSITORY_TAGS_SETTING: &str = "tags";
+
+/// The most tags a repository can carry.
+const MAX_REPOSITORY_TAGS: usize = 64;
+
+/// Parse the tags a repository declares in its settings.
+///
+/// An absent key is "no tags". Anything that is not an array of valid
+/// [`ResourceTag`]s is an error, never silently dropped: a dropped tag would
+/// change who a tag-based policy admits.
+pub fn tags_of_settings(
+    settings: &serde_json::Value,
+) -> Result<BTreeSet<ResourceTag>, ScopeValidationError> {
+    let Some(value) = settings.get(REPOSITORY_TAGS_SETTING) else {
+        return Ok(BTreeSet::new());
+    };
+    let items = value
+        .as_array()
+        .ok_or(ScopeValidationError("tags are not an array"))?;
+    if items.len() > MAX_REPOSITORY_TAGS {
+        return Err(ScopeValidationError("too many tags"));
+    }
+    items
+        .iter()
+        .map(|item| {
+            item.as_str()
+                .ok_or(ScopeValidationError("a tag is not a string"))
+                .and_then(ResourceTag::parse)
+        })
+        .collect()
+}
+
+/// The trusted [`ResourceScope`] of a repository (HSP-321).
+///
+/// The namespace is the owning account, lowercased with `_` mapped to `-` so
+/// it fits the namespace grammar; accounts are already isolated by the
+/// use case (`ScopeMismatch`), so two accounts that normalize to the same
+/// namespace can never reach each other. The repository itself is identified
+/// by its HRN. Tags come from the validated `config_settings.tags` section.
+/// Any failure is an error that callers must treat as `Indeterminate`.
+pub fn repository_scope(
+    account: &str,
+    settings: &serde_json::Value,
+) -> Result<ResourceScope, ScopeValidationError> {
+    let namespace = Namespace::parse(account.to_ascii_lowercase().replace('_', "-"))?;
+    let mut scope = ResourceScope::new(namespace);
+    for tag in tags_of_settings(settings)? {
+        scope = scope.with_tag(tag);
+    }
+    Ok(scope)
+}
+
 /// Intersect an identity/resource policy layer with an explicit permission
 /// boundary (HSP-150, AC#1).
 ///
@@ -519,18 +572,37 @@ impl AuthorizeResourceUseCase {
         action: ActionId,
         hrn: &CanonicalHrn,
     ) -> Result<AuthorizationOutcome, hodei_authz::ModelError> {
-        let authz_hrn = Hrn::new(
-            &hrn.partition,
-            &hrn.service,
-            &hrn.region,
-            &hrn.account_id,
-            &hrn.resource_type,
-            &hrn.resource_id,
-        )
-        .map_err(|_| hodei_authz::ModelError::InvalidResourceHrn)?;
-        let resource = ResourceRef::new(authz_hrn)?;
+        let resource = canonical_resource(hrn)?;
         Ok(self.execute(context, action, resource))
     }
+
+    /// [`Self::execute_canonical`] for a resource whose trusted
+    /// [`ResourceScope`] (namespace and tags) travels with the request, so a
+    /// policy can read `resource.namespace` and `resource.tags` (HSP-321).
+    pub fn execute_canonical_scoped(
+        &self,
+        context: VerifiedContext,
+        action: ActionId,
+        hrn: &CanonicalHrn,
+        scope: ResourceScope,
+    ) -> Result<AuthorizationOutcome, hodei_authz::ModelError> {
+        let resource = scope.apply(canonical_resource(hrn)?);
+        Ok(self.execute(context, action, resource))
+    }
+}
+
+/// Convert the canonical kernel HRN into a typed resource reference.
+fn canonical_resource(hrn: &CanonicalHrn) -> Result<ResourceRef, hodei_authz::ModelError> {
+    let authz_hrn = Hrn::new(
+        &hrn.partition,
+        &hrn.service,
+        &hrn.region,
+        &hrn.account_id,
+        &hrn.resource_type,
+        &hrn.resource_id,
+    )
+    .map_err(|_| hodei_authz::ModelError::InvalidResourceHrn)?;
+    ResourceRef::new(authz_hrn)
 }
 
 #[cfg(test)]
@@ -1383,5 +1455,27 @@ mod tests {
             AttributeValue::Set(["a".to_string(), "b".to_string()].into_iter().collect()),
         );
         assert_ne!(render_attributes(&joined), render_attributes(&split));
+    }
+
+    #[test]
+    fn repository_scope_reads_validated_tags_and_fails_closed() {
+        let scope = repository_scope("Acme_Co", &serde_json::json!({"tags": ["prod", "eu"]}))
+            .expect("a scope");
+        assert_eq!(scope.namespace().as_str(), "acme-co");
+        assert_eq!(scope.tags().len(), 2);
+        assert!(
+            repository_scope("acme", &serde_json::json!({}))
+                .unwrap()
+                .tags()
+                .is_empty()
+        );
+        for bad in [
+            serde_json::json!({"tags": "prod"}),
+            serde_json::json!({"tags": [1]}),
+            serde_json::json!({"tags": ["NOT OK"]}),
+        ] {
+            assert!(repository_scope("acme", &bad).is_err(), "{bad}");
+        }
+        assert!(repository_scope("acme-", &serde_json::json!({})).is_err());
     }
 }

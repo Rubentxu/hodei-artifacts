@@ -412,8 +412,16 @@ pub(crate) fn authorize_repository(
     action: ActionId,
     repository: &RepositoryDescriptor,
 ) -> Result<PolicyDecision, ResolutionError> {
+    // The trusted namespace and tags travel with the request so ABAC
+    // policies can read them. A scope that cannot be built is a decision
+    // that cannot be taken: fail closed, like `Indeterminate`.
+    let scope = crate::authorization::repository_scope(
+        &repository.account,
+        &repository.config.config_settings,
+    )
+    .map_err(|_| ResolutionError::Internal)?;
     let outcome = authorize_resource
-        .execute_canonical(context.clone(), action.clone(), &repository.hrn)
+        .execute_canonical_scoped(context.clone(), action.clone(), &repository.hrn, scope)
         .map_err(|_| ResolutionError::Internal)?;
     match &outcome {
         AuthorizationOutcome::Permit => Ok(PolicyDecision {

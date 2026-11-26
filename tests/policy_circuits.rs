@@ -84,7 +84,11 @@ const SHARED_SCHEMA_JSON: &str = r#"{
       "Repository": {
         "shape": {
           "type": "Record",
-          "attributes": { "owner": { "type": "String", "required": false } }
+          "attributes": {
+            "owner": { "type": "String", "required": false },
+            "namespace": { "type": "String", "required": false },
+            "tags": { "type": "Set", "element": { "type": "String" }, "required": false }
+          }
         }
       },
       "Artifact": {
@@ -102,6 +106,12 @@ const SHARED_SCHEMA_JSON: &str = r#"{
         }
       },
       "CreateRepository": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
+      "ManageRepositoryTags": {
         "appliesTo": {
           "principalTypes": ["Iam::User"],
           "resourceTypes": ["Artifacts::Repository"]
