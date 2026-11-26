@@ -991,6 +991,7 @@ describe('PackageDetailView', () => {
       </MemoryRouter>
     );
 
+    await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
     await user.click(
       await screen.findByRole('button', { name: 'Investigate' })
     );
@@ -1071,6 +1072,7 @@ describe('PackageDetailView', () => {
       </MemoryRouter>
     );
 
+    await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
     await user.click(
       await screen.findByRole('button', { name: 'Investigate' })
     );
