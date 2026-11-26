@@ -329,6 +329,18 @@ pipeline {
                         "--test hsp300_go_sumdb",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
+                // HSP-314 F4 S2b: la direccion publica del despliegue (HSP-238) y el
+                // mirror de Terraform con URLs de zip firmadas (HSP-157, HSP-304,
+                // HSP-313), sobre el perfil de grafo: `bootstrap_graph_profile` cablea
+                // `public_url` y `signing` con la misma funcion que el perfil embebido.
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp238_public_url",
+                        "--test hsp157_terraform_mirror",
+                        "--test hsp304_terraform_init",
+                        "--test hsp313_signed_archive_url",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
                 // Registry lab, upstreams reales (red externa), OCI proxy/group, raw,
                 // guias nativas, auditoria de formatos y el informe de conformidad
                 // cruda (`raw_conformity_uat`).
@@ -551,30 +563,13 @@ pipeline {
                         "--test hsp107_proxy_cache_e2e",
                         "--test hsp108_group_e2e",
                         "--test hsp111_npm_e2e",
-                        // La direccion publica del despliegue (HSP-238): lo
-                        // que el registro anuncia lo decide la
-                        // configuracion y no la peticion.
-                        "--test hsp238_public_url",
                         "--test hsp143_namespaces_e2e",
                         "--test hsp121_go_e2e",
-                        // Los formatos adicionales que siguen en el motor embebido:
-                        // mirror de Terraform (brecha medida: el bootstrap del
-                        // perfil de grafo no cablea `signing` ni `public_url`) y
-                        // Hugging Face (siembra HF sin portar).
-                        "--test hsp157_terraform_mirror",
                         "--test hsp297_format_prefixes",
                         "--test hsp297_trusted_listings",
+                        // Hugging Face: siembra HF sin portar.
                         "--test hsp218_hf_client",
-                        // Residuales de la pila de formatos (HSP-304): terraform
-                        // init real contra el mirror sobre https verificado
-                        // (NOT_RUN visible si faltan terraform/socat/openssl) y
-                        // la matriz 401/403/cuenta ajena/413 de las escrituras.
-                        "--test hsp304_terraform_init",
                         "--test hsp304_format_access",
-                        // URLs de zip firmadas del mirror de providers: ligadas a
-                        // ruta, repositorio, cuenta y expiracion; rotacion; falla
-                        // cerrado sin clave; sin secretos en el log.
-                        "--test hsp313_signed_archive_url",
                         "--test hsp124_quota_e2e",
                         "--test hsp137_ciclo_cve_e2e",
                         "--test hsp138_s3_arranque_e2e",

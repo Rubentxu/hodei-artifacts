@@ -441,35 +441,9 @@ async fn bootstrap_embedded_profile(
     // despliegue que no dice cuotas obtiene un libro sin limites, que
     // admite todo y es exactamente lo que dijo.
     let app_state = app_state.with_quota(config.quota.the_limits());
-    // La direccion publica del despliegue la dice la configuracion, y no
-    // la peticion: un `Host` hostil o un `X-Forwarded-Proto` hostil que
-    // cambien la URL que el registro devuelve es una URL que el cliente
-    // elige. La configuracion que no se puede entender no arranca.
-    let app_state = app_state.with_public_url(
-        config
-            .public_url
-            .the_public_url()
-            .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
-    );
-    // The ring that signs the archive URLs of the provider mirror. A key that
-    // is named and cannot be read stops the boot; no key at all is allowed
-    // and is announced, because the mirror then refuses to issue archive
-    // URLs and a Terraform client cannot install from it.
-    let signed_urls = config
-        .signing
-        .the_ring()
-        .map_err(|error| BootstrapError::Initialization(format!("signing keys: {error}")))?;
-    if signed_urls.is_configured() {
-        info!(
-            ttl_secs = signed_urls.ttl_secs(),
-            "the signed URLs of the provider mirror are enabled"
-        );
-    } else {
-        warn!(
-            "no signing key is configured: the Terraform provider mirror will not issue archive URLs and its version documents answer 503; add a key to [signing]"
-        );
-    }
-    let app_state = app_state.with_signed_urls(signed_urls);
+    // The public address and the signed-URL ring: one wiring shared with the
+    // graph profile.
+    let app_state = crate::public_url_wiring::wire_public_url_and_signing(app_state, config)?;
     if config.quota.max_stored_bytes_per_account.is_some()
         || config.quota.max_concurrent_uploads_per_account.is_some()
     {
@@ -684,6 +658,7 @@ async fn bootstrap_graph_profile(
     // answers with its default closed behavior and no local engine is
     // opened to give it an answer.
     let app_state = app_state.with_investigation_limits(config.investigation.clone());
+    let app_state = crate::public_url_wiring::wire_public_url_and_signing(app_state, config)?;
     let app_state = crate::risk_facts::wire_graph_risk_facts(app_state, config, &graph).await?;
     let app_state = crate::evidence_dgraph::wire_graph_evidence_reader(app_state, &graph).await?;
     let app_state = crate::reactor_dgraph::wire_graph_reactor(app_state, config, &graph).await?;
