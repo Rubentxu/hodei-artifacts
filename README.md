@@ -104,7 +104,7 @@ cargo run --bin hodei-artifacts-api
 ```
 
 - **Local CI:** [`pipeline.kts`](pipeline.kts) (PipelineK) and [`docs/ci-strategy.md`](docs/ci-strategy.md)
-- **Testing organization:** [`docs/testing-organization.md`](docs/testing-organization.md)
+- **Testing organization (superseded, historical):** [`docs/testing-organization.md`](docs/testing-organization.md)
 - **UAT contracts:** [`uat/README.md`](uat/README.md), [`uat/UAT-FORMATS.md`](uat/UAT-FORMATS.md)
 
 ### Workspace Architecture

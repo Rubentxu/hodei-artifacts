@@ -126,8 +126,8 @@ artefactos OCI con control de acceso, no multi-formato-- y no lo segundo.
 | Documento | Clasificación |
 | --- | --- |
 | Este documento | vigente |
-| `docs/security/*.md` | vigente: describe el comportamiento comprobado |
-| `docs/ci-strategy.md` | vigente |
+| `docs/security/*.md` | vigente: describe el comportamiento comprobado, salvo `repository-durable.md`, `superado` en HSP-314 (motor embebido retirado) |
+| `docs/ci-strategy.md` | vigente: reescrito el 2026-11-26 (HSP-317) para la CI local con PipelineK |
 | `docs/cedar-policies-manual.md` | vigente |
 | `uat/UAT-OCI.md` | vigente: el contrato de compatibilidad OCI --con qué clientes y con qué versión se ha medido, y qué categorías se declaran-- |
 | `docs/prd/` (10 documentos) | `deprecada`: el PRD v3 lo sustituye |
@@ -136,7 +136,7 @@ artefactos OCI con control de acceso, no multi-formato-- y no lo segundo.
 | `docs/architecture.md` | `legacy` |
 | `docs/historias-usuario.md`, `docs/DESIGN_REST_API_AND_PLAYGROUND.md`, `docs/PLAYGROUND_EXAMPLES.md` | `referencia` |
 | `docs/api/`, `docs/openapi/`, `docs/postman/` | `referencia`: artefactos generados |
-| `docs/testing-organization.md` | `deprecada`: describe una organización de pruebas que ya no es la de este repositorio |
+| `docs/testing-organization.md` | `deprecada` (marcada SUPERADO en HSP-317, 2026-11-26): describe una organización de pruebas que ya no es la de este repositorio |
 
 ## 5. Costuras del tiempo y de la identidad
 
@@ -198,6 +198,10 @@ canje correcto, y la medida a escala queda para la UAT de M1 en vez de
 darse por supuesta.
 
 ### Lo que la medida a escala cambio (SPIKE-012)
+
+> **HISTÓRICO (HSP-314, 2026-11-26).** Medido sobre el motor embebido retirado en HSP-314;
+> no es reproducible en `main` (solo Dgraph). Se conserva como registro de la decisión, no como
+> medición vigente del producto.
 
 La medida de la escala de referencia (HSP-70) **midio** ese canje y dio el
 numero. Sobre la carga de referencia, con el grafo escrito sin indice:
@@ -878,6 +882,11 @@ estado **dice que analizador y que version** lo produjo, porque una
 alcanzabilidad que no nombra su version no se puede reproducir ni discutir.
 
 ## 10-nonies. El SPIKE-003: la proyeccion analitica NO se anade (M5)
+
+> **HISTÓRICO (HSP-314, 2026-11-26).** Las cifras de esta sección se midieron sobre el motor
+> embebido retirado en HSP-314 y no son reproducibles en `main` (solo Dgraph). La decisión
+> (no añadir proyección analítica) se conserva como historia; no hay medición equivalente sobre
+> Dgraph.
 
 ### Que se midio, y con que datos
 
