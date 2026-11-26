@@ -26,12 +26,10 @@
 //! Superficies deliberadamente **no cableadas** en este perfil (bloqueadores
 //! registrados en `target/uat/hsp209/evidencia.md`, no degradaciones):
 //!
-//! - Persistencia del esquema Cedar: no existe `SchemaStoragePort` sobre
-//!   Dgraph. El proveedor del perfil ([`GraphSchemaStorage]) responde con el
-//!   error tipado del puerto inexistente; `/schemas/load` queda vacío y
-//!   `/policies/validate` sin esquema (el modo NoSchema en que el propio IT
-//!   de IAM sobre el grafo evalúa). Un bundle de autorización declarado no
-//!   puede persistirse sobre el grafo: el arranque lo dice.
+//! - Persistencia del esquema Cedar: la implementa `DgraphSchemaStore`
+//!   (HSP-314 P2), un tenant del mismo grafo. El esquema del bundle y el
+//!   del registro IAM sobreviven al reinicio y las políticas se validan
+//!   contra él.
 //! - Registro de repositorios legacy (`/repositories`, superficie
 //!   `RepositoryReader/Writer`): sin implementación sobre Dgraph. El
 //!   repositorio del catálogo (`/catalog/repositories`) sí está cableado,
@@ -51,9 +49,8 @@ use std::sync::Arc;
 
 use hodei_catalog::AllowAllAuthorizer;
 use hodei_graph_client::{GraphClient, Tenant};
+use hodei_iam::infrastructure::DgraphSchemaStore;
 use hodei_iam::infrastructure::dgraph::DgraphIamAdapter;
-use hodei_policies::build_schema::error::BuildSchemaError;
-use hodei_policies::build_schema::ports::SchemaStoragePort;
 use hodei_trust_policy_storage::{DgraphDecisionStore, DgraphTrustStore};
 
 use crate::app_state::AppState;
@@ -347,54 +344,17 @@ pub async fn assemble_graph_profile(
 
 /// El grafo del perfil también porta las políticas IAM: la raíz de
 /// composición entra con el adapter del grafo como proveedor de los seis
-/// puertos de política y con el proveedor de esquema del perfil.
-pub fn composition_root_for_graph(iam: Arc<DgraphIamAdapter>) -> CompositionRoot {
-    CompositionRoot::production_with_authoritative_schema(Arc::new(GraphSchemaStorage), iam, None)
-}
-
-/// El proveedor de esquema del perfil de grafo: todavía no hay uno sobre
-/// Dgraph. Se declara vacío y de escritura rechazada para que la superficie
-/// de esquema responda con el error claro del puerto no implementado en vez
-/// de abrir un motor embebido a escondidas.
-///
-/// Es el registro vivo del bloqueador "SchemaStoragePort sin implementación
-/// Dgraph" (evidencia HSP-209): el perfil no finge tener persistencia de
-/// esquema Cedar sobre el grafo, la declara inexistente. Las evaluaciones
-/// de política corren en el modo NoSchema en el que el propio IT del IAM
-/// sobre el grafo las verifica.
-#[derive(Clone)]
-pub struct GraphSchemaStorage;
-
-#[async_trait::async_trait]
-impl SchemaStoragePort for GraphSchemaStorage {
-    async fn save_schema(
-        &self,
-        _schema_json: String,
-        _version: Option<String>,
-    ) -> Result<String, BuildSchemaError> {
-        Err(BuildSchemaError::SchemaStorageError(
-            "the graph profile has no Cedar schema store yet (HSP-209 blocker: SchemaStoragePort is not implemented over Dgraph)".to_string(),
-        ))
-    }
-
-    async fn get_latest_schema(&self) -> Result<Option<String>, BuildSchemaError> {
-        Ok(None)
-    }
-
-    async fn get_schema_by_version(
-        &self,
-        _version: &str,
-    ) -> Result<Option<String>, BuildSchemaError> {
-        Ok(None)
-    }
-
-    async fn delete_schema(&self, _schema_id: &str) -> Result<bool, BuildSchemaError> {
-        Ok(false)
-    }
-
-    async fn list_schema_versions(&self) -> Result<Vec<String>, BuildSchemaError> {
-        Ok(Vec::new())
-    }
+/// puertos de política y con el almacén de esquema Cedar sobre Dgraph.
+pub fn composition_root_for_graph(
+    iam: Arc<DgraphIamAdapter>,
+    schema_store: Arc<DgraphSchemaStore>,
+    authoritative_schema_id: Option<String>,
+) -> CompositionRoot {
+    CompositionRoot::production_with_authoritative_schema(
+        schema_store,
+        iam,
+        authoritative_schema_id,
+    )
 }
 
 /// Rechazo explícito del intento de degradar: un despliegue con `[graph]`
@@ -442,19 +402,5 @@ mod tests {
         a_graph_database()
             .validate_without_engine()
             .expect("a profile that does not claim the embedded engine is valid");
-    }
-
-    #[tokio::test]
-    async fn the_graph_schema_storage_refuses_to_write() {
-        // El registro vivo del bloqueador: escribir esquema sobre el perfil
-        // de grafo falla con el nombre del bloqueador, no degrada.
-        let error = GraphSchemaStorage
-            .save_schema("{}".to_string(), None)
-            .await
-            .expect_err("the graph profile has no schema store");
-        assert!(
-            error.to_string().contains("HSP-209 blocker"),
-            "the error names the blocker: {error}"
-        );
     }
 }
