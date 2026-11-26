@@ -69,10 +69,14 @@ test.describe('the console of the catalog', () => {
     // is measured is that the format is offered.
     await expect(page.getByRole('option', { name: 'Raw' })).toHaveCount(1);
     await expect(page.getByRole('option', { name: 'OCI' })).toHaveCount(1);
-    await expect(page.getByRole('option', { name: 'Cargo' })).toHaveCount(0);
+    // Helm is declared by the release but no surface serves it yet.
+    await expect(page.getByRole('option', { name: 'Helm' })).toHaveCount(0);
 
-    await page.getByRole('combobox').selectOption('oci');
+    // Cargo is served in a single modality, OCI in three.
+    await page.getByRole('combobox').selectOption('cargo');
     await expect(page.getByRole('radio')).toHaveCount(1);
+    await page.getByRole('combobox').selectOption('oci');
+    await expect(page.getByRole('radio')).toHaveCount(3);
   });
 
   test('finds the asset of the catalog', async ({ page }) => {
@@ -92,8 +96,13 @@ test.describe('the console of the catalog', () => {
       page.getByText(`sha256:${theDigest.split(':')[1]}`).first()
     ).toBeVisible();
     await expect(page.getByText('Identity')).toBeVisible();
-    await expect(page.getByText('Trust profile')).toBeVisible();
     await expect(page.getByText('Trusted', { exact: true })).toBeVisible();
+
+    // The trust of the distribution lives in its own tab.
+    await page.getByRole('tab', { name: 'Trust' }).click();
+    await expect(
+      page.getByRole('heading', { name: 'Distribution trust' })
+    ).toBeVisible();
   });
 
   test('asks for a reason before it revokes a concession', async ({
