@@ -88,6 +88,11 @@ fn config_from_env() -> Option<GraphClientConfig> {
 
 async fn open_client() -> Option<Arc<GraphClient>> {
     let config = config_from_env().or_else(|| {
+        // With HODEI_REQUIRE_IT=1 a missing harness is a failure, not a skip.
+        assert!(
+            std::env::var("HODEI_REQUIRE_IT").as_deref() != Ok("1"),
+            "HODEI_REQUIRE_IT=1 but HODEI_GRAPH_IT_ENDPOINT is not set"
+        );
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
         None
     })?;

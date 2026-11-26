@@ -57,6 +57,9 @@ const ALLOWED_ALGORITHMS: [Algorithm; 2] = [Algorithm::RS256, Algorithm::ES256];
 /// (a race may overshoot by a few); the exchange reads them all and refuses
 /// to decide on a registry that returns far more, instead of silently
 /// ignoring records.
+/// The most JWKS locations kept in memory at once.
+const MAX_JWKS_SLOTS: usize = 256;
+
 pub const MAX_PUBLISHERS_PER_REPOSITORY: usize = 16;
 /// The largest ID token the exchange reads.
 const MAX_TOKEN_BYTES: usize = 8 * 1024;
@@ -202,7 +205,8 @@ impl PublisherSpec {
         if !url_ok(&self.issuer) {
             return Err("the issuer is not a valid url");
         }
-        if !url_ok(&self.jwks_url) {
+        if !url_ok(&self.jwks_url) || Url::parse(&self.jwks_url).is_ok_and(|u| u.query().is_some())
+        {
             return Err("the jwks_url is not a valid url");
         }
         let text_ok = |text: &str| {
@@ -372,7 +376,7 @@ pub struct PublishersService {
     fetcher: ProxyFetcher,
     signer: CredentialSigner,
     settings: PublisherSettings,
-    jwks: Mutex<HashMap<String, Arc<JwksSlot>>>,
+    jwks: Mutex<HashMap<String, (Arc<JwksSlot>, Instant)>>,
     bucket: Mutex<Bucket>,
     /// `(issuer, jti)` already exchanged, until the token's own expiry.
     exchanged: Mutex<HashMap<String, u64>>,
@@ -482,8 +486,8 @@ impl PublishersService {
                 .and_then(|v| v.as_str())
                 .filter(|v| !v.is_empty() && v.len() <= 256)
                 .ok_or(ExchangeError::Denied("jti_missing"))?;
-            let exp = claims.get("exp").and_then(|v| v.as_u64()).unwrap_or(0);
-            self.mark_exchanged(&issuer, jti, exp)?;
+            let iat = claims.get("iat").and_then(|v| v.as_u64()).unwrap_or(0);
+            self.mark_exchanged(&issuer, jti, iat)?;
             let subject = candidate.subject.as_str();
             return self.mint(candidate, subject);
         }
@@ -630,11 +634,9 @@ impl PublishersService {
             .cache
             .lock()
             .map_err(|_| ExchangeError::Unavailable("jwks_cache"))?;
-        if let Some(failed) = cache.failed
-            && failed.elapsed() < self.settings.jwks_refetch_cooldown
-        {
-            return Err(ExchangeError::Unavailable("jwks_unavailable"));
-        }
+        // A fresh set that holds the requested key is served even while the
+        // negative cache is active: only going to the network is throttled.
+        let mut refetch_throttled = false;
         if let (Some(set), Some(fetched)) = (&cache.set, cache.fetched) {
             let age = fetched.elapsed();
             if age < self.settings.jwks_ttl {
@@ -643,24 +645,45 @@ impl PublishersService {
                 }
                 // An unknown kid on a fresh set: one refetch per cooldown
                 // (the issuer may have rotated), otherwise no.
-                if age < self.settings.jwks_refetch_cooldown {
-                    return Err(ExchangeError::Denied("kid_unknown"));
-                }
+                refetch_throttled = age < self.settings.jwks_refetch_cooldown;
             }
+        }
+        if let Some(failed) = cache.failed
+            && failed.elapsed() < self.settings.jwks_refetch_cooldown
+        {
+            return Err(ExchangeError::Unavailable("jwks_unavailable"));
+        }
+        if refetch_throttled {
+            return Err(ExchangeError::Denied("kid_unknown"));
         }
         Ok(None)
     }
 
+    /// The slot of a url. The map is bounded: when it is full the least
+    /// recently used slot (preferring one nobody is using) is evicted, so a
+    /// flood of distinct urls can only cost refetches, never block anyone.
     fn slot(&self, url: &str) -> Result<Arc<JwksSlot>, ExchangeError> {
         let mut slots = self
             .jwks
             .lock()
             .map_err(|_| ExchangeError::Unavailable("jwks_cache"))?;
-        if slots.len() >= 256 && !slots.contains_key(url) {
-            // Urls come from the registry, so this is a bound, not a policy.
-            return Err(ExchangeError::Unavailable("jwks_cache_full"));
+        let now = Instant::now();
+        if let Some((slot, used)) = slots.get_mut(url) {
+            *used = now;
+            return Ok(slot.clone());
         }
-        Ok(slots.entry(url.to_string()).or_default().clone())
+        if slots.len() >= MAX_JWKS_SLOTS {
+            let victim = slots
+                .iter()
+                .min_by_key(|(_, (slot, used))| (Arc::strong_count(slot) > 1, *used))
+                .map(|(key, _)| key.clone());
+            if let Some(victim) = victim {
+                slots.remove(&victim);
+            }
+        }
+        let slot = Arc::new(JwksSlot::default());
+        slots.insert(url.to_string(), (slot.clone(), now));
+        Ok(slot)
     }
 
     /// Charge the service-wide token bucket.
@@ -682,7 +705,7 @@ impl PublishersService {
         Ok(())
     }
 
-    fn mark_exchanged(&self, issuer: &str, jti: &str, exp: u64) -> Result<(), ExchangeError> {
+    fn mark_exchanged(&self, issuer: &str, jti: &str, iat: u64) -> Result<(), ExchangeError> {
         let mut seen = self
             .exchanged
             .lock()
@@ -692,13 +715,16 @@ impl PublishersService {
         if seen.contains_key(&key) {
             return Err(ExchangeError::Denied("replayed"));
         }
-        // Entries live until the token could no longer pass its own `exp`.
-        let horizon = self.settings.leeway.as_secs();
-        seen.retain(|_, until| until.saturating_add(horizon) >= now);
+        // An entry lives until the token can no longer pass the freshness
+        // window on `iat` (never until its own `exp`, which a token may set
+        // to the far future to pin the cache).
+        seen.retain(|_, until| *until >= now);
         if seen.len() >= self.settings.replay_capacity {
             return Err(ExchangeError::Unavailable("replay_cache_full"));
         }
-        let until = exp.max(now.saturating_add(self.settings.max_token_age.as_secs()));
+        let until = iat
+            .saturating_add(self.settings.max_token_age.as_secs())
+            .saturating_add(self.settings.leeway.as_secs());
         seen.insert(key, until);
         Ok(())
     }

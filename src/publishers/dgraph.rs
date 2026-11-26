@@ -30,7 +30,8 @@ type HodeiTrustedPublisher {
 }
 ";
 
-/// The most records one repository can hold: the exchange only reads a few.
+/// The most records one repository can hold (enforced on write by the handler);
+/// reading more than this is an error, never a silent truncation.
 const MAX_LIST: usize = 100;
 
 const MAX_ATTEMPTS: usize = 12;

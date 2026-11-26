@@ -677,6 +677,9 @@ fn a_record_cannot_be_written_with_wildcards_reserved_claims_or_bad_urls() {
     spec.jwks_url = "ftp://x/jwks".into();
     assert!(spec.validate("x").is_err());
     let mut spec = good();
+    spec.jwks_url = "https://token.actions.example/jwks?n=1".into();
+    assert!(spec.validate("x").is_err());
+    let mut spec = good();
     spec.issuer = "https://user:pw@x.example".into();
     assert!(spec.validate("x").is_err());
     assert!(
@@ -1003,4 +1006,75 @@ async fn a_token_with_a_crit_header_is_refused_before_anything_else() {
     );
     denied(exchange(&rig, &token).await, "crit_header");
     assert_eq!(rig.issuer.hits(), 0);
+}
+
+#[tokio::test]
+async fn more_than_256_distinct_jwks_urls_never_block_a_new_issuer() {
+    let rig = rig_with(PublisherSettings {
+        exchange_burst: 10_000,
+        exchange_rate_per_sec: 10_000,
+        ..PublisherSettings::default()
+    })
+    .await;
+    for n in 0..300 {
+        let mut extra = record(&rig.issuer);
+        extra.repository = format!("repo-{n}");
+        extra.jwks_url = format!("{}/jwks?n={n}", rig.issuer.url());
+        rig.registry.put(&extra).await.unwrap();
+        rig.service
+            .exchange(
+                &sign(&claims(&rig.issuer.url())),
+                "acme",
+                &format!("repo-{n}"),
+            )
+            .await
+            .expect("every url is served, none is refused for fullness");
+    }
+    // The original issuer (its slot may have been evicted) still works.
+    exchange(&rig, &sign(&claims(&rig.issuer.url())))
+        .await
+        .expect("a new or evicted issuer is not blocked");
+}
+
+#[tokio::test]
+async fn a_known_kid_still_verifies_while_an_unknown_kid_refetch_failed() {
+    let rig = rig_with(PublisherSettings {
+        jwks_refetch_cooldown: Duration::from_millis(300),
+        ..PublisherSettings::default()
+    })
+    .await;
+    exchange(&rig, &sign(&claims(&rig.issuer.url())))
+        .await
+        .expect("warm cache");
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    rig.issuer.serve(500, "boom".into());
+    // An invented kid forces a refetch, which fails and arms the negative cache.
+    let ghost = sign_with("issuer-key-1.json", "ghost", &claims(&rig.issuer.url()));
+    assert!(exchange(&rig, &ghost).await.is_err());
+    // A known kid is served from the fresh set regardless.
+    exchange(&rig, &sign(&claims(&rig.issuer.url())))
+        .await
+        .expect("a known kid is not locked out by an unknown one");
+}
+
+#[tokio::test]
+async fn a_far_future_exp_does_not_pin_the_replay_cache() {
+    let rig = rig_with(PublisherSettings {
+        max_token_age: Duration::from_secs(1),
+        leeway: Duration::ZERO,
+        replay_capacity: 2,
+        ..PublisherSettings::default()
+    })
+    .await;
+    for _ in 0..2 {
+        let mut body = claims(&rig.issuer.url());
+        body["exp"] = json!(u64::MAX);
+        exchange(&rig, &sign(&body)).await.expect("fits");
+    }
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    let mut body = claims(&rig.issuer.url());
+    body["exp"] = json!(u64::MAX);
+    exchange(&rig, &sign(&body))
+        .await
+        .expect("entries expire with the freshness window, not with exp");
 }
