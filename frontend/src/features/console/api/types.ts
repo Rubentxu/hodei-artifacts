@@ -7,29 +7,15 @@
  * nobody can reproduce.
  */
 
-export type RepositoryFormat =
-  | 'raw'
-  | 'oci'
-  | 'maven2'
-  | 'npm'
-  | 'pypi'
-  | 'cargo'
-  | 'nuget'
-  | 'go'
-  | 'helm'
-  | 'apt'
-  | 'rpm';
+/**
+ * A repository format identifier on the wire.
+ *
+ * The deployment capabilities endpoint is the source of truth for which
+ * formats are served; the frontend does not maintain a closed allowlist.
+ */
+export type RepositoryFormat = string;
 
 export type RepositoryMode = 'hosted' | 'proxy' | 'group';
-
-/**
- * The formats that the service serves, and the ones it can create.
- *
- * The domain knows more formats than the service serves, and the ones it
- * does not serve cannot be declared: a repository of one of them would be
- * a repository that nothing could serve.
- */
-export type ServedFormat = 'raw' | 'oci' | 'maven2' | 'npm' | 'pypi';
 
 export type ServeChannel = 'open' | 'trusted';
 
@@ -58,8 +44,8 @@ export interface RepositoryList {
 
 /** What a format admits. */
 export interface FormatCapability {
-  name: ServedFormat;
-  modes: RepositoryMode[];
+  name: RepositoryFormat;
+  modes: string[];
 }
 
 /** What can be created. */
@@ -205,8 +191,8 @@ export interface PromotionResult {
 /** The body of a creation of a repository. */
 export interface CreateRepositoryBody {
   name: string;
-  format: ServedFormat;
-  mode: RepositoryMode;
+  format: RepositoryFormat;
+  mode: string;
   region?: string;
   settings?: Record<string, unknown>;
 }

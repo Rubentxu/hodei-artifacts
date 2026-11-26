@@ -10,7 +10,7 @@
 import { http, HttpResponse } from 'msw';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/shared/test/mocks/server';
 import { render } from '@/shared/test/test-utils';
@@ -29,18 +29,20 @@ const theCapabilities = {
 describe('RepositoryCreateDialog', () => {
   beforeEach(() => {
     server.use(
-      http.get('/api/v1/capabilities', () =>
-        HttpResponse.json(theCapabilities)
-      )
+      http.get('/api/v1/capabilities', () => HttpResponse.json(theCapabilities))
     );
   });
 
   it('offers only the formats that the service serves', async () => {
     render(<RepositoryCreateDialog open onClose={() => {}} />);
 
-    expect(await screen.findByRole('option', { name: 'Raw' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('option', { name: 'Raw' })
+    ).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'OCI' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Cargo' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('option', { name: 'Cargo' })
+    ).not.toBeInTheDocument();
   });
 
   it('offers the modalities of the format that was chosen', async () => {
@@ -97,7 +99,10 @@ describe('RepositoryCreateDialog', () => {
     await user.selectOptions(screen.getByRole('combobox'), 'raw');
     await user.click(screen.getByRole('radio', { name: /Proxy/ }));
     await user.type(await screen.findByLabelText('Name'), 'MyLibs');
-    await user.type(screen.getByLabelText('Upstream'), 'https://registry.example.org/');
+    await user.type(
+      screen.getByLabelText('Upstream'),
+      'https://registry.example.org/'
+    );
     await user.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() =>
@@ -174,5 +179,138 @@ describe('RepositoryCreateDialog', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The request was not understood'
     );
+  });
+
+  it('offers a newly supported format from capabilities without a frontend allowlist', async () => {
+    const user = userEvent.setup();
+    let created: unknown = null;
+    server.use(
+      http.get('/api/v1/capabilities', () =>
+        HttpResponse.json({
+          formats: [{ name: 'terraform', modes: ['hosted'] }],
+        })
+      ),
+      http.post('/api/v1/catalog/repositories', async ({ request }) => {
+        created = await request.json();
+        return HttpResponse.json(
+          {
+            name: 'infra-modules',
+            format: 'terraform',
+            mode: 'hosted',
+            channel: 'open',
+          },
+          { status: 201 }
+        );
+      })
+    );
+
+    render(<RepositoryCreateDialog open onClose={() => {}} />);
+
+    expect(
+      await screen.findByRole('option', { name: 'terraform' })
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Name'), 'infra-modules');
+    await user.selectOptions(screen.getByRole('combobox'), 'terraform');
+    await user.click(screen.getByRole('radio', { name: /Hosted/ }));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    await waitFor(() =>
+      expect(created).toEqual({
+        name: 'infra-modules',
+        format: 'terraform',
+        mode: 'hosted',
+        settings: {},
+      })
+    );
+  });
+
+  it('fails closed without fallback options when capabilities fail to load', async () => {
+    server.use(
+      http.get('/api/v1/capabilities', () =>
+        HttpResponse.json(
+          {
+            error: 'unavailable',
+            message: 'the capabilities are not available',
+          },
+          { status: 503 }
+        )
+      )
+    );
+
+    render(<RepositoryCreateDialog open onClose={() => {}} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The service cannot answer right now'
+    );
+    expect(
+      screen.getByText(/Repository creation is unavailable/)
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+  });
+
+  it('fails closed when capabilities report no formats', async () => {
+    server.use(
+      http.get('/api/v1/capabilities', () => HttpResponse.json({ formats: [] }))
+    );
+
+    render(<RepositoryCreateDialog open onClose={() => {}} />);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'No repository formats are available in this deployment.'
+    );
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create' })).toBeDisabled();
+  });
+
+  it('shows permission denial on 403 and does not close', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    server.use(
+      http.post('/api/v1/catalog/repositories', () =>
+        HttpResponse.json(
+          { error: 'permission', message: 'denied by policy' },
+          { status: 403 }
+        )
+      )
+    );
+
+    render(<RepositoryCreateDialog open onClose={onClose} />);
+
+    await user.type(await screen.findByLabelText('Name'), 'restricted');
+    await user.selectOptions(screen.getByRole('combobox'), 'oci');
+    await user.click(screen.getByRole('radio', { name: /Hosted/ }));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'You are not allowed to do this'
+    );
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('shows conflict on 409 and does not close', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    server.use(
+      http.post('/api/v1/catalog/repositories', () =>
+        HttpResponse.json(
+          { error: 'conflict', message: 'repository already exists' },
+          { status: 409 }
+        )
+      )
+    );
+
+    render(<RepositoryCreateDialog open onClose={onClose} />);
+
+    await user.type(await screen.findByLabelText('Name'), 'existing-repo');
+    await user.selectOptions(screen.getByRole('combobox'), 'npm');
+    await user.click(screen.getByRole('radio', { name: /Hosted/ }));
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'It already exists'
+    );
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

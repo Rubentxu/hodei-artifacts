@@ -120,12 +120,13 @@ export const useRepositories = () => {
  * It is asked once and kept: the answer is a fact of the deployment, and
  * it does not change while the console is open.
  */
-export const useCapabilities = () => {
+export const useCapabilities = (enabled = true) => {
   const session = useConsoleSessionGuard();
   return useQuery({
     queryKey: KEYS.capabilities(session),
     queryFn: ({ signal }) => api.capabilities(signal),
     staleTime: 300_000,
+    enabled,
   });
 };
 
