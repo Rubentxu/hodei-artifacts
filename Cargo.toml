@@ -723,7 +723,6 @@ required-features = ["legacy"]
 [[test]]
 name = "bootstrap_integration"
 path = "tests/bootstrap_integration.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "capsule_read"
@@ -766,11 +765,14 @@ path = "tests/hsp292_readiness_timeout.rs"
 [[test]]
 name = "http_contract"
 path = "tests/http_contract.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "iam_audit"
 path = "tests/iam_audit.rs"
+
+[[test]]
+name = "hsp314_p2_graph_schema"
+path = "tests/hsp314_p2_graph_schema.rs"
 
 [[test]]
 name = "iam_scope"
@@ -783,12 +785,10 @@ path = "tests/playground_isolation.rs"
 [[test]]
 name = "policy_circuits"
 path = "tests/policy_circuits.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "production_auth"
 path = "tests/production_auth.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "repository_create"

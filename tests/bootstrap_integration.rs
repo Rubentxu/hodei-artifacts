@@ -35,12 +35,15 @@
 //!   vacuously true: a schema that is persisted but never applied reports
 //!   every policy as valid.
 //!
-//! Every test owns a throwaway RocksDB directory, so no state is shared and
-//! no port is bound.
+//! Every test owns its own ACL namespace of a real Dgraph, so no state is
+//! shared and no port is bound.
 
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap};
 use hodei_policies::load_schema::dto::LoadSchemaCommand;
-use tempfile::TempDir;
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// The schema version used by the registering tests.
 const SCHEMA_VERSION: &str = "v1.0.0";
@@ -53,21 +56,14 @@ const POLICY_OVER_DECLARED_TYPES: &str =
 const POLICY_OVER_UNDECLARED_TYPE: &str =
     r#"permit(principal == Nope::Ghost::"alice", action == Action::"CreateUser", resource);"#;
 
-/// Builds an application configuration backed by a throwaway RocksDB directory.
+/// Builds an application configuration on a throwaway Dgraph namespace.
 ///
-/// The returned `TempDir` must outlive the application state: dropping it
-/// first would delete the database directory while the embedded engine still
-/// holds it open.
-fn test_config() -> (AppConfig, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
-
+/// The returned `Workdir` must outlive the application state: it owns the
+/// namespace the application runs on.
+fn test_config() -> (AppConfig, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
-
+    tmp.apply(&mut config);
     (config, tmp)
 }
 
@@ -180,9 +176,8 @@ async fn b4_bootstrapping_without_registration_leaves_no_schema_behind() {
 /// Bootstrapping twice against the same database must succeed
 ///
 /// The schema is persisted under its version, so persisting it has to be
-/// idempotent. A non-idempotent write (a plain `create`) makes the second
-/// boot fail with "Found existing record" — the service would only ever be
-/// able to start once per database.
+/// idempotent. A non-idempotent write makes the second boot fail — the
+/// service would only ever be able to start once per database.
 #[tokio::test]
 async fn b5_bootstrapping_twice_against_the_same_database_succeeds() {
     let (config, _tmp) = test_config();
@@ -199,31 +194,12 @@ async fn b5_bootstrapping_twice_against_the_same_database_succeeds() {
 
     let first_version = first.schema_version.clone();
 
-    // The embedded database holds an exclusive lock on its directory, so the
-    // first application state has to release it before the second one can
-    // open the same database.
+    // The second application opens the same namespace after the first one
+    // is gone, as a restarted service does.
     drop(first);
-
-    // Releasing that lock is asynchronous, so a second open that arrives too
-    // early fails with a lock error that says nothing about idempotency.
-    // That error — and only that error — is retried inside a bounded window;
-    // every other failure (a non-idempotent write, for instance) fails the
-    // test at once, so the guarantee is not weakened by the retry.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let second = loop {
-        match bootstrap(&config, bootstrap_config.clone()).await {
-            Ok(state) => break state,
-            Err(error) => {
-                let message = error.to_string();
-                let lock_contention = message.contains("lock hold by current process")
-                    || message.contains("No locks available");
-                if !lock_contention || std::time::Instant::now() >= deadline {
-                    panic!("bootstrapping again against the same database must succeed: {error}");
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
+    let second = bootstrap(&config, bootstrap_config.clone())
+        .await
+        .expect("bootstrapping again against the same database must succeed");
 
     assert_eq!(
         second.schema_version, first_version,

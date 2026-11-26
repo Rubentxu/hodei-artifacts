@@ -82,7 +82,12 @@ use crate::port::{GraphMutationPort, GraphUpsertTransaction};
 /// trigger exact-indexed so a case is read by account and by the
 /// vulnerability that opened it. Purely additive over v7: nothing is
 /// renamed or dropped.
-pub const SCHEMA_VERSION: u64 = 8;
+///
+/// v9 adds the Cedar schemas of the authorization bundle (`hodei.cedar.*`):
+/// ONE node per (tenant, version) holding the stored schema, so the graph
+/// profile validates policies against a schema that survives a restart.
+/// Purely additive over v8: nothing is renamed or dropped.
+pub const SCHEMA_VERSION: u64 = 9;
 
 /// How many times a schema metadata write may lose the write race before
 /// giving up (same policy as the identity upserts).
@@ -1271,6 +1276,51 @@ pub fn hodei_schema() -> HodeiSchema {
                 false,
                 false,
             ),
+            spec(
+                "hodei.cedar.key",
+                "hodei.cedar.key: string @index(exact) @upsert .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                true,
+            ),
+            spec(
+                "hodei.cedar.tenant",
+                "hodei.cedar.tenant: string @index(exact) .",
+                "string",
+                Some("exact"),
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.cedar.version",
+                "hodei.cedar.version: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.cedar.content",
+                "hodei.cedar.content: string .",
+                "string",
+                None,
+                false,
+                false,
+                false,
+            ),
+            spec(
+                "hodei.cedar.stored_at",
+                "hodei.cedar.stored_at: int @index(int) .",
+                "int",
+                Some("int"),
+                false,
+                false,
+                false,
+            ),
         ],
         vec![
             // The type declarations put every field on its own line:
@@ -1353,6 +1403,10 @@ pub fn hodei_schema() -> HodeiSchema {
             // The security cases (v8): one node per case of one account.
             "type HodeiSecurityCase {\n  hodei.case.key\n  hodei.case.tenant\n  \
              hodei.case.trigger\n  hodei.case.record\n  hodei.case.opened_at\n}"
+                .to_owned(),
+            // The Cedar schemas of the authorization bundle (v9).
+            "type HodeiCedarSchema {\n  hodei.cedar.key\n  hodei.cedar.tenant\n  \
+             hodei.cedar.version\n  hodei.cedar.content\n  hodei.cedar.stored_at\n}"
                 .to_owned(),
         ],
     )

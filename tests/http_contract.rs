@@ -65,8 +65,8 @@
 //!   attached to another principal is not even consulted, so it cannot grant
 //!   anything to a principal it was never attached to.
 //!
-//! Each test bootstraps its own application on a throwaway RocksDB directory,
-//! so tests never share mutable state.
+//! Each test bootstraps its own application on its own ACL namespace of a
+//! real Dgraph (the graph profile), so tests never share mutable state.
 
 use std::sync::Arc;
 
@@ -86,7 +86,10 @@ use hodei_authz::{
     PrincipalId,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 /// A valid Cedar policy used across the contract.
@@ -189,22 +192,18 @@ fn contract_admin_authorizer() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// Bootstraps the application on a throwaway RocksDB directory.
+/// Bootstraps the application on a throwaway Dgraph namespace.
 ///
-/// The returned `TempDir` must outlive the router: dropping it first would
-/// remove the database directory while the embedded engine is still open.
-async fn test_app() -> (Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+/// The returned `Workdir` must outlive the router: it owns the policy files
+/// and the Dgraph namespace the application is running on.
+async fn test_app() -> (Router, Workdir) {
+    let tmp = Workdir::new();
 
     let mut config = AppConfig::default();
     // This contract exercises the administrative surface on purpose; the
     // production default is closed (see tests/admin_surface.rs).
     config.security.admin_api_enabled = true;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     // The IAM schema is not registered on purpose: this contract asserts the
     // HTTP surface, and schema registration is covered by its own test.

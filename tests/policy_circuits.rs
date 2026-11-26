@@ -25,7 +25,10 @@ use hodei_authz::{
     verify_principal,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 const PRINCIPAL: &str = "hrn:hodei:iam::acme:User/alice";
@@ -111,6 +114,24 @@ const SHARED_SCHEMA_JSON: &str = r#"{
         }
       },
       "DownloadAsset": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
+      "UploadAsset": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
+      "PromoteAsset": {
+        "appliesTo": {
+          "principalTypes": ["Iam::User"],
+          "resourceTypes": ["Artifacts::Repository"]
+        }
+      },
+      "RevokePromotion": {
         "appliesTo": {
           "principalTypes": ["Iam::User"],
           "resourceTypes": ["Artifacts::Repository"]
@@ -203,19 +224,19 @@ const CASES: &[Case] = &[
 /// The IAM schema is registered too, so the test also proves that registering
 /// it does not displace the bundle: the schema the gate enforces and the
 /// schema the validator applies have to be the same one.
-async fn app(policy: &str) -> (axum::Router, TempDir) {
+async fn app(policy: &str) -> (axum::Router, Workdir) {
     app_with_version(policy, None).await
 }
 
 /// The same application, with the IAM schema registered under a version.
-async fn app_with_version(policy: &str, version: Option<&str>) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
+async fn app_with_version(policy: &str, version: Option<&str>) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
     config.security.auth_jwt_secret = Some("hsp-28-matrix-secret".to_string());
     config.security.auth_issuer = Some("https://issuer.example".to_string());
     config.security.auth_audience = Some("hodei-artifacts".to_string());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
 
     let schema_path = tmp.path().join("schema.json");
     let policy_path = tmp.path().join("policies.cedar");
@@ -532,13 +553,13 @@ async fn a_request_that_does_not_fit_the_schema_is_denied_with_a_reason() {
 /// caught at boot instead of in production.
 #[tokio::test]
 async fn a_bundle_that_disagrees_with_the_service_does_not_start() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
     config.security.auth_jwt_secret = Some("hsp-28-mismatch-secret".to_string());
     config.security.auth_issuer = Some("https://issuer.example".to_string());
     config.security.auth_audience = Some("hodei-artifacts".to_string());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
 
     // The verb is declared, but under another namespace than the one the
     // service builds: `Warehouse::Action::"ReadRepository"` instead of

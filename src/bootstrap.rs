@@ -28,14 +28,12 @@ use std::fs;
 
 #[cfg(feature = "legacy")]
 use hodei_iam::infrastructure::surreal::policy_adapter::SurrealPolicyAdapter;
-#[cfg(feature = "legacy")]
 use hodei_iam::register_iam_schema::dto::{RegisterIamSchemaCommand, RegisterIamSchemaResult};
 #[cfg(feature = "legacy")]
 use hodei_policies::build_schema::error::BuildSchemaError;
+use hodei_policies::build_schema::ports::{AUTHORIZATION_BUNDLE_SCHEMA_ID, SchemaStoragePort};
 #[cfg(feature = "legacy")]
-use hodei_policies::build_schema::ports::{
-    AUTHORIZATION_BUNDLE_SCHEMA_ID, SchemaStoragePort, StoredSchema,
-};
+use hodei_policies::build_schema::ports::StoredSchema;
 #[cfg(feature = "legacy")]
 use serde::Deserialize;
 use std::sync::Arc;
@@ -564,13 +562,9 @@ async fn open_content_store(
 ///
 /// What the profile does NOT carry, and says so instead of degrading:
 ///
-/// - The persistence of the Cedar schema: `SchemaStoragePort` has no Dgraph
-///   implementation (registered blocker). The gate authorizes from the
-///   declared bundle file -- that is the security boundary every request
-///   crosses -- and the persisted evaluator runs in NoSchema mode, exactly
-///   the mode the IAM-over-graph ITs (HSP-186) certify.
-/// - The IAM schema registration: it writes through the same missing port,
-///   so a deployment that asks for it stops with the blocker named.
+/// - Nothing about the Cedar schema is missing: `SchemaStoragePort` is
+///   implemented over Dgraph (`DgraphSchemaStore`), the bundle schema is
+///   persisted, and the IAM schema registration runs when it is asked for.
 /// - The investigation and the legacy repository registry: their wiring is
 ///   not done yet; the surfaces answer with their default closed behavior
 ///   and the profile does not open a local engine to make them answer. (The
@@ -592,21 +586,23 @@ async fn bootstrap_graph_profile(
     // profile exists over a server this binary cannot speak to.
     let graph = crate::profile::GraphAuthority::connect(config).await?;
 
-    if config.schema.register_iam_on_startup {
-        return Err(Box::new(BootstrapError::SchemaRegistration(
-            "the graph profile cannot register the IAM Cedar schema: SchemaStoragePort is not \
-             implemented over Dgraph (HSP-209 blocker). Set schema.register_iam_on_startup = \
-             false, or run the embedded profile until the port lands"
-                .to_string(),
-        )));
+    // The Cedar schema store of the profile: one tenant of the graph, the
+    // same authority as every other store. The bundle schema the deployment
+    // declares is persisted under its well-known id, so the gate and the
+    // persisted evaluator validate against ONE schema, exactly as the
+    // embedded profile does.
+    let schema_store = Arc::new(hodei_iam::infrastructure::DgraphSchemaStore::new(
+        graph.client.clone(),
+        graph.tenant.as_str(),
+    ));
+    if let Some(schema_path) = &config.security.authorization_schema_path {
+        persist_bundle_schema(schema_store.as_ref(), schema_path).await?;
     }
-    if config.security.authorization_schema_path.is_some() {
-        warn!(
-            "the authorization bundle schema cannot be PERSISTED on the graph profile \
-             (HSP-209 blocker: no SchemaStoragePort over Dgraph); the Cedar gate authorizes \
-             from the declared file and the persisted evaluator runs in NoSchema mode"
-        );
-    }
+    let authoritative_schema_id = config
+        .security
+        .authorization_schema_path
+        .as_ref()
+        .map(|_| AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string());
 
     // Step 2: the bytes. The same decision and the same readiness the
     // embedded profile makes of its content store: an S3 deployment that
@@ -615,12 +611,32 @@ async fn bootstrap_graph_profile(
     let (content, content_check) = open_content_store(config).await?;
 
     // Step 3: the use cases over the graph. The IAM ports of the
-    // composition root are the Dgraph adapter's; the schema provider is
-    // the profile's honest stand-in (writes refused, reads empty).
-    let root = crate::profile::composition_root_for_graph(graph.iam.clone());
-    let schema_version = bootstrap_config
-        .schema_version
-        .unwrap_or_else(|| "graph-v7".to_string());
+    // composition root are the Dgraph adapter's, and the schema provider is
+    // the Dgraph schema store.
+    let root = crate::profile::composition_root_for_graph(
+        graph.iam.clone(),
+        schema_store,
+        authoritative_schema_id,
+    );
+    let schema_version = if bootstrap_config.register_iam_schema {
+        info!("📝 Registering IAM schema");
+        let result = register_iam_schema(
+            &*root.iam_ports.register_iam_schema,
+            bootstrap_config.schema_version.clone(),
+            bootstrap_config.validate_schemas,
+        )
+        .await?;
+        info!(
+            "✅ IAM schema registered successfully (version: {}, entities: {}, actions: {})",
+            result.schema_version, result.entity_types_registered, result.action_types_registered
+        );
+        result.schema_version
+    } else {
+        warn!("⚠️  Skipping IAM schema registration");
+        bootstrap_config
+            .schema_version
+            .unwrap_or_else(|| "unregistered".to_string())
+    };
     let app_state = AppState::from_composition_root(schema_version.clone(), root);
 
     // Step 4: the vertical stores, all over the same client, with the
@@ -1342,6 +1358,34 @@ async fn initialize_schema_storage(
     Ok(Arc::new(SurrealSchemaAdapter::new(db)))
 }
 
+/// Persist the Cedar schema the deployment's authorization bundle declares,
+/// in the envelope the build-schema use case writes, under the id that
+/// makes it the authoritative one.
+async fn persist_bundle_schema(
+    storage: &dyn SchemaStoragePort,
+    schema_path: &str,
+) -> Result<(), BootstrapError> {
+    let raw = fs::read_to_string(schema_path).map_err(|error| {
+        BootstrapError::Security(format!(
+            "cannot read authorization schema {schema_path}: {error}"
+        ))
+    })?;
+    let fragment: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|error| BootstrapError::Security(format!("invalid Cedar schema: {error}")))?;
+    let envelope = serde_json::json!({
+        "format": "cedar-schema-fragments-v1",
+        "fragments": [fragment],
+    });
+    storage
+        .save_schema(
+            envelope.to_string(),
+            Some(AUTHORIZATION_BUNDLE_SCHEMA_ID.to_string()),
+        )
+        .await
+        .map_err(|error| BootstrapError::Security(format!("cannot persist schema: {error}")))?;
+    Ok(())
+}
+
 /// Validate bootstrap configuration and fail explicitly on any issues
 ///
 /// This function performs additional validation beyond what's in AppConfig::validate()
@@ -1378,7 +1422,6 @@ fn validate_bootstrap_configuration(
     Ok(())
 }
 
-#[cfg(feature = "legacy")]
 /// Register the IAM schema using the provided use case
 async fn register_iam_schema(
     use_case: &dyn hodei_iam::features::register_iam_schema::ports::RegisterIamSchemaPort,

@@ -242,6 +242,7 @@ pipeline {
                         "--test hsp208_simulation_dgraph_it",
                         "--test hsp314_dgraph_risk_facts_it",
                         "--test hsp314_f3b0_dgraph_ports_it",
+                        "--test hsp314_p2_dgraph_schema_it",
                         "--test hsp314_graph_risk_facts_it",
                         "--test hsp314_graph_evidence_reader_it",
                         "--test hsp314_f3b2_reactor_dgraph_it",
@@ -262,6 +263,13 @@ pipeline {
                         "--test hsp197_yum_dgraph_it",
                         "--test hsp207_capsule_dgraph_it",
                         "--test hsp304_formats_dgraph_it",
+                        // HSP-314 P2: the IAM and policy circuits over the graph profile,
+                        // now that the Cedar schema has a Dgraph store.
+                        "--test http_contract",
+                        "--test policy_circuits",
+                        "--test production_auth",
+                        "--test bootstrap_integration",
+                        "--test hsp314_p2_graph_schema",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
                 // HSP-314 F4 S2a: las suites de comportamiento migradas al harness del
@@ -534,14 +542,12 @@ pipeline {
                         "--test hsp118_bundle_contract",
                         "--test hsp126_capsule_oci",
                         "--test audit_events",
-                        "--test http_contract",
                         // La readiness y la liveness son dos preguntas
                         // distintas (HSP-237): con el almacen desconectado
                         // en caliente, la readiness deja de ser 200 y la
                         // liveness no. Arranca el motor embebido.
                         "--test hsp237_readiness",
                         "--test iam_policy_timestamps",
-                        "--test policy_circuits",
                         "--test repository_create",
                         "--test repository_read",
                         "--test har04_raw_hosted_contract",
@@ -552,8 +558,6 @@ pipeline {
                         "--test hsp89_investigation_freshness",
                         "--test hsp134_risk_facts_e2e",
                         "--test hsp142_capability_matrix",
-                        "--test bootstrap_integration",
-                        "--test production_auth",
                         "--test blob_integrity_contract",
                         "--test doc9_uat",
                         "--test oci_pull_contract",
