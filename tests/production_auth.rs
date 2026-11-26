@@ -6,7 +6,10 @@ use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_r
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 use serde_json::{Value, json};
-use tempfile::TempDir;
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 const SECRET: &[u8] = b"production-test-secret-that-is-long-enough";
@@ -103,8 +106,8 @@ fn token(sub: &str, account: &str, audience: &str, exp: usize) -> String {
     .expect("token")
 }
 
-async fn production_jwks_app() -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn production_jwks_app() -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let policy_path = tmp.path().join("policies.cedar");
     let schema_path = tmp.path().join("schema.json");
     let jwks_path = tmp.path().join("jwks.json");
@@ -119,7 +122,7 @@ async fn production_jwks_app() -> (axum::Router, TempDir) {
     config.security.auth_audience = Some(AUDIENCE.to_string());
     config.security.authorization_policy_path = Some(policy_path.to_string_lossy().into_owned());
     config.security.authorization_schema_path = Some(schema_path.to_string_lossy().into_owned());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -134,8 +137,8 @@ async fn production_jwks_app() -> (axum::Router, TempDir) {
     (build_router(state, &config), tmp)
 }
 
-async fn production_app() -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn production_app() -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let policy_path = tmp.path().join("policies.cedar");
     let schema_path = tmp.path().join("schema.json");
     std::fs::write(&policy_path, POLICY).unwrap();
@@ -148,7 +151,7 @@ async fn production_app() -> (axum::Router, TempDir) {
     config.security.auth_audience = Some(AUDIENCE.to_string());
     config.security.authorization_policy_path = Some(policy_path.to_string_lossy().into_owned());
     config.security.authorization_schema_path = Some(schema_path.to_string_lossy().into_owned());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -270,10 +273,10 @@ async fn invalid_audience_expired_and_bad_signature_are_401() {
 
 #[tokio::test]
 async fn partial_security_configuration_fails_bootstrap() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.auth_jwt_secret = Some(String::from_utf8(SECRET.to_vec()).unwrap());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
 
     let result = bootstrap(
         &config,
@@ -362,7 +365,7 @@ async fn invalid_issuer_and_invalid_cedar_bundle_fail_closed() {
     let (status, _) = request(&app, "GET", "/api/v1/schemas/load", Some(&wrong), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = Workdir::new();
     let policy_path = tmp.path().join("bad-policy.cedar");
     let schema_path = tmp.path().join("schema.json");
     std::fs::write(&policy_path, "not cedar").unwrap();
@@ -373,7 +376,7 @@ async fn invalid_issuer_and_invalid_cedar_bundle_fail_closed() {
     config.security.auth_audience = Some(AUDIENCE.to_string());
     config.security.authorization_policy_path = Some(policy_path.to_string_lossy().into_owned());
     config.security.authorization_schema_path = Some(schema_path.to_string_lossy().into_owned());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let result = bootstrap(
         &config,
         BootstrapConfig {
@@ -388,7 +391,7 @@ async fn invalid_issuer_and_invalid_cedar_bundle_fail_closed() {
 
 #[tokio::test]
 async fn empty_secret_and_invalid_schema_fail_closed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = Workdir::new();
     let policy_path = tmp.path().join("policies.cedar");
     let schema_path = tmp.path().join("schema.json");
     std::fs::write(&policy_path, POLICY).unwrap();
@@ -400,7 +403,7 @@ async fn empty_secret_and_invalid_schema_fail_closed() {
     config.security.auth_audience = Some(AUDIENCE.to_string());
     config.security.authorization_policy_path = Some(policy_path.to_string_lossy().into_owned());
     config.security.authorization_schema_path = Some(schema_path.to_string_lossy().into_owned());
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     assert!(
         bootstrap(
             &config,
