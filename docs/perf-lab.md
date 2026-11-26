@@ -42,7 +42,10 @@ Opciones: `--scales 1000,10000`, `--concurrency 4`, `--samples 1000`,
 `--payload-bytes 1024` (lista, véase abajo), `--dist uniform|zipf`,
 `--zipf-s 1.0`, `--seed 319`, `--out target/perf-lab/last.json`,
 `--record <ruta>` (escribe el baseline), `--compare <ruta>`,
-`--threshold-pct 50`, `--min-delta-ms 2`, `--inject-delay-ms N` (solo para
+`--threshold-pct 50`, `--min-delta-ms 2`, `--p99-threshold-pct 100`,
+`--p99-min-delta-ms 5`, `--throughput-drop-pct 30`,
+`--min-throughput-delta-rps 5`, `--repeat N`, `--dgraph-container NOMBRE`
+(o `HODEI_GRAPH_IT_CONTAINER`), `--inject-delay-ms N` (solo para
 comprobar que `--compare` falla) e `--inject-kill <carga>` (mata el servicio a
 mitad de esa carga, para comprobar la sonda de vida). Nunca se registra un
 baseline con ninguna de las dos inyecciones.
@@ -54,11 +57,95 @@ comparación solo tiene sentido en la misma máquina.
 
 ### `--compare`
 
-Falla (código 1) si el p95 de cualquier pareja (escala, carga) compartida con
-el baseline empeora más de `--threshold-pct` por ciento **y** más de
-`--min-delta-ms` milisegundos (el suelo evita que el ruido de submilisegundo
-tumbe la ejecución), o si alguna petición falla. Las parejas que no están en
-el baseline se listan como no comparadas.
+Falla (código 1) si, en cualquier pareja (escala, carga) compartida con el
+baseline, empeora alguna de estas métricas (cada una necesita superar el
+porcentaje **y** el suelo absoluto; el suelo evita que el ruido pequeño tumbe
+la ejecución), o si alguna petición falla:
+
+| Métrica | Falla si | Umbral | Suelo |
+| --- | --- | --- | --- |
+| p95 | `ahora > antes x (1 + pct/100)` | `--threshold-pct` (50) | `--min-delta-ms` (2 ms) |
+| p99 | ídem | `--p99-threshold-pct` (100) | `--p99-min-delta-ms` (5 ms) |
+| rendimiento | `ahora < antes x (1 - pct/100)` | `--throughput-drop-pct` (30) | `--min-throughput-delta-rps` (5 rps) |
+
+Se imprime una línea por métrica (`[compare] ... / p95: antes -> ahora (límite,
+suelo) ok|REGRESSION`) y un `FAIL` por cada regresión. El p99 solo se compara si
+las dos filas lo tienen (hacen falta 1000 muestras correctas); si falta en
+alguno de los lados la línea dice `skipped` y no falla, de modo que las filas
+del baseline antiguo y las ejecuciones con `--samples` bajo no rompen la
+comparación. El comportamiento del p95 es el de siempre. Las parejas que no
+están en el baseline se listan como no comparadas.
+
+Con `--repeat N` la comparación usa la **mediana** de las N ejecuciones.
+
+### `--repeat N` y cómo elegir el umbral
+
+`--repeat N` ejecuta N veces la misma configuración (cada una con servicio y
+namespace nuevos) y deja en cada fila la mediana como cifra principal y, en
+`repeat.dispersion.<carga>.<métrica>`, `median`, `min`, `max`, `mad` (desviación
+absoluta mediana), `mad_pct`, `range_pct` (`(max-min)/mediana`) y los valores
+de cada ejecución.
+
+Medido en esta máquina (1000 activos, 1 KiB, concurrencia 4, `--repeat 5`):
+
+| Métrica | `mad_pct` | `range_pct` (peor carga) |
+| --- | --- | --- |
+| p95 | 0,8 a 2,2 % | 22,7 % (`publish`, una ejecución atípica de 75 ms frente a 61 a 63 ms); 5 a 9 % en el resto |
+| p99 | 0,2 a 2,0 % | 3,8 a 10,9 % |
+| rendimiento | 0,8 a 1,9 % | 4,6 a 7,5 % |
+
+Regla para fijar un umbral: ejecuta `--repeat 5` (como mínimo) sobre la
+configuración que vas a vigilar, toma el mayor `range_pct` de la métrica y fija
+el umbral en **2 a 3 veces ese rango**, de forma que una ejecución sana no falle
+y una regresión real (decenas de por ciento) sí. Con eso, los valores por
+defecto son: p95 50 % (2,2 veces el peor rango), p99 100 % (p99 es más
+ruidoso: se mide sobre 10 muestras de cola y se compara con un baseline de una
+sola ejecución) y rendimiento 30 % (4 veces el peor rango, porque el
+rendimiento es la métrica más estable). El suelo absoluto se elige al nivel del
+ruido de la métrica más rápida (2 ms de p95 en `read`, que ronda 10 ms; 5 rps
+de rendimiento). Si en otra máquina o escala `range_pct` es mayor, sube el
+umbral en proporción o compara contra la mediana de un baseline hecho con
+`--repeat`. Un baseline de una sola ejecución arrastra su propio ruido.
+
+Comprobado con mutaciones (1000 activos contra el baseline): `--inject-delay-ms
+50` falla en las tres cargas de lectura por p95, p99 y rendimiento (`publish`
+solo por rendimiento, su latencia base ya es alta); con p95 y rendimiento
+relajados falla solo por p99; `--concurrency 1` falla solo por rendimiento.
+
+### Muestreo de recursos (HSP-140, HSP-215)
+
+Durante cada carga un hilo muestrea cada ~250 ms el proceso del servicio
+(`/proc/<pid>/stat` para CPU y `/proc/<pid>/status` para `VmRSS`) y la fila de
+cada carga lleva `resources.service`: `cpu_pct_mean`, `cpu_pct_max` (porcentaje
+de **un** núcleo: 200 son dos núcleos ocupados), `rss_mib_max`, `rss_mib_mean`,
+`readings` y `discarded_readings`.
+
+Para Dgraph hay que decir qué contenedor mirar, con `--dgraph-container NOMBRE`
+o `HODEI_GRAPH_IT_CONTAINER`. Entonces `resources.dgraph_resources` trae
+`cpu_pct_mean`, `cpu_pct_max` (derivados del `cpu_time` acumulado de
+`podman stats --no-stream --format json`), `mem_mib_max` y `mem_mib_mean`. Sin
+contenedor, o si el contenedor no existe o no publica el puerto de
+`HODEI_GRAPH_IT_ENDPOINT` (no es ese alpha), el valor es la cadena
+`"not_sampled"`, `parameters.dgraph_container` dice por qué y no se inventa
+nada. Cada lectura de Dgraph se valida: el ID debe ser el resuelto al empezar,
+el límite de memoria no puede cambiar respecto a la primera lectura y el
+`cpu_time` no puede retroceder (un lector que pasa a otro cgroup a mitad de la
+ejecución, como se observó con `docker stats`). Una lectura incoherente se
+descarta y se cuenta en `discarded_readings` con el motivo en
+`discard_reasons`. La validación no se ha forzado con un cambio real de cgroup
+(no se pudo provocar): solo se ha comprobado que en las ejecuciones normales no
+se descarta nada. Con `--repeat`, los picos (`*_max`) son el máximo de las
+ejecuciones y el resto la mediana.
+
+El proceso del laboratorio (el cliente de carga) no se mide.
+
+El baseline versionado (`docs/perf/baseline-graph.json`) **no se ha regenerado**
+con estos campos: una ejecución de registro posterior, con la misma
+configuración y sin errores, salió entre un 10 y un 25 % más lenta en esta
+máquina (el alpha compartido acumulaba ya los namespaces de las pruebas), y
+versionarla habría aflojado la referencia sin motivo. Los recursos viven en el
+JSON de `--out` de cada ejecución; el baseline no los lleva y `--compare` no los
+compara.
 
 ### Réplica válida: sonda de vida y `permission_probe` (HSP-173)
 
@@ -125,8 +212,8 @@ plan de accesos escala a 100 000 sin problema). Observado en esta máquina
 Esa ejecución **no es un baseline**: tuvo un error, así que el laboratorio la
 declara inválida (código 1) y `--record` la rechazaría. No se ha añadido ninguna
 fila de 100 000 a `docs/perf/baseline-graph.json`; solo se afirma lo anterior,
-como observación única (una réplica, sin repetir). No se midió CPU del servicio
-ni RSS del servicio (extensión 4).
+como observación única (una réplica, sin repetir). Esa observación es anterior al
+muestreo de recursos del laboratorio (extensión 4).
 
 ## Baseline
 
@@ -147,9 +234,11 @@ una máquina no es comparable con otra.
 - **Solo se afirma lo medido**: 1000 y 10 000 activos, en el hardware y con el
   binario de depuración declarados en el baseline (el servicio se compila sin
   optimizar: las cifras absolutas no representan un despliegue de producción).
-- **Esta extensión (S2, 1 y 2) no mide CPU/RSS del servicio ni compara p99 o
-  rendimiento**; eso queda para las extensiones 3 y 4. Tampoco se ha
-  investigado el 503 de publicar con concurrencia alta.
+- Las extensiones 3 y 4 de S2 añaden la comparación de p99 y rendimiento, la
+  dispersión con `--repeat` y el muestreo de CPU/RSS del servicio y de Dgraph.
+  Siguen sin cubrirse: bucle abierto, réplicas del servicio, métricas internas
+  del alpha más allá de CPU y memoria del contenedor, y el 503 de publicar con
+  concurrencia alta (no investigado).
 - **10M y 100M de activos: `NOT_RUN`.** Pertenecen a S4 (HSP-216) y el JSON lo
   declara en `not_run`. No hay ninguna afirmación a esas escalas.
 - **Bucle cerrado**: hay `--concurrency` peticiones en vuelo; no se corrige la
