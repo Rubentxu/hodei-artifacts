@@ -84,7 +84,7 @@ impl Options {
     fn parse() -> Result<Self, String> {
         let mut options = Self {
             scales: vec![1000],
-            concurrency: 16,
+            concurrency: 8,
             samples: 1000,
             payload_bytes: 1024,
             out: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/perf-lab/last.json"),
