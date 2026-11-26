@@ -41,7 +41,9 @@ use hodei_authz::{
 };
 use kernel::Hrn;
 use serde_json::Value;
-use tempfile::TempDir;
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 struct TestAuthenticator;
@@ -169,15 +171,11 @@ fn cedar_create_and_read() -> Arc<dyn AuthorizerPort> {
 async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
     reader: Arc<dyn RepositoryReader>,
-) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -199,15 +197,11 @@ async fn app_with(
 async fn app_with_store(
     authorizer: Arc<dyn AuthorizerPort>,
     store: Arc<InMemoryRepositoryStore>,
-) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,

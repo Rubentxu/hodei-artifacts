@@ -110,7 +110,6 @@ utoipa-swagger-ui = { version = "9.0.2", features = ["axum"] }
 
 
 lapin = "3.6.0"
-surrealdb = { version = "2.3.9", features = ["kv-mem", "kv-rocksdb"] }
 
 # Configuration management
 config = "0.14"
@@ -148,16 +147,12 @@ tracing-test = "0.2.5"
 http = "1.1.0"
 infer = "0.19.0"
 
-# HSP-213: el almacen embebido (SurrealDB sobre RocksDB) queda tras la
-# feature `legacy`. HSP-314 F2: `legacy` ya NO es el defecto. El build por
-# defecto es el perfil productivo: no enlaza ni surrealdb ni librocksdb, y
-# un perfil sin `[graph]` se rechaza con el mensaje de migracion. Las
-# suites historicas (el motor embebido, hasta F4) se construyen con
-# `--features legacy`; la etapa `legacy` de pipeline.kts las ejecuta. Las
-# herramientas de operacion legado se retiraron en F4.
+# HSP-314 F4: the embedded engine (SurrealDB over RocksDB) and its `legacy`
+# feature were retired. The only profile is the graph: the dependency tree
+# links neither surrealdb nor librocksdb-sys (scripts/check-production-closure.sh
+# and tests/hsp314_no_embedded_engine.rs hold that).
 [features]
 default = []
-legacy = ["dep:surrealdb"]
 # Statically link OpenSSL for portable container/release binaries (e.g. Debian Bookworm).
 vendored-openssl = ["dep:openssl"]
 
@@ -174,8 +169,8 @@ description = "Hodei Artifacts Graph-First API: Cedar authorization evaluation o
 # scripts/package-release.sh: `<name>-<version>-<target>.tar.gz`, whose single
 # top-level directory carries the binaries under `bin/`. Signature and SHA256
 # verification is the job of scripts/install.sh; binstall fetches the same asset.
-# HSP-314: the tarball carries `bin/hodei-artifacts-api` only. The legacy
-# operator tools were retired in HSP-314 F4.
+# HSP-314: the tarball carries `bin/hodei-artifacts-api` only (the embedded
+# operator tools were retired in HSP-314 F4).
 [package.metadata.binstall]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.{ archive-format }"
 bin-dir = "{ name }-{ version }-{ target }/bin/{ bin }{ binary-ext }"
@@ -267,9 +262,6 @@ semver = "1.0"
 uuid = { workspace = true }
 jsonwebtoken = { workspace = true }
 
-# Database
-surrealdb = { workspace = true, optional = true }
-
 # Policy engine
 cedar-policy = { workspace = true }
 
@@ -325,8 +317,8 @@ serde_yaml = "0.9"
 hodei-graph-client = { path = "crates/hodei-graph-client" }
 
 # HSP-314 F4 S3: IT de catalogo y formatos sobre Dgraph real. Compilan y
-# corren con `--no-default-features` (sin `legacy`): la referencia de paridad
-# del motor embebido se sustituyo por aserciones directas del contrato. Se
+# corren sobre el perfil de grafo: la referencia de paridad del motor
+# embebido se sustituyo por aserciones directas del contrato. Se
 # saltan a si mismos (exit 0) sin HODEI_GRAPH_IT_ENDPOINT.
 
 [[test]]
@@ -373,10 +365,8 @@ path = "tests/hsp207_capsule_dgraph_it.rs"
 name = "hsp304_formats_dgraph_it"
 path = "tests/hsp304_formats_dgraph_it.rs"
 
-# HSP-314 F1: suites que siembran o montan el motor embebido (SurrealDB) y por
-# tanto solo existen con la feature `legacy`. Con `--no-default-features` no se
-# compilan; la cobertura sin legacy la dan los IT de grafo (*_dgraph_it con
-# perfil [graph]) y hsp237/hsp308.
+# Suites de comportamiento sobre el perfil de grafo (Dgraph real; se saltan
+# a si mismas sin HODEI_GRAPH_IT_ENDPOINT).
 
 [[test]]
 name = "blob_integrity_contract"
@@ -672,10 +662,7 @@ path = "tests/raw_hosted_restart_contract.rs"
 
 
 
-# HSP-314 F1: suites que arrancan el binario o el bootstrap con el perfil
-# embebido (sin `[graph]`). Sin `legacy` el arranque se rechaza por diseno
-# (HSP-213), asi que solo se construyen con la feature. Migrarlas al perfil
-# `[graph]` o retirarlas es trabajo de F2/F3.
+# Suites que arrancan el binario o el bootstrap sobre el perfil de grafo.
 
 [[test]]
 name = "admin_surface"
@@ -684,7 +671,6 @@ path = "tests/admin_surface.rs"
 [[test]]
 name = "audit_events"
 path = "tests/audit_events.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "bootstrap_integration"
@@ -697,7 +683,6 @@ path = "tests/capsule_read.rs"
 [[test]]
 name = "hsp132_registry_list"
 path = "tests/hsp132_registry_list.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp222_search_cursor_surface"
@@ -758,9 +743,7 @@ path = "tests/production_auth.rs"
 [[test]]
 name = "repository_create"
 path = "tests/repository_create.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "repository_read"
 path = "tests/repository_read.rs"
-required-features = ["legacy"]

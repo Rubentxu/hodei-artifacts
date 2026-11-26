@@ -8,22 +8,6 @@ use axum::http::HeaderValue;
 use serde::{Deserialize, Serialize};
 use std::env;
 
-/// Main application configuration
-///
-/// This struct holds all configuration parameters for the Hodei Artifacts API.
-/// Configuration is loaded from multiple sources with the following precedence:
-/// 1. Environment variables (HODEI_ prefix)
-/// 2. config/local.toml
-/// 3. config/{RUN_MODE}.toml
-/// 4. config/default.toml
-/// 5. Hardcoded defaults
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct RepositoryConfig {
-    /// Use the durable SurrealDB adapter instead of the in-memory slice.
-    #[serde(default)]
-    pub durable: bool,
-}
-
 /// The limits of the investigation surface.
 ///
 /// An investigation is a read with a cost: it reads the evidence and the
@@ -889,6 +873,29 @@ fn the_minimum_staging_max_age_secs() -> u64 {
     60
 }
 
+/// What the service says when the configuration does not declare `[graph]`.
+///
+/// The graph is the single authority of the metadata. The embedded engine
+/// (SurrealDB over RocksDB) and its operator tools were retired
+/// (HSP-213, HSP-314 F4): a deployment that still carries the old profile
+/// is refused here, with the way out, and nothing local is created.
+pub const GRAPH_PROFILE_REQUIRED: &str = "the embedded engine (SurrealDB over RocksDB) is \
+retired (HSP-213, HSP-314 F4): declare a [graph] section so the Dgraph alpha is the single \
+authority of the metadata (RUN_MODE=dgraph reads config/dgraph.toml); a local store from an \
+older release has to be migrated with a release that still shipped the operator tools";
+
+/// The start of the refusal of a `[database] db_type` that is not the graph.
+pub const REFUSED_DATABASE_TYPE: &str = "Unsupported database type";
+
+/// Main application configuration
+///
+/// This struct holds all configuration parameters for the Hodei Artifacts API.
+/// Configuration is loaded from multiple sources with the following precedence:
+/// 1. Environment variables (HODEI_ prefix)
+/// 2. config/local.toml
+/// 3. config/{RUN_MODE}.toml
+/// 4. config/default.toml
+/// 5. Hardcoded defaults
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     /// Server configuration
@@ -897,8 +904,6 @@ pub struct AppConfig {
     /// Security configuration
     #[serde(default)]
     pub security: SecurityConfig,
-    #[serde(default)]
-    pub repository: RepositoryConfig,
 
     /// Where the content of the artifacts lives.
     #[serde(default)]
@@ -931,14 +936,11 @@ pub struct AppConfig {
     pub public_url: PublicUrlConfig,
 
     /// The authority of the graph: the Dgraph deployment this service
-    /// reads and writes. Absent means the service runs on the embedded
-    /// engine (SurrealDB over RocksDB); present means the graph is the
-    /// single authority and the embedded engine is refused: a deployment
-    /// that names an alpha never opens a local RocksDB, and a profile
-    /// that cannot be validated against the server stops the boot
-    /// instead of degrading (HSP-209). There is no fallback between the
-    /// two authorities: metadata that silently lives in two places is
-    /// metadata no restore can be trusted with.
+    /// reads and writes. It is the single authority of the metadata and it
+    /// is required: a configuration that does not declare it is refused
+    /// with [`GRAPH_PROFILE_REQUIRED`], and a profile that cannot be
+    /// validated against the server stops the boot instead of degrading
+    /// (HSP-209, HSP-314 F4).
     #[serde(default)]
     pub graph: Option<hodei_graph_client::GraphClientConfig>,
 
@@ -950,9 +952,6 @@ pub struct AppConfig {
 
     /// Logging configuration
     pub logging: LoggingConfig,
-
-    /// RocksDB specific configuration
-    pub rocksdb: RocksDbConfig,
 }
 
 /// Server configuration
@@ -1214,20 +1213,15 @@ impl SecurityConfig {
     }
 }
 
-/// Database configuration
+/// Database configuration: the declaration of the metadata backend.
+///
+/// There is a single backend, the graph (`"dgraph"`), and the declaration
+/// stays in the file so an operator reads which authority a profile uses.
+/// Any other value is refused by name at validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DatabaseConfig {
-    /// Database type (only "rocksdb" supported)
+    /// Database type (only "dgraph" supported)
     pub db_type: String,
-
-    /// Database namespace
-    pub namespace: Option<String>,
-
-    /// Database name
-    pub database: Option<String>,
-
-    /// Connection pool size (default: 10)
-    pub pool_size: u32,
 }
 
 /// Schema configuration
@@ -1242,7 +1236,7 @@ pub struct SchemaConfig {
     /// Whether to validate schemas after building (default: true)
     pub validate: bool,
 
-    /// Schema storage type (default: "rocksdb")
+    /// Schema storage type (default: "dgraph")
     pub storage_type: String,
 }
 
@@ -1264,25 +1258,6 @@ pub struct LoggingConfig {
     pub include_location: bool,
 }
 
-/// RocksDB specific configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RocksDbConfig {
-    /// Path to RocksDB database file (default: "./data/hodei.rocksdb")
-    pub path: String,
-
-    /// Create database if it doesn't exist (default: true)
-    pub create_if_missing: bool,
-
-    /// Enable compression (default: true)
-    pub compression: bool,
-
-    /// Maximum number of open files (default: 1000)
-    pub max_open_files: i32,
-
-    /// Write buffer size in bytes (default: 64MB)
-    pub write_buffer_size: usize,
-}
-
 // Default derived for AppConfig
 
 impl Default for ServerConfig {
@@ -1299,10 +1274,7 @@ impl Default for ServerConfig {
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
-            db_type: "rocksdb".to_string(),
-            namespace: Some("hodei".to_string()),
-            database: Some("artifacts".to_string()),
-            pool_size: 10,
+            db_type: "dgraph".to_string(),
         }
     }
 }
@@ -1313,7 +1285,7 @@ impl Default for SchemaConfig {
             register_iam_on_startup: false,
             version: None,
             validate: true,
-            storage_type: "rocksdb".to_string(),
+            storage_type: "dgraph".to_string(),
         }
     }
 }
@@ -1325,18 +1297,6 @@ impl Default for LoggingConfig {
             format: "pretty".to_string(),
             include_timestamps: true,
             include_location: false,
-        }
-    }
-}
-
-impl Default for RocksDbConfig {
-    fn default() -> Self {
-        Self {
-            path: "./target/debug/data/hodei.rocksdb".to_string(),
-            create_if_missing: true,
-            compression: true,
-            max_open_files: 1000,
-            write_buffer_size: 64 * 1024 * 1024, // 64MB
         }
     }
 }
@@ -1366,21 +1326,17 @@ impl AppConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.server.validate()?;
         self.security.validate()?;
-        // The engine of the metadata is decided by the profile: with a
-        // `[graph]` section the authority is Dgraph and the embedded
-        // engine must NOT be claimed; without it the embedded engine is
-        // the authority and `db_type` keeps its own contract (HSP-209).
-        if self.graph.is_some() {
-            self.database.validate_without_engine()?;
-            if let Some(graph) = &self.graph {
-                graph
-                    .validate()
-                    .map_err(|error| ConfigError::Message(error.to_string()))?;
-            }
-        } else {
-            self.database.validate()?;
-            self.rocksdb.validate()?;
-        }
+        // The graph is the only authority of the metadata: a configuration
+        // that does not declare it is refused with the way out (HSP-209,
+        // HSP-314 F4).
+        let graph = self
+            .graph
+            .as_ref()
+            .ok_or_else(|| ConfigError::Message(GRAPH_PROFILE_REQUIRED.to_string()))?;
+        self.database.validate()?;
+        graph
+            .validate()
+            .map_err(|error| ConfigError::Message(error.to_string()))?;
         self.logging.validate()?;
         self.content.validate()?;
         self.investigation.validate()?;
@@ -1397,23 +1353,11 @@ impl AppConfig {
     /// validates a configuration, and its failures say that the problem is
     /// the storage and not the configuration.
     ///
-    /// With a graph authority declared, the local engine is not preflighted
-    /// at all: the profile refuses RocksDB (HSP-209). What the graph profile
-    /// preflights is its own content store; the reachability of the alpha is
-    /// checked with a real connection and a version probe in the bootstrap,
-    /// which is where the network question belongs.
+    /// What the service preflights is its own content store; the reachability
+    /// of the alpha is checked with a real connection and a version probe in
+    /// the bootstrap, which is where the network question belongs.
     pub fn preflight_storage(&self) -> Result<(), ConfigError> {
-        if self.graph.is_some() {
-            // There is no local engine to preflight: the bytes live in the
-            // content store, whose readiness the bootstrap checks when it
-            // opens it, and the metadata live in the alpha, whose reach is
-            // a real connection. The path the RocksDB section names is not
-            // created, opened, or touched by a graph deployment.
-            self.content.preflight_storage()
-        } else {
-            self.rocksdb.preflight_storage()?;
-            self.content.preflight_storage()
-        }
+        self.content.preflight_storage()
     }
 
     /// Get the server bind address
@@ -1506,78 +1450,15 @@ impl ServerConfig {
 }
 
 impl DatabaseConfig {
-    /// Validate database configuration
+    /// Validate database configuration: the graph is the only backend, and
+    /// any other declaration is refused by name (HSP-209, HSP-314 F4).
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.db_type != "rocksdb" {
+        if self.db_type != "dgraph" {
             return Err(ConfigError::Message(format!(
-                "Unsupported database type '{}'. Only 'rocksdb' is supported. Please set HODEI_DATABASE__DB_TYPE to 'rocksdb'",
+                "{REFUSED_DATABASE_TYPE} '{}'. Only 'dgraph' is supported: the graph declared in [graph] is the single authority of the metadata. Please set HODEI_DATABASE__DB_TYPE to 'dgraph'",
                 self.db_type
             )));
         }
-
-        if self.namespace.is_none() || self.namespace.as_ref().unwrap().is_empty() {
-            return Err(ConfigError::Message(
-                "Database namespace cannot be empty. Please set HODEI_DATABASE__NAMESPACE"
-                    .to_string(),
-            ));
-        }
-
-        if self.database.is_none() || self.database.as_ref().unwrap().is_empty() {
-            return Err(ConfigError::Message(
-                "Database name cannot be empty. Please set HODEI_DATABASE__DATABASE".to_string(),
-            ));
-        }
-
-        if self.pool_size == 0 {
-            return Err(ConfigError::Message(
-                "Database pool size cannot be 0. Please set HODEI_DATABASE__POOL_SIZE to a positive value".to_string()
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Validate the database section of a deployment whose authority is the
-    /// graph (a `[graph]` section is declared), HSP-209.
-    ///
-    /// The embedded engine is refused, not reinterpreted: under a graph
-    /// profile the metadata live in the alpha and nowhere else, so a
-    /// `[database]` section that claims `db_type = "rocksdb"` is not a
-    /// second storage waiting to be used -- it is a silent second authority.
-    /// A boot that would "work" on RocksDB while the profile says Dgraph is
-    /// exactly the degradation this rejection exists to make impossible:
-    /// metadata that lives in two places is metadata no restore can be
-    /// trusted with. The section is therefore refused when it names the
-    /// local engine. The remaining keys stay validated because the profile
-    /// files keep the section present (a graph deployment is one edit away
-    /// from an embedded one), and an invalid embedded configuration must not
-    /// be carried unnoticed in either direction.
-    pub fn validate_without_engine(&self) -> Result<(), ConfigError> {
-        if self.db_type == "rocksdb" {
-            return Err(ConfigError::Message(
-                "the Dgraph profile refuses the embedded RocksDB engine: [graph] declares the authority, so [database] db_type = \"rocksdb\" would claim a second one. There is no fallback between the two authorities (HSP-209)".to_string()
-            ));
-        }
-
-        if self.namespace.is_none() || self.namespace.as_ref().unwrap().is_empty() {
-            return Err(ConfigError::Message(
-                "Database namespace cannot be empty. Please set HODEI_DATABASE__NAMESPACE"
-                    .to_string(),
-            ));
-        }
-
-        if self.database.is_none() || self.database.as_ref().unwrap().is_empty() {
-            return Err(ConfigError::Message(
-                "Database name cannot be empty. Please set HODEI_DATABASE__DATABASE".to_string(),
-            ));
-        }
-
-        if self.pool_size == 0 {
-            return Err(ConfigError::Message(
-                "Database pool size cannot be 0. Please set HODEI_DATABASE__POOL_SIZE to a positive value".to_string()
-            ));
-        }
-
         Ok(())
     }
 }
@@ -1721,7 +1602,7 @@ pub fn explain_config_error(error: &ConfigError, base: &std::path::Path, run_mod
         .nth(1)
         .and_then(|rest| rest.split('`').next())
     {
-        const SECTIONS: [&str; 5] = ["server", "database", "schema", "logging", "rocksdb"];
+        const SECTIONS: [&str; 4] = ["server", "database", "schema", "logging"];
         if SECTIONS.contains(&field) {
             lines.push(format!(
                 "Required section missing: '[{field}]'. Add it to config/default.toml, or set its keys as HODEI_{}__<KEY> (for example HODEI_SERVER__PORT=3000).",
@@ -1729,126 +1610,12 @@ pub fn explain_config_error(error: &ConfigError, base: &std::path::Path, run_mod
             ));
         } else {
             lines.push(format!(
-                "Required key missing: '{field}'. Set it in its section of config/default.toml, or as HODEI_<SECTION>__{} (for example HODEI_ROCKSDB__CREATE_IF_MISSING=true).",
+                "Required key missing: '{field}'. Set it in its section of config/default.toml, or as HODEI_<SECTION>__{} (for example HODEI_DATABASE__DB_TYPE=dgraph).",
                 field.to_ascii_uppercase()
             ));
         }
     }
     lines.join("\n")
-}
-
-impl RocksDbConfig {
-    /// Validate the RocksDB configuration.
-    ///
-    /// This check is pure: it looks at the configuration and nothing else. It
-    /// does not touch the filesystem, so validating a configuration twice
-    /// gives the same answer twice, and validating one never leaves a
-    /// directory behind.
-    ///
-    /// Whether the path can actually be used is a question about the machine,
-    /// not about the configuration, and it is answered by
-    /// `preflight_storage`.
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.path.is_empty() {
-            return Err(ConfigError::Message(
-                "RocksDB path cannot be empty. Please set HODEI_ROCKSDB__PATH to a valid file path"
-                    .to_string(),
-            ));
-        }
-
-        if self.max_open_files <= 0 {
-            return Err(ConfigError::Message(
-                "RocksDB max_open_files must be positive. Please set HODEI_ROCKSDB__MAX_OPEN_FILES to a value > 0".to_string()
-            ));
-        }
-
-        if self.write_buffer_size == 0 {
-            return Err(ConfigError::Message(
-                "RocksDB write_buffer_size cannot be 0. Please set HODEI_ROCKSDB__WRITE_BUFFER_SIZE to a positive value".to_string()
-            ));
-        }
-
-        Ok(())
-    }
-
-    /// Check that the storage the configuration names can actually be used.
-    ///
-    /// This is the infrastructure preflight: it touches the filesystem, it
-    /// creates the directory when the configuration says it may, and it
-    /// reports what is wrong with the machine -- not with the configuration.
-    /// A service that cannot write where it was told to write says so here,
-    /// before it starts accepting requests.
-    pub fn preflight_storage(&self) -> Result<(), ConfigError> {
-        // RocksDB path is actually a directory that contains the database files
-        let path = std::path::Path::new(&self.path);
-
-        if path.exists() {
-            // Case 1: Path already exists
-            // It must be a directory (RocksDB creates and uses directories)
-            if !path.is_dir() {
-                return Err(ConfigError::Message(format!(
-                    "RocksDB path '{}' exists but is not a directory. RocksDB requires a directory path. Please remove this file or choose a different path.",
-                    self.path
-                )));
-            }
-
-            // Verify the directory is writable
-            let test_file = path.join(".hodei_test_write");
-            match std::fs::write(&test_file, "test") {
-                Ok(_) => {
-                    // Clean up test file
-                    let _ = std::fs::remove_file(test_file);
-                }
-                Err(e) => {
-                    return Err(ConfigError::Message(format!(
-                        "RocksDB directory '{}' exists but is not writable: {}. Please check permissions.",
-                        path.display(),
-                        e
-                    )));
-                }
-            }
-        } else {
-            // Case 2: Path doesn't exist yet (will be created by RocksDB)
-            // Validate that we can create it by checking parent directory
-            let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-
-            if !parent.exists() {
-                // Parent doesn't exist, try to create it
-                if self.create_if_missing {
-                    if let Err(e) = std::fs::create_dir_all(parent) {
-                        return Err(ConfigError::Message(format!(
-                            "Cannot create parent directory '{}' for RocksDB: {}. Please check permissions or set HODEI_ROCKSDB__PATH to a writable location.",
-                            parent.display(),
-                            e
-                        )));
-                    }
-                } else {
-                    return Err(ConfigError::Message(format!(
-                        "Parent directory '{}' does not exist and create_if_missing is false. Please create the directory manually or set create_if_missing=true.",
-                        parent.display()
-                    )));
-                }
-            } else {
-                // Parent exists, verify it's writable
-                let test_file = parent.join(".hodei_test_write");
-                match std::fs::write(&test_file, "test") {
-                    Ok(_) => {
-                        // Clean up test file
-                        let _ = std::fs::remove_file(test_file);
-                    }
-                    Err(e) => {
-                        return Err(ConfigError::Message(format!(
-                            "Parent directory '{}' is not writable: {}. Please check permissions.",
-                            parent.display(),
-                            e
-                        )));
-                    }
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 impl LoggingConfig {
@@ -2083,9 +1850,7 @@ mod tests {
         [
             ("HODEI_SERVER__PORT", "41535"),
             ("HODEI_SERVER__HOST", "127.0.0.1"),
-            ("HODEI_DATABASE__NAMESPACE", "hodei"),
-            ("HODEI_DATABASE__DATABASE", "artifacts"),
-            ("HODEI_ROCKSDB__PATH", "/tmp/hodei-config-override.rocksdb"),
+            ("HODEI_DATABASE__DB_TYPE", "dgraph"),
             ("HODEI_SCHEMA__REGISTER_IAM_ON_STARTUP", "true"),
             ("HODEI_LOGGING__LEVEL", "warn"),
         ]
@@ -2115,13 +1880,8 @@ mod tests {
             "HODEI_SERVER__HOST must override the configured host"
         );
         assert_eq!(
-            config.rocksdb.path, "/tmp/hodei-config-override.rocksdb",
-            "HODEI_ROCKSDB__PATH must override the configured database path"
-        );
-        assert_eq!(
-            config.database.namespace.as_deref(),
-            Some("hodei"),
-            "HODEI_DATABASE__NAMESPACE must override the configured namespace"
+            config.database.db_type, "dgraph",
+            "HODEI_DATABASE__DB_TYPE must override the configured backend"
         );
         assert!(
             config.schema.register_iam_on_startup,
@@ -2188,10 +1948,9 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.server.host, "0.0.0.0");
         assert_eq!(config.server.port, 3000);
-        assert_eq!(config.database.db_type, "rocksdb");
+        assert_eq!(config.database.db_type, "dgraph");
         assert!(!config.schema.register_iam_on_startup);
         assert_eq!(config.logging.level, "info");
-        assert_eq!(config.rocksdb.path, "./target/debug/data/hodei.rocksdb");
     }
 
     /// The staging of an interrupted upload is cleaned up, but not too soon.
@@ -2235,20 +1994,62 @@ mod tests {
 
     #[test]
     fn test_config_validation() {
-        let config = AppConfig::default();
+        // The graph is required: a configuration without `[graph]` is the
+        // retired embedded profile and is refused with the way out.
+        let error = AppConfig::default()
+            .validate()
+            .expect_err("a configuration without [graph] must be refused");
+        assert!(
+            error.to_string().contains(GRAPH_PROFILE_REQUIRED),
+            "the refusal must carry the migration message: {error}"
+        );
+
+        let config = a_graph_config();
         assert!(config.validate().is_ok());
 
-        let mut invalid_config = AppConfig::default();
+        let mut invalid_config = a_graph_config();
         invalid_config.server.port = 0;
         assert!(invalid_config.validate().is_err());
 
-        let mut invalid_config = AppConfig::default();
-        invalid_config.database.db_type = "postgres".to_string();
-        assert!(invalid_config.validate().is_err());
+        // Any backend that is not the graph is refused by name, the
+        // retired embedded engine included.
+        for refused in ["rocksdb", "postgres"] {
+            let mut invalid_config = a_graph_config();
+            invalid_config.database.db_type = refused.to_string();
+            let error = invalid_config
+                .validate()
+                .expect_err("a backend that is not the graph must be refused");
+            let text = error.to_string();
+            assert!(
+                text.contains(REFUSED_DATABASE_TYPE) && text.contains(refused),
+                "the refusal must name the offending value: {text}"
+            );
+        }
 
-        let mut invalid_config = AppConfig::default();
+        let mut invalid_config = a_graph_config();
         invalid_config.logging.level = "invalid".to_string();
         assert!(invalid_config.validate().is_err());
+    }
+
+    /// A valid graph profile, the base the validation tests perturb.
+    fn a_graph_config() -> AppConfig {
+        AppConfig {
+            graph: Some(hodei_graph_client::GraphClientConfig {
+                endpoint: "127.0.0.1:9080".to_string(),
+                tls: hodei_graph_client::GraphTlsConfig {
+                    enabled: false,
+                    ca_cert_path: None,
+                    client_cert_path: None,
+                    client_key_path: None,
+                    server_name: None,
+                },
+                credentials: None,
+                connect_timeout_ms: 5_000,
+                request_timeout_ms: 30_000,
+                namespace: 0,
+            }),
+            ..AppConfig::default()
+        }
     }
 
     #[test]
@@ -2335,7 +2136,7 @@ mod tests {
 
     #[test]
     fn deployed_config_files_keep_the_admin_surface_closed() {
-        for name in ["config/default", "config/development", "config/release"] {
+        for name in ["config/default", "config/dgraph"] {
             let config: AppConfig = Config::builder()
                 .add_source(File::with_name(name))
                 .build()
@@ -2362,97 +2163,6 @@ mod tests {
         config.server.host = "127.0.0.1".to_string();
         config.server.port = 8080;
         assert_eq!(config.server_address(), "127.0.0.1:8080");
-    }
-
-    #[test]
-    fn test_rocksdb_validation() {
-        let config = RocksDbConfig::default();
-        assert!(config.validate().is_ok());
-
-        let invalid_config = RocksDbConfig {
-            path: "".to_string(),
-            ..Default::default()
-        };
-        assert!(invalid_config.validate().is_err());
-
-        let invalid_config = RocksDbConfig {
-            max_open_files: 0,
-            ..Default::default()
-        };
-        assert!(invalid_config.validate().is_err());
-    }
-
-    /// The validation does not touch the filesystem.
-    ///
-    /// Validating a configuration is a question about the configuration. When
-    /// the answer depended on the machine, two validations of the same
-    /// configuration could disagree, and validating one left directories
-    /// behind.
-    #[test]
-    fn the_validation_does_not_touch_the_filesystem() {
-        let tmp = tempfile::tempdir().unwrap();
-        let missing = tmp.path().join("not-created");
-
-        let config = RocksDbConfig {
-            path: missing.to_string_lossy().into_owned(),
-            ..Default::default()
-        };
-
-        // The path does not exist and the validation says nothing about it:
-        // the shape of the configuration is valid.
-        assert!(
-            config.validate().is_ok(),
-            "a path that does not exist yet is a valid configuration"
-        );
-        assert!(
-            !missing.exists(),
-            "the validation must not create the directory"
-        );
-
-        // And it leaves nothing behind in the parent either.
-        let entries = std::fs::read_dir(tmp.path()).unwrap().count();
-        assert_eq!(entries, 0, "the validation must not write anything");
-    }
-
-    /// The preflight is the part that talks to the machine.
-    ///
-    /// It creates the directory when the configuration allows it, and it says
-    /// that the problem is the storage when the storage is the problem.
-    #[test]
-    fn the_preflight_creates_the_storage_and_reports_the_storage_problem() {
-        let tmp = tempfile::tempdir().unwrap();
-        let parent = tmp.path().join("created-by-the-preflight");
-        let database = parent.join("db");
-
-        let config = RocksDbConfig {
-            path: database.to_string_lossy().into_owned(),
-            create_if_missing: true,
-            ..Default::default()
-        };
-
-        config
-            .preflight_storage()
-            .expect("the preflight can create it");
-        assert!(
-            parent.exists(),
-            "the preflight creates the directory the database will live in"
-        );
-
-        // A path that is a file, and not a directory, is a storage problem.
-        let file = tmp.path().join("a-file");
-        std::fs::write(&file, "not a directory").unwrap();
-        let config = RocksDbConfig {
-            path: file.to_string_lossy().into_owned(),
-            ..Default::default()
-        };
-
-        let error = config
-            .preflight_storage()
-            .expect_err("a file is not a valid storage path");
-        assert!(
-            error.to_string().contains("not a directory"),
-            "the error must say what is wrong with the storage: {error}"
-        );
     }
 
     /// The content table read as the service would read it from a TOML.

@@ -26,10 +26,6 @@ pub mod composition_root;
 pub mod config;
 pub mod evidence;
 pub mod evidence_dgraph;
-// HSP-213: el lector del motor embebido queda tras la feature `legacy`;
-// el binario productivo no la declara.
-#[cfg(feature = "legacy")]
-pub mod evidence_surreal;
 pub mod gc;
 pub mod handlers;
 pub mod investigation;
@@ -49,8 +45,6 @@ pub mod reactor_dgraph;
 pub mod readiness;
 pub mod recovery;
 pub mod repository;
-#[cfg(feature = "legacy")]
-pub mod repository_surreal;
 pub mod resolution;
 pub mod risk_facts;
 pub mod router;

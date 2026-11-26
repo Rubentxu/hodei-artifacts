@@ -107,10 +107,6 @@ fn p5_the_binary_refuses_to_start_without_a_readable_configuration() {
         // instance is the missing configuration, so the refusal can only come
         // from that.
         .env("HODEI_SERVER__PORT", free_port().to_string())
-        .env(
-            "HODEI_ROCKSDB__PATH",
-            dir.join("data").join("hodei.rocksdb"),
-        )
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());

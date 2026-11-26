@@ -9,8 +9,8 @@
 //!   written through the Raw API before the restart must be read back with
 //!   the SAME digest after it (HSP-287); the test is red when the volume does
 //!   not persist the data.
-//! - AC2: External Dgraph/S3 profile does not touch RocksDB paths and fails
-//!   closed when the backend is unreachable; runtime image contains no build
+//! - AC2: a deployment without `[graph]` and an unreachable S3 backend fail
+//!   closed without touching local paths; runtime image contains no build
 //!   tools and no baked-in tokens/secrets.
 //! - HSP-308: the same image boots the graph profile (`RUN_MODE=dgraph`) with a
 //!   real Dgraph and an S3 at hand, writes an artifact, restarts and reads it
@@ -299,157 +299,6 @@ fn sha256_digest(bytes: &[u8]) -> String {
     format!("sha256:{hex}")
 }
 
-/// Start the standalone image with the Raw API enabled and a real
-/// authenticator + policy bundle, on the given data volume.
-fn run_authenticated_container(name: &str, data_mount: &str, policy_mount: &str) -> u16 {
-    let port = free_port();
-    let port_map = format!("127.0.0.1:{port}:3000");
-    let envs = [
-        ("RUN_MODE", "standalone"),
-        ("HODEI_SECURITY__RAW_API_ENABLED", "true"),
-        ("HODEI_SECURITY__AUTH_JWT_SECRET", LAB_SECRET),
-        ("HODEI_SECURITY__AUTH_ISSUER", LAB_ISSUER),
-        ("HODEI_SECURITY__AUTH_AUDIENCE", LAB_AUDIENCE),
-        (
-            "HODEI_SECURITY__AUTHORIZATION_POLICY_PATH",
-            "/policy/policies.cedar",
-        ),
-        (
-            "HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH",
-            "/policy/schema.json",
-        ),
-    ];
-    let env_args: Vec<String> = envs.iter().map(|(k, v)| format!("{k}={v}")).collect();
-    let mut args: Vec<&str> = vec![
-        "run",
-        "-d",
-        "--name",
-        name,
-        "--read-only",
-        "--tmpfs",
-        "/tmp:rw,noexec,nosuid,size=64m",
-        "--cap-drop=ALL",
-        "--security-opt=no-new-privileges:true",
-        "-v",
-        data_mount,
-        "-v",
-        policy_mount,
-        "-p",
-        &port_map,
-    ];
-    for e in &env_args {
-        args.push("-e");
-        args.push(e);
-    }
-    args.push(IMAGE_TAG);
-    podman_checked(&args);
-    wait_until_healthy(port, name);
-    port
-}
-
-#[test]
-#[ignore = "the OCI image is the production binary without the embedded engine (HSP-213): the standalone profile cannot boot in it. The graph profile counterpart is graph_profile_image_persists_artifact_across_restart_with_same_digest (HSP-308); this case goes with the embedded engine in HSP-314 F4"]
-fn artifact_written_before_restart_is_read_back_with_same_digest() {
-    let _ = packaged_dist();
-
-    let data_dir = TempDir::new().expect("create data temp dir");
-    prepare_container_data_dir(data_dir.path());
-    let data_mount = format!("{}:/app/data:rw,Z", data_dir.path().display());
-    let policy_dir = prepare_policy_dir();
-    let policy_mount = format!("{}:/policy:ro,Z", policy_dir.path().display());
-    let token = mint_token();
-    let auth = ("Authorization", format!("Bearer {token}"));
-
-    // Deterministic, non-trivial payload so a wrong blob cannot collide.
-    let payload: Vec<u8> = (0..65_536u32)
-        .map(|i| (i.wrapping_mul(31) % 251) as u8)
-        .collect();
-    let expected = sha256_digest(&payload);
-    let blob_path = format!("/repository/{LAB_REPOSITORY}/restart/payload.bin");
-
-    let c1 = format!("hodei-hsp287-c1-{}", std::process::id());
-    let _g1 = ContainerGuard::new(&c1);
-    let port1 = run_authenticated_container(&c1, &data_mount, &policy_mount);
-
-    let repo_body = format!(r#"{{"name":"{LAB_REPOSITORY}","format":"raw","mode":"hosted"}}"#);
-    let (status, answer) = http_request(
-        port1,
-        "POST",
-        "/api/v1/catalog/repositories",
-        &[
-            auth.clone(),
-            ("Content-Type", "application/json".to_string()),
-        ],
-        repo_body.as_bytes(),
-    );
-    assert_eq!(
-        status,
-        201,
-        "repository creation: {}",
-        String::from_utf8_lossy(&answer)
-    );
-    let (status, answer) = http_request(
-        port1,
-        "PUT",
-        &blob_path,
-        &[
-            auth.clone(),
-            (
-                "x-checksum-sha256",
-                expected.trim_start_matches("sha256:").to_string(),
-            ),
-        ],
-        &payload,
-    );
-    assert_eq!(
-        status,
-        201,
-        "artifact publish: {}",
-        String::from_utf8_lossy(&answer)
-    );
-    let answer: Value = serde_json::from_slice(&answer).expect("publish answer is JSON");
-    assert_eq!(
-        answer["digest"].as_str(),
-        Some(expected.as_str()),
-        "the service must report the digest of the written bytes"
-    );
-    let (status, before) = http_request(port1, "GET", &blob_path, std::slice::from_ref(&auth), b"");
-    assert_eq!(status, 200, "read-back before the restart");
-    assert_eq!(sha256_digest(&before), expected, "digest before restart");
-
-    podman_checked(&["stop", "-t", "15", &c1]);
-    podman_checked(&["rm", "-f", &c1]);
-
-    // Same volume, brand-new container: the artifact must come back intact.
-    let c2 = format!("hodei-hsp287-c2-{}", std::process::id());
-    let _g2 = ContainerGuard::new(&c2);
-    let port2 = run_authenticated_container(&c2, &data_mount, &policy_mount);
-    let (status, after) = http_request(port2, "GET", &blob_path, std::slice::from_ref(&auth), b"");
-    assert_eq!(
-        status, 200,
-        "artifact written before the restart must survive it (volume not persisting?)"
-    );
-    assert_eq!(
-        sha256_digest(&after),
-        expected,
-        "digest after restart must equal the digest written before it"
-    );
-    podman_checked(&["stop", "-t", "15", &c2]);
-    podman_checked(&["rm", "-f", &c2]);
-
-    // Negative control: a fresh volume must NOT serve the artifact, proving the
-    // assertions above discriminate persisted data from a lucky default.
-    let empty_dir = TempDir::new().expect("create empty data dir");
-    prepare_container_data_dir(empty_dir.path());
-    let empty_mount = format!("{}:/app/data:rw,Z", empty_dir.path().display());
-    let c3 = format!("hodei-hsp287-c3-{}", std::process::id());
-    let _g3 = ContainerGuard::new(&c3);
-    let port3 = run_authenticated_container(&c3, &empty_mount, &policy_mount);
-    let (status, _) = http_request(port3, "GET", &blob_path, &[auth], b"");
-    assert_ne!(status, 200, "a fresh volume must not serve the artifact");
-    podman_checked(&["stop", "-t", "15", &c3]);
-}
-
 /// Start the image on the graph profile: Dgraph and S3 come from the lab
 /// (host network, so the loopback endpoints of the lab are the ones the
 /// container dials), and the bytes live in S3, not in the volume.
@@ -664,7 +513,7 @@ async fn graph_profile_image_persists_artifact_across_restart_with_same_digest()
     // The graph profile must not have used the embedded engine or the local CAS.
     assert!(
         !data_dir.path().join("hodei.rocksdb").exists(),
-        "the graph profile must not create the RocksDB directory"
+        "the graph profile must not create a local metadata store"
     );
 
     // Negative control: same Dgraph, EMPTY bucket. The bytes live in S3, so the
@@ -685,7 +534,7 @@ async fn graph_profile_image_persists_artifact_across_restart_with_same_digest()
 
 /// HSP-308 regression: `RUN_MODE=dgraph` loads `config/dgraph.toml` with
 /// `required(false)`, so an image that does not ship it silently boots the
-/// default (rocksdb) profile and then dies with a RocksDB-vs-`[graph]` error.
+/// shared base, which declares no `[graph]` and is refused at startup.
 /// Cheap, no podman: the staging loop must name every shipped run mode.
 #[test]
 fn oci_staging_ships_the_graph_profile_config() {
@@ -695,12 +544,7 @@ fn oci_staging_ships_the_graph_profile_config() {
         .lines()
         .find(|l| l.starts_with("for cfg in "))
         .expect("the config staging loop");
-    for profile in [
-        "default.toml",
-        "standalone.toml",
-        "external.toml",
-        "dgraph.toml",
-    ] {
+    for profile in ["default.toml", "release.toml", "dgraph.toml"] {
         assert!(
             loop_line.contains(profile),
             "the OCI image must ship config/{profile}: {loop_line}"
@@ -831,101 +675,16 @@ fn oci_image_runs_as_non_root_without_build_tools_or_secrets() {
 }
 
 #[test]
-#[ignore = "the OCI image is the production binary without the embedded engine (HSP-213): the standalone profile cannot boot in it. The graph profile counterpart is graph_profile_image_persists_artifact_across_restart_with_same_digest (HSP-308); this case goes with the embedded engine in HSP-314 F4"]
-fn podman_standalone_readonly_persists_across_restart_and_handles_sigterm() {
+fn a_deployment_without_the_graph_fails_closed_without_touching_local_paths() {
     let _ = packaged_dist();
 
     let data_dir = TempDir::new().expect("create data temp dir");
     prepare_container_data_dir(data_dir.path());
     let data_mount = format!("{}:/app/data:rw,Z", data_dir.path().display());
 
-    // First boot with --read-only rootfs and non-root UID.
-    let c1_name = format!("hodei-hsp242-c1-{}", std::process::id());
-    let _g1 = ContainerGuard::new(&c1_name);
-    let port1 = free_port();
-    let port_map1 = format!("127.0.0.1:{port1}:3000");
-
-    podman_checked(&[
-        "run",
-        "-d",
-        "--name",
-        &c1_name,
-        "--read-only",
-        "--tmpfs",
-        "/tmp:rw,noexec,nosuid,size=64m",
-        "--cap-drop=ALL",
-        "--security-opt=no-new-privileges:true",
-        "-v",
-        &data_mount,
-        "-p",
-        &port_map1,
-        "-e",
-        "RUN_MODE=standalone",
-        IMAGE_TAG,
-    ]);
-
-    wait_until_healthy(port1, &c1_name);
-    assert!(
-        data_dir.path().join("hodei.rocksdb").exists(),
-        "RocksDB directory must be persisted in the mounted /app/data volume"
-    );
-
-    // Graceful SIGTERM shutdown via `podman stop`.
-    podman_checked(&["stop", "-t", "15", &c1_name]);
-    let exit1 = podman_checked(&["inspect", "--format", "{{.State.ExitCode}}", &c1_name]);
-    assert_eq!(
-        exit1.trim(),
-        "0",
-        "SIGTERM must trigger graceful shutdown (exit 0), got {}",
-        exit1.trim()
-    );
-    let logs1 = podman_checked(&["logs", &c1_name]);
-    assert!(
-        logs1.contains("shut down gracefully") || logs1.contains("Received SIGTERM signal"),
-        "expected graceful shutdown log in:\n{logs1}"
-    );
-
-    // Second boot reusing the exact same persisted volume.
-    let c2_name = format!("hodei-hsp242-c2-{}", std::process::id());
-    let _g2 = ContainerGuard::new(&c2_name);
-    let port2 = free_port();
-    let port_map2 = format!("127.0.0.1:{port2}:3000");
-
-    podman_checked(&[
-        "run",
-        "-d",
-        "--name",
-        &c2_name,
-        "--read-only",
-        "--tmpfs",
-        "/tmp:rw,noexec,nosuid,size=64m",
-        "--cap-drop=ALL",
-        "--security-opt=no-new-privileges:true",
-        "-v",
-        &data_mount,
-        "-p",
-        &port_map2,
-        "-e",
-        "RUN_MODE=standalone",
-        IMAGE_TAG,
-    ]);
-
-    wait_until_healthy(port2, &c2_name);
-    podman_checked(&["stop", "-t", "15", &c2_name]);
-    let exit2 = podman_checked(&["inspect", "--format", "{{.State.ExitCode}}", &c2_name]);
-    assert_eq!(exit2.trim(), "0", "second boot SIGTERM must exit 0");
-}
-
-#[test]
-fn external_dgraph_s3_profile_fails_closed_without_touching_rocksdb() {
-    let _ = packaged_dist();
-
-    let data_dir = TempDir::new().expect("create data temp dir");
-    prepare_container_data_dir(data_dir.path());
-    let data_mount = format!("{}:/app/data:rw,Z", data_dir.path().display());
-
-    // 1. RUN_MODE=external (db_type=dgraph, backend=s3) must fail closed and
-    //    never create RocksDB or filesystem CAS directories.
+    // 1. A run mode the image does not ship loads only the shared base,
+    //    which declares no `[graph]`: the boot is refused (the embedded
+    //    profile is retired) and never creates the filesystem CAS.
     let out = podman(&[
         "run",
         "--rm",
@@ -935,24 +694,18 @@ fn external_dgraph_s3_profile_fails_closed_without_touching_rocksdb() {
         "-v",
         &data_mount,
         "-e",
-        "RUN_MODE=external",
-        "-e",
-        "HODEI_ROCKSDB__PATH=/app/data/forbidden.rocksdb",
+        "RUN_MODE=retired-embedded",
         "-e",
         "HODEI_CONTENT__CAS_PATH=/app/data/forbidden.cas",
         IMAGE_TAG,
     ]);
     assert!(
         !out.status.success(),
-        "external Dgraph/S3 profile must fail closed when unimplemented/unreachable"
-    );
-    assert!(
-        !data_dir.path().join("forbidden.rocksdb").exists(),
-        "external profile must NOT touch RocksDB path"
+        "a deployment without [graph] must fail closed"
     );
     assert!(
         !data_dir.path().join("forbidden.cas").exists(),
-        "external profile must NOT touch filesystem CAS path"
+        "the refusal must NOT touch the filesystem CAS path"
     );
 
     // 2. Unreachable S3 content backend must also fail closed without touching cas_path.
@@ -965,7 +718,7 @@ fn external_dgraph_s3_profile_fails_closed_without_touching_rocksdb() {
         "-v",
         &data_mount,
         "-e",
-        "RUN_MODE=standalone",
+        "RUN_MODE=dgraph",
         "-e",
         "HODEI_CONTENT__BACKEND=s3",
         "-e",

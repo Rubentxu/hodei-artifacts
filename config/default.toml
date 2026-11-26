@@ -17,24 +17,14 @@ request_timeout_secs = 30
 max_body_size = 10485760  # 10MB
 
 [database]
-db_type = "rocksdb"
-namespace = "hodei"
-database = "artifacts"
-pool_size = 10
-
-[rocksdb]
-path = "./data/hodei.rocksdb"
-create_if_missing = true
-compression = true
-max_open_files = 1000
-write_buffer_size = 67108864  # 64MB
+db_type = "dgraph"
 
 [schema]
 # The IAM schema is registered on startup, so a fresh instance validates
 # policies against a schema instead of degrading to a syntax check.
 register_iam_on_startup = true
 validate = true
-storage_type = "rocksdb"
+storage_type = "dgraph"
 
 [security]
 # The administrative /api/v1 surface stays closed unless an authenticator and

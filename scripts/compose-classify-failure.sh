@@ -17,7 +17,7 @@ set -euo pipefail
 
 LOG="$(cat)"
 
-if grep -qiE 'unsupported (database|storage|backend) type|only .rocksdb. is supported' <<<"$LOG"; then
+if grep -qiE 'unsupported (database|storage|backend) type|only .(rocksdb|dgraph). is supported' <<<"$LOG"; then
   echo unsupported-backend
 elif grep -qiE 'tcp connect error|connection refused|dns error|failed to lookup|timed out|cannot be used' <<<"$LOG"; then
   echo connectivity

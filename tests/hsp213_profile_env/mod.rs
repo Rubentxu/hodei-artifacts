@@ -1,14 +1,9 @@
-//! Los fixtures del perfil embebido para el contrato de HSP-213.
+//! Los fixtures del despliegue antiguo para el contrato de HSP-213.
 //!
-//! Lo usa `hsp213_profile_rejection` (el binario productivo rechaza el
-//! perfil antiguo sin `[graph]`). El target lo declara bajo su cfg, asi que
-//! el modulo solo se compila donde hay un test que lo usa.
-//!
-//! El binario es `CARGO_BIN_EXE_hodei-artifacts-api`: el que Cargo acaba
-//! de construir **con las features de este target**. Eso es exactamente
-//! lo que la pareja de targets necesita probar: con `--no-default-features`
-//! el binario es el arbol productivo, y con el default es el de la
-//! herramienta legacy.
+//! Lo usa `hsp213_profile_rejection`: el binario productivo rechaza el
+//! perfil antiguo sin `[graph]`. El binario es
+//! `CARGO_BIN_EXE_hodei-artifacts-api`: el que Cargo acaba de construir,
+//! y el unico arbol que existe (sin motor embebido).
 
 use std::path::Path;
 
@@ -26,9 +21,7 @@ pub fn free_port() -> u16 {
 /// El esquema Cedar del despliegue, con las acciones que el servicio
 /// autoriza: un bundle que no las declara muere en la validacion de
 /// seguridad antes de llegar al despacho del perfil, y la prueba mediria
-/// otra cosa. Es el mismo que sirve el arnes de `tests/support` (hsp138);
-/// se copia aqui porque este modulo debe compilar tambien sin la feature,
-/// donde el arnes enlaza surrealdb.
+/// otra cosa. Es el mismo que sirve el arnes de `tests/support` (hsp138).
 pub const SCHEMA: &str = r#"{
   "": { "entityTypes": {}, "actions": {} },
   "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },
@@ -49,9 +42,10 @@ pub const SCHEMA: &str = r#"{
   }
 }"#;
 
-/// The environment the embedded profile asks for: no `[graph]`, a local
-/// store path, and the production bundle the validator demands.
-pub fn embedded_profile_env(tmp: &Path, port: u16) -> Vec<(String, String)> {
+/// The environment an old embedded deployment still carries: no `[graph]`,
+/// the retired local store path, and the production bundle the validator
+/// demands.
+pub fn retired_profile_env(tmp: &Path, port: u16) -> Vec<(String, String)> {
     let policy = tmp.join("policies.cedar");
     let schema = tmp.join("schema.json");
     std::fs::write(&policy, "permit(principal, action, resource);\n").expect("the policy");
@@ -67,7 +61,6 @@ pub fn embedded_profile_env(tmp: &Path, port: u16) -> Vec<(String, String)> {
             "HODEI_CONTENT__CAS_PATH".to_string(),
             tmp.join("cas").to_string_lossy().into_owned(),
         ),
-        ("HODEI_REPOSITORY__DURABLE".to_string(), "true".to_string()),
         (
             "HODEI_SECURITY__RAW_API_ENABLED".to_string(),
             "true".to_string(),

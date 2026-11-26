@@ -24,10 +24,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-// HSP-213: el puerto de la investigacion y sus tipos viajan sin la feature
-// `legacy` --el handler HTTP los necesita tambien en el binario
-// productivo--, y solo la composicion sobre el almacem embebido queda
-// detras del corte.
 use hodei_authz::VerifiedContext;
 use hodei_evidence::ports::{ContentStore, StoreError};
 use hodei_hub::blob::BlobError;
@@ -38,27 +34,11 @@ use hodei_investigator::read_set::ReadSet;
 use hodei_investigator::scope::RetrievalScope;
 
 use hodei_authz::AuthorizationOutcome;
-#[cfg(feature = "legacy")]
-use hodei_evidence::domain::delta::RelationDeltaLedger;
-#[cfg(feature = "legacy")]
-use hodei_evidence::ports::EvidenceStore;
-#[cfg(feature = "legacy")]
-use hodei_investigator::Investigator;
-#[cfg(feature = "legacy")]
-use hodei_investigator::guard::CapabilityGuard;
 use hodei_investigator::scope::EvidenceReadAuthorizer;
-#[cfg(feature = "legacy")]
-use hodei_investigator_storage::GraphEvidenceRetriever;
-#[cfg(feature = "legacy")]
-use hodei_investigator_storage::freshness::LedgerFreshness;
 use kernel::Hrn;
-#[cfg(feature = "legacy")]
-use surrealdb::Connection;
 
 use crate::actions;
 use crate::authorization::AuthorizeResourceUseCase;
-#[cfg(feature = "legacy")]
-use crate::config::InvestigationConfig;
 
 /// The port of the investigation.
 ///
@@ -87,98 +67,6 @@ pub trait InvestigationPort: Send + Sync {
         scope: &RetrievalScope,
         report: &ReadSet,
     ) -> Result<Freshness, InvestigationError>;
-}
-
-#[cfg(feature = "legacy")]
-/// The investigation over the graph and the evidence of the deployment.
-pub struct GraphInvestigation<C: Connection> {
-    evidence: Arc<dyn EvidenceStore>,
-    content: Arc<dyn ContentStore>,
-    graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
-    deltas: Arc<dyn RelationDeltaLedger>,
-    authorize_resource: Arc<AuthorizeResourceUseCase>,
-    limits: InvestigationConfig,
-}
-
-#[cfg(feature = "legacy")]
-impl<C: Connection> GraphInvestigation<C> {
-    /// The investigation over the stores of the deployment.
-    pub fn new(
-        evidence: Arc<dyn EvidenceStore>,
-        content: Arc<dyn ContentStore>,
-        graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
-        deltas: Arc<dyn RelationDeltaLedger>,
-        authorize_resource: Arc<AuthorizeResourceUseCase>,
-        limits: InvestigationConfig,
-    ) -> Self {
-        Self {
-            evidence,
-            content,
-            graph,
-            deltas,
-            authorize_resource,
-            limits,
-        }
-    }
-
-    /// The tenant of the graph for a subject, or the reason there is
-    /// none.
-    fn the_tenant(&self, subject: &Hrn) -> Result<Hrn, InvestigationError> {
-        self.limits.the_graph_tenant(subject).ok_or_else(|| {
-            InvestigationError::NoAnswer(
-                "the tenant of the graph is not a canonical HRN".to_string(),
-            )
-        })
-    }
-}
-
-#[cfg(feature = "legacy")]
-#[async_trait]
-impl<C: Connection> InvestigationPort for GraphInvestigation<C> {
-    async fn investigate(
-        &self,
-        investigation: &str,
-        context: &VerifiedContext,
-        scope: &RetrievalScope,
-        question: &str,
-        now: DateTime<Utc>,
-    ) -> Result<Investigation, InvestigationError> {
-        // The tenant of the graph: the account the investigation is about.
-        // A graph written under another name has no relations to show, and
-        // that is said in the coverage of the report rather than hidden.
-        let tenant = self.the_tenant(&scope.subject)?;
-        // The authorizer carries the context of THIS request: the decision
-        // is taken for the principal that asked, and not for whoever asked
-        // last.
-        let retriever = GraphEvidenceRetriever::new(
-            self.evidence.clone(),
-            self.content.clone(),
-            self.graph.clone(),
-            Arc::new(CedarReadAuthorizer {
-                authorize_resource: self.authorize_resource.clone(),
-                context: context.clone(),
-            }),
-            tenant,
-        );
-        let investigator =
-            Investigator::without_a_model(Arc::new(retriever), CapabilityGuard::empty());
-        investigator
-            .investigate_without_a_model(investigation, scope, question, now)
-            .await
-    }
-
-    async fn freshness_of(
-        &self,
-        scope: &RetrievalScope,
-        report: &ReadSet,
-    ) -> Result<Freshness, InvestigationError> {
-        // El tenant es el de la cuenta del sujeto, y el comprobador
-        // consulta SOLO ese tenant: una comprobacion de otra cuenta no
-        // se hace por el camino de un tenant ajeno.
-        let tenant = self.the_tenant(&scope.subject)?;
-        let checker = LedgerFreshness::new(self.evidence.clone(), self.deltas.clone(), tenant);
-        Ok(checker.freshness_of(report, &scope.subject).await)
-    }
 }
 
 /// The authorizer of the reads, over Cedar.

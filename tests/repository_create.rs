@@ -19,7 +19,9 @@ use hodei_authz::{
     IndeterminateReason, PrincipalAuthenticator, PrincipalClaims, PrincipalId,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 struct TestAuthenticator;
@@ -70,15 +72,11 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
 
 async fn app(
     authorizer: Arc<dyn AuthorizerPort>,
-) -> (axum::Router, InMemoryRepositoryStore, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (axum::Router, InMemoryRepositoryStore, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -149,11 +147,11 @@ impl AuthorizerPort for IndeterminateAuthorizer {
     }
 }
 
-async fn bootstrap_shared(authorizer: Arc<dyn AuthorizerPort>) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn bootstrap_shared(authorizer: Arc<dyn AuthorizerPort>) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let state = bootstrap(
         &config,
         BootstrapConfig {
@@ -390,9 +388,9 @@ async fn writer_failure_is_503_and_has_no_effect() {
         }
     }
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let state = bootstrap(
         &config,
         BootstrapConfig {

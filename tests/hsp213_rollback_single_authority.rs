@@ -1,9 +1,7 @@
-#![cfg(not(feature = "legacy"))]
 //! HSP-213: el rollback no depende de arrancar dos autoridades.
 //!
 //! AC3 del retiro, demostrado con la maquina de estados de HSP-212 en el
-//! **arbol productivo**: este target solo declara sus tests compilado
-//! `--no-default-features` — el mismo arbol que rechaza el perfil
+//! **arbol productivo**: el unico que existe, el que rechaza el perfil
 //! embebido (`hsp213_profile_rejection`) y que empaqueta
 //! `scripts/package-release.sh`. Que la maquinaria de rollback
 //! (`src/recovery/cutover.rs`, sin feature) funcione ahi ya es parte de
@@ -26,8 +24,7 @@
 //!   juego: no hay ventana de dos autoridades ni un instante.
 //!
 //! La siembra y el paquete de 31 filas son los fixtures certificados de
-//! HSP-210/211/212; el arnes de `tests/support` no se usa —enlaza
-//! surrealdb y este target vive justo donde esa dependencia ya no esta—.
+//! HSP-210/211/212; este target no usa el arnes de `tests/support`.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -295,13 +292,13 @@ async fn the_pre_write_rollback_restores_one_authority_exactly() {
 }
 
 /// La prueba de que el ensayo corre donde no hay motor embebido: el
-/// propio arbol del test. Que este modulo compile sin `legacy` ya afirma
+/// propio arbol del test. Que este modulo compile ya afirma
 /// que la maquina de rollback (`src/recovery/cutover.rs`) no depende del
 /// lector retirado; la asercion del mensaje recuerda que, en ese mismo
 /// arbol, no queda herramienta para volver al almacen local (retiradas en
 /// HSP-314 F4), y tampoco un segundo binario del servicio.
 #[test]
 fn the_rehearsal_tree_ships_no_embedded_engine() {
-    assert!(hodei_artifacts_api::bootstrap::LEGACY_PROFILE_REFUSAL.contains("HSP-213"));
-    assert!(hodei_artifacts_api::bootstrap::LEGACY_PROFILE_REFUSAL.contains("HSP-314 F4"));
+    assert!(hodei_artifacts_api::config::GRAPH_PROFILE_REQUIRED.contains("HSP-213"));
+    assert!(hodei_artifacts_api::config::GRAPH_PROFILE_REQUIRED.contains("HSP-314 F4"));
 }

@@ -19,7 +19,9 @@ use hodei_authz::{
     PrincipalId,
 };
 use serde_json::{Value, json};
-use tempfile::TempDir;
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 struct TestAuthenticator;
@@ -62,10 +64,10 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-async fn app(sink: Arc<dyn AuditSink>) -> (axum::Router, Arc<InMemoryRepositoryStore>, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+async fn app(sink: Arc<dyn AuditSink>) -> (axum::Router, Arc<InMemoryRepositoryStore>, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let store = Arc::new(InMemoryRepositoryStore::empty());
     let state = bootstrap(
         &config,
@@ -220,9 +222,9 @@ impl RepositoryWriter for FailingWriter {
 
 #[tokio::test]
 async fn writer_failure_emits_failed() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp.path().join("db").to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let sink = Arc::new(InMemoryAuditSink::new());
     let store = Arc::new(InMemoryRepositoryStore::empty());
     let state = bootstrap(

@@ -1,11 +1,9 @@
 # El perfil productivo sobre la autoridad única del grafo (HSP-209).
 #
 # Este es el fichero que dice RUN_MODE=dgraph. Declara `[graph]`, y esa
-# declaración ES el perfil: con ella el motor embebido queda rechazado
-# (el `[database]` no puede reclamar `rocksdb`, y si lo reclama el arranque
-# muere nombrando el motor rechazado), su path no se crea ni se toca, y
-# todas las tiendas de metadato se abren contra el alpha declarado. Sin
-# `[graph]`, este mismo binario corre sobre el motor embebido como siempre.
+# declaración ES el perfil: el único que existe (HSP-314 F4 retiró el motor
+# embebido). Todas las tiendas de metadato se abren contra el alpha
+# declarado. Sin `[graph]` el arranque muere con el mensaje de migración.
 #
 # Las credenciales del alpha viajan por el entorno del proceso, nunca por
 # aquí: HODEI_GRAPH__CREDENTIALS__PASSWORD (y HODEI_GRAPH__CREDENTIALS__
@@ -46,15 +44,11 @@ server_name = "dgraph-alpha"
 [graph.credentials]
 userid = "groot"
 
-# La sección del motor embebido se mantiene porque la configuración es
-# estricta y compartida entre perfiles, pero su db_type DECLARA el grafo:
-# poner "rocksdb" aquí con [graph] presente es rechazado en el arranque
-# con el error que nombra el motor rechazado (HSP-209).
+# La configuración es estricta y compartida entre perfiles: `db_type`
+# DECLARA el grafo. Cualquier otro valor (el motor embebido retirado
+# incluido) es rechazado en el arranque nombrando el valor.
 [database]
 db_type = "dgraph"
-namespace = "hodei"
-database = "artifacts"
-pool_size = 10
 
 # Los bytes no viven en el grafo: el backend del contenido se declara como
 # en cualquier otro perfil. El productivo es S3; un bucket inalcanzable
@@ -96,24 +90,8 @@ oci_api_enabled = true
 # authorization_schema_path = "/etc/hodei/schema.json"
 cors_allowed_origins = []
 
-[repository]
-# Las modalidades verticales (raw, OCI y las demás) son la superficie de
-# este perfil; el registro legacy `/repositories` no tiene puerto sobre
-# Dgraph (bloqueador registrado) y responde cerrado.
-durable = false
-
 [logging]
 level = "info"
 format = "json"
 include_timestamps = true
 include_location = false
-
-# El path del motor embebido existe en el esquema de configuración pero
-# este perfil no lo crea, no lo abre y no lo toca: con [graph] declarado,
-# el preflight del motor embebido no corre (HSP-209).
-[rocksdb]
-path = "/var/lib/hodei/unused.rocksdb"
-create_if_missing = true
-compression = true
-max_open_files = 1000
-write_buffer_size = 67108864

@@ -367,7 +367,7 @@ async fn read(
     correlation: &str,
 ) -> Result<Response, Failure> {
     let _decision = authorize_repository(
-        state,
+        &state.authorize_resource,
         context,
         crate::actions::download_asset(),
         &repository,

@@ -141,10 +141,11 @@ fn classify(log: &str) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
-/// What the API printed (observed with Podman) when it rejected `db_type = dgraph`.
-const UNSUPPORTED_LOG: &str = "Configuration error: Unsupported database type 'dgraph'. \
-Only 'rocksdb' is supported. Please set HODEI_DATABASE__DB_TYPE to 'rocksdb'\n\
-Configuration files read: config/default.toml, config/external.toml.\n";
+/// What the API prints when it rejects a `db_type` that is not the graph.
+const UNSUPPORTED_LOG: &str = "Configuration error: Unsupported database type 'rocksdb'. \
+Only 'dgraph' is supported: the graph declared in [graph] is the single authority of the metadata. \
+Please set HODEI_DATABASE__DB_TYPE to 'dgraph'\n\
+Configuration files read: config/default.toml, config/dgraph.toml.\n";
 
 /// What the API printed (observed with Podman) when the S3 endpoint was down.
 const CONNECTIVITY_LOG: &str = "Bootstrap failed: Failed to initialize namespace/database: \

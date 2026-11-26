@@ -3,8 +3,8 @@
 //!
 //! La readiness **no** es la liveness. La liveness dice que el proceso
 //! vive; la readiness dice que el proceso sabe servir: que las
-//! dependencias que el perfil activo exige --el catalogo y el almacen de
-//! contenido-- estan a mano. Un despliegue sin catalogo no puede decir
+//! dependencias que el perfil activo exige --el grafo y el almacen de
+//! contenido-- estan a mano. Un despliegue sin grafo no puede decir
 //! que repositorio existe, y un despliegue sin almacen de contenido no
 //! tiene bytes que servir: en los dos casos la readiness es un `503`, y el
 //! proceso sigue vivo.
@@ -22,10 +22,6 @@ use hodei_graph_client::{GraphClientError, GraphHealthPort};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-#[cfg(feature = "legacy")]
-use surrealdb::Surreal;
-#[cfg(feature = "legacy")]
-use surrealdb::engine::local::Db;
 
 /// El presupuesto de red de **una** dependencia.
 ///
@@ -55,8 +51,6 @@ pub const VERDICT_TTL: Duration = Duration::from_secs(1);
 /// Una dependencia que el perfil activo exige para servir.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dependency {
-    /// El catalogo: los repositorios, los assets y las versiones.
-    Catalog,
     /// El almacen de contenido: los bytes.
     ContentStore,
     /// La autoridad de grafo (Dgraph): alcanzable y con el login ACL valido.
@@ -76,7 +70,6 @@ impl Dependency {
     /// falla, no donde esta.
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Catalog => "catalog",
             Self::ContentStore => "content_store",
             Self::Graph => "graph",
             Self::TrustPolicy => "trust_policy",
@@ -316,8 +309,6 @@ impl ContentCheck {
 /// Las que no estan aqui no se exigen: una dependencia que el perfil no
 /// exige no puede hacer fallar el readiness.
 pub struct ProfileProbe {
-    #[cfg(feature = "legacy")]
-    catalog: Option<Surreal<Db>>,
     content: Option<ContentCheck>,
     graph: Option<Arc<dyn GraphHealthPort>>,
 }
@@ -326,8 +317,6 @@ impl ProfileProbe {
     /// Un perfil que no exige nada.
     pub fn new() -> Self {
         Self {
-            #[cfg(feature = "legacy")]
-            catalog: None,
             content: None,
             graph: None,
         }
@@ -338,13 +327,6 @@ impl ProfileProbe {
     /// authenticated read-only round-trip; no data is scanned.
     pub fn with_graph(mut self, graph: Arc<dyn GraphHealthPort>) -> Self {
         self.graph = Some(graph);
-        self
-    }
-
-    /// El perfil exige el catalogo, que vive en este motor.
-    #[cfg(feature = "legacy")]
-    pub fn with_catalog(mut self, db: Surreal<Db>) -> Self {
-        self.catalog = Some(db);
         self
     }
 
@@ -365,10 +347,6 @@ impl Default for ProfileProbe {
 impl ReadinessProbe for ProfileProbe {
     fn required(&self) -> Vec<Dependency> {
         let mut required = Vec::new();
-        #[cfg(feature = "legacy")]
-        if self.catalog.is_some() {
-            required.push(Dependency::Catalog);
-        }
         if self.graph.is_some() {
             required.push(Dependency::Graph);
         }
@@ -380,30 +358,6 @@ impl ReadinessProbe for ProfileProbe {
 
     async fn check(&self, dependency: Dependency) -> Result<(), DependencyFailure> {
         match dependency {
-            #[cfg(not(feature = "legacy"))]
-            Dependency::Catalog => Err(DependencyFailure::Misconfigured),
-            #[cfg(feature = "legacy")]
-            Dependency::Catalog => {
-                let Some(db) = self.catalog.as_ref() else {
-                    return Err(DependencyFailure::Misconfigured);
-                };
-                // El catalogo de este despliegue es el motor embebido: esta
-                // dentro del proceso. Su comprobacion es **trivial** --una
-                // sentencia que no toca ninguna tabla y no baja el
-                // catalogo-- y su fallo no es alcanzable en caliente. Un
-                // catalogo **remoto** si se puede perder en caliente, y su
-                // comprobacion seria la lectura mas barata del puerto del
-                // catalogo, con una pagina de uno.
-                let mut response = db
-                    .query("RETURN true")
-                    .await
-                    .map_err(|_error| DependencyFailure::Unreachable)?;
-                if response.take_errors().is_empty() {
-                    Ok(())
-                } else {
-                    Err(DependencyFailure::Unreachable)
-                }
-            }
             Dependency::ContentStore => {
                 let Some(content) = self.content.as_ref() else {
                     return Err(DependencyFailure::Misconfigured);
@@ -532,12 +486,12 @@ mod tests {
 
     #[tokio::test]
     async fn una_dependencia_opcional_que_no_se_exige_no_puede_fallar_el_readiness() {
-        // El probe exige el catalogo y la comprobacion falla: el veredicto
+        // El probe exige el grafo y la comprobacion falla: el veredicto
         // es que no esta listo. La dependencia que no se exige --el
         // almacen de contenido-- no aparece ni puede fallar.
         let probe = CachedProbe::with_ttl(
             Arc::new(Counting::new(
-                vec![Dependency::Catalog],
+                vec![Dependency::Graph],
                 Err(DependencyFailure::Unreachable),
             )),
             Duration::from_millis(10),
@@ -546,9 +500,9 @@ mod tests {
         assert!(!report.ready);
         assert_eq!(
             report.failing,
-            vec![(Dependency::Catalog, DependencyFailure::Unreachable)]
+            vec![(Dependency::Graph, DependencyFailure::Unreachable)]
         );
-        assert_eq!(probe.required(), vec![Dependency::Catalog]);
+        assert_eq!(probe.required(), vec![Dependency::Graph]);
     }
 
     #[tokio::test]
@@ -565,7 +519,7 @@ mod tests {
     #[tokio::test]
     async fn el_probe_no_consulta_mas_de_una_vez_cada_dependencia() {
         let counting = Arc::new(Counting::new(
-            vec![Dependency::Catalog, Dependency::ContentStore],
+            vec![Dependency::Graph, Dependency::ContentStore],
             Ok(()),
         ));
         let probe = CachedProbe::with_ttl(counting.clone(), Duration::from_millis(10));

@@ -94,7 +94,6 @@ async fn real_app() -> (axum::Router, Workdir) {
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.raw_api_enabled = true;
-    config.repository.durable = true;
     tmp.apply(&mut config);
     config.content.cas_path = tmp.path().join("cas").to_string_lossy().into_owned();
 

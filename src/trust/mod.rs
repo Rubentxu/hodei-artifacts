@@ -30,13 +30,6 @@
 pub mod cache;
 pub mod hrn;
 pub mod promotion;
-// HSP-213: el ciclo reactivo se apoya en los almacenes del motor embebido
-// (intents, casos y decisiones en SurrealDB). El modulo queda partido por
-// dentro: la composicion esta tras la feature `legacy` --que el binario
-// productivo no declara--, y los tipos puros del contrato HTTP
-// (ReactorError, AdvisoryAdmission, SweepCounters) siguen visibles para
-// que la entrada de advisories responda 501 con su error tambien sin la
-// feature.
 pub mod reaction;
 
 use std::collections::HashSet;
