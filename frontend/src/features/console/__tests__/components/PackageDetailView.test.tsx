@@ -862,7 +862,7 @@ describe('PackageDetailView', () => {
               basis: 'Deterministic check.',
             },
           ],
-          coverage: 'complete',
+          coverage: { partial: { omitted: 3 } },
           read_set: { generations: [], stamps: [] },
         });
       })
@@ -875,13 +875,24 @@ describe('PackageDetailView', () => {
     );
 
     await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
-    await user.click(await screen.findByRole('button', { name: 'Investigate' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Investigate' })
+    );
 
-    expect(await screen.findByText('Digest evidence is verified.')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Digest evidence is verified.')
+    ).toBeInTheDocument();
     expect(investigationRequest).toEqual({
       subject: thePackage.capsule.subject,
     });
-    expect(screen.getByText('Complete coverage')).toBeInTheDocument();
+    expect(
+      screen.getByText('Partial coverage (3 omitted)')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Partial coverage: 3 fact\(s\) were omitted by the deployment budget\. This report is not exhaustive\./
+      )
+    ).toBeInTheDocument();
   });
 
   it('does not simulate investigation results when the route is unavailable', async () => {
@@ -902,12 +913,16 @@ describe('PackageDetailView', () => {
     );
 
     await user.click(await screen.findByRole('tab', { name: 'Evidence' }));
-    await user.click(await screen.findByRole('button', { name: 'Investigate' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Investigate' })
+    );
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'The service cannot answer right now'
     );
     expect(screen.getByText(/No results were simulated\./)).toBeInTheDocument();
-    expect(screen.queryByText('Digest evidence is verified.')).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Digest evidence is verified.')
+    ).not.toBeInTheDocument();
   });
 });
