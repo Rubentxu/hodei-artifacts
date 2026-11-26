@@ -37,7 +37,9 @@ use hodei_catalog::{
 };
 use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
-use hodei_graph_client::{GraphClient, GraphClientConfig};
+use hodei_graph_client::{
+    GraphClient, GraphClientConfig, GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction,
+};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 
 /// El directorio de evidencia de HSP-192: los object stores de prueba
@@ -822,4 +824,71 @@ async fn a_hold_is_released_once_and_the_census_lists_the_accounts_with_reposito
         1,
         "one row per account, not per repository: {accounts:?}"
     );
+}
+
+/// An account whose rows still root a digest but that has no repository row
+/// (a repository removed without cascade, a direct seed, a migration) is
+/// part of the census: its digest stays retained, never reclaimable.
+#[tokio::test]
+async fn an_account_with_roots_and_no_repository_row_still_retains_its_digest() {
+    let Some(client) = fresh_client().await else {
+        return;
+    };
+    let store = open_store(Arc::clone(&client)).await;
+    let owner = account("norepo");
+
+    let cas_root = std::path::Path::new(UAT_ROOT).join(format!("cas-{owner}"));
+    std::fs::create_dir_all(&cas_root).expect("the UAT evidence directory");
+    let content = Arc::new(FileBlobStore::new(&cas_root).expect("the file CAS"));
+
+    store
+        .create_repository(&owner, a_descriptor(&owner, "raw"))
+        .await
+        .expect("the repository");
+    let bytes = format!("rooted-without-repository-{owner}").into_bytes();
+    content.put(&bytes).await.expect("the blob");
+    store
+        .publish(&owner, a_publication(&owner, &bytes, "rooted"))
+        .await
+        .expect("the publication");
+
+    // Remove ONLY the repository row: the asset, version and reference rows
+    // of the account stay, as after a removal without cascade.
+    client
+        .upsert(GraphUpsertTransaction {
+            query: format!(
+                "{{ r as var(func: eq(hodei.catalog.repository.account, \"{owner}\")) }}"
+            ),
+            blocks: vec![GraphMutationBlock {
+                cond: Some("eq(len(r), 1)".to_owned()),
+                set_nquads: String::new(),
+                delete_nquads: "uid(r) * * .\n".to_owned(),
+            }],
+            commit_now: true,
+        })
+        .await
+        .expect("the repository row is removed");
+
+    let accounts = ledger(&store).census_accounts().await.expect("accounts");
+    assert!(
+        accounts.contains(&owner),
+        "the census must include an account that only has roots: {accounts:?}"
+    );
+
+    let service = GcService::new(
+        ledger(&store),
+        Arc::clone(&content) as Arc<dyn BlobStore>,
+        GRACE,
+    )
+    .expect("the file store reclaims");
+    let plan = serde_json::to_value(&*service.dry_run().await.expect("the dry-run"))
+        .expect("the plan serialises");
+    let digest = ContentDigest::of_bytes(&bytes).to_string();
+    let entry = plan["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["digest"] == digest.as_str())
+        .unwrap_or_else(|| panic!("the plan lists {digest}"));
+    assert_eq!(entry["verdict"], "retained", "{entry:#}");
 }

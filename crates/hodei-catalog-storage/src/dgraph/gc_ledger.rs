@@ -808,28 +808,46 @@ impl DgraphCatalogStore {
             .map_err(graph_error)
     }
 
-    /// The accounts that own repositories: the census of the store is the
-    /// union of the roots of each one.
+    /// The accounts whose rows keep a digest alive: the union of the distinct
+    /// accounts of the four root families (asset, version, reference, apt
+    /// snapshot) and of the repositories.
     ///
-    /// `@groupby` answers one row per account, not one per repository, so
-    /// the response is bounded by the number of accounts.
+    /// The census pages each family by its OWN account column, so the
+    /// accounts must come from those same columns: an account with roots
+    /// and no repository row (a repository removed without cascade, a
+    /// direct seed, a migration) must still be censused, or its digests
+    /// would look unrooted and a sweep would delete live blobs.
+    /// `@groupby` answers one row per account, so the response is bounded
+    /// by the number of accounts, never by the number of roots.
     pub async fn census_accounts_here(&self) -> Result<Vec<String>, CatalogError> {
-        let query = "{ q(func: has(hodei.catalog.repository.key)) \
-             @groupby(hodei.catalog.repository.account) { count(uid) } }";
-        let json = self.execute_dql_row(query).await?;
-        let mut accounts: Vec<String> = json
-            .get("q")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|group| group.get("@groupby").and_then(serde_json::Value::as_array))
-            .flatten()
-            .filter_map(|row| {
-                row.get("hodei.catalog.repository.account")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned)
-            })
-            .collect();
+        let mut accounts: Vec<String> = Vec::new();
+        for predicate in [
+            "hodei.catalog.repository.account".to_owned(),
+            format!("{}.account", Family::Asset.prefix()),
+            format!("{}.account", Family::Version.prefix()),
+            format!("{}.account", Family::Reference.prefix()),
+            format!("{}.account", Family::AptSnapshot.prefix()),
+        ] {
+            let query = format!(
+                "{{ q(func: has({predicate})) @groupby({predicate}) {{ count(uid) }} }}"
+            );
+            let json = self.execute_dql_row(&query).await?;
+            accounts.extend(
+                json.get("q")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|group| {
+                        group.get("@groupby").and_then(serde_json::Value::as_array)
+                    })
+                    .flatten()
+                    .filter_map(|row| {
+                        row.get(&predicate)
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    }),
+            );
+        }
         accounts.sort();
         accounts.dedup();
         Ok(accounts)
