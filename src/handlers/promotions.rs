@@ -226,10 +226,10 @@ pub async fn promote(
         .await
         .map_err(|error| catalog_error(&error))?;
     let action = crate::actions::promote_asset();
-    let authorization = match state.authorize_resource.execute_canonical(
+    let authorization = match state.authorize_resource.execute_repository(
         context.clone(),
         action.clone(),
-        &repository.hrn,
+        &repository,
     ) {
         Ok(AuthorizationOutcome::Permit) => AuthorizationResult::Permit,
         Ok(AuthorizationOutcome::Deny(_)) => AuthorizationResult::Deny,
@@ -495,11 +495,10 @@ pub async fn revoke(
             &correlation,
         );
     };
-    match state.authorize_resource.execute_canonical(
-        context.clone(),
-        action.clone(),
-        &repository.hrn,
-    ) {
+    match state
+        .authorize_resource
+        .execute_repository(context.clone(), action.clone(), &repository)
+    {
         Ok(AuthorizationOutcome::Permit) => {}
         Ok(AuthorizationOutcome::Deny(_)) => {
             audit(AuditResult::Denied);

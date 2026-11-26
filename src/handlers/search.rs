@@ -367,7 +367,7 @@ fn the_permitted(
     for repository in repositories {
         let outcome = state
             .authorize_resource
-            .execute_canonical(context.clone(), action.clone(), &repository.hrn)
+            .execute_repository(context.clone(), action.clone(), &repository)
             .map_err(|_| SearchApiError::Internal)?;
         match outcome {
             AuthorizationOutcome::Permit => permitted.push(repository),

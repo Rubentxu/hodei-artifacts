@@ -29,6 +29,15 @@ pub fn create_repository() -> ActionId {
     ActionId::new("artifacts", "CreateRepository").expect("a valid action")
 }
 
+/// Managing the ABAC tags of a repository.
+///
+/// Tags feed tag-based policies, so whoever writes them can widen who is
+/// admitted. It is its own action and no other (not `CreateRepository`, nor
+/// any future update verb) implies it: a policy has to grant it explicitly.
+pub fn manage_repository_tags() -> ActionId {
+    ActionId::new("artifacts", "ManageRepositoryTags").expect("a valid action")
+}
+
 /// Reading the trust capsule of a release.
 ///
 /// The capsule is a read: it is a view of the evidence that is there, and
@@ -91,6 +100,7 @@ pub fn all() -> Vec<ActionId> {
     vec![
         read_repository(),
         create_repository(),
+        manage_repository_tags(),
         read_capsule(),
         access_admin_api(),
         upload_asset(),
@@ -176,6 +186,8 @@ pub fn check_service_declared(
     check_declared(schema, &read_repository())?;
     check_declared(schema, &read_capsule())?;
     check_declared(schema, &create_repository())?;
+    check_declared(schema, &manage_repository_tags())?;
+    check_scope_attributes_declared(schema)?;
     check_declared(schema, &download_asset())?;
     if admin_enabled {
         check_declared(schema, &access_admin_api())?;
@@ -193,4 +205,79 @@ pub fn check_service_declared(
         check_declared(schema, &investigate())?;
     }
     Ok(())
+}
+
+/// Check that the bundle's schema accepts the trusted scope attributes
+/// (`namespace`, `tags`) on `Artifacts::Repository`.
+///
+/// Every repository decision carries those attributes (HSP-321). Cedar
+/// refuses an entity with an attribute the schema does not declare, so a
+/// bundle that omits them would turn every repository decision into
+/// `Indeterminate`. The deployment refuses to start instead. Declare them
+/// as optional (`"required": false`) so decisions without a scope still
+/// validate.
+pub fn check_scope_attributes_declared(schema: &Schema) -> Result<(), String> {
+    use cedar_policy::{
+        Entities, Entity, EntityId, EntityTypeName, EntityUid, RestrictedExpression,
+    };
+    use std::collections::HashMap;
+    use std::str::FromStr;
+
+    let probe = || -> Result<(), String> {
+        let type_name =
+            EntityTypeName::from_str("Artifacts::Repository").map_err(|error| error.to_string())?;
+        let uid = EntityUid::from_type_name_and_id(type_name, EntityId::new("probe"));
+        let attributes = HashMap::from([
+            (
+                crate::authorization::NAMESPACE_ATTRIBUTE.to_string(),
+                RestrictedExpression::new_string("probe".to_string()),
+            ),
+            (
+                crate::authorization::TAGS_ATTRIBUTE.to_string(),
+                RestrictedExpression::new_set([RestrictedExpression::new_string(
+                    "probe".to_string(),
+                )]),
+            ),
+        ]);
+        let entity = Entity::new(uid, attributes, std::collections::HashSet::new())
+            .map_err(|error| error.to_string())?;
+        Entities::from_entities([entity], Some(schema))
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    };
+    probe().map_err(|reason| {
+        format!(
+            "the authorization schema must declare the optional attributes `namespace` (String) \
+             and `tags` (Set<String>) on Artifacts::Repository: {reason}"
+        )
+    })
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    fn schema_of(text: &str) -> Schema {
+        Schema::from_json_str(text).expect("a schema")
+    }
+
+    #[test]
+    fn shipped_schemas_declare_the_scope_attributes_and_the_tag_action() {
+        for text in [
+            include_str!("../config/community/schema.json"),
+            include_str!("../config/examples/schema.json"),
+        ] {
+            let schema = schema_of(text);
+            check_scope_attributes_declared(&schema).expect("scope attributes declared");
+            check_declared(&schema, &manage_repository_tags()).expect("tag action declared");
+        }
+    }
+
+    #[test]
+    fn a_schema_without_the_scope_attributes_is_refused_at_boot() {
+        let text = include_str!("../config/community/schema.json")
+            .replace("\"namespace\"", "\"unrelated\"");
+        let error = check_scope_attributes_declared(&schema_of(&text)).unwrap_err();
+        assert!(error.contains("namespace"), "{error}");
+    }
 }
