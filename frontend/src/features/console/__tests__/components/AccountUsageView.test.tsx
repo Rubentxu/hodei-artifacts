@@ -191,6 +191,22 @@ describe('AccountUsageView', () => {
     expect(screen.queryByText('0 B')).not.toBeInTheDocument();
   });
 
+  it('shows network failure as unavailable and never renders 0 usage', async () => {
+    server.use(http.get('/api/v1/account/usage', () => HttpResponse.error()));
+
+    render(
+      <MemoryRouter>
+        <AccountUsageView />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The service cannot answer right now'
+    );
+    expect(screen.queryByTestId('stored-bytes-value')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 B')).not.toBeInTheDocument();
+  });
+
   it('shows error on 500 and never renders 0 usage', async () => {
     server.use(
       http.get('/api/v1/account/usage', () =>
@@ -265,7 +281,7 @@ describe('AccountUsageView', () => {
     expect(screen.getByTestId('stored-bytes-value')).toHaveTextContent('4 KB');
   });
 
-  it('reuses the same TanStack Query hook in Overview (Dashboard and AccountUsageSummary)', async () => {
+  it('reuses the same principal-scoped query between the Dashboard summary and account usage details', async () => {
     let requestCount = 0;
     server.use(
       http.get('/api/v1/account/usage', () => {
@@ -276,8 +292,8 @@ describe('AccountUsageView', () => {
 
     render(
       <MemoryRouter>
-        <AccountUsageView />
         <AccountUsageSummary />
+        <AccountUsageView />
       </MemoryRouter>
     );
 
