@@ -1,20 +1,20 @@
-//! La superficie de contenido **crudo**.
+//! The **raw** content surface.
 //!
-//! Un repositorio crudo no tiene paquetes, ni versiones, ni formatos:
-//! tiene **bytes en una ruta**. Por eso la superficie es pequeña a
-//! propósito: `PUT` publica, `GET` descarga, `HEAD` describe, y las tres
-//! hablando con un repositorio `hosted`.
+//! A raw repository has no packages, no versions, no formats:
+//! it has **bytes at a path**. That is why the surface is small on
+//! purpose: `PUT` publishes, `GET` downloads, `HEAD` describes, and all three
+//! talk to a `hosted` repository.
 //!
-//! Lo que esta superficie **no** hace:
+//! What this surface does **not** do:
 //!
-//! - No comparte semantica con OCI, Maven ni npm: un repositorio de otro
-//!   formato no se sirve aquí, y una ruta de otro formato no significa
-//!   nada aquí.
-//! - No decide la autorización por su cuenta: pide la decisión de Cedar
-//!   con la acción que corresponde, y si la decisión no es permiso, no
-//!   hay contenido.
-//! - No admite una ruta ambigua: las reglas están en
-//!   [`path`], y se aplican antes de tocar el almacén de contenido.
+//! - It shares no semantics with OCI, Maven or npm: a repository of another
+//!   format is not served here, and a path of another format means
+//!   nothing here.
+//! - It does not decide authorization on its own: it asks Cedar for the decision
+//!   with the corresponding action, and if the decision is not permit, there is
+//!   no content.
+//! - It does not admit an ambiguous path: the rules are in
+//!   [`path`], and are applied before touching the content store.
 
 pub mod conditional;
 pub mod path;

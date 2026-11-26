@@ -1,50 +1,50 @@
-//! La política de sustitución del contenido de una dirección.
+//! The replacement policy for the content of an address.
 //!
-//! Un repositorio crudo **hosted** guarda el contenido en una dirección.
-//! Publicar en una dirección que ya tiene contenido **sustituye** lo
-//! que hay, y sustituir sin más es una decisión que no puede tomar el
-//! cliente: dos clientes que publican en la misma dirección se pisan,
-//! y el que pierde no se entera.
+//! A **hosted** raw repository stores content at an address.
+//! Publishing to an address that already has content **replaces** what
+//! is there, and replacing without further ado is a decision the
+//! client cannot make: two clients publishing to the same address overwrite each other,
+//! and the one that loses does not find out.
 //!
-//! Por eso la decisión no es del cliente: es del **repositorio**, y vive
-//! en su configuración **versionada**. Por defecto una dirección publica
-//! **una vez**: publicar el mismo contenido otra vez es idempotente, y
-//! publicar otro contenido es un conflicto.
+//! That is why the decision is not the client's: it is the **repository's**, and lives
+//! in its **versioned** configuration. By default an address publishes
+//! **once**: publishing the same content again is idempotent, and
+//! publishing other content is a conflict.
 //!
-//! # Donde vive la decisión
+//! # Where the decision lives
 //!
-//! En los ajustes del repositorio, bajo la clave `raw.replace`:
+//! In the repository settings, under the key `raw.replace`:
 //!
 //! ```json
 //! { "raw": { "replace": "allow" } }
 //! ```
 //!
-//! `allow` reponer. `deny` --o la ausencia de la clave-- no. La ausencia
-//! es una decisión: un repositorio que no dice nada es un repositorio que
-//! no ha dicho que se pueda reponer, y lo que no se ha dicho no se
-//! permite.
+//! `allow` permits replacement. `deny` --or the absence of the key-- does not. The absence
+//! is a decision: a repository that says nothing is a repository that
+//! has not said replacement is allowed, and what has not been said is not
+//! permitted.
 
 use serde_json::Value;
 
-/// Si el contenido de una dirección puede ser sustituido.
+/// Whether the content of an address can be replaced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplacePolicy {
-    /// No: la dirección publica una vez.
+    /// No: the address publishes once.
     Deny,
-    /// Si: la dirección se puede reponer.
+    /// Yes: the address can be replaced.
     Allow,
 }
 
-/// La clave de la política dentro de los ajustes del repositorio.
+/// The policy key within the repository settings.
 const REPLACE_KEY: &str = "replace";
 
-/// El valor que autoriza a reponer.
+/// The value that authorizes replacement.
 const ALLOW: &str = "allow";
 
-/// La política de sustitución que dice la configuración del repositorio.
+/// The replacement policy stated by the repository configuration.
 ///
-/// Lo que no es `allow` es `deny`: un valor desconocido no es un permiso,
-/// y un permiso que no se nombra no se concede.
+/// What is not `allow` is `deny`: an unknown value is not a permission,
+/// and a permission that is not named is not granted.
 pub fn the_replace_policy(settings: &Value) -> ReplacePolicy {
     let allowed = settings
         .get("raw")
