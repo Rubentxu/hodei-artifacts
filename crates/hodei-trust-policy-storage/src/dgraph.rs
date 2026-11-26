@@ -303,6 +303,11 @@ fn digest_of(algorithm: &str, value: &str) -> Result<ContentDigest, DgraphTrustE
     }
 }
 
+/// How many digests one `active_digests` read names at most: the query is
+/// text, and a page of a listing is far below this, so the chunking only
+/// bounds the size of what is sent for a caller that asks for many.
+const ACTIVE_DIGESTS_CHUNK: usize = 100;
+
 /// The grant row fields a read brings back.
 const GRANT_FIELDS: &str = "
   uid
@@ -801,6 +806,69 @@ impl DgraphTrustStore {
         }
     }
 
+    /// Which of the given digests have an active grant in the repository at
+    /// `at`, in ONE read bounded by the digests that are asked for.
+    ///
+    /// The query roots on the exact digest index, so it touches the grants
+    /// of those contents and nothing else; the account and the repository
+    /// narrow the candidates, and the validity is decided with the domain
+    /// rule of the grant itself (`is_active_at`), not with a second copy of
+    /// it. Digests are grouped by algorithm because a digest value is only
+    /// meaningful next to its algorithm.
+    async fn read_active_digests(
+        &self,
+        account: &str,
+        repository: &str,
+        digests: &[ContentDigest],
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ContentDigest>, DgraphTrustError> {
+        let mut active: Vec<ContentDigest> = Vec::new();
+        let mut by_algorithm: std::collections::BTreeMap<String, Vec<&ContentDigest>> =
+            std::collections::BTreeMap::new();
+        for digest in digests {
+            by_algorithm
+                .entry(digest.algorithm.to_string())
+                .or_default()
+                .push(digest);
+        }
+        for (algorithm, group) in by_algorithm {
+            for chunk in group.chunks(ACTIVE_DIGESTS_CHUNK) {
+                let values = chunk
+                    .iter()
+                    .map(|digest| dql_string(&digest.value))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let query = format!(
+                    "{{ q(func: eq(hodei.trust.grant.digest, [{values}])) \
+                      @filter(eq(hodei.trust.grant.account, {account}) AND \
+                              eq(hodei.trust.grant.repository, {repository}) AND \
+                              eq(hodei.trust.grant.digest_algorithm, {algorithm}) AND \
+                              not has(hodei.trust.grant.revoked_at) AND \
+                              gt(hodei.trust.grant.valid_until, {at})) \
+                      {{ {fields} }} }}",
+                    account = dql_string(account),
+                    repository = dql_string(repository),
+                    algorithm = dql_string(&algorithm),
+                    at = dql_string(&rfc3339(at)),
+                    fields = GRANT_FIELDS,
+                );
+                let response = query_json(&self.client, &query).await?;
+                for node in response
+                    .get("q")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                {
+                    let grant = grant_of(node)?;
+                    if grant.is_active_at(at) && !active.contains(&grant.digest) {
+                        active.push(grant.digest);
+                    }
+                }
+            }
+        }
+        Ok(active)
+    }
+
     /// Every grant of one repository, active or revoked, in the order
     /// the Surreal contract promises: granted time, then decision, then
     /// digest.
@@ -1074,6 +1142,18 @@ impl TrustLedger for DgraphTrustStore {
         repository: &str,
     ) -> Result<Vec<TrustGrant>, CatalogError> {
         self.read_grants_of(account, repository)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn active_digests(
+        &self,
+        account: &str,
+        repository: &str,
+        digests: &[ContentDigest],
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ContentDigest>, CatalogError> {
+        self.read_active_digests(account, repository, digests, at)
             .await
             .map_err(Into::into)
     }

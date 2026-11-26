@@ -263,6 +263,11 @@ pipeline {
                         "--test hsp197_yum_dgraph_it",
                         "--test hsp207_capsule_dgraph_it",
                         "--test hsp304_formats_dgraph_it",
+                        // HSP-314 P5: la busqueda del perfil de grafo sirve el canal
+                        // de confianza, el estado de confianza y el texto; la suite de
+                        // superficie corre sobre el cableado productivo del arranque.
+                        "--test hsp314_p5_search_dgraph_it",
+                        "--test hsp113_search_e2e",
                         // HSP-314 P2: the IAM and policy circuits over the graph profile,
                         // now that the Cedar schema has a Dgraph store.
                         "--test http_contract",
@@ -658,11 +663,6 @@ pipeline {
                         "--test audit_events",
                         "--test repository_create",
                         "--test repository_read",
-                        // La busqueda del grafo no sirve el canal de confianza ni el
-                        // estado de confianza (HTTP 400 con un repositorio trusted): sigue
-                        // en el motor embebido hasta que la busqueda lea el libro de
-                        // concesiones del grafo.
-                        "--test hsp113_search_e2e",
                         "--test hsp132_registry_list",
                     ).joinToString(" ")
                 )

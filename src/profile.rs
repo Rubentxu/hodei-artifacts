@@ -171,6 +171,22 @@ pub async fn assemble_graph_profile(
         .map(|g| g.endpoint.clone())
         .unwrap_or_default();
 
+    // 3a. El libro de confianza: las concesiones viven en la misma autoridad
+    //    que el catálogo que las menciona. Se abre antes del catálogo porque
+    //    la búsqueda lo lee. Encima, la misma caché TTL de lectura que usa
+    //    el perfil embebido.
+    let trust: Arc<dyn hodei_catalog::TrustLedger> = Arc::new(
+        DgraphTrustStore::open(client.clone(), graph.tenant.clone())
+            .await
+            .map_err(|error| {
+                BootstrapError::Initialization(format!(
+                    "the trust ledger cannot open on the graph at {endpoint}: {error}"
+                ))
+            })?,
+    );
+    let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> =
+        Arc::new(CachedTrustLedger::with_default_ttl(trust));
+
     // 3. El catálogo sobre el grafo. El autorizador es el de paso: la
     //    decisión real la toma el borde con Cedar, igual que en el perfil
     //    embebido; la sonda de integridad viene del CAS abierto antes.
@@ -185,27 +201,15 @@ pub async fn assemble_graph_profile(
                 "the catalog cannot open on the graph at {endpoint}: {error}"
             ))
         })?
-        .with_probe(Arc::new(BlobStoreProbe::new(content.clone()))),
+        .with_probe(Arc::new(BlobStoreProbe::new(content.clone())))
+        // The search serves the trusted channel and the trust state of every
+        // result from the same ledger the download path reads.
+        .with_trust_ledger(trust_ledger.clone()),
     );
     let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
     let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog.clone();
     let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
     let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
-
-    // 4. El libro de confianza: las concesiones viven en la misma autoridad
-    //    que el catálogo que las menciona. Encima, la misma caché TTL de
-    //    lectura que usa el perfil embebido.
-    let trust: Arc<dyn hodei_catalog::TrustLedger> = Arc::new(
-        DgraphTrustStore::open(client.clone(), graph.tenant.clone())
-            .await
-            .map_err(|error| {
-                BootstrapError::Initialization(format!(
-                    "the trust ledger cannot open on the graph at {endpoint}: {error}"
-                ))
-            })?,
-    );
-    let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> =
-        Arc::new(CachedTrustLedger::with_default_ttl(trust));
 
     // Las piezas del plano de promoción: el libro de decisiones sobre el
     // grafo y la política que el despliegue declara. Igual que en el
