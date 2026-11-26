@@ -1,5 +1,12 @@
 # Guía de Organización de Tests (TEST-ORG1)
 
+> **SUPERADO (HSP-317, 2026-11-26; motor embebido retirado en HSP-314).** Esta guía describe una
+> organización anterior: un directorio `e2e/` en la raíz que no existe, jobs planificados
+> (`test-unit`, `test-integration`, `test-e2e-playwright`) que no son la CI actual, y servicios
+> (MongoDB) que ya no forman parte del producto. Hoy: la CI es `pipeline.kts` (PipelineK), la
+> gate diaria es `scripts/test-affected.sh`, y los E2E de la consola viven en
+> `frontend/tests/e2e` (sección 3.4, la única vigente). El resto se conserva como historia.
+
 Versión: 1.3 (actualizada con ejecución paralela de tests de integración)
 Cambios 1.3: implementa sistema de generación de Docker Compose con templates para ejecución paralela de tests de integración
 Cambios 1.2: implementa estructura de tests unitarios en archivos separados con sufijo _test.rs y mantiene tests E2E con Playwright

@@ -1,5 +1,13 @@
 # Persistencia durable de repositorios
 
+> **SUPERADO (HSP-314, 2026-11-26).** Este documento describe `SurrealRepositoryStore`
+> sobre el motor embebido (SurrealDB/RocksDB), que se retiró del producto en HSP-314
+> (PR #235). Ese adaptador, `tests/repository_durable.rs` y la opción `[repository] durable`
+> ya no existen en `main`; el único perfil de producción es Dgraph. El texto de abajo se
+> conserva solo como historia de HSP-21 y **no** describe el comportamiento actual.
+
+## Histórico (motor retirado)
+
 HSP-21 añade `SurrealRepositoryStore`, un adaptador que implementa los puertos `RepositoryReader` y `RepositoryWriter` sobre la misma base RocksDB/SurrealDB del servicio.
 
 ## Garantías
