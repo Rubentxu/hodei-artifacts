@@ -309,7 +309,10 @@ async fn grant_validity_answers_follow_the_facts() {
             .active_grant(account, "raw", &digest, now)
             .await
             .expect("the graph answers");
-        let expected = matches!(content, "active" | "legacy");
+        // Only a grant with a declared, still-open validity serves: the
+        // expired one, the legacy one (no declared validity) and the
+        // never-granted digest are all closed.
+        let expected = content == "active";
         assert_eq!(
             from_graph.is_some(),
             expected,
