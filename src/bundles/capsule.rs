@@ -1,24 +1,24 @@
-//! La capsula de release como paquete OCI: el bundle, vestido de estandar.
+//! The release capsule as an OCI package: the bundle, dressed in a standard.
 //!
-//! Un paquete de resolucion ya dice todo lo que hace falta decir —digests,
-//! recibos, decisiones y ausencias explicitas— pero lo dice en un
-//! directorio propio. Exportarlo como **OCI image layout** no le anade
-//! verdad: le quita exotismo. El layout que escribe este modulo lo lee
-//! `oras` o `skopeo` sin saber nada de Hodei, y dentro de el hay dos
-//! capas con nombre: `release.json`, que son los bytes **exactos** del
-//! manifiesto del bundle, y `capsule.json`, que es el estado de confianza
-//! del paquete en el momento de exportarlo.
+//! A resolution bundle already says everything that needs saying —digests,
+//! receipts, decisions and explicit absences— but it says it in its own
+//! directory. Exporting it as an **OCI image layout** does not add
+//! truth to it: it removes the exoticism. The layout this module writes can be read by
+//! `oras` or `skopeo` without knowing anything about Hodei, and inside it there are two
+//! named layers: `release.json`, which is the **exact** bytes of the
+//! bundle's manifest, and `capsule.json`, which is the bundle's trust
+//! state at the moment of export.
 //!
-//! La capsula de confianza se deriva del propio paquete, no de la fe:
-//! cada ruta lleva el resultado de su recibo y la decision que la
-//! respaldaba — o `null` si no la habia. Un `null` exportado como `null`
-//! se importa como `null`: aqui nadie convierte una ausencia en un
-//! veredificado, porque la autoridad la tiene el destino con sus propias
-//! concesiones (la regla del paquete, repetida en el manifiesto).
+//! The trust capsule is derived from the bundle itself, not from faith:
+//! each path carries the result of its receipt and the decision that
+//! backed it — or `null` if there was none. A `null` exported as `null`
+//! is imported as `null`: here nobody turns an absence into a
+//! verified, because authority belongs to the destination with its own
+//! grants (the bundle's rule, repeated in the manifest).
 //!
-//! La firma es detached OpenPGP sobre los bytes exactos del manifiesto
-//! de la capsula, y viaja como un segundo manifiesto cuyo `subject` es el
-//! primero: el patron de referrers que el registro ya sirve por HTTP.
+//! The signature is a detached OpenPGP over the exact bytes of the capsule's
+//! manifest, and travels as a second manifest whose `subject` is the
+//! first: the referrers pattern that the registry already serves over HTTP.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -110,9 +110,9 @@ pub struct TrustState {
 }
 
 impl TrustState {
-    /// El estado que se deriva de un manifiesto de paquete ya comprobado:
-    /// misma entrada, misma capsula. No pregunta a nadie porque no hay
-    /// nadie — el paquete ya cuenta lo que sabia.
+    /// The state derived from an already-checked bundle manifest:
+    /// same input, same capsule. It asks nobody because there is
+    /// nobody — the bundle already tells what it knew.
     pub fn of(manifest: &BundleManifest) -> Self {
         Self {
             capsule: CAPSULE_NAME.to_string(),
@@ -150,7 +150,7 @@ fn annotation(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// La ruta de un blob dentro del layout, segun el estandar.
+/// The path of a blob within the layout, according to the standard.
 pub fn layout_blob_path(digest: &str) -> PathBuf {
     let hex = digest
         .strip_prefix("sha256:")
@@ -191,9 +191,9 @@ pub(super) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T
     Ok(serde_json::from_slice(&bytes)?)
 }
 
-/// Los bytes de cada descriptor que un manifiesto declara, comprobados
-/// contra su descriptor. Un blob que falta es un error; uno que no
-/// cuadra, tambien.
+/// The bytes of each descriptor that a manifest declares, checked
+/// against its descriptor. A missing blob is an error; one that does not
+/// match is too.
 pub(super) fn read_declared_blobs(
     dir: &Path,
     manifest: &ImageManifest,
@@ -238,8 +238,8 @@ pub(super) fn read_layout_blob(dir: &Path, desc: &Descriptor) -> Result<Vec<u8>,
     Ok(bytes)
 }
 
-/// Lo que [`export_capsule`] dejo en el disco: el layout, el digest de
-/// la capsula y los bytes exactos que se firmaron.
+/// What [`export_capsule`] left on disk: the layout, the digest of
+/// the capsule and the exact bytes that were signed.
 #[derive(Debug)]
 pub struct CapsuleExport {
     pub layout_dir: PathBuf,
@@ -248,13 +248,13 @@ pub struct CapsuleExport {
     pub signed_manifest: Vec<u8>,
 }
 
-/// Exporta el bundle ya escrito bajo `dir` como imagen OCI firmada en
-/// `layout`: el layout es un subdirectorio del paquete, de modo que el
-/// bundle sigue intacto y `oras push` recibe la carpeta OCI a pelo.
+/// Exports the bundle already written under `dir` as a signed OCI image in
+/// `layout`: the layout is a subdirectory of the bundle, so that the
+/// bundle stays intact and `oras push` receives the OCI folder as is.
 ///
-/// Comprueba cada blob del paquete contra su digest declarado antes de
-/// copiarlo como capa: la capsula no puede contener nada que el propio
-/// paquete no respalde.
+/// Checks each blob of the bundle against its declared digest before
+/// copying it as a layer: the capsule cannot contain anything that the
+/// bundle itself does not back.
 pub fn export_capsule(
     dir: &Path,
     layout: &Path,
@@ -268,11 +268,11 @@ pub fn export_capsule(
     }
     std::fs::create_dir_all(layout.join(LAYOUT_BLOBS))?;
 
-    // El manifiesto que se exporta son los bytes del `release.json` que
-    // `export` escribio: la capsula contiene el paquete, no una copia
-    // re-serializada que cambiaria de digest por el orden de un mapa.
-    // Quien exporta acaba de escribir el paquete en `dir`, asi que los
-    // blobs del almacen se leen de su propia copia del paquete.
+    // The manifest that gets exported is the bytes of the `release.json` that
+    // `export` wrote: the capsule contains the bundle, not a re-serialized
+    // copy that would change digest because of the order of a map.
+    // Whoever exports has just written the bundle in `dir`, so the
+    // store's blobs are read from its own copy of the bundle.
     let manifest_bytes = std::fs::read(dir.join(MANIFEST_NAME))?;
     let manifest: BundleManifest = read_json(&dir.join(MANIFEST_NAME))?;
     manifest.check_importable()?;
@@ -301,9 +301,9 @@ pub fn export_capsule(
         let bytes = content
             .get(&entry.digest)
             .ok_or_else(|| unsound(format!("the bundle lost its own blob {}", entry.digest)))?;
-        // La capa de contenido vive en su blob del layout, como exige el
-        // estandar: el descriptor puede anunciar el mismo digest que el
-        // paquete, pero sin bytes no hay capa que un cliente OCI lea.
+        // The content layer lives in its layout blob, as the
+        // standard requires: the descriptor may announce the same digest as the
+        // bundle, but without bytes there is no layer that an OCI client can read.
         let actual = write_layout_blob(layout, BLOB_MEDIA_TYPE, bytes)?;
         if actual.digest != entry.digest || actual.size != entry.size_bytes {
             return Err(unsound(format!(
@@ -322,8 +322,8 @@ pub fn export_capsule(
     let release = write_layout_blob(layout, RELEASE_MEDIA_TYPE, &manifest_bytes)?;
     let capsule_json = serde_json::to_vec_pretty(&TrustState::of(&manifest))?;
     let capsule_layer = write_layout_blob(layout, TRUST_MEDIA_TYPE, &capsule_json)?;
-    // Las capas de contenido primero; el manifiesto del bundle y la
-    // capsula de confianza al final, con nombre.
+    // The content layers first; the bundle manifest and the
+    // trust capsule last, by name.
     layers.push(release);
     layers.push(capsule_layer);
 
@@ -418,8 +418,8 @@ pub fn export_capsule(
             image_layout_version: LAYOUT_VERSION.to_string(),
         })?,
     )?;
-    // Los dos manifiestos son contenido: viven en su blob, igual que en
-    // el layout que `skopeo copy --format oci` escribe.
+    // The two manifests are content: they live in their blob, just like in
+    // the layout that `skopeo copy --format oci` writes.
     std::fs::write(layout.join(layout_blob_path(&image_digest)), &image_bytes)?;
     std::fs::write(
         layout.join(layout_blob_path(&signature_digest)),
@@ -434,10 +434,10 @@ pub fn export_capsule(
     })
 }
 
-/// El digest de contenido del estandar OCI: sha256 en **minusculas**.
-/// `ContentDigest::of_bytes` lo escribe en mayusculas, que aqui no
-/// vale: la ruta del blob y el digest anunciado tienen que coincidir
-/// byte a byte con lo que cualquier cliente OCI va a recalcular.
+/// The OCI standard's content digest: sha256 in **lowercase**.
+/// `ContentDigest::of_bytes` writes it in uppercase, which is not
+/// valid here: the blob path and the announced digest have to match
+/// byte for byte with what any OCI client is going to recompute.
 fn digest_of(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     use std::fmt::Write as _;
@@ -448,25 +448,25 @@ fn digest_of(bytes: &[u8]) -> String {
     digest
 }
 
-/// El veredicto de [`verify_capsule`]: que el layout es una capsula
-/// coherente y que la firma corresponde a esta capsula y a nadie mas.
+/// The verdict of [`verify_capsule`]: that the layout is a coherent
+/// capsule and that the signature corresponds to this capsule and to no other.
 #[derive(Debug)]
 pub struct CapsuleVerification {
     pub image: ImageManifest,
-    /// El manifiesto del bundle que la capsula contiene, byte a byte.
+    /// The bundle manifest that the capsule contains, byte for byte.
     pub manifest: BundleManifest,
     pub capsule: TrustState,
     pub signer: String,
 }
 
-/// Comprueba el layout: cada descriptor contra sus bytes, la capsula
-/// contra lo que el manifiesto del bundle dice, y la firma detached
-/// contra los bytes exactos del manifiesto de imagen.
+/// Checks the layout: each descriptor against its bytes, the capsule
+/// against what the bundle manifest says, and the detached signature
+/// against the exact bytes of the image manifest.
 ///
-/// La verificacion es estructural, no testimonial: un blob que falta o
-/// que no cuadra se rechaza; una capsula que afirma una decision que el
-/// manifiesto no tiene se rechaza; una firma valida sobre otra capsula
-/// no sirve.
+/// The verification is structural, not testimonial: a blob that is missing or
+/// does not match is rejected; a capsule that claims a decision that the
+/// manifest does not have is rejected; a valid signature over another capsule
+/// is of no use.
 pub fn verify_capsule(
     dir: &Path,
     signer: &MetadataSigner,
@@ -514,10 +514,10 @@ pub fn verify_capsule(
         ));
     }
 
-    // La firma vive en su propio manifiesto, con `subject` apuntando a
-    // la capsula: el patron de referrers. Verificar exige el mismo
-    // rigor que firmar: la firma es sobre los bytes del manifiesto de
-    // imagen, y ese manifiesto tiene que ser el que el indice anuncia.
+    // The signature lives in its own manifest, with `subject` pointing to
+    // the capsule: the referrers pattern. Verifying demands the same
+    // rigor as signing: the signature is over the bytes of the image
+    // manifest, and that manifest has to be the one the index announces.
     let signature_image = read_manifest_of(dir, &index, SIGNATURE_ARTIFACT_TYPE)?;
     let subject = signature_image
         .subject
@@ -566,8 +566,8 @@ pub fn verify_capsule(
     })
 }
 
-/// El manifiesto del layout cuyo `artifactType` es `want`, comprobando
-/// que el blob bajo el digest anunciado digiere exactamente eso.
+/// The layout manifest whose `artifactType` is `want`, checking
+/// that the blob under the announced digest digests exactly that.
 fn read_manifest_of(
     dir: &Path,
     index: &LayoutIndex,

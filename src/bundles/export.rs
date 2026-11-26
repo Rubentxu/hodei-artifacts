@@ -1,17 +1,17 @@
-//! La exportacion del paquete: el resultado de resolver, con su respaldo.
+//! The bundle export: the result of resolving, with its backing.
 //!
-//! Exportar no es copiar el cache: es declarar que cada ruta exportada
-//! estaba **resuelta y confirmada** en el momento de cerrar el paquete. La
-//! confirmacion es la misma que exige el servidor sin red: un recibo del
-//! upstream y de la configuracion vigentes, que habla del contenido al que
-//! apunta la ruta, y que no es una cuarentena. Lo que no cumple se va en
-//! `withheld` con su motivo, para que la ausencia sea explicable al
-//! importar y no un misterio.
+//! Exporting is not copying the cache: it is declaring that each exported path
+//! was **resolved and confirmed** at the moment the bundle was closed. The
+//! confirmation is the same one the offline server requires: a receipt from
+//! the current upstream and configuration, which speaks of the content the
+//! path points to, and which is not a quarantine. Whatever does not comply goes into
+//! `withheld` with its reason, so that the absence is explainable on
+//! import and not a mystery.
 //!
-//! El paquete se escribe como la copia de recuperacion: en un directorio
-//! temporal del mismo destino y con un renombrado atomico. Un corte deja,
-//! como mucho, un tempororal que nadie importa; no deja nunca un paquete a
-//! medias con el nombre del destino.
+//! The bundle is written like the recovery backup: in a temporary
+//! directory next to the destination and with an atomic rename. A cut leaves,
+//! at most, a temporary file that nobody imports; it never leaves a
+//! half-written bundle under the destination's name.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -29,25 +29,25 @@ use super::manifest::{
     Withheld,
 };
 
-/// Lo que hizo una exportacion.
+/// What an export did.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ExportReport {
-    /// Donde quedo el paquete.
+    /// Where the bundle ended up.
     pub path: PathBuf,
-    /// Las rutas exportadas.
+    /// The exported paths.
     pub exported: usize,
-    /// Las rutas retenidas, cada una con su motivo.
+    /// The withheld paths, each with its reason.
     pub withheld: Vec<Withheld>,
-    /// Los bytes de blobs que lleva el paquete.
+    /// The bytes of blobs that the bundle carries.
     pub blob_bytes: u64,
-    /// La capsula OCI escrita junto al paquete, o `None` si el firmante
-    /// no estaba configurado. El paquete se escribe siempre: la capsula
-    /// es lo que se puede dejar de producir, nunca lo que se corrompe.
+    /// The OCI capsule written next to the bundle, or `None` if the signer
+    /// was not configured. The bundle is always written: the capsule
+    /// is what can be left unproduced, never what gets corrupted.
     pub capsule: Option<CapsuleReport>,
 }
 
-/// La capsula de un export: donde quedo, que digest tiene y con que
-/// clave se firmo su manifiesto.
+/// The capsule of an export: where it ended up, what digest it has and with what
+/// key its manifest was signed.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct CapsuleReport {
     pub layout: std::path::PathBuf,
@@ -55,16 +55,16 @@ pub struct CapsuleReport {
     pub signer: String,
 }
 
-/// Exporta el repositorio proxy `repository` de `account` como paquete en
+/// Exports the proxy repository `repository` of `account` as a bundle at
 /// `to`.
 ///
-/// Con `signer` escrito además como capsula OCI bajo `to/oci` (véase
-/// [`super::capsule`]); sin signer el paquete se exporta igual y la
-/// capsula brilla por su ausencia explicita.
+/// With a `signer` it is additionally written as an OCI capsule under `to/oci` (see
+/// [`super::capsule`]); without a signer the bundle is exported all the same and the
+/// capsule is conspicuous by its explicit absence.
 ///
-/// La cuenta opera como principal de sus propias lecturas: la exportacion
-/// es una operacion de operador, y el decisor que se inyecte es el que
-/// dice si puede ver el repositorio.
+/// The account operates as the principal of its own reads: the export
+/// is an operator operation, and the decider that gets injected is the one that
+/// says whether the repository can be seen.
 #[allow(clippy::too_many_arguments)]
 pub async fn export(
     reader: &dyn CatalogReader,
@@ -102,14 +102,14 @@ pub async fn export(
         let receipts = ledger
             .receipts_of(account, repository, &asset.asset_path)
             .await?;
-        // La misma lectura que el servidor sin red: el primer recibo que
-        // habla de este contenido y no es cuarentena es el que confirma.
+        // The same read as the offline server: the first receipt that
+        // speaks of this content and is not a quarantine is the one that confirms.
         let confirmation = receipts.iter().find(|receipt| {
             receipt.digest == asset.digest && receipt.outcome != ReceiptOutcome::Quarantined
         });
-        // La cuarentena del recibo mas reciente manda sobre cualquier
-        // confirmacion anterior, igual que en el servidor sin red: dura
-        // hasta que cambia la configuracion.
+        // The quarantine of the most recent receipt overrides any earlier
+        // confirmation, just as on the offline server: it lasts
+        // until the configuration changes.
         let quarantined_now = receipts.first().is_some_and(|receipt| {
             receipt.outcome == ReceiptOutcome::Quarantined
                 && receipt.config_version == descriptor.config.version
@@ -198,8 +198,8 @@ pub async fn export(
             .collect(),
         withheld,
     };
-    // La comprobacion es la misma que haria el destino: este binario no
-    // escribe un paquete que el mismo rechazaria al importar.
+    // The check is the same one the destination would make: this binary does not
+    // write a bundle that it would itself reject on import.
     manifest.check_importable()?;
 
     if to.exists() {
@@ -232,10 +232,10 @@ pub async fn export(
         ))
     })?;
 
-    // La capsula se escribe **despues** de publicar el paquete: un
-    // firmante que falta o una clave rota no pueden dejar a medias lo
-    // que ya es verificable por si mismo. Sin firmante no hay capsula,
-    // y el export sigue siendo un export.
+    // The capsule is written **after** publishing the bundle: a
+    // missing signer or a broken key cannot leave half-done what
+    // is already verifiable by itself. Without a signer there is no capsule,
+    // and the export is still an export.
     let capsule = match signer {
         Some(signer) => {
             let report = super::capsule::export_capsule(to, &to.join("oci"), signer)?;

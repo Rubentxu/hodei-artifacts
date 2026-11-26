@@ -1,13 +1,13 @@
-//! El manifiesto de un paquete de resolucion: lo que el paquete dice de si
-//! mismo.
+//! The manifest of a resolution bundle: what the bundle says about
+//! itself.
 //!
-//! Es lo ultimo que se escribe al exportar y lo primero que se lee al
-//! importar. Como el de una copia, su comprobacion es **pura**: rechaza el
-//! paquete entero antes de tocar nada si un manifiesto hostil o roto podria
-//! hacer importar contenido sin respaldo, sobrescribir una ruta ajena o
-//! escribir fuera del paquete. La regla esta tomada del manifiesto de
-//! copias: un paquete que este binario no entiende se rechaza con un
-//! mensaje, no se importa a medias.
+//! It is the last thing written on export and the first thing read on
+//! import. Like that of a backup, its check is **pure**: it rejects the
+//! whole bundle before touching anything if a hostile or broken manifest could
+//! cause content to be imported without backing, overwrite someone else's path, or
+//! write outside the bundle. The rule is taken from the backup
+//! manifest: a bundle that this binary does not understand is rejected with a
+//! message, not imported halfway.
 
 use std::path::PathBuf;
 
@@ -18,127 +18,127 @@ use serde::{Deserialize, Serialize};
 use super::BundleError;
 use crate::recovery::manifest::hex_of;
 
-/// La version del formato del paquete.
+/// The version of the bundle format.
 ///
-/// Sube cuando un paquete antiguo ya no se puede leer. Uno con un formato
-/// que este binario no entiende se rechaza, no se importa a medias.
+/// It goes up when an old bundle can no longer be read. One with a format
+/// that this binary does not understand is rejected, not imported halfway.
 pub const FORMAT: u32 = 1;
 
-/// El nombre del manifiesto dentro del paquete.
+/// The name of the manifest within the bundle.
 pub const MANIFEST_NAME: &str = "bundle.json";
 
-/// El directorio de blobs dentro del paquete, con el mismo reparto que el
-/// almacen: `<ab>/<cd>/<hex>`.
+/// The blobs directory within the bundle, with the same layout as the
+/// store: `<ab>/<cd>/<hex>`.
 pub const BLOBS_DIRECTORY: &str = "blobs";
 
-/// La cantidad maxima de rutas que un paquete puede declarar.
+/// The maximum number of paths a bundle may declare.
 ///
-/// Es la cota honesta de la lectura de exportacion: un paquete con mas
-/// entradas que las que el catalogo puede enumerar de una vez no pudo
-/// exportarse completo, y no se importa lo que parece completo y no lo es.
+/// It is the honest bound of the export read: a bundle with more
+/// entries than the catalog can enumerate at once could not be
+/// exported in full, and what looks complete and is not does not get imported.
 pub const MAX_BUNDLE_ASSETS: usize = hodei_catalog::MAX_ASSETS_UNDER;
 
-/// De donde salio el paquete.
+/// Where the bundle came from.
 ///
-/// No lleva la URL del upstream: una URL de configuracion puede llevar
-/// credenciales en la parte de usuario, y un paquete no sale de casa con
-/// secretos. La URL por archivo vive, sanitizada, en los recibos.
+/// It does not carry the upstream URL: a configuration URL may carry
+/// credentials in the user part, and a bundle does not leave home with
+/// secrets. The per-archive URL lives, sanitized, in the receipts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Origin {
-    /// La cuenta del repositorio exportado.
+    /// The account of the exported repository.
     pub account: String,
-    /// La clave del repositorio proxy.
+    /// The key of the proxy repository.
     pub repository: String,
-    /// El identificador del upstream con el que se resolvió.
+    /// The identifier of the upstream it was resolved with.
     pub upstream_id: String,
-    /// La version de la configuracion con la que se resolvio.
+    /// The version of the configuration it was resolved with.
     pub config_version: u64,
 }
 
-/// La decision que respaldaba un digest al exportar.
+/// The decision that backed a digest at export time.
 ///
-/// Es **evidencia, no permiso**: al importar, el destino juzga la confianza
-/// con sus propias concesiones. Se guarda para poder responder despues por
-/// que el paquete traia lo que traia.
+/// It is **evidence, not permission**: on import, the destination judges trust
+/// with its own grants. It is kept so that it is possible to answer later for
+/// why the bundle brought what it brought.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DecisionEvidence {
-    /// La promocion que concedio el digest.
+    /// The promotion that granted the digest.
     pub decision_id: String,
-    /// Quien promovio.
+    /// Who promoted.
     pub actor: String,
-    /// Cuando se concedio.
+    /// When it was granted.
     pub granted_at: DateTime<Utc>,
 }
 
-/// Una ruta resuelta del paquete, con su procedencia.
+/// A resolved path of the bundle, with its provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AssetEntry {
-    /// La ruta dentro del repositorio.
+    /// The path within the repository.
     pub asset_path: String,
-    /// El nombre del paquete tal y como lo publico la resolucion.
+    /// The package name exactly as the resolution published it.
     pub package: String,
-    /// La version publicada en la ruta.
+    /// The version published at the path.
     pub version: String,
-    /// El contenido de la ruta, como `sha256:<hex>`.
+    /// The content of the path, as `sha256:<hex>`.
     pub digest: String,
-    /// Los bytes del contenido.
+    /// The bytes of the content.
     pub size_bytes: u64,
-    /// El recibo de procedencia que confirmaba la ruta al exportar.
+    /// The provenance receipt that confirmed the path at export.
     pub receipt: ProvenanceReceipt,
-    /// La decision activa sobre ese digest al exportar, si existia.
+    /// The active decision on that digest at export, if one existed.
     #[serde(default)]
     pub decision: Option<DecisionEvidence>,
 }
 
-/// Un blob del paquete.
+/// A blob of the bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobEntry {
-    /// El contenido, como `sha256:<hex>`.
+    /// The content, as `sha256:<hex>`.
     pub digest: String,
-    /// Los bytes que ocupa.
+    /// The bytes it occupies.
     pub length: u64,
 }
 
-/// Una ruta que el paquete no trae, y por que.
+/// A path that the bundle does not carry, and why.
 ///
-/// Queda escrita para que la ausencia sea **explicable**: quien importa
-/// ve que el origen tenia esa ruta y por que no vino.
+/// It is written down so that the absence is **explainable**: whoever imports
+/// sees that the origin had that path and why it did not come.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Withheld {
-    /// La ruta retenida en el origen.
+    /// The path withheld at the origin.
     pub asset_path: String,
-    /// Por que no se exporto.
+    /// Why it was not exported.
     pub reason: String,
 }
 
-/// Lo que un paquete dice de si mismo.
+/// What a bundle says about itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BundleManifest {
-    /// La version del formato.
+    /// The format version.
     pub format: u32,
-    /// Cuando se cerro el paquete.
+    /// When the bundle was closed.
     pub exported_at: DateTime<Utc>,
-    /// De donde salio.
+    /// Where it came from.
     pub origin: Origin,
-    /// Las rutas resueltas, ordenadas por ruta.
+    /// The resolved paths, sorted by path.
     pub assets: Vec<AssetEntry>,
-    /// Los blobs, ordenados por digest y sin repetirse.
+    /// The blobs, sorted by digest and without repetition.
     pub blobs: Vec<BlobEntry>,
-    /// Las rutas que el origen tenia y el paquete no trae.
+    /// The paths that the origin had and the bundle does not carry.
     pub withheld: Vec<Withheld>,
 }
 
 impl BundleManifest {
-    /// Los bytes de blobs que lleva el paquete.
+    /// The bytes of blobs that the bundle carries.
     pub fn blob_bytes(&self) -> u64 {
         self.blobs.iter().map(|blob| blob.length).sum()
     }
 
-    /// Comprueba que el paquete se puede importar con este binario.
+    /// Checks that the bundle can be imported with this binary.
     ///
-    /// No toca el disco: es la parte pura. Rechaza lo que, de aceptarse,
-    /// dejaria que un paquete hostil hiciera visible contenido sin respaldo
-    /// o escribiera fuera de sus propias reglas.
+    /// It does not touch the disk: it is the pure part. It rejects what, if accepted,
+    /// would let a hostile bundle make content visible without backing
+    /// or write outside its own rules.
     pub fn check_importable(&self) -> Result<(), BundleError> {
         if self.format != FORMAT {
             return Err(BundleError::Unsound(format!(
@@ -232,8 +232,8 @@ impl BundleManifest {
                 )));
             }
             previous = Some(&blob.digest);
-            // Un blob que no declara ninguna ruta no se importa: no hay a
-            // que respaldarlo.
+            // A blob that declares no path is not imported: there is nothing
+            // to back it with.
             match digests.iter().find(|digest| **digest == blob.digest) {
                 None => {
                     return Err(BundleError::Unsound(format!(
@@ -241,9 +241,9 @@ impl BundleManifest {
                         blob.digest
                     )));
                 }
-                // El tamano declarado tiene que coincidir con el de toda
-                // ruta que lo comparte: un mismo contenido no puede medir
-                // dos cosas.
+                // The declared size has to match that of every
+                // path that shares it: the same content cannot measure
+                // two things.
                 Some(_) => {
                     for entry in self
                         .assets
@@ -299,9 +299,9 @@ impl BundleManifest {
         Ok(())
     }
 
-    /// La ruta del fichero de un blob dentro del paquete.
+    /// The path of a blob's file within the bundle.
     ///
-    /// Solo se llama con digests de un manifiesto ya comprobado.
+    /// Only called with digests of an already-checked manifest.
     pub fn blob_file(digest: &str) -> PathBuf {
         let hex = hex_of(digest).expect("a blob path is built only on a checked manifest");
         PathBuf::from(BLOBS_DIRECTORY)
@@ -311,7 +311,7 @@ impl BundleManifest {
     }
 }
 
-/// Una ruta que no puede escribir fuera de su repositorio al importar.
+/// A path that cannot write outside its repository on import.
 fn check_path(path: &str) -> Result<(), BundleError> {
     if path.is_empty()
         || path.starts_with('/')
@@ -403,8 +403,8 @@ mod tests {
         let bundle = manifest();
         bundle.check_importable().expect("sound");
 
-        // Y el viaje por JSON no cambia nada: el manifiesto canonico es lo
-        // que se escribe y lo que se lee.
+        // And the round trip through JSON changes nothing: the canonical manifest is what
+        // gets written and what gets read.
         let text = serde_json::to_string(&bundle).expect("writes");
         let read: BundleManifest = serde_json::from_str(&text).expect("reads");
         assert_eq!(read, bundle);
@@ -449,23 +449,23 @@ mod tests {
 
     #[test]
     fn a_receipt_of_other_than_the_entry_is_not_provenance() {
-        // El recibo habla de otro contenido.
+        // The receipt speaks of other content.
         let mut bundle = manifest();
         bundle.assets[0].receipt.digest = digest('z');
         assert!(bundle.check_importable().is_err());
 
-        // El recibo es de otra cuenta o de otro repositorio.
+        // The receipt is from another account or another repository.
         let mut bundle = manifest();
         bundle.assets[0].receipt.account = "someone-else".into();
         assert!(bundle.check_importable().is_err());
 
-        // El recibo cuenta una cuarentena: esos bytes fueron rechazados en
-        // el origen y no viajan como resolucion.
+        // The receipt records a quarantine: those bytes were rejected at
+        // the origin and do not travel as a resolution.
         let mut bundle = manifest();
         bundle.assets[0].receipt.outcome = ReceiptOutcome::Quarantined;
         assert!(bundle.check_importable().is_err());
 
-        // Y un tamano que no cuadra con su recibo.
+        // And a size that does not match its receipt.
         let mut bundle = manifest();
         bundle.assets[0].size_bytes += 1;
         assert!(bundle.check_importable().is_err());
@@ -473,12 +473,12 @@ mod tests {
 
     #[test]
     fn blobs_and_paths_have_to_cover_each_exactly() {
-        // Falta el blob de una ruta.
+        // The blob of a path is missing.
         let mut bundle = manifest();
         bundle.blobs.remove(0);
         assert!(bundle.check_importable().is_err());
 
-        // Sobra un blob que no es de ninguna ruta.
+        // There is a blob that belongs to no path.
         let mut bundle = manifest();
         bundle.blobs.push(BlobEntry {
             digest: format!("sha256:{}", digest('q').value),
@@ -487,7 +487,7 @@ mod tests {
         bundle.blobs.sort_by(|a, b| a.digest.cmp(&b.digest));
         assert!(bundle.check_importable().is_err());
 
-        // El blob dice unos bytes que la ruta no dice.
+        // The blob states some bytes that the path does not state.
         let mut bundle = manifest();
         bundle.blobs[0].length += 1;
         assert!(bundle.check_importable().is_err());
@@ -559,8 +559,8 @@ mod tests {
 
     #[test]
     fn the_well_formed_digest_of_a_receipt_is_its_own() {
-        // Un digest del recibo mal formado (aunque la entrada cuadre) no
-        // respaldo nada.
+        // A malformed receipt digest (even if the input matches) backs
+        // nothing.
         let mut bundle = manifest();
         bundle.assets[0].receipt.digest.value = "../../etc/passwd".into();
         bundle.assets[0].digest = "sha256:../../etc/passwd".into();
