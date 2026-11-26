@@ -30,6 +30,7 @@ pub mod oci;
 pub mod packages;
 pub mod playground;
 pub mod policies;
+pub mod policy_studio;
 pub mod promotions;
 pub mod pypi;
 pub mod quota;

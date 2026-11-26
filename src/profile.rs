@@ -235,6 +235,22 @@ pub async fn assemble_graph_profile(
         )),
     ));
 
+    // The Policy Studio's lifecycle over the same graph: per-account
+    // revisions, head (CAS) and events. The separation of editor and
+    // approver is required: whoever saves a revision cannot activate it.
+    let lifecycle: Arc<dyn hodei_trust_policy::LifecycleStore> = Arc::new(
+        hodei_trust_policy_storage::DgraphLifecycleStore::open(
+            client.clone(),
+            hodei_trust_policy::lifecycle::SeparationPolicy::required(),
+        )
+        .await
+        .map_err(|error| {
+            BootstrapError::Initialization(format!(
+                "the policy lifecycle cannot open on the graph at {endpoint}: {error}"
+            ))
+        })?,
+    );
+
     // 5. The remote proxy's provenance: the durable ledger over the graph.
     let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = Arc::new(
         DgraphProvenanceLedger::open(client.clone())
@@ -314,6 +330,7 @@ pub async fn assemble_graph_profile(
         .with_trust_ledger(trust_ledger)
         .with_proxy_plane(proxy_plane)
         .with_trust_plane(plane)
+        .with_policy_studio(lifecycle, config.trust.policy_id.clone())
         .with_content_store(content)
         .with_uploads(Arc::new(uploads));
     // GC and scrub open or warn, as in the embedded profile: a

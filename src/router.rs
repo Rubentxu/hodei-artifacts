@@ -380,6 +380,7 @@ fn admin_v1_routes(app_state: AppState) -> Router {
             "/playground/evaluate",
             post(crate::handlers::playground::playground_evaluate),
         )
+        .merge(policy_studio_routes())
         // TODO: Add more routes as needed
         // .route("/users", post(crate::handlers::users::create_user))
         // .route("/users/:id", get(crate::handlers::users::get_user))
@@ -697,4 +698,49 @@ fn investigation_route(app_state: AppState, enabled: bool) -> axum::Router {
     } else {
         axum::Router::new()
     }
+}
+
+/// The Policy Studio routes (HSP-151). Each route is its own resource for
+/// the gate; every request body is bounded (413 above the limit), because a
+/// policy document is small and a revision is stored forever.
+fn policy_studio_routes() -> Router<AppState> {
+    Router::new()
+        // Policy Studio: the lifecycle of a trust policy, server-side
+        // (HSP-151). The gate asks Cedar per method and path, so each route
+        // is its own resource: a revision can be read without being savable
+        // and saved without being activatable. validate/simulate never
+        // write (their answer carries `applied: false`); only
+        // activate/rollback move the head, through the lifecycle's CAS.
+        .route(
+            "/policy-studio/revisions",
+            get(crate::handlers::policy_studio::load_revision)
+                .post(crate::handlers::policy_studio::save),
+        )
+        .route(
+            "/policy-studio/head",
+            get(crate::handlers::policy_studio::head),
+        )
+        .route(
+            "/policy-studio/validate",
+            post(crate::handlers::policy_studio::validate),
+        )
+        .route(
+            "/policy-studio/simulate",
+            post(crate::handlers::policy_studio::simulate),
+        )
+        .route(
+            "/policy-studio/activate",
+            post(crate::handlers::policy_studio::activate),
+        )
+        .route(
+            "/policy-studio/rollback",
+            post(crate::handlers::policy_studio::rollback),
+        )
+        .route(
+            "/policy-studio/history",
+            get(crate::handlers::policy_studio::history),
+        )
+        .layer(axum::extract::DefaultBodyLimit::max(
+            crate::handlers::policy_studio::STUDIO_BODY_LIMIT,
+        ))
 }

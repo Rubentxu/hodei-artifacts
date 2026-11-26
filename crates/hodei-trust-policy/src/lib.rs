@@ -64,6 +64,7 @@ pub mod exception;
 pub mod gate;
 pub mod lifecycle;
 pub mod policy;
+pub mod policy_loader;
 pub mod ports;
 pub mod promotion;
 pub mod reasons;
@@ -71,6 +72,7 @@ pub mod registry;
 pub mod service;
 pub mod shadow;
 pub mod simulation;
+pub mod studio;
 
 pub use context::{
     ExceptionFact, Exposure, RiskFacts, SubjectFact, TargetEnvironment, TrustContext,
@@ -85,6 +87,7 @@ pub use lifecycle::{
     SeparationPolicy, MAX_REVISIONS, ROLLBACK_PREFIX,
 };
 pub use policy::{OnFailure, Requirement, RequirementKind, TrustPolicy};
+pub use policy_loader::AccountPolicyLoader;
 pub use ports::{
     DecisionStore, DecisionStoreError, LifecycleStore, PolicyLoader, PromotionTargets,
 };
@@ -97,6 +100,10 @@ pub use registry::{Activation, PolicyRegistry};
 pub use service::PromotionService;
 pub use shadow::{shadow_evaluate, ShadowEntry, ShadowReport};
 pub use simulation::{simulate, AffectedRelease, SimulationReport};
+pub use studio::{
+    simulate_effects, validate_candidate, EffectChange, EvidenceGap, SimulatedEffect,
+    SimulatedSubject, SimulationAnswer, StudioCandidate, StudioKind,
+};
 
 /// The version of the schema that a policy set is written against.
 ///
