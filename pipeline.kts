@@ -133,6 +133,8 @@ pipeline {
                         "--test hsp123_migration_pure",
                         "--test hsp124_quota_pure",
                         "--test hsp134_risk_facts",
+                        // HSP-321 tramo j (HSP-152): exchange OIDC de trusted publishers contra un emisor falso en proceso.
+                        "--test hsp321j_publishers_exchange",
                     ).joinToString(" ")
                 )
             }
@@ -216,6 +218,8 @@ pipeline {
                         "--test hsp321h_abac_wired_dgraph_it",
                         // HSP-321 tramo i: admision de evidencias en la publicacion (HSP-153) por el router real.
                         "--test hsp321i_admission_dgraph_it",
+                        // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.
+                        "--test hsp321j_publishers_dgraph_it",
                         "--test hsp314_f3b3_reactor_wiring_it",
                         "--test hsp323_reaction_status_it",
                         // HSP-151 / HSP-321: the Policy Studio API over the real binary and Dgraph.

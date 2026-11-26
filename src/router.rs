@@ -664,6 +664,21 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
         // authenticates, and Cedar decides on the repository.
         // The provenance of what a proxy brought from its upstream.
         .route("/provenance", get(crate::handlers::raw::provenance))
+        // Trusted publishers (HSP-152): the OIDC exchange authenticates with
+        // the ID token itself, the management with Cedar on the repository.
+        .route(
+            "/publishers/exchange",
+            post(crate::handlers::publishers::exchange),
+        )
+        .route(
+            "/trusted-publishers/{repository}",
+            get(crate::handlers::publishers::list),
+        )
+        .route(
+            "/trusted-publishers/{repository}/{id}",
+            axum::routing::put(crate::handlers::publishers::put_publisher)
+                .delete(crate::handlers::publishers::delete_publisher),
+        )
         .route("/promotions", post(crate::handlers::promotions::promote))
         .route(
             "/promotions/revoke",

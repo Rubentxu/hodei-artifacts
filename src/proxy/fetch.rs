@@ -789,6 +789,49 @@ impl ProxyFetcher {
         Ok(bytes)
     }
 
+    /// GETs a document from an administrator-allowed destination and reads
+    /// the answer under a byte budget (the OIDC issuers' JWKS wire).
+    ///
+    /// Same egress as [`Self::post_json`]: the destination must be in the
+    /// allow-list, is validated and pinned, and redirects are never followed
+    /// (a `3xx` is a non-success status). The body is cut as soon as it
+    /// passes `max_bytes`.
+    pub async fn get_bytes(
+        &self,
+        url: &Url,
+        timeout: Duration,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, FetchError> {
+        if self.offline {
+            return Err(FetchError::Offline);
+        }
+        let client = self.pinned_client(url, timeout).await?;
+        let mut response = client.get(url.clone()).send().await.map_err(|error| {
+            if error.is_timeout() {
+                FetchError::Timeout
+            } else {
+                FetchError::Unreachable
+            }
+        })?;
+        if !response.status().is_success() {
+            return Err(FetchError::Status(response.status().as_u16()));
+        }
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            if error.is_timeout() {
+                FetchError::Timeout
+            } else {
+                FetchError::Truncated
+            }
+        })? {
+            if bytes.len() as u64 + chunk.len() as u64 > max_bytes {
+                return Err(FetchError::TooLarge);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+
     /// Where a redirect leads, if going there is allowed.
     fn redirect_target(
         response: &reqwest::Response,

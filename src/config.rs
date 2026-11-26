@@ -1057,6 +1057,12 @@ pub struct SecurityConfig {
     /// Cedar schema used to validate the policy bundle.
     #[serde(default)]
     pub authorization_schema_path: Option<String>,
+    /// Secret (at least 32 bytes) from which the key that signs the short
+    /// credentials of the trusted publishers (HSP-152) is derived. Without
+    /// it the OIDC exchange is not mounted. Distinct from `auth_jwt_secret`
+    /// on purpose: a user token can never be a publisher credential.
+    #[serde(default, skip_serializing)]
+    pub publisher_credential_secret: Option<String>,
 }
 
 /// The default value of the security configuration.
@@ -1081,6 +1087,7 @@ impl Default for SecurityConfig {
             auth_audience: None,
             authorization_policy_path: None,
             authorization_schema_path: None,
+            publisher_credential_secret: None,
         }
     }
 }
@@ -1100,6 +1107,13 @@ impl std::fmt::Debug for SecurityConfig {
             .field("auth_audience", &self.auth_audience)
             .field("authorization_policy_path", &self.authorization_policy_path)
             .field("authorization_schema_path", &self.authorization_schema_path)
+            .field(
+                "publisher_credential_secret",
+                &self
+                    .publisher_credential_secret
+                    .as_ref()
+                    .map(|_| "<redacted>"),
+            )
             .finish()
     }
 }

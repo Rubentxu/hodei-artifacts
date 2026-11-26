@@ -32,6 +32,7 @@ pub mod playground;
 pub mod policies;
 pub mod policy_studio;
 pub mod promotions;
+pub mod publishers;
 pub mod pypi;
 pub mod quota;
 pub mod raw;
