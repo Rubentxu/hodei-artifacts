@@ -227,6 +227,92 @@ async fn a_crash_between_saying_and_doing_is_recovered_by_the_resume() {
     );
 }
 
+/// An outbox whose first `put_pending` is lost, like a crash right before
+/// the intent is said; everything else is delegated.
+struct LosesTheFirstSay {
+    inner: Arc<InMemoryIntentOutbox>,
+    said: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl IntentOutbox for LosesTheFirstSay {
+    async fn put_pending(&self, intent: &Intent) -> Result<(), String> {
+        if self.said.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err("the process died before saying".to_string());
+        }
+        self.inner.put_pending(intent).await
+    }
+
+    async fn claim(
+        &self,
+        identity: &str,
+        lease_owner: &str,
+        lease_until: chrono::DateTime<Utc>,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<Intent>, String> {
+        self.inner
+            .claim(identity, lease_owner, lease_until, now)
+            .await
+    }
+
+    async fn record_receipt(&self, identity: &str, receipt: &Receipt) -> Result<(), String> {
+        self.inner.record_receipt(identity, receipt).await
+    }
+
+    async fn recover_pending(&self, now: chrono::DateTime<Utc>) -> Result<Vec<Intent>, String> {
+        self.inner.recover_pending(now).await
+    }
+
+    async fn reconcile(&self, identity: &str) -> Result<(), String> {
+        self.inner.reconcile(identity).await
+    }
+}
+
+/// The plan is closed as Completed only AFTER its intents are said: a
+/// failure to say leaves no Completed plan, so the repeated event plans
+/// again, says the intent and the effect lands exactly once.
+#[tokio::test]
+async fn a_plan_is_not_completed_until_its_intents_are_said() {
+    let inner = Arc::new(InMemoryIntentOutbox::empty());
+    let outbox = Arc::new(LosesTheFirstSay {
+        inner: inner.clone(),
+        said: AtomicUsize::new(0),
+    });
+    let executor = SpyExecutor::with(Answer::Applied);
+    let mut runtime =
+        ReactiveRuntime::new(Arc::new(InMemoryExecutionStore::empty()), Budget::default())
+            .with_tenant("acme");
+    runtime.with_outbox(outbox);
+    runtime.register_planned(Arc::new(OneIntentPlanning), executor.clone());
+
+    let first = runtime
+        .dispatch_planned(the_event(), Utc::now())
+        .await
+        .expect("the dispatch runs");
+    assert!(
+        first.applied.is_empty(),
+        "nothing was said, nothing is done"
+    );
+    assert_eq!(inner.state_of(&the_identity()), None, "nothing was said");
+
+    // The repeated event is NOT a duplicate: the plan was never completed.
+    let second = runtime
+        .dispatch_planned(the_event(), Utc::now())
+        .await
+        .expect("the repeated dispatch runs");
+    assert!(second.duplicates.is_empty(), "the lost plan is replanned");
+    assert_eq!(second.applied.len(), 1, "the effect is recovered");
+    assert_eq!(inner.state_of(&the_identity()), Some("applied".to_string()));
+
+    // And a third delivery is the duplicate it should be: still one touch.
+    let third = runtime
+        .dispatch_planned(the_event(), Utc::now())
+        .await
+        .expect("the third dispatch runs");
+    assert!(!third.duplicates.is_empty());
+    assert_eq!(executor.touches(), 1, "the effect lands exactly once");
+}
+
 /// The unknown does NOT come back by itself: the resume does not re-execute it, the
 /// explicit reconciliation returns it to the market, and only then.
 #[tokio::test]

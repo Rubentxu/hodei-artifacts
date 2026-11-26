@@ -769,13 +769,9 @@ async fn crash_at(point: Point) {
     drop(restarted);
 }
 
-/// KNOWN GAP (reported, not hidden): the runtime records the plan
-/// (`planned:<behavior>:<event>`) BEFORE it says the intents to the outbox, so
-/// a crash between the two leaves a Completed plan with no intents: the
-/// repeated request is a duplicate and the effect is lost. Fixing it changes
-/// the domain, which this slice must not do. Run it with `--ignored` to
-/// reproduce.
-#[ignore = "HSP-78 AC2 gap: a crash between the plan record and saying the intents loses the plan"]
+/// The runtime says the intents to the outbox BEFORE it records the plan as
+/// Completed, so a crash between the two leaves no Completed plan: the
+/// repeated request plans again and the effect is recovered.
 #[tokio::test]
 async fn a_crash_before_the_intent_is_said_loses_nothing() {
     crash_at(Point::BeforeSay).await;
