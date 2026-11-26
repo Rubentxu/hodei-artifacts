@@ -154,6 +154,28 @@ fn the_stored_quota_refuses_before_anything_lands() {
 // The race: two uploads that do not both fit.
 // ---------------------------------------------------------------------------
 
+/// Polls the account's usage until an upload holds a reservation, so the
+/// caller knows the first upload is really in flight (no fixed sleep).
+///
+/// Bounded by a deadline: if the reservation never shows, the test fails
+/// loudly instead of hanging.
+fn wait_until_upload_is_in_flight(port: u16, token: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let current = usage(port, token);
+        if current["active_uploads"].as_u64().unwrap_or(0) >= 1
+            && current["in_flight_bytes"].as_u64().unwrap_or(0) > 0
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the first upload never showed a reservation: {current}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Two simultaneous uploads that do not both fit **never** both fit.
 ///
 /// The body is deliberately slow (`--limit-rate`) so that the two
@@ -176,7 +198,7 @@ fn two_concurrent_uploads_that_do_not_both_fit_never_both_land() {
     let first = std::thread::spawn(move || {
         publish(port, "race/one.bin", &first_token, &one_path, Some("100"))
     });
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    wait_until_upload_is_in_flight(port, &token);
     let second_token = token.clone();
     let two_path = two.clone();
     let second = std::thread::spawn(move || {
