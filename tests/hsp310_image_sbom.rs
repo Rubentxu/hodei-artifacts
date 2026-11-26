@@ -223,6 +223,14 @@ fn binary_scan_matches_crate_paths_not_prose() {
     assert!(check_binary(b"x tokio-1.54.1 /surrealdb-core-2.3.0/src").is_err());
     assert!(check_binary(b"/librocksdb-sys-0.16.0/ tokio-1.2.3").is_err());
     assert!(check_binary(b"no control here").is_err());
+    // Every retired crate is caught on its own, whatever else the binary has.
+    for name in ["surrealdb", "surrealdb-core", "rocksdb", "librocksdb-sys"] {
+        let binary = format!("tokio-1.2.3 /registry/{name}-1.0.0/src/lib.rs");
+        assert!(
+            check_binary(binary.as_bytes()).is_err(),
+            "{name} crate path must be rejected"
+        );
+    }
 }
 
 // ------------------------------------------------------------- real image
