@@ -227,6 +227,35 @@ pub trait TrustLedger: Send + Sync {
         account: &str,
         repository: &str,
     ) -> Result<Vec<TrustGrant>, CatalogError>;
+
+    /// Which of these digests have an active grant in the repository at
+    /// `at`.
+    ///
+    /// It is the question a listing asks for a whole page, and it has to
+    /// cost what the page costs, not what the repository holds. The
+    /// default asks [`TrustLedger::active_grant`] one digest at a time; a
+    /// ledger that can answer the page in one bounded read overrides it.
+    /// The answer follows the same rule as `active_grant`: revoked,
+    /// expired and unproven grants are not active.
+    async fn active_digests(
+        &self,
+        account: &str,
+        repository: &str,
+        digests: &[ContentDigest],
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ContentDigest>, CatalogError> {
+        let mut active = Vec::new();
+        for digest in digests {
+            if self
+                .active_grant(account, repository, digest, at)
+                .await?
+                .is_some()
+            {
+                active.push(digest.clone());
+            }
+        }
+        Ok(active)
+    }
 }
 
 /// A concession the validity sweep looks at: the row, with what the

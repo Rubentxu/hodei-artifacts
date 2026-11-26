@@ -49,7 +49,7 @@ use hodei_catalog::{
     CatalogReader, CatalogResource, CatalogSearch, CatalogWriter, DigestScope, MutableTag,
     PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord,
     RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, ServeChannel,
-    TrustState,
+    TrustLedger, TrustState,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_graph_client::guard::{GuardKind, GuardScope, GuardedEffect};
@@ -1847,6 +1847,7 @@ pub struct DgraphCatalogStore {
     authorizer: Arc<dyn CatalogAuthorizer>,
     probe: Option<Arc<dyn BlobIntegrityProbe>>,
     identity: Identity,
+    trust: Option<Arc<dyn TrustLedger>>,
 }
 
 impl std::fmt::Debug for DgraphCatalogStore {
@@ -1905,7 +1906,22 @@ impl DgraphCatalogStore {
             authorizer,
             probe: None,
             identity: Identity::system(),
+            trust: None,
         })
+    }
+
+    /// The store with the ledger of the trust grants the search reads.
+    ///
+    /// The search serves the trusted channel and says the trust state of
+    /// every result from the grants, so it asks the same ledger the
+    /// download path asks: a listing that read another source could say
+    /// that content exists where the download answers that it does not.
+    /// Without a ledger the trusted channel cannot be searched (it fails
+    /// closed) and the results of the open channel carry no grant, which
+    /// is quarantine.
+    pub fn with_trust_ledger(mut self, trust: Arc<dyn TrustLedger>) -> Self {
+        self.trust = Some(trust);
+        self
     }
 
     /// El almacén con el decisor que la frontera ya no repite.
@@ -3289,6 +3305,14 @@ impl CatalogWriter for DgraphCatalogStore {
 
 // ---------------------------------------------------------------------------
 // La búsqueda indexada (HSP-191).
+//
+// Cada consulta va acotada por cuenta y por repositorio sobre índices
+// exactos. El canal de confianza se recorre por los digests con concesión
+// activa que da el libro de concesiones; el estado de confianza de cada
+// resultado sale del mismo libro, nunca de la referencia. El texto es una
+// subcadena sin distinción de mayúsculas que se evalúa como filtro dentro
+// del repositorio ya acotado (sin índice de trigramas: ningún escaneo sale
+// del repositorio, y el coste de escritura de cada asset no cambia).
 // ---------------------------------------------------------------------------
 
 /// Cuántos repositorios pueden compartir una etiqueta que la búsqueda
@@ -3382,10 +3406,14 @@ impl DgraphCatalogStore {
         principal_account: &str,
         repo_key: &str,
         query: &SearchQuery,
-        target: Option<&TagTarget>,
-        after_path: Option<&str>,
+        scope: WindowScope<'_>,
         window: usize,
     ) -> Result<Vec<AssetRow>, CatalogError> {
+        let WindowScope {
+            target,
+            after_path,
+            granted,
+        } = scope;
         let mut filters = vec![format!(
             "eq(hodei.catalog.asset.account, {})",
             dql_string(principal_account)
@@ -3408,6 +3436,26 @@ impl DgraphCatalogStore {
                  eq(hodei.catalog.asset.digest, {value})",
                 algorithm = digest.algorithm,
                 value = dql_string(&digest.value),
+            ));
+        }
+        if let Some(granted) = granted {
+            let values = granted
+                .values
+                .iter()
+                .map(|value| dql_string(value))
+                .collect::<Vec<_>>()
+                .join(", ");
+            filters.push(format!(
+                "eq(hodei.catalog.asset.digest_algorithm, \"{algorithm}\") AND \
+                 eq(hodei.catalog.asset.digest, [{values}])",
+                algorithm = granted.algorithm,
+            ));
+        }
+        if let Some(text) = &query.text {
+            let pattern = the_text_pattern(text)?;
+            filters.push(format!(
+                "(regexp(hodei.catalog.asset.package_name, {pattern}) OR \
+                 regexp(hodei.catalog.asset.asset_path, {pattern}))"
             ));
         }
         if let Some(target) = target {
@@ -3456,21 +3504,192 @@ impl DgraphCatalogStore {
         principal_account: &str,
         repo_key: &str,
         query: &SearchQuery,
-        target: Option<&TagTarget>,
-        after_path: Option<&str>,
+        scope: WindowScope<'_>,
         cap: usize,
     ) -> Result<usize, CatalogError> {
         let rows = self
-            .the_asset_window(
-                principal_account,
-                repo_key,
-                query,
-                target,
-                after_path,
-                cap + 1,
-            )
+            .the_asset_window(principal_account, repo_key, query, scope, cap + 1)
             .await?;
         Ok(rows.len())
+    }
+}
+
+/// Cuántos digests con concesión activa nombra UNA consulta de la ventana.
+///
+/// La consulta es texto y la lista va en el filtro: el grupo acota el tamaño
+/// de lo que se envía, y los grupos de un repositorio se mezclan en el
+/// adaptador por el orden del camino.
+const GRANTED_DIGESTS_PER_QUERY: usize = 64;
+
+/// Cuántos digests con concesión activa puede tener un repositorio del canal
+/// de confianza para buscarlo. Más allá no es una búsqueda: es recorrer el
+/// libro entero, y se dice con un error de petición, igual que las
+/// etiquetas compartidas por demasiados repositorios.
+const MAX_GRANTED_DIGESTS: usize = 2048;
+
+/// Lo que estrecha la ventana de un repositorio además de la consulta: las
+/// coordenadas de la etiqueta, la clave que el cursor ya vio y el grupo de
+/// digests concedidos.
+#[derive(Clone, Copy, Default)]
+struct WindowScope<'a> {
+    target: Option<&'a TagTarget>,
+    after_path: Option<&'a str>,
+    granted: Option<&'a GrantedDigests>,
+}
+
+/// Un grupo de digests concedidos de un mismo algoritmo.
+struct GrantedDigests {
+    algorithm: DigestAlgorithm,
+    values: Vec<String>,
+}
+
+/// El patrón DQL `/texto/i` de un texto que el cliente escribe.
+///
+/// El texto se busca como **subcadena sin distinción de mayúsculas**, igual
+/// que la referencia, así que cada carácter con significado de expresión
+/// regular se escapa y el patrón nunca es una expresión que el cliente
+/// controle. Los caracteres de control no son texto buscable.
+fn the_text_pattern(text: &str) -> Result<String, CatalogError> {
+    if text.chars().any(char::is_control) {
+        return Err(CatalogError::invalid(
+            "the text of the search has control characters",
+        ));
+    }
+    let mut pattern = String::with_capacity(text.len() + 4);
+    pattern.push('/');
+    for character in text.chars() {
+        if matches!(
+            character,
+            '\\' | '/'
+                | '.'
+                | '+'
+                | '*'
+                | '?'
+                | '('
+                | ')'
+                | '|'
+                | '['
+                | ']'
+                | '{'
+                | '}'
+                | '^'
+                | '$'
+        ) {
+            pattern.push('\\');
+        }
+        pattern.push(character);
+    }
+    pattern.push_str("/i");
+    Ok(pattern)
+}
+
+impl DgraphCatalogStore {
+    /// Los grupos de digests por los que se recorre un repositorio.
+    ///
+    /// Un repositorio abierto es un solo grupo sin restricción. Uno del
+    /// canal de confianza solo sirve lo que tiene una concesión activa **ahora**:
+    /// los digests se leen del libro (una lectura acotada por cuenta y
+    /// repositorio), uno por contenido aunque varias decisiones lo hayan
+    /// concedido, y se parten en grupos por algoritmo. Sin libro no hay
+    /// forma de saber qué está concedido y la búsqueda falla cerrada: una
+    /// página vacía diría que no hay nada.
+    async fn the_digest_groups(
+        &self,
+        principal_account: &str,
+        repository: &RepositoryDescriptor,
+        query: &SearchQuery,
+    ) -> Result<Vec<Option<GrantedDigests>>, CatalogError> {
+        if ServeChannel::of(&repository.config) != ServeChannel::Trusted {
+            return Ok(vec![None]);
+        }
+        let ledger = self.trust.as_ref().ok_or_else(|| {
+            CatalogError::unavailable("the trusted channel cannot be searched without the grants")
+        })?;
+        let now = Utc::now();
+        let grants = ledger
+            .grants_of(principal_account, &repository.repo_key)
+            .await?;
+        let mut seen: std::collections::HashSet<ContentDigest> = std::collections::HashSet::new();
+        let mut by_algorithm: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for grant in grants {
+            if !grant.is_active_at(now) {
+                continue;
+            }
+            // Una búsqueda por digest solo mira la concesión de ese digest.
+            if query
+                .digest
+                .as_ref()
+                .is_some_and(|asked| asked != &grant.digest)
+            {
+                continue;
+            }
+            if !seen.insert(grant.digest.clone()) {
+                continue;
+            }
+            by_algorithm
+                .entry(grant.digest.algorithm.to_string())
+                .or_default()
+                .push(grant.digest.value.clone());
+        }
+        if seen.len() > MAX_GRANTED_DIGESTS {
+            return Err(CatalogError::invalid(
+                "too many grants in the repository to search the trusted channel",
+            ));
+        }
+        let mut groups = Vec::new();
+        for (algorithm, values) in by_algorithm {
+            let algorithm = match algorithm.as_str() {
+                "sha256" => DigestAlgorithm::Sha256,
+                "sha512" => DigestAlgorithm::Sha512,
+                other => {
+                    return Err(CatalogError::corrupt(
+                        "grant",
+                        other,
+                        "the digest algorithm of a grant is unknown",
+                    ));
+                }
+            };
+            for chunk in values.chunks(GRANTED_DIGESTS_PER_QUERY) {
+                groups.push(Some(GrantedDigests {
+                    algorithm: algorithm.clone(),
+                    values: chunk.to_vec(),
+                }));
+            }
+        }
+        Ok(groups)
+    }
+
+    /// Los resultados de la página que tienen una concesión activa: pares
+    /// (repositorio, digest). Una lectura del libro por repositorio de la
+    /// página, acotada por los digests que la página nombra.
+    async fn the_granted_hits(
+        &self,
+        principal_account: &str,
+        rows: &[AssetRow],
+    ) -> Result<std::collections::HashSet<(String, ContentDigest)>, CatalogError> {
+        let mut granted = std::collections::HashSet::new();
+        let Some(ledger) = self.trust.as_ref() else {
+            return Ok(granted);
+        };
+        let mut by_repository: std::collections::BTreeMap<&str, Vec<ContentDigest>> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            let digests = by_repository.entry(row.repository.as_str()).or_default();
+            if !digests.contains(&row.digest) {
+                digests.push(row.digest.clone());
+            }
+        }
+        let now = Utc::now();
+        for (repository, digests) in by_repository {
+            for digest in ledger
+                .active_digests(principal_account, repository, &digests, now)
+                .await?
+            {
+                granted.insert((repository.to_string(), digest));
+            }
+        }
+        Ok(granted)
     }
 }
 
@@ -3523,14 +3742,6 @@ impl CatalogSearch for DgraphCatalogStore {
         if repositories.is_empty() {
             return Ok(SearchPage::empty(query));
         }
-        // La búsqueda del grafo es EXACTA: cada filtro que pide es una
-        // igualdad sobre un índice exacto. El texto es otra búsqueda.
-        if query.text.is_some() {
-            return Err(CatalogError::invalid(
-                "the dgraph search serves exact filters, not text searches",
-            ));
-        }
-
         // Los repositorios que toman parte, en el orden en que se
         // recorren. El atributo se decide con el descriptor, como en la
         // referencia: el motor no tiene que resolverlo.
@@ -3545,16 +3756,6 @@ impl CatalogSearch for DgraphCatalogStore {
         if candidates.is_empty() {
             return Ok(SearchPage::empty(query));
         }
-        // El canal de confianza lo sirve el libro de concesiones, que este
-        // slice no lleva: lo dice, no lo finge.
-        for repository in &candidates {
-            if ServeChannel::of(&repository.config) == ServeChannel::Trusted {
-                return Err(CatalogError::invalid(
-                    "the dgraph slice does not serve the trusted channel",
-                ));
-            }
-        }
-
         // La etiqueta se resuelve primero: lo que estrecha son sus
         // coordenadas, no su nombre.
         let targets = match &query.tag {
@@ -3604,46 +3805,63 @@ impl CatalogSearch for DgraphCatalogStore {
                 continue;
             }
 
-            let rows = self
-                .the_asset_window(
-                    principal_account,
-                    &repository.repo_key,
-                    query,
+            // Un repositorio abierto se recorre entero; uno servido por el
+            // canal de confianza, solo por los digests con concesión
+            // activa, en grupos acotados.
+            let groups = self
+                .the_digest_groups(principal_account, repository, query)
+                .await?;
+            let mut repository_rows: Vec<AssetRow> = Vec::new();
+            for group in &groups {
+                let scope = WindowScope {
                     target,
                     after_path,
-                    window,
-                )
-                .await?;
+                    granted: group.as_ref(),
+                };
+                let rows = self
+                    .the_asset_window(
+                        principal_account,
+                        &repository.repo_key,
+                        query,
+                        scope,
+                        window,
+                    )
+                    .await?;
 
-            if exact {
-                if rows.len() < window {
-                    counted += rows.len();
-                } else {
-                    let remaining = hodei_catalog::search::MAX_COUNTED.saturating_sub(counted);
-                    if remaining == 0 {
-                        exact = false;
+                if exact {
+                    if rows.len() < window {
+                        counted += rows.len();
                     } else {
-                        let found = self
-                            .the_remaining_count(
-                                principal_account,
-                                &repository.repo_key,
-                                query,
-                                target,
-                                after_path,
-                                remaining,
-                            )
-                            .await?;
-                        if found > remaining {
-                            counted += remaining;
+                        let remaining = hodei_catalog::search::MAX_COUNTED.saturating_sub(counted);
+                        if remaining == 0 {
                             exact = false;
                         } else {
-                            counted += found;
+                            let found = self
+                                .the_remaining_count(
+                                    principal_account,
+                                    &repository.repo_key,
+                                    query,
+                                    scope,
+                                    remaining,
+                                )
+                                .await?;
+                            if found > remaining {
+                                counted += remaining;
+                                exact = false;
+                            } else {
+                                counted += found;
+                            }
                         }
                     }
                 }
+                repository_rows.extend(rows);
             }
-
-            collected.extend(rows);
+            // Los grupos son conjuntos disjuntos de digests y cada uno sale
+            // en el orden del camino: la unión se ordena por el camino, que
+            // es único dentro del repositorio, y la ventana de la cuenta
+            // entera es la que se guarda.
+            repository_rows.sort_by(|left, right| left.asset_path.cmp(&right.asset_path));
+            collected.extend(repository_rows);
             collected.truncate(window);
         }
 
@@ -3672,6 +3890,12 @@ impl CatalogSearch for DgraphCatalogStore {
         };
         let rows = &collected[start..end];
 
+        // La confianza la dice el libro de concesiones, no la referencia: la
+        // referencia guarda lo que la admisión dijo al publicar y no cambia
+        // nunca, y una promoción o una revocación tiene que verse en la
+        // petición siguiente sin reescribir nada.
+        let granted = self.the_granted_hits(principal_account, rows).await?;
+
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
             let asset = AssetRow::into_record(
@@ -3681,9 +3905,12 @@ impl CatalogSearch for DgraphCatalogStore {
                 &row.asset_path,
             )?;
             let format = repository_format(&candidates, &asset.repository);
-            // La confianza la declara el libro de concesiones, que este
-            // slice no lleva: lo que sale por aquí es lo que la referencia
-            // declaró al publicar, y sin concesión eso es cuarentena.
+            let trust_state = if granted.contains(&(asset.repository.clone(), asset.digest.clone()))
+            {
+                TrustState::Trusted
+            } else {
+                TrustState::Quarantined
+            };
             results.push(SearchHit {
                 repository: asset.repository,
                 format,
@@ -3692,7 +3919,7 @@ impl CatalogSearch for DgraphCatalogStore {
                 package_version: asset.coordinates.package_version,
                 digest: asset.digest,
                 size_bytes: asset.size_bytes,
-                trust_state: TrustState::Quarantined,
+                trust_state,
                 updated_at: asset.updated_at,
             });
         }
@@ -4173,6 +4400,25 @@ impl AuditOutbox for DgraphAuditOutbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_text_pattern_is_a_literal_case_insensitive_regex() {
+        assert_eq!(the_text_pattern("LabPkg").unwrap(), "/LabPkg/i");
+        assert_eq!(the_text_pattern("a.b").unwrap(), "/a\\.b/i");
+        assert_eq!(the_text_pattern("dist/x").unwrap(), "/dist\\/x/i");
+        assert_eq!(the_text_pattern("(1)+[x]").unwrap(), "/\\(1\\)\\+\\[x\\]/i");
+        assert_eq!(the_text_pattern("a\\b").unwrap(), "/a\\\\b/i");
+        assert_eq!(the_text_pattern("a b-c_d").unwrap(), "/a b-c_d/i");
+    }
+
+    #[test]
+    fn the_text_pattern_refuses_control_characters() {
+        assert!(matches!(
+            the_text_pattern("a\nb"),
+            Err(CatalogError::InvalidRequest { .. })
+        ));
+        assert!(the_text_pattern("a\tb").is_err());
+    }
 
     #[test]
     fn guard_part_escapes_the_debian_charset() {
