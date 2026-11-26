@@ -598,7 +598,7 @@ async fn the_capabilities_say_what_can_be_created() {
         json!(["hosted", "proxy", "group"]),
         "the go surface serves the three modalities"
     );
-    assert_eq!(of("nuget")["modes"], json!(["hosted", "proxy"]));
+    assert_eq!(of("nuget")["modes"], json!(["hosted", "proxy", "group"]));
     assert_eq!(
         of("apt")["modes"],
         json!(["hosted", "proxy", "group"]),

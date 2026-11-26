@@ -158,9 +158,9 @@ impl RepositoryFormat {
     /// hosted one, the proxy one and the group one: a go group assembles
     /// the union of the versions of its members and resolves a version
     /// from a single member, so the `go.sum` of the client always
-    /// describes one and the same version. The nuget surface serves the
-    /// hosted one and the proxy one —its protocol documents were verified
-    /// byte for byte— and does not assemble a group yet.
+    /// describes one and the same version. The NuGet surface serves the
+    /// hosted and proxy modalities, plus groups that combine version indexes
+    /// across members while resolving each package version from one owner.
     ///
     /// The formats that are declared but not served yet —helm— have no
     /// modality at all: a repository of one of them can be declared, and
@@ -192,7 +192,11 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            RepositoryFormat::NuGet => &[RepositoryMode::Hosted, RepositoryMode::Proxy],
+            RepositoryFormat::NuGet => &[
+                RepositoryMode::Hosted,
+                RepositoryMode::Proxy,
+                RepositoryMode::Group,
+            ],
             RepositoryFormat::Go => &[
                 RepositoryMode::Hosted,
                 RepositoryMode::Proxy,

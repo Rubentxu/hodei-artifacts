@@ -517,14 +517,12 @@ fn the_matrix_selects_the_suites_that_accredit_each_cell() {
          and an evidence table that shrinks is an evidence table that was gutted"
     );
 
-    // The refusals that were proven against the wire are named where the
-    // proof lives.
     let nuget_group =
         hodei_catalog::conformance_cell(RepositoryFormat::NuGet, RepositoryMode::Group);
     assert_eq!(
-        nuget_group.refusal_evidence,
-        &["hsp120_nuget_e2e"],
-        "the refusal of a nuget group was proven in the dialect of nuget"
+        nuget_group.evidence,
+        &["hsp231_nuget_group"],
+        "nuget group is accredited by its group conformance suite"
     );
 
     let commit = the_commit();
