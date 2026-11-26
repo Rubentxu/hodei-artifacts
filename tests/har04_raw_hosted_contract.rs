@@ -25,7 +25,7 @@
 //!
 //! The router is driven in process, through `tower::ServiceExt::oneshot`:
 //! no port is bound and no process is spawned. The catalog and the store
-//! of content are **real** (SurrealDB on disk and the file CAS), because
+//! of content are **real** (a Dgraph namespace and the file CAS), because
 //! a contract asserted against a mock proves that the mock behaves.
 
 use std::sync::Arc;
@@ -47,17 +47,18 @@ use hodei_authz::{
     PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogWriter, DigestScope, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode, repository_hrn,
+    CatalogReader, CatalogWriter, DigestScope, RepositoryConfig, RepositoryDescriptor,
+    RepositoryFormat, RepositoryMode, repository_hrn,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
 use hodei_evidence::domain::content::ContentDigest;
 use hodei_hub::blob::FileBlobStore;
 use serde_json::{Value, json};
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// The account of the principal that is allowed to publish and download.
 const ACCOUNT: &str = "acme";
@@ -139,8 +140,9 @@ struct Contract {
     writer: Arc<dyn CatalogWriter>,
     /// The store of content, so that what is left in it can be looked at.
     content: Arc<FileBlobStore>,
+    /// The directory of the CAS, which owns the Dgraph namespace.
     #[allow(dead_code)]
-    tmp: TempDir,
+    workdir: Workdir,
 }
 
 impl Contract {
@@ -166,7 +168,7 @@ impl Contract {
 
     /// A contract that admits at most `limit` bytes of content.
     async fn with_body_limit(limit: usize) -> Self {
-        let tmp = tempfile::tempdir().expect("temp dir");
+        let workdir = Workdir::new();
 
         let mut config = AppConfig::default();
         // The raw surface is closed by default; this contract opens it on
@@ -174,12 +176,7 @@ impl Contract {
         config.security.raw_api_enabled = true;
         // The catalog and the store of content are built below and
         // injected, so the contract owns them.
-        config.repository.durable = false;
-        config.rocksdb.path = tmp
-            .path()
-            .join("hodei.rocksdb")
-            .to_string_lossy()
-            .into_owned();
+        workdir.apply(&mut config);
 
         let state = bootstrap(
             &config,
@@ -192,20 +189,12 @@ impl Contract {
         .await
         .expect("bootstrap must succeed for the raw contract");
 
-        let db = Surreal::new::<RocksDb>(tmp.path().join("catalog.rocksdb"))
-            .await
-            .expect("rocksdb");
-        db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-        let catalog = Arc::new(SurrealCatalogStore::with_authorizer(
-            db,
-            Arc::new(AllowAllAuthorizer),
-        ));
-        catalog.initialize().await.expect("catalog initialize");
+        let catalog = Arc::new(workdir.tenant().catalog_store().await);
         let reader: Arc<dyn CatalogReader> = catalog.clone();
         let writer: Arc<dyn CatalogWriter> = catalog.clone();
 
         let content =
-            Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the store of content"));
+            Arc::new(FileBlobStore::new(workdir.path().join("cas")).expect("the store of content"));
 
         let state = state
             .with_catalog(reader.clone(), writer.clone())
@@ -218,7 +207,7 @@ impl Contract {
             app: build_router(state, &config),
             writer,
             content,
-            tmp,
+            workdir,
         }
     }
 
@@ -1263,14 +1252,10 @@ async fn a_repository_that_does_not_exist_is_not_found() {
 
 #[tokio::test]
 async fn the_surface_is_closed_when_the_deployment_does_not_open_it() {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    let workdir = Workdir::new();
     let mut config = AppConfig::default();
     config.security.raw_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    workdir.apply(&mut config);
 
     let state = bootstrap(
         &config,

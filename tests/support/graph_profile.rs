@@ -269,6 +269,27 @@ impl GraphTenant {
     }
 }
 
+impl GraphTenant {
+    /// The trust ledger of this tenant (grants and decisions), over the real
+    /// Dgraph store: the one the graph profile wires.
+    pub async fn trust_store(&self) -> hodei_trust_policy_storage::DgraphTrustStore {
+        let tenant = hodei_graph_client::identity::Tenant::new(&self.namespace.to_string())
+            .expect("the namespace names a valid tenant");
+        hodei_trust_policy_storage::DgraphTrustStore::open(self.client().await, tenant)
+            .await
+            .expect("the dgraph trust store opens")
+    }
+
+    /// The provenance ledger of the remote proxy over the real Dgraph store.
+    pub async fn provenance_ledger(
+        &self,
+    ) -> hodei_artifacts_api::proxy::dgraph_ledger::DgraphProvenanceLedger {
+        hodei_artifacts_api::proxy::dgraph_ledger::DgraphProvenanceLedger::open(self.client().await)
+            .await
+            .expect("the dgraph provenance ledger opens")
+    }
+}
+
 impl Drop for GraphTenant {
     /// The namespace goes away with its deployment (best effort: a leaked
     /// namespace is isolated garbage, not a hazard for other tests).

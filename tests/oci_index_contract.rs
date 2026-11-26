@@ -12,9 +12,8 @@
 //! con el cliente que escribio el servidor no es un protocolo.
 //!
 //! Los fixtures (blobs, manifiestos, etiquetas) se siembran en un proceso
-//! aparte, como el resto del catalogo: el motor de disco mantiene el
-//! bloqueo del directorio mientras el proceso lo tiene abierto, y el
-//! servicio es otro proceso.
+//! aparte, como el resto del catalogo, contra el namespace Dgraph del
+//! despliegue.
 
 mod support;
 
@@ -39,7 +38,7 @@ const SBOM_TYPE: &str = "application/vnd.example.sbom.v1";
 /// El tipo de artefacto de la firma que se cuelga.
 const SIGNATURE_TYPE: &str = "application/vnd.example.signature.v1";
 
-/// La ruta de la base, que el proceso hijo necesita.
+/// El localizador del tenant Dgraph, que el proceso hijo necesita.
 const SEED_DB: &str = "HODEI_OCI_INDEX_SEED_DB";
 
 /// Los digests que el inspector tiene que mirar, que viajan con el.
@@ -1730,8 +1729,8 @@ fn a_n_that_is_not_a_number_is_a_bad_request() {
 
 /// El inspector del canal, en un proceso aparte.
 ///
-/// La base de disco la tiene el servicio mientras esta vivo, asi que el
-/// que mira tiene que ser otro proceso.
+/// Mira el catalogo desde otro proceso, con su propio cliente del
+/// namespace Dgraph del despliegue, como lo haria un operador.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo de los tests del indice OCI"]
 async fn the_signed_manifest_is_still_in_quarantine() {
@@ -1739,17 +1738,11 @@ async fn the_signed_manifest_is_still_in_quarantine() {
         return;
     };
 
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(Path::new(&db_path))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").await.expect("ns");
-    db.use_db("artifacts").await.expect("db");
-
-    let catalog = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
-    );
-    catalog.initialize().await.expect("initialize");
+    // `HODEI_OCI_INDEX_SEED_DB` carries the locator of the deployment's graph
+    // tenant: the inspector reads through the real Dgraph catalog store.
+    let tenant = support::graph_profile::GraphTenant::from_locator(&db_path)
+        .expect("the locator names a graph tenant");
+    let catalog = tenant.catalog_store().await;
 
     // Lo que importa: **ninguna** de las dos referencias ha salido de la
     // cuarentena. La firma es un referrer mas, y un referrer no promueve

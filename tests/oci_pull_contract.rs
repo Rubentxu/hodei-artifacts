@@ -9,9 +9,8 @@
 //! tag, con negociación de tipos. El push no se anuncia todavia.
 //!
 //! Los fixtures (blobs, manifest, tag) se siembran en un **proceso
-//! aparte**, como el resto del catálogo: el motor de disco mantiene el
-//! bloqueo del directorio mientras el proceso lo tiene abierto, y el
-//! servicio es otro proceso.
+//! aparte**, como el resto del catálogo, contra el namespace Dgraph del
+//! despliegue.
 
 mod support;
 
@@ -44,7 +43,7 @@ fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// La ruta de la base y del CAS que el fixture de OCI usa.
+/// El localizador del tenant (base) y la ruta del CAS que el fixture de OCI usa.
 const SEED_DB: &str = "HODEI_OCI_SEED_DB";
 const SEED_CAS: &str = "HODEI_OCI_SEED_CAS";
 
@@ -92,8 +91,7 @@ fn the_digest(content: &[u8]) -> String {
 /// La ruta del fixture de OCI, en su propio proceso.
 ///
 /// Igual que el semillero del catálogo: el arnés le pasa la ruta de la
-/// base y del CAS por el entorno, este la escribe y se acaba, para que
-/// el motor de disco libere el bloqueo antes de que el servicio arranque.
+/// base y del CAS por el entorno, este la escribe y se acaba.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo de los tests de pull OCI"]
 async fn the_oci_fixture_can_be_seeded() {
@@ -109,18 +107,11 @@ async fn the_oci_fixture_can_be_seeded() {
         store.clone(),
     ));
 
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(Path::new(&db_path))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").await.expect("ns");
-    db.use_db("artifacts").await.expect("db");
-
-    let catalog = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
-    )
-    .with_probe(probe);
-    catalog.initialize().await.expect("initialize");
+    // `HODEI_OCI_SEED_DB` carries the locator of the deployment's graph
+    // tenant: the fixture goes through the real Dgraph catalog store.
+    let tenant = support::graph_profile::GraphTenant::from_locator(&db_path)
+        .expect("the locator names a graph tenant");
+    let catalog = tenant.catalog_store().await.with_probe(probe);
 
     // La configuración, la capa y el manifiesto OCI, como blobs del
     // almacén y como assets del repositorio de la primera cuenta.
@@ -157,19 +148,20 @@ async fn the_oci_fixture_can_be_seeded() {
         ),
     ] {
         let digest = store.put(content).await.expect("the blob is stored");
+        let coordinates = hodei_catalog::PackageCoordinates {
+            package_name: path.clone(),
+            package_version: digest.value.clone(),
+        };
         catalog
             .publish(
                 FIRST_ACCOUNT,
                 hodei_catalog::Publication {
                     repository: FIRST_REPOSITORY.to_string(),
                     asset_path: path.clone(),
-                    coordinates: hodei_catalog::PackageCoordinates {
-                        package_name: path.clone(),
-                        package_version: digest.value.clone(),
-                    },
+                    coordinates: coordinates.clone(),
                     digest,
                     size_bytes: content.len() as u64,
-                    tags,
+                    tags: Vec::new(),
                     actor: "alice".to_string(),
                     correlation_id: "oci-fixture".to_string(),
                     overwrite: false,
@@ -179,6 +171,14 @@ async fn the_oci_fixture_can_be_seeded() {
             )
             .await
             .expect("the blob asset is published");
+        // The tag is created the way a client push creates it: moved onto
+        // the version that already exists.
+        for tag in tags {
+            catalog
+                .move_tag(FIRST_ACCOUNT, FIRST_REPOSITORY, &tag, coordinates.clone())
+                .await
+                .expect("the tag is created");
+        }
     }
 }
 

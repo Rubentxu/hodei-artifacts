@@ -6,63 +6,54 @@
 //! es procedencia y no autoridad, lo que falta es explicable, un paquete
 //! podrido no publica nada, y cruzar de dueno exige decirlo explicitamente.
 
-use std::sync::Arc;
-
 use chrono::{Duration, Utc};
 use hodei_catalog::model::{
     DigestScope, PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogWriter, ChecksumEvidence, ProvenanceLedger,
-    ProvenanceReceipt, ReceiptOutcome, TrustGrant, TrustLedger,
+    CatalogReader, CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt,
+    ReceiptOutcome, TrustGrant, TrustLedger,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_hub::BlobStore;
 use hodei_hub::blob::FileBlobStore;
 use serde_json::json;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, RocksDb};
 
 use hodei_artifacts_api::bundles::{self, BundleManifest, Mapping, manifest::FORMAT};
 
-const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
+// The graph profile of the harness: a REAL Dgraph namespace per site.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
-async fn open(path: &std::path::Path) -> Surreal<Db> {
-    let mut last = String::new();
-    for _ in 0..20 {
-        match Surreal::new::<RocksDb>(path).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                return db;
-            }
-            Err(error) => {
-                last = error.to_string();
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    }
-    panic!("the database could not be opened: {last}");
-}
+const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 
 /// Un registro con su catalogo y su almacen, en un directorio propio.
 struct Site {
-    tmp: tempfile::TempDir,
-    store: SurrealCatalogStore,
+    tmp: Workdir,
+    store: DgraphCatalogStore,
+    trust: hodei_trust_policy_storage::DgraphTrustStore,
+    provenance: hodei_artifacts_api::proxy::dgraph_ledger::DgraphProvenanceLedger,
     cas: std::path::PathBuf,
 }
 
 impl Site {
     async fn new() -> Self {
-        let tmp = tempfile::tempdir().expect("tmp");
-        let store = SurrealCatalogStore::with_authorizer(
-            open(&tmp.path().join("db")).await,
-            Arc::new(AllowAllAuthorizer),
-        );
-        store.initialize().await.expect("initialize");
+        // A REAL Dgraph namespace per site, with the real catalog store.
+        let tmp = Workdir::new();
+        let store = tmp.tenant().catalog_store().await;
+        let trust = tmp.tenant().trust_store().await;
+        let provenance = tmp.tenant().provenance_ledger().await;
         let cas = tmp.path().join("cas");
-        Site { tmp, store, cas }
+        Site {
+            tmp,
+            store,
+            trust,
+            provenance,
+            cas,
+        }
     }
 
     fn blobs(&self) -> FileBlobStore {
@@ -189,10 +180,13 @@ impl Site {
         config_version: u64,
         age_secs: i64,
     ) {
-        self.store
+        self.provenance
             .record(&ProvenanceReceipt {
+                // The id is a graph key: the production ids are UUIDs, so the
+                // slashes of the path cannot ride in it.
                 id: format!(
-                    "prv-{path}-{upstream_id}-{config_version}-{}",
+                    "prv-{}-{upstream_id}-{config_version}-{}",
+                    path.replace('/', "_"),
                     outcome.as_str()
                 ),
                 account: account.to_string(),
@@ -224,8 +218,8 @@ async fn export(site: &Site, name: &str, account: &str, repository: &str) -> std
     let blobs = site.blobs();
     let report = bundles::export(
         &site.store,
-        &site.store,
-        &site.store,
+        &site.provenance,
+        &site.trust,
         &blobs,
         account,
         repository,
@@ -248,7 +242,7 @@ async fn import(
     bundles::import(
         &site.store,
         &site.store,
-        &site.store,
+        &site.provenance,
         &blobs,
         account,
         repository,
@@ -369,7 +363,7 @@ async fn the_bundle_carries_resolved_content_and_leaves_the_rest_explained() {
         1,
     )
     .await;
-    site.store
+    site.trust
         .grant(&[TrustGrant {
             account: "acme".to_string(),
             repository: "mirror".to_string(),
@@ -507,7 +501,7 @@ async fn an_imported_package_resolves_without_the_network() {
     assert_eq!(asset.digest, digest);
 
     let receipts = destination
-        .store
+        .provenance
         .receipts_of("acme", "mirror", "tools/a.bin")
         .await
         .expect("the ledger answers");
@@ -542,7 +536,7 @@ async fn an_imported_package_resolves_without_the_network() {
     assert_eq!(again.already_present, 1);
     assert_eq!(
         destination
-            .store
+            .provenance
             .receipts_of("acme", "mirror", "tools/a.bin")
             .await
             .expect("the ledger answers")
@@ -616,7 +610,7 @@ async fn a_corrupt_package_makes_nothing_visible() {
     );
     assert!(
         destination
-            .store
+            .provenance
             .receipts_of("acme", "mirror", "tools/a.bin")
             .await
             .expect("the ledger answers")
@@ -734,7 +728,7 @@ async fn crossing_owners_needs_the_explicit_mapping() {
     .expect("the mapped import runs");
     assert_eq!(report.imported, 1);
     let receipts = destination
-        .store
+        .provenance
         .receipts_of("umbrella", "mirror", "tools/a.bin")
         .await
         .expect("the ledger answers");

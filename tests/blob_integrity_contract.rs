@@ -207,19 +207,13 @@ async fn a_catalog_without_a_probe_still_publishes_and_reads() {
     let store = hodei_hub::blob::FileBlobStore::new(&cas).expect("the store");
     store.put(&content).await.expect("the content is stored");
 
-    let db = surrealdb::Surreal::new::<surrealdb::engine::local::RocksDb>(
-        deployment.directory.path().join("db"),
-    )
-    .await
-    .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-
-    // Sin sonda: el store se construye igual, y el contenido se publica.
-    let catalog = hodei_catalog_storage::SurrealCatalogStore::with_authorizer(
-        db,
-        std::sync::Arc::new(hodei_catalog::AllowAllAuthorizer),
-    );
-    catalog.initialize().await.expect("initialize");
+    // The real Dgraph catalog store of the deployment's own namespace.
+    let catalog = deployment
+        .graph
+        .as_ref()
+        .expect("the harness always runs on the graph profile")
+        .catalog_store()
+        .await;
     catalog
         .create_repository(
             FIRST_ACCOUNT,

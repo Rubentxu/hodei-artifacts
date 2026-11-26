@@ -8,31 +8,32 @@
 //! confianza no inventa decisiones (`null` dentro, `null` fuera) y la
 //! firma es sobre los bytes exactos que el indice anuncia.
 
-use std::path::Path;
-use std::sync::Arc;
-
 use chrono::{Duration, Utc};
 use hodei_catalog::model::{
     DigestScope, PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor,
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt,
-    ReceiptOutcome, TrustGrant, TrustLedger,
+    CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
+    TrustGrant, TrustLedger,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_hub::BlobStore;
 use hodei_hub::blob::FileBlobStore;
 use serde_json::json;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, RocksDb};
+use std::path::Path;
 
 use hodei_artifacts_api::bundles::capsule::{INDEX_MEDIA_TYPE, LAYOUT_VERSION};
 use hodei_artifacts_api::bundles::{
     self, Mapping, TrustState, manifest::MANIFEST_NAME, verify_capsule,
 };
 use hodei_artifacts_api::openpgp::MetadataSigner;
+
+// The graph profile of the harness: a REAL Dgraph namespace per site.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 
@@ -80,7 +81,7 @@ async fn three_way_site() -> (Site, ContentDigest) {
         1,
     )
     .await;
-    site.store
+    site.trust
         .grant(&[TrustGrant {
             account: "acme".to_string(),
             repository: "mirror".to_string(),
@@ -332,7 +333,7 @@ async fn a_revocation_after_export_never_rewrites_the_capsule() {
     // El origen revoca la decision despues del export. La capsula no
     // se entera porque no puede: es un recorte firmad del pasado, y su
     // firma es precisamente sobre esos bytes inmutables.
-    site.store
+    site.trust
         .revoke_decision(
             "acme",
             "mirror",
