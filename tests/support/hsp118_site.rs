@@ -1,7 +1,7 @@
-// Extraido literal de tests/hsp118_bundle_contract.rs: una capsula que
-// no se exporte desde un paquete real no prueba nada. Imports y
-// constantes los pone el test que incluye este andamiaje.
-/// Un registro con su catalogo y su almacen, en un directorio propio.
+// Extracted verbatim from tests/hsp118_bundle_contract.rs: a capsule that
+// is not exported from a real package proves nothing. Imports and
+// constants are provided by the test that includes this scaffolding.
+/// A registry with its catalog and its store, in its own directory.
 struct Site {
     tmp: Workdir,
     store: DgraphCatalogStore,
@@ -56,7 +56,7 @@ impl Site {
             .expect("the proxy is created");
     }
 
-    #[allow(dead_code)] // compartido: no todo consumidor crea repositorios hosted
+    #[allow(dead_code)] // shared: not every consumer creates hosted repositories
     async fn create_hosted(&self, account: &str, repo_key: &str) {
         let config = RepositoryConfig::new(DigestScope::Global);
         self.store
@@ -77,8 +77,8 @@ impl Site {
             .expect("the hosted repository is created");
     }
 
-    /// Lo que hace una resolucion de proxy: guardar, publicar y firmar el
-    /// recibo que la confirma.
+    /// What a proxy resolution does: store, publish and sign the
+    /// receipt that confirms it.
     async fn resolve(
         &self,
         account: &str,

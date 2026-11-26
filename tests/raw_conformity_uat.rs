@@ -1,25 +1,25 @@
-//! La conformidad de la superficie de contenido crudo, de **caja negra**.
+//! The conformity of the raw content surface, **black box**.
 //!
-//! No hay mocks aquí: hay un proceso de verdad, que es el binario del
-//! servicio, arrancado en un puerto de verdad, y hay herramientas del
-//! sistema hablando con él: `curl` y `sha256sum`.
+//! There are no mocks here: there is a real process, which is the service's
+//! binary, started on a real port, and there are system tools
+//! talking to it: `curl` and `sha256sum`.
 //!
-//! Lo que se mira no es una función de Rust, sino lo que un cliente
-//! ve:
+//! What is looked at is not a Rust function, but what a client
+//! sees:
 //!
-//! - Que lo que se publica vuelve **intacto**: el hash del fichero que
-//!   sale del `curl` es el hash del fichero que entró, y lo dice un
-//!   programa que no tiene nada que ver con este servicio.
-//! - Que un proceso que **se muere a mitad de una subida** no deja una
-//!   ruta publicada a medias, y que al reiniciar el servicio recoge lo
-//!   que quedó y respeta lo que está vivo.
-//! - Que dos subidas simultáneas **no se mezclan**: lo que se descarga
-//!   tiene el hash de lo que se subió, siempre.
-//! - Que dos cuentas con tokens reales **no se ven** entre sí, y que la
-//!   cuenta que no tiene el repositorio no puede saber si existe.
+//! - That what is published comes back **intact**: the hash of the file that
+//! comes out of `curl` is the hash of the file that went in, and it is stated by a
+//! program that has nothing to do with this service.
+//! - That a process that **dies in the middle of an upload** does not leave a
+//! half-published path, and that on restarting the service picks up
+//! what was left and respects what is alive.
+//! - That two simultaneous uploads **do not get mixed**: what is downloaded
+//! has the hash of what was uploaded, always.
+//! - That two accounts with real tokens **do not see** each other, and that the
+//! account that does not have the repository cannot know whether it exists.
 //!
-//! Y el resultado se escribe en un informe, que es lo que queda dentro de
-//! seis meses.
+//! And the result is written to a report, which is what remains six
+//! months from now.
 
 mod support;
 
@@ -31,59 +31,59 @@ use support::{
     SECOND_REPOSITORY,
 };
 
-/// El contenido de la primera persona: bytes que no son texto, para que
-/// la comparación sea de bytes y no de líneas.
+/// The content of the first person: bytes that are not text, so that
+/// the comparison is of bytes and not of lines.
 fn the_content() -> Vec<u8> {
     (0u16..4096).map(|value| (value % 251) as u8).collect()
 }
 
-/// Un contenido distinto para cada escritor, para que una mezcla se
-/// note: cada uno tiene su propio hash.
+/// A different content for each writer, so that a mix
+/// is noticed: each one has its own hash.
 fn the_content_of(seed: u8) -> Vec<u8> {
     (0u16..8192)
         .map(|value| ((value as u8).wrapping_add(seed)) % 251)
         .collect()
 }
 
-/// Un contenido grande, para que las subidas se solapen de verdad.
+/// A large content, so that the uploads really overlap.
 ///
-/// Un cuerpo de cuatro kilobytes se sube antes de que el siguiente
-/// `curl` conecte, y entonces lo que se mide no es la concurrencia sino
-/// la idempotencia de republicar.
+/// A four-kilobyte body is uploaded before the next
+/// `curl` connects, and then what is measured is not concurrency but
+/// the idempotence of republishing.
 fn a_big_content(seed: u8) -> Vec<u8> {
     the_content_of(seed).repeat(512)
 }
 
-/// El seeder del catálogo.
+/// The catalog seeder.
 ///
-/// El motor embebido mantiene el bloqueo del directorio de la base
-/// mientras hay una conexión abierta, y el servicio es otro proceso: la
-/// siembra tiene que estar en un proceso que se acaba. Este test es el
-/// que se ejecuta en ese proceso, y en el resto de las veces no hace
-/// nada.
+/// The embedded engine holds the lock on the database directory
+/// while a connection is open, and the service is another process: the
+/// seeding has to be in a process that ends. This test is the
+/// one that runs in that process, and the rest of the time it does
+/// nothing.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Un despliegue limpio con el catálogo sembrado.
+/// A clean deployment with the catalog seeded.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed();
     deployment
 }
 
-/// La ruta del contenido dentro del repositorio.
+/// The content's path inside the repository.
 fn the_path(repository: &str, path: &str) -> String {
     format!("/repository/{repository}/{path}")
 }
 
-/// El caso del informe, antes de ejecutarlo.
+/// The report case, before running it.
 ///
-/// Se anota dos veces: al principio, con lo que se espera, y al final,
-/// con lo que se ha medido. Si la prueba se muere entre medias, el
-/// informe se queda con la primera anotación, que dice `FALLO`. Un
-/// informe que solo sabe decir `PASS` no es un informe.
+/// It is recorded twice: at the start, with what is expected, and at the end,
+/// with what was measured. If the test dies in between, the
+/// report keeps the first record, which says `FAILURE`. A
+/// report that only knows how to say `PASS` is not a report.
 fn the_case(id: &str, given: &str, when: &str, command: &str) -> Case {
     Case {
         id: id.to_string(),
@@ -95,16 +95,16 @@ fn the_case(id: &str, given: &str, when: &str, command: &str) -> Case {
     }
 }
 
-/// Los comandos de un caso, tal y como se ejecutaron.
+/// A case's commands, as they were executed.
 ///
-/// La columna del informe lleva el comando **real**: lo que se ejecutó,
-/// con sus banderas. Un comando resumido es una paráfrasis, y una
-/// paráfrasis es una opinión.
+/// The report column carries the **real** command: what was executed,
+/// with its flags. A summarized command is a paraphrase, and a
+/// paraphrase is an opinion.
 ///
-/// La credencial va **redactada**: el informe dice `<alice>` donde el
-/// `curl` llevaba el token. Un informe se archiva y se comparte, y un
-/// token en un fichero es una credencial en un fichero. Lo que se
-/// escribe es quién actuó, no con qué se autenticó.
+/// The credential is **redacted**: the report says `<alice>` where the
+/// `curl` carried the token. A report is archived and shared, and a
+/// token in a file is a credential in a file. What is
+/// written is who acted, not what they authenticated with.
 fn the_commands(curls: &[&support::Curl]) -> String {
     curls
         .iter()
@@ -114,13 +114,13 @@ fn the_commands(curls: &[&support::Curl]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// RAW-01 y RAW-02 — publicar, descargar, describir y pedir un tramo.
+// RAW-01 and RAW-02 — publish, download, describe and request a range.
 // ---------------------------------------------------------------------------
 
-/// Publicar y descargar dan el mismo contenido, y el HEAD lo describe sin
-/// traerlo.
+/// Publishing and downloading give the same content, and HEAD describes it without
+/// fetching it.
 ///
-/// El hash lo dice `sha256sum`, no el código que se está probando.
+/// The hash is stated by `sha256sum`, not by the code under test.
 #[test]
 fn the_content_that_is_published_comes_back_intact() {
     let deployment = a_deployment();
@@ -132,8 +132,8 @@ fn the_content_that_is_published_comes_back_intact() {
     let expected = support::sha256_of(&source);
     let path = the_path(FIRST_REPOSITORY, "dir/file.bin");
 
-    // Los `curl` se construyen primero: el informe y la ejecución salen
-    // de la misma construcción, así que el informe no puede mentir.
+    // The `curl`s are built first: the report and the execution come
+    // from the same construction, so the report cannot lie.
     let download_path = deployment.directory.path().join("downloaded.bin");
     let range_path = deployment.directory.path().join("ranged.bin");
     let upload = support::Curl::upload(port, &path, &token, &source, None);
@@ -154,8 +154,8 @@ fn the_content_that_is_published_comes_back_intact() {
     );
     support::record(case.clone());
 
-    // El comando del informe tiene que ser el que se ejecuta, con sus
-    // banderas: un `HEAD` que no esta en el comando no se puede repetir.
+    // The report's command has to be the one that is executed, with its
+    // flags: a `HEAD` that is not in the command cannot be repeated.
     assert!(
         case.command.contains("--head"),
         "the command of the report does not have the HEAD: {}",
@@ -188,7 +188,7 @@ fn the_content_that_is_published_comes_back_intact() {
         "the bytes that came back are not the bytes that went in"
     );
 
-    // Y la cabecera dice lo que el contenido mide, con el digest dentro.
+    // And the header says what the content measures, with the digest inside.
     let etag = answer.header("etag");
     assert_eq!(
         etag,
@@ -196,8 +196,8 @@ fn the_content_that_is_published_comes_back_intact() {
         "the ETag has to be the digest of the content"
     );
 
-    // El HEAD describe sin traer: mismo estado, mismo tamaño, y **cero**
-    // bytes de cuerpo. El cero lo cuenta el propio `curl`.
+    // HEAD describes without fetching: same status, same size, and **zero**
+    // body bytes. The zero is counted by `curl` itself.
     let described = describe.run();
     assert_eq!(described.status, 200);
     assert_eq!(
@@ -211,9 +211,9 @@ fn the_content_that_is_published_comes_back_intact() {
         described.size
     );
 
-    // Y el tramo es un 206 con su Content-Range, y con **sus bytes**: un
-    // 206 con el Content-Range correcto y el contenido de otro asset
-    // sería un tramo que miente.
+    // And the range is a 206 with its Content-Range, and with **its bytes**: a
+    // 206 with the right Content-Range and another asset's content
+    // would be a range that lies.
     let ranged = range.run();
     assert_eq!(ranged.status, 206);
     assert_eq!(
@@ -243,17 +243,17 @@ fn the_content_that_is_published_comes_back_intact() {
 }
 
 // ---------------------------------------------------------------------------
-// RAW-06 — el proceso se muere a mitad de una subida.
+// RAW-06 — the process dies in the middle of an upload.
 // ---------------------------------------------------------------------------
 
-/// Un proceso que se muere a mitad de una subida no deja una ruta
-/// publicada a medias, y al reiniciar el servicio recoge lo que quedó.
+/// A process that dies in the middle of an upload does not leave a
+/// half-published path, and on restarting the service it picks up what was left.
 ///
-/// El `curl` va limitado para que la subida dure lo suficiente como para
-/// poder matar al servicio con el cuerpo a medias, y el arnés espera a
-/// que el staging **tenga bytes** antes de matar: un staging vacío
-/// significa que la subida no había empezado a llegar, y matar ahí no es
-/// matar una subida a la mitad.
+/// The `curl` is rate-limited so that the upload lasts long enough
+/// to be able to kill the service with the body half sent, and the harness waits
+/// for the staging to **have bytes** before killing: an empty staging
+/// means the upload had not started arriving, and killing then is not
+/// killing an upload halfway.
 #[test]
 fn an_upload_that_is_interrupted_leaves_nothing_published() {
     let deployment = a_deployment();
@@ -267,8 +267,8 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
     let big_path = deployment.directory.path().join("big.bin");
     let after_path = deployment.directory.path().join("after.bin");
 
-    // El corte se ve en el comando: el `curl` limitado que se queda en
-    // curso, el `kill` y el arranque de verdad.
+    // The cut shows in the command: the limited `curl` that stays
+    // in progress, the `kill` and the real startup.
     let cut_upload = support::Curl::upload(port, &cut_path, &token, &big_path, Some("256K"));
     let keep_upload = support::Curl::upload(port, &keep_path, &token, &published_path, None);
 
@@ -284,19 +284,19 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
     );
     support::record(case.clone());
 
-    // Un contenido que sí se publicó, para poder comprobar que sigue
-    // intacto después del corte.
+    // A content that was published, so as to be able to check that it remains
+    // intact after the cut.
     std::fs::write(&published_path, the_content()).expect("the source is written");
     let expected = support::sha256_of(&published_path);
     let answer = keep_upload.run();
     assert_eq!(answer.status, 201);
 
-    // Y ahora una subida que no llega a terminarse.
+    // And now an upload that never gets to finish.
     std::fs::write(&big_path, the_content_of(7).repeat(128)).expect("the source is written");
     let mut upload = cut_upload.run_in_background();
 
-    // Se espera a que la subida esté **en curso**: el staging existe y
-    // tiene bytes, o sea que el servicio está escribiendo el cuerpo.
+    // Wait until the upload is **in progress**: the staging exists and
+    // has bytes, meaning the service is writing the body.
     let deadline = Instant::now() + Duration::from_secs(30);
     while deployment.staging_bytes() == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
@@ -307,36 +307,36 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         deployment.the_log()
     );
 
-    // Y ahora se mata el servicio, sin oportunidad de limpiar nada.
+    // And now the service is killed, with no chance to clean anything up.
     support::kill(&mut service);
     let _ = upload.wait();
 
-    // El staging del proceso muerto sigue en el disco: nadie lo limpió.
+    // The dead process's staging is still on disk: nobody cleaned it up.
     assert!(
         !deployment.staging_entries().is_empty(),
         "the staging of the interrupted upload was expected to be there"
     );
 
-    // Ese staging es un fichero abandonado: lleva dos horas ahí, que es
-    // más que la caducidad por defecto (una hora). Y al lado se deja un
-    // staging **vivo**, como el de una subida de otro proceso, que es lo
-    // que el arranque no tiene que tocar.
+    // That staging is an abandoned file: it has been there for two hours, which is
+    // more than the default expiry (one hour). And next to it a **live**
+    // staging is left, like that of another process's upload, which is what
+    // startup must not touch.
     //
-    // El vivo también lleva dos horas: si lo protegiera solo su fecha,
-    // el arranque se lo llevaría. Lo que lo protege es el **bloqueo**,
-    // que es lo que dice que alguien lo está escribiendo.
+    // The live one is also two hours old: if only its date protected it,
+    // startup would take it away. What protects it is the **lock**,
+    // which is what says that someone is writing it.
     let live = deployment.a_live_staging();
     deployment.age_the_staging(Duration::from_secs(2 * 3600));
 
-    // Al reiniciar, el servicio limpia lo que encuentra caducado y
-    // respeta lo que está vivo. Y se reinicia con la configuración de
-    // verdad: la caducidad por defecto, sin tocar nada.
+    // On restart, the service cleans up what it finds expired and
+    // respects what is alive. And it is restarted with the real
+    // configuration: the default expiry, without touching anything.
     let mut service = deployment.start(&[]);
     let port = service.port;
 
-    // El reinicio abre otro puerto, así que los `curl` de despues se
-    // construyen aqui: el comando del informe es el que se ejecutó, con
-    // el puerto que se ejecutó.
+    // The restart opens another port, so the later `curl`s are
+    // built here: the report's command is the one that was executed, with
+    // the port that was executed.
     let missing_command = support::Curl::download(port, &cut_path, &token, None);
     let again_command = support::Curl::upload(port, &cut_path, &token, &published_path, None);
     let after_command = support::Curl::download(port, &keep_path, &token, Some(&after_path));
@@ -356,16 +356,16 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         deployment.staging_entries()
     );
 
-    // La ruta de la subida cortada no existe: no se publicó a medias.
+    // The cut upload's path does not exist: it was not published halfway.
     let missing = missing_command.run();
     assert_eq!(
         missing.status, 404,
         "an interrupted upload must not publish a path"
     );
 
-    // Y publicarla otra vez **funciona**: un `404` y un `409` juntos
-    // serían un asset colgado, un camino que nadie puede usar. Con el
-    // `409` solo, lo que se comprueba es que la dirección está libre.
+    // And publishing it again **works**: a `404` and a `409` together
+    // would be a dangling asset, a path nobody can use. With the
+    // `409` alone, all that is checked is that the address is free.
     let again = again_command.run();
     assert_eq!(
         again.status,
@@ -374,7 +374,7 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         deployment.the_log()
     );
 
-    // Y el contenido que sí estaba publicado sigue siendo el mismo.
+    // And the content that was published is still the same.
     let answer = after_command.run();
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -383,8 +383,8 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         "the content that was published did not survive the interruption"
     );
 
-    // El arranque dice cuantos stagings se llevo y cuantos dejo, y el
-    // informe lo dice: es el recuento del servicio, no el del arnes.
+    // Startup says how many stagings it took away and how many it left, and the
+    // report says so: it is the service's tally, not the harness's.
     let (removed, alive) = support::the_boot_cleanup(&deployment.the_log());
     assert_eq!(
         removed,
@@ -411,9 +411,9 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
         "la ruta cortada no existe ({}), republicar en ella da {} (no 409), el staging caducado se limpió al arrancar y el vivo sigue —caducado y bloqueado, que es lo que lo salva—, y el contenido publicado sigue con el mismo sha256 ({expected})",
         missing.status, again.status
     );
-    // Los recuentos se escriben como los dice el log del servicio, con
-    // los nombres de sus campos: asi el informe y el log se pueden
-    // comparar sin traducir.
+    // The tallies are written as the service's log states them, with
+    // the names of its fields: that way the report and the log can be
+    // compared without translating.
     case.outcome.push_str(&format!(
         " (removed: {removed}, alive: {alive})",
         removed = removed.unwrap_or(0),
@@ -426,21 +426,21 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
 }
 
 // ---------------------------------------------------------------------------
-// CAS-02 y CAT-02 — subidas simultáneas.
+// CAS-02 and CAT-02 — simultaneous uploads.
 // ---------------------------------------------------------------------------
 
-/// Varias subidas a la vez no se mezclan.
+/// Several uploads at once do not get mixed.
 ///
-/// Tres situaciones, porque cada una falla de una manera distinta:
+/// Three situations, because each fails in a different way:
 ///
-/// - El mismo contenido a la misma ruta: el efecto es **uno**, y lo que
-///   se descarga es ese contenido.
-/// - Contenidos distintos a rutas distintas: cada ruta tiene lo suyo.
-/// - Contenidos distintos a la misma ruta: la dirección publica una vez,
-///   así que uno gana y los demás reciben un `409`.
+/// - The same content to the same path: the effect is **one**, and what
+/// is downloaded is that content.
+/// - Different contents to different paths: each path has its own.
+/// - Different contents to the same path: the address publishes once,
+/// so one wins and the others receive a `409`.
 ///
-/// Lo que no puede pasar es que lo que se descargue sea una mezcla: el
-/// hash de lo que se baja tiene que ser el hash de lo que se subió.
+/// What cannot happen is that what is downloaded is a mix: the
+/// hash of what is downloaded has to be the hash of what was uploaded.
 #[test]
 fn simultaneous_uploads_do_not_mix_the_content() {
     let deployment = a_deployment();
@@ -452,9 +452,9 @@ fn simultaneous_uploads_do_not_mix_the_content() {
     let same_path = the_path(FIRST_REPOSITORY, "same/file.bin");
     let same_download_path = directory.join("same-downloaded.bin");
 
-    // Los `curl` de este caso se construyen antes de ejecutarlos, y el
-    // informe los lleva tal cual: los cinco que compiten por la misma
-    // ruta son el mismo comando con la misma bandera de limite.
+    // This case's `curl`s are built before being executed, and the
+    // report carries them as they are: the five competing for the same
+    // path are the same command with the same limit flag.
     let same_upload = support::Curl::upload(
         port,
         &same_path,
@@ -465,8 +465,8 @@ fn simultaneous_uploads_do_not_mix_the_content() {
     let same_download =
         support::Curl::download(port, &same_path, &token, Some(&same_download_path));
 
-    // Los tres grupos de subidas y las tres descargas: cada grupo es un
-    // comando, y el numero de veces que se repite lo dice la prosa.
+    // The three groups of uploads and the three downloads: each group is a
+    // command, and the number of times it is repeated is stated by the prose.
     let distinct_upload = support::Curl::upload(
         port,
         &the_path(FIRST_REPOSITORY, "distinct/0.bin"),
@@ -511,7 +511,7 @@ fn simultaneous_uploads_do_not_mix_the_content() {
     );
     support::record(case.clone());
 
-    // --- El mismo contenido, a la misma ruta, por cinco peticiones.
+    // --- The same content, to the same path, by five requests.
     let same = directory.join("same.bin");
     std::fs::write(&same, a_big_content(1)).expect("the source is written");
     let same_digest = support::sha256_of(&same);
@@ -520,10 +520,10 @@ fn simultaneous_uploads_do_not_mix_the_content() {
         uploads.push(same_upload.run_in_background());
     }
 
-    // Y las subidas **se solapan**: hay más de un staging en curso, que
-    // es lo que dice que las peticiones estaban en vuelo a la vez y que
-    // cada una tenía su propio staging. Sin esta comprobación, lo que
-    // se mide es una republicar en fila.
+    // And the uploads **overlap**: there is more than one staging in progress, which
+    // is what says the requests were in flight at the same time and that
+    // each had its own staging. Without this check, what is
+    // measured is a republish in a row.
     let deadline = Instant::now() + Duration::from_secs(30);
     while deployment.staging_entries().len() < 2 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
@@ -554,7 +554,7 @@ fn simultaneous_uploads_do_not_mix_the_content() {
         "the content of a simultaneous publication is not the content that was published"
     );
 
-    // --- Contenidos distintos, a rutas distintas.
+    // --- Different contents, to different paths.
     let mut uploads = Vec::new();
     let mut digests = Vec::new();
     for writer in 0..4u8 {
@@ -600,7 +600,7 @@ fn simultaneous_uploads_do_not_mix_the_content() {
         );
     }
 
-    // --- Contenidos distintos, a la misma ruta.
+    // --- Different contents, to the same path.
     let mut uploads = Vec::new();
     let mut contenders = Vec::new();
     for writer in 0..4u8 {
@@ -641,7 +641,7 @@ fn simultaneous_uploads_do_not_mix_the_content() {
         "the publications that lost have to be refused: {contested_statuses:?}"
     );
 
-    // Y lo que queda es **uno** de los que se publicaron, entero.
+    // And what remains is **one** of those that were published, whole.
     let file = directory.join("contested-downloaded.bin");
     let answer = support::curl_download(
         port,
@@ -656,7 +656,7 @@ fn simultaneous_uploads_do_not_mix_the_content() {
         "the content that survived is not any of the contents that were published"
     );
 
-    // Y no queda ninguna escritura a medias.
+    // And no half-finished write remains.
     assert!(
         deployment.staging_entries().is_empty(),
         "a finished publication must not leave a staging behind: {:?}",
@@ -673,15 +673,15 @@ fn simultaneous_uploads_do_not_mix_the_content() {
 }
 
 // ---------------------------------------------------------------------------
-// RAW-05 y CAT-03 — dos cuentas con tokens reales.
+// RAW-05 and CAT-03 — two accounts with real tokens.
 // ---------------------------------------------------------------------------
 
-/// Dos cuentas no se ven, y la que no tiene el repositorio no puede
-/// saber si existe.
+/// Two accounts do not see each other, and the one that does not have the repository cannot
+/// know whether it exists.
 ///
-/// Las dos cuentas tienen un repositorio con la **misma clave**, así que
-/// la misma dirección con tokens distintos son dos contenidos distintos:
-/// es el aislamiento por cuenta, medido con las dos URLs iguales.
+/// Both accounts have a repository with the **same key**, so
+/// the same address with different tokens are two different contents:
+/// it is isolation per account, measured with both URLs identical.
 #[test]
 fn two_accounts_do_not_see_each_other() {
     let deployment = a_deployment();
@@ -696,9 +696,9 @@ fn two_accounts_do_not_see_each_other() {
     let only_first = the_path(FIRST_ONLY_REPOSITORY, "secret/file.bin");
     let carol = support::token(FIRST_ACCOUNT, "carol");
 
-    // Los `curl` de este caso se construyen antes: el informe lleva las
-    // dos cuentas y la peticion sin credencial, cada una con su
-    // credencial redactada.
+    // This case's `curl`s are built beforehand: the report carries the
+    // two accounts and the request without credentials, each with its
+    // redacted credential.
     let first_upload = support::Curl::upload(
         port,
         &shared_first,
@@ -753,7 +753,7 @@ fn two_accounts_do_not_see_each_other() {
     );
     support::record(case.clone());
 
-    // Las dos cuentas publican en la misma dirección.
+    // Both accounts publish to the same address.
     let first_file = directory.join("first.bin");
     std::fs::write(&first_file, the_content_of(1)).expect("the source is written");
     let first_digest = support::sha256_of(&first_file);
@@ -766,16 +766,16 @@ fn two_accounts_do_not_see_each_other() {
     let answer = second_upload.run();
     assert_eq!(answer.status, 201, "{}", deployment.the_log());
 
-    // Y la primera cuenta publica también en un repositorio que la
-    // segunda no tiene. Sin esto, el `404` de la segunda no distinguiría
-    // "no lo ves" de "no hay nada publicado": haría falta que lo hubiera
-    // publicado alguien.
+    // And the first account also publishes to a repository that the
+    // second does not have. Without this, the second's `404` would not distinguish
+    // "you cannot see it" from "nothing is published": someone would have
+    // had to publish it.
     let only_first_file = directory.join("only-first.bin");
     std::fs::write(&only_first_file, the_content_of(3)).expect("the source is written");
     let answer = only_first_upload.run();
     assert_eq!(answer.status, 201, "{}", deployment.the_log());
 
-    // Y cada una descarga lo suyo de la misma dirección.
+    // And each downloads its own from the same address.
     let answer = first_download.run();
     assert_eq!(answer.status, 200);
     assert_eq!(
@@ -792,18 +792,18 @@ fn two_accounts_do_not_see_each_other() {
         "the second account did not get its own content"
     );
 
-    // Y lo que hay en la dirección de la otra cuenta no se puede leer:
-    // con el token de la segunda, la dirección de la primera no existe.
+    // And what is at the other account's address cannot be read:
+    // with the second's token, the first's address does not exist.
     let answer = other_account.run();
     assert_eq!(
         answer.status, 404,
         "a repository of another account must not exist for this one"
     );
 
-    // Y la denegación es **coherente**: la misma cuenta, el mismo
-    // repositorio y otra persona: el bundle de Cedar no la cubre, así que
-    // la respuesta es un 403 —que sí dice que el repositorio existe— en
-    // vez de un 404 que mentiría.
+    // And the denial is **coherent**: the same account, the same
+    // repository and another person: the Cedar bundle does not cover it, so
+    // the response is a 403 —which does say the repository exists— instead of
+    // a 404 that would lie.
     let answer = uncovered.run();
     assert_eq!(
         answer.status,
@@ -812,7 +812,7 @@ fn two_accounts_do_not_see_each_other() {
         deployment.the_log()
     );
 
-    // Y sin credencial tampoco se dice nada.
+    // And without credentials nothing is said either.
     let answer = anonymous.run();
     assert_eq!(answer.status, 401);
 
@@ -826,7 +826,7 @@ fn two_accounts_do_not_see_each_other() {
     support::stop(&mut service);
 }
 
-/// El informe se escribe donde la CI lo puede leer.
+/// The report is written where the CI can read it.
 #[test]
 fn the_report_is_written_where_the_ci_can_read_it() {
     let path: PathBuf = support::Report::the_path();
@@ -836,15 +836,15 @@ fn the_report_is_written_where_the_ci_can_read_it() {
     );
     let parent = path.parent().expect("the report has a directory");
     std::fs::create_dir_all(parent).expect("the directory of the report");
-    // Y el informe dice lo que no certifica, porque un informe que solo
-    // dice lo que sí es una propaganda.
+    // And the report says what it does not certify, because a report that only
+    // says what it does is propaganda.
     let report = support::Report::new();
     let markdown = report.as_markdown();
     assert!(markdown.contains("no** certifica"));
     assert!(markdown.contains("OCI"));
     assert!(markdown.contains("S3"));
-    // Y dice que la credencial va redactada, para que nadie lea la
-    // columna como si fueran comandos copiables tal cual.
+    // And it says the credential is redacted, so that nobody reads the
+    // column as if they were commands that can be copied as they are.
     assert!(
         markdown.contains("redactad"),
         "the report does not say that the credentials are redacted:\n{markdown}"

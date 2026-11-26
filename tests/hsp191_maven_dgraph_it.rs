@@ -1,24 +1,24 @@
-//! HSP-191: Maven y consulta de catálogo indexada sobre el motor Dgraph real.
+//! HSP-191: Maven and indexed catalog query over the real Dgraph engine.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como los IT del stack (TLS + ACL, el
-//! servidor vivo h186). Lo que prueba, contra el motor de verdad:
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like the stack ITs (TLS + ACL, the
+//! live h186 server). What it proves, against the real engine:
 //!
-//! - **AC1** el despliegue Maven REAL: el cliente `mvn` (deploy-file,
-//!   dependency:get) publica POM+jar por coordenadas `group:artifact:version`
-//!   con el layout estándar de repositorio sobre el catálogo Dgraph; los
-//!   `maven-metadata.xml` DERIVADOS del catálogo y sus checksums son
-//!   equivalentes (estables entre lecturas); los bytes van al CAS y el grafo
-//!   solo guarda coordenadas y referencias; el outbox atómico de HSP-187
-//!   acompaña a cada commit de publicación; la release es inmutable (409) y
-//!   el re-despliegue del mismo contenido es idempotente;
-//! - **AC2** el listado por CURSOR ESTABLE (re-paginar tras insertar no
-//!   salta ni duplica), la búsqueda EXACTA por coordenadas y tipo con
-//!   distractores que NO causan scan global (el plan usa el índice: el
-//!   esquema declara `@index(exact)` en los predicados filtrados y la
-//!   consulta exacta devuelve solo lo suyo en un coste relativo pequeño),
-//!   y el scoping por cuenta (los assets de otra cuenta no existen aquí);
-//! - las lecturas del estado publicado según el contrato: por coordenadas,
-//!   listado por prefijo y páginas por cursor de clave.
+//! - **AC1** the REAL Maven deployment: the `mvn` client (deploy-file,
+//!   dependency:get) publishes POM+jar by `group:artifact:version` coordinates
+//!   with the standard repository layout over the Dgraph catalog; the
+//!   `maven-metadata.xml` DERIVED from the catalog and their checksums are
+//!   equivalent (stable between reads); the bytes go to the CAS and the graph
+//!   only stores coordinates and references; the atomic outbox of HSP-187
+//!   accompanies each publication commit; the release is immutable (409) and
+//!   the redeployment of the same content is idempotent;
+//! - **AC2** listing by STABLE CURSOR (re-paginating after inserting neither
+//!   skips nor duplicates), EXACT search by coordinates and type with
+//!   distractors that do NOT cause a global scan (the plan uses the index: the
+//!   schema declares `@index(exact)` on the filtered predicates and the
+//!   exact query returns only what is its own at a small relative cost),
+//!   and per-account scoping (the assets of another account do not exist here);
+//! - reads of the published state according to the contract: by coordinates,
+//!   listing by prefix and pages by key cursor.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -53,8 +53,8 @@ use hodei_hub::blob::FileBlobStore;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// La ejecución: una por corrida, para que ninguna prueba se encuentre
-/// con lo que otra dejó.
+/// The run: one per execution, so that no test runs into
+/// what another left behind.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -63,7 +63,7 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Una cuenta por prueba y por ejecución.
+/// One account per test and per run.
 fn account(tag: &str) -> String {
     format!("it191{}{}", tag, &nonce()[8..])
 }
@@ -99,7 +99,7 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     Some(Arc::new(client))
 }
 
-/// El directorio de la evidencia: `target/uat/hsp191/`.
+/// The evidence directory: `target/uat/hsp191/`.
 fn the_evidence_dir() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
@@ -108,7 +108,7 @@ fn the_evidence_dir() -> PathBuf {
     dir
 }
 
-/// Una línea de evidencia, con el momento.
+/// An evidence line, with the timestamp.
 fn record_evidence(test: &str, line: &str) {
     let file = the_evidence_dir().join("evidencia.md");
     let entry = format!("- [{test}] {line}\n");
@@ -122,16 +122,16 @@ fn record_evidence(test: &str, line: &str) {
     }
 }
 
-// El almacén Dgraph del catálogo: la apertura condicionada que comparten
-// las suites gated del stack (HSP-219). La receta nacida en esta suite —el
-// retry acotado del `open`— se generaliza en el helper incluido: puerta de
-// serialización intra-proceso (los opens del binario comparten la
-// preparación del schema de uno en uno) y hasta ocho intentos con backoff
-// lineal creciente sobre los errores transitorios (`Unavailable`, que es
-// la clase con la que el alter rechazado por `errIndexingInProgress` se
-// dice). **Carril recomendado**: este binario con threads por defecto,
-// pero solo contra el alpha; dos suites gated a la vez siguen siendo el
-// terreno del flake entre procesos (lección HSP-190).
+// The catalog's Dgraph store: the conditioned opening shared by
+// the stack's gated suites (HSP-219). The recipe born in this suite (the
+// bounded retry of `open`) is generalized in the included helper: an
+// intra-process serialization gate (the binary's opens share the
+// schema preparation one at a time) and up to eight attempts with
+// increasing linear backoff on transient errors (`Unavailable`, which is
+// the class that the alter rejected by `errIndexingInProgress` is
+// reported with). **Recommended lane**: this binary with default threads,
+// but only against the alpha; two gated suites at once remain the
+// ground of the cross-process flake (lesson HSP-190).
 include!("support/hsp219_concurrent_open.rs");
 
 fn actor(account: &str) -> String {
@@ -142,7 +142,7 @@ fn correlation_of(account: &str) -> String {
     format!("corr-hsp191-{account}")
 }
 
-/// Un descriptor de repositorio hosted, del formato y los ajustes pedidos.
+/// A hosted repository descriptor, with the requested format and settings.
 fn a_descriptor(
     account: &str,
     repo_key: &str,
@@ -163,7 +163,7 @@ fn a_descriptor(
     }
 }
 
-/// Una publicación directa en el almacén, del contenido pedido.
+/// A direct publication into the store, with the requested content.
 async fn publish(
     store: &DgraphCatalogStore,
     account: &str,
@@ -198,7 +198,7 @@ async fn publish(
 }
 
 // ---------------------------------------------------------------------------
-// El vertical HTTP: el router del hub sobre el catálogo Dgraph.
+// The HTTP vertical: the hub router over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
 struct ContractAuthenticator {
@@ -221,7 +221,7 @@ impl PrincipalAuthenticator for ContractAuthenticator {
     }
 }
 
-/// La Cedar bundle: solo `alice` de esta cuenta publica y descarga.
+/// The Cedar bundle: only `alice` of this account publishes and downloads.
 fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     let policy = format!(
         r#"permit(
@@ -312,7 +312,7 @@ impl Vertical {
     }
 }
 
-/// El mismo servicio, en un puerto de verdad: el cliente Maven habla TCP.
+/// The same service, on a real port: the Maven client speaks TCP.
 async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -327,7 +327,7 @@ async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     address
 }
 
-/// La respuesta de una petición.
+/// The response to a request.
 struct Answer {
     status: StatusCode,
     body: Vec<u8>,
@@ -363,7 +363,7 @@ async fn send(
 }
 
 // ---------------------------------------------------------------------------
-// El cliente Maven real (mvn), como hsp109: la credencial en el settings.xml.
+// The real Maven client (mvn), like hsp109: the credential in settings.xml.
 // ---------------------------------------------------------------------------
 
 const DEPLOY: &str = "org.apache.maven.plugins:maven-deploy-plugin:3.1.2:deploy-file";
@@ -381,8 +381,8 @@ fn require_maven() {
     );
 }
 
-/// El grupo de la prueba en el repositorio local de Maven, que se borra al
-/// acabar para no dejar nada en la caché del usuario.
+/// The test group in Maven's local repository, which is deleted at the
+/// end so as not to leave anything in the user's cache.
 struct LocalGroup(PathBuf);
 
 impl Drop for LocalGroup {
@@ -487,7 +487,7 @@ impl Maven {
     }
 }
 
-/// El resumen SHA-256 en hexadecimal, de lo que el catálogo también dice.
+/// The SHA-256 digest in hexadecimal, of what the catalog also states.
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::Digest as _;
     sha2::Sha256::digest(bytes)
@@ -496,7 +496,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// El resumen SHA-1 en hexadecimal, de lo que Maven sube junto al fichero.
+/// The SHA-1 digest in hexadecimal, of what Maven uploads alongside the file.
 fn sha1_hex(bytes: &[u8]) -> String {
     use sha1::Digest as _;
     sha1::Sha1::digest(bytes)
@@ -505,16 +505,16 @@ fn sha1_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Cuántos eventos del outbox de ESTA cuenta nombra el recurso pedido.
+/// How many outbox events of THIS account name the requested resource.
 ///
-/// El censo va POR TENANT (índice exacto), no por el `pending()` global:
-/// el outbox del servidor compartido acumula los hechos de TODAS las
-/// corridas —ninguna prueba los marca entregados— y su respuesta llegó a
-/// desbordar el límite de mensaje gRPC (4 MiB; hallazgo de HSP-194,
-/// drenado y documentado por HSP-220). La cuenta es única por corrida,
-/// así que la raíz `eq(tenant)` trae por índice solo los hechos de ESTA
-/// prueba, y el filtro del recurso va en el adaptador (el grupo Maven
-/// lleva el pid, así que el camino es único por ejecución).
+/// The census goes PER TENANT (exact index), not through the global `pending()`:
+/// the shared server's outbox accumulates the facts of ALL
+/// runs (no test marks them delivered) and its response came to
+/// overflow the gRPC message limit (4 MiB; finding of HSP-194,
+/// drained and documented by HSP-220). The account is unique per run,
+/// so the `eq(tenant)` root brings by index only the facts of THIS
+/// test, and the resource filter goes in the adapter (the Maven group
+/// carries the pid, so the path is unique per execution).
 async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str) -> usize {
     let escaped = tenant.replace('\\', "\\\\").replace('"', "\\\"");
     let response = client
@@ -541,11 +541,11 @@ async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el despliegue Maven real sobre el catálogo Dgraph.
+// AC1: the real Maven deployment over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
-/// El vertical deja de servir si el IT no está gated: sin servidor no hay
-/// cliente real.
+/// The vertical stops serving if the IT is not gated: without a server there is no
+/// real client.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
     require_maven();
@@ -565,13 +565,13 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
     let local = LocalGroup(the_local_repository().join(group.replace('.', "/")));
     let maven = Maven::new(&work, "alice", group.clone());
 
-    // El jar que Maven despliega. El POM lo genera el propio plugin.
+    // The jar that Maven deploys. The POM is generated by the plugin itself.
     let jar = work.join("lib.jar");
     let jar_bytes = b"PK-hsp191-maven-over-dgraph-release-bytes".to_vec();
     std::fs::write(&jar, &jar_bytes).expect("the jar");
 
-    // Despliegue real: jar + checksums + POM, por coordenadas y layout
-    // estándar, contra el vertical con el catálogo Dgraph.
+    // Real deployment: jar + checksums + POM, by coordinates and standard
+    // layout, against the vertical with the Dgraph catalog.
     let deployed = maven.deploy(&address, repo, "1.0", &jar);
     assert!(
         deployed.ok,
@@ -583,17 +583,17 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         &format!("mvn deploy-file 1.0 sobre {repo} (catálogo Dgraph): OK"),
     );
 
-    // El layout del repo Maven: las coordenadas `group:artifact:version`
-    // viven en `com/hodei/uatN/lib/1.0/lib-1.0.jar` y su POM al lado. El
-    // grupo pasa a directorios; la versión y el nombre NO llevan barras.
+    // The Maven repo layout: the `group:artifact:version` coordinates
+    // live at `com/hodei/uatN/lib/1.0/lib-1.0.jar` and its POM next to it. The
+    // group becomes directories; the version and the name carry NO slashes.
     let group_prefix = group.replace('.', "/");
     let jar_path = format!("{group_prefix}/lib/1.0/lib-1.0.jar");
     let pom_path = format!("{group_prefix}/lib/1.0/lib-1.0.pom");
 
-    // Los bytes que el catálogo dice son los del fichero desplegado, y
-    // van al CAS: el GET sirve lo mismo que se subió. Las coordenadas
-    // del catálogo para cada fichero son las de la superficie de
-    // contenido: el camino del layout Maven y SU digest.
+    // The bytes the catalog states are those of the deployed file, and
+    // go to the CAS: the GET serves the same as was uploaded. The catalog
+    // coordinates for each file are those of the content
+    // surface: the Maven layout path and ITS digest.
     let coordinates = PackageCoordinates {
         package_name: jar_path.clone(),
         package_version: sha256_hex(&jar_bytes),
@@ -627,8 +627,8 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
     assert_eq!(served.status, StatusCode::OK);
     assert_eq!(served.body, jar_bytes, "the CAS serves the deployed bytes");
 
-    // La metadata DERIVADA del catálogo existe y es equivalente entre
-    // lecturas: el mismo XML dos veces, y su checksum .sha1 el de SU XML.
+    // The DERIVED metadata from the catalog exists and is equivalent between
+    // reads: the same XML twice, and its .sha1 checksum is that of ITS XML.
     let metadata_path = format!("{group_prefix}/lib/maven-metadata.xml");
     let first = send(
         &vertical.app,
@@ -675,8 +675,8 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         "the checksum of the metadata is the checksum of the served metadata"
     );
 
-    // El POM que Maven generó está guardado y su coordenada es la de la
-    // ruta (el handler lo valida antes de guardar).
+    // The POM that Maven generated is stored and its coordinate is that of the
+    // path (the handler validates it before storing).
     let pom = send(
         &vertical.app,
         Method::GET,
@@ -692,10 +692,10 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         "{pom_text}"
     );
 
-    // El outbox atómico: cada commit de publicación lleva SU evento. Los
-    // ficheros desplegados (jar, pom y sus checksums absorbidos) dicen los
-    // hechos de esta ejecución, y ningún evento de otra corrida entra en
-    // el censo.
+    // The atomic outbox: each publication commit carries ITS event. The
+    // deployed files (jar, pom and their absorbed checksums) state the
+    // facts of this execution, and no event from another run enters
+    // the census.
     let client = fresh_client().await.expect("client");
     let needle = format!("{repo}/{group_prefix}/lib/1.0/");
     let said = the_events_of(&client, &account, &needle).await;
@@ -705,8 +705,8 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         &format!("eventos de auditoría de esta ejecución en el outbox: {said}"),
     );
 
-    // El cliente real RESUELVE: dependency:get baja el jar por la
-    // coordenada y los bytes son los mismos.
+    // The real client RESOLVES: dependency:get downloads the jar by the
+    // coordinate and the bytes are the same.
     maven.forget();
     let resolved = maven.resolve(&address, repo, "1.0");
     assert!(
@@ -724,8 +724,8 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         "mvn dependency:get 1.0: los bytes resueltos son los desplegados",
     );
 
-    // La release es INMUTABLE: otro contenido con la misma versión es un
-    // 409 y no deja nada escrito.
+    // The release is IMMUTABLE: other content with the same version is a
+    // 409 and leaves nothing written.
     let other = work.join("other.jar");
     std::fs::write(&other, b"PK-another-content").expect("the other jar");
     let again = maven.deploy(&address, repo, "1.0", &other);
@@ -742,8 +742,8 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
         .expect("the version is still there");
     assert_eq!(unchanged.digest.value, sha256_hex(&jar_bytes));
 
-    // El mismo contenido dicho DOS veces no es un error ni un hecho nuevo:
-    // la republicación idempotente vuelve a terminar bien.
+    // The same content stated TWICE is neither an error nor a new fact:
+    // the idempotent republication finishes well again.
     let events_before = said;
     let redeployed = maven.deploy(&address, repo, "1.0", &jar);
     assert!(
@@ -765,11 +765,11 @@ async fn the_real_maven_client_deploys_and_resolves_over_dgraph() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: el cursor estable, la búsqueda exacta y el scoping por cuenta.
+// AC2: the stable cursor, the exact search and the per-account scoping.
 // ---------------------------------------------------------------------------
 
-/// La página que sigue empieza EN LA CLAVE ya vista: una inserción ANTES de
-/// la clave no la mueve, y re-paginar no salta ni duplica resultado.
+/// The next page starts AT THE KEY already seen: an insertion BEFORE
+/// the key does not move it, and re-paginating neither skips nor duplicates a result.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_cursor_pages_are_stable_under_insertions() {
     let Some(client) = fresh_client().await else {
@@ -800,7 +800,7 @@ async fn the_cursor_pages_are_stable_under_insertions() {
         .await;
     }
 
-    // Primera página por clave: dos resultados y su cursor.
+    // First page by key: two results and its cursor.
     let query = SearchQuery::new().with_repository(repo).with_limit(2);
     let first = store
         .search(
@@ -819,7 +819,7 @@ async fn the_cursor_pages_are_stable_under_insertions() {
     };
     let cursor = search_cursor(&first_repository, &last_seen);
 
-    // Llegan inserciones: una ANTES de la clave ya vista y otra al final.
+    // Insertions arrive: one BEFORE the key already seen and another at the end.
     publish(
         &store,
         &account,
@@ -841,8 +841,8 @@ async fn the_cursor_pages_are_stable_under_insertions() {
     )
     .await;
 
-    // Re-paginar desde el MISMO cursor: la página sigue en p/03 y la
-    // caminata entera por cursores no salta ni duplica nada.
+    // Re-paginate from the SAME cursor: the page is still at p/03 and the
+    // whole walk by cursors neither skips nor duplicates anything.
     let mut walked: Vec<String> = first
         .results
         .iter()
@@ -882,8 +882,8 @@ async fn the_cursor_pages_are_stable_under_insertions() {
         "caminata por cursor (2 por página) tras insertar p/00 (antes) y p/07 (después): p/01..p/07 una vez cada uno, sin saltos ni duplicados; p/00 queda fuera de la caminata ya empezada",
     );
 
-    // El total de una página POR CLAVE es lo que queda por ver desde la
-    // clave: tras p/02 quedan cinco (p/03..p/07).
+    // The total of a page BY KEY is what remains to be seen from the
+    // key: after p/02 five remain (p/03..p/07).
     let second = store
         .search(
             &account,
@@ -906,8 +906,8 @@ async fn the_cursor_pages_are_stable_under_insertions() {
     );
 }
 
-/// La búsqueda exacta por coordenadas y tipo, autorizada por cuenta, con
-/// distractores que no causan scan global: el plan consulta POR ÍNDICE.
+/// The exact search by coordinates and type, authorized by account, with
+/// distractors that do not cause a global scan: the plan queries BY INDEX.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_exact_search_is_scoped_indexed_and_cheap() {
     let Some(client) = fresh_client().await else {
@@ -939,8 +939,8 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         )
         .await
         .expect("the repository is created");
-    // La cuenta distractora: otra cuenta con la MISMA clave de repositorio
-    // y los mismos caminos. Lo que ella guarda no existe aquí.
+    // The distractor account: another account with the SAME repository key
+    // and the same paths. What it stores does not exist here.
     store
         .create_repository(
             &other,
@@ -949,7 +949,7 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         .await
         .expect("the other repository is created");
 
-    // Los que la búsqueda debe encontrar.
+    // Those that the search must find.
     for index in 0..6u32 {
         publish(
             &store,
@@ -962,10 +962,10 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         )
         .await;
     }
-    // Distractores de la MISMA cuenta (otro paquete en el mismo
-    // repositorio, otro repositorio de la cuenta) y de la OTRA cuenta con
-    // las MISMAS coordenadas y caminos. Suficientes para que un scan
-    // global destaque.
+    // Distractors from the SAME account (another package in the same
+    // repository, another repository of the account) and from the OTHER account with
+    // the SAME coordinates and paths. Enough for a global
+    // scan to stand out.
     for index in 0..120u32 {
         publish(
             &store,
@@ -1003,8 +1003,8 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         .await;
     }
 
-    // El listado de repositorios es de LA CUENTA: la otra cuenta con la
-    // misma clave no aparece, y sus assets tampoco en la búsqueda.
+    // The repository listing is the ACCOUNT's: the other account with the
+    // same key does not appear, and neither do its assets in the search.
     let repositories = store.repositories(&account).await.expect("the listing");
     let keys: Vec<String> = repositories
         .iter()
@@ -1012,9 +1012,9 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         .collect();
     assert_eq!(keys, vec!["libs".to_string(), "oci".to_string()]);
 
-    // Búsqueda exacta por coordenadas: solo los seis de esta cuenta. Ni
-    // los 120 de la otra cuenta con las mismas coordenadas, ni los 120
-    // del mismo repositorio con otro paquete.
+    // Exact search by coordinates: only the six of this account. Neither
+    // the 120 of the other account with the same coordinates, nor the 120
+    // of the same repository with another package.
     let started = Instant::now();
     let page = store
         .search(
@@ -1047,7 +1047,7 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         ),
     );
 
-    // La coordenada completa: nombre Y versión.
+    // The full coordinate: name AND version.
     let one = store
         .search(
             &account,
@@ -1062,10 +1062,10 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
     assert_eq!(one.total, Some(1));
     assert_eq!(one.results[0].asset_path, "target/3.bin");
 
-    // El filtro por TIPO (formato del repositorio), resuelto con el
-    // descriptor: el repositorio `oci` es Maven2, y la búsqueda que pide
-    // los raw deja fuera sus 60 assets. La caminata entera de la cuenta
-    // son 186 (126 de libs + 60 de oci); la de los raw, 126.
+    // The filter by TYPE (repository format), resolved with the
+    // descriptor: the `oci` repository is Maven2, and the search that asks for
+    // the raw ones leaves out its 60 assets. The whole walk of the account
+    // is 186 (126 of libs + 60 of oci); that of the raw ones, 126.
     let all = store
         .search(&account, &repositories, &SearchQuery::new().with_limit(100))
         .await
@@ -1092,11 +1092,11 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         "filtro por tipo (format=raw): el total baja de 186 a 126, el repositorio Maven2 queda fuera",
     );
 
-    // El probe del PLAN: los predicados por los que la consulta exacta
-    // filtra están declarados con `@index(exact)` en el esquema del grafo.
-    // El contrato del motor: una igualdad de RAÍZ se sirve POR EL ÍNDICE
-    // del predicado, y las búsquedas de este slice son igualdades de raíz
-    // (cuenta y repositorio) más filtro sobre el mismo índice.
+    // The PLAN probe: the predicates that the exact query
+    // filters by are declared with `@index(exact)` in the graph schema.
+    // The engine contract: a ROOT equality is served BY THE INDEX
+    // of the predicate, and the searches of this slice are root equalities
+    // (account and repository) plus a filter over the same index.
     let probed = [
         "hodei.catalog.asset.account",
         "hodei.catalog.asset.repository",
@@ -1120,7 +1120,7 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
         "probe de plan: account/repository/package_name/package_version/digest declarados @index(exact); la raíz de la consulta es eq(account/repository), servida por el índice",
     );
 
-    // La etiqueta exacta: lo que la etiqueta nombra, y nada más.
+    // The exact tag: what the tag names, and nothing more.
     store
         .move_tag(
             &account,
@@ -1150,15 +1150,15 @@ async fn the_exact_search_is_scoped_indexed_and_cheap() {
 }
 
 // ---------------------------------------------------------------------------
-// Las lecturas dicen lo que el contrato del catálogo dice.
+// The reads state what the catalog contract states.
 // ---------------------------------------------------------------------------
 
-/// El estado publicado responde lo que el contrato dice: por coordenadas
-/// (digest y tamaño de lo publicado), el listado por prefijo (los caminos
-/// del prefijo, en orden ascendente) y las páginas por cursor de clave (la
-/// secuencia entera y el total son los de lo publicado). HSP-314 F4: antes
-/// se comparaba con un segundo motor por offset; ahora la secuencia
-/// esperada es la de los caminos publicados ordenados.
+/// The published state answers what the contract says: by coordinates
+/// (digest and size of what was published), the listing by prefix (the paths
+/// of the prefix, in ascending order) and the pages by key cursor (the
+/// whole sequence and the total are those of what was published). HSP-314 F4: before,
+/// it was compared with a second engine by offset; now the expected sequence
+/// is that of the published paths sorted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
@@ -1180,9 +1180,9 @@ async fn the_reads_match_the_contract_for_the_published_state() {
         .await
         .expect("the dgraph repository");
 
-    // El estado: los caminos, coordenadas, digests y tamaños. Las
-    // coordenadas son las que la superficie de contenido publica: el
-    // camino del fichero y su digest, uno por fichero.
+    // The state: the paths, coordinates, digests and sizes. The
+    // coordinates are those the content surface publishes: the
+    // file path and its digest, one per file.
     let assets = [
         "com/acme/lib/1.0/lib-1.0.pom",
         "com/acme/lib/1.0/lib-1.0.jar",
@@ -1215,7 +1215,7 @@ async fn the_reads_match_the_contract_for_the_published_state() {
             .expect("the dgraph publication");
     }
 
-    // Por coordenadas: la versión es el digest y el tamaño de lo publicado.
+    // By coordinates: the version is the digest and the size of what was published.
     let published = b"parity::com/acme/lib/1.1/lib-1.1.jar";
     let coordinates = PackageCoordinates {
         package_name: "com/acme/lib/1.1/lib-1.1.jar".to_string(),
@@ -1228,8 +1228,8 @@ async fn the_reads_match_the_contract_for_the_published_state() {
     assert_eq!(dgraph_version.digest, ContentDigest::of_bytes(published));
     assert_eq!(dgraph_version.size_bytes, published.len() as u64);
 
-    // El listado por prefijo: los caminos publicados bajo el prefijo, en
-    // orden ascendente y sin los de fuera del prefijo.
+    // The listing by prefix: the paths published under the prefix, in
+    // ascending order and without those outside the prefix.
     let dgraph_listing = dgraph
         .assets_under(&account, repo, "com/acme/lib/")
         .await
@@ -1247,9 +1247,9 @@ async fn the_reads_match_the_contract_for_the_published_state() {
     assert_eq!(expected_listing.len(), 4);
     assert_eq!(dgraph_paths, expected_listing);
 
-    // Las páginas de búsqueda por cursor de clave: la secuencia entera es
-    // la de los caminos publicados ordenados, y el total, el de los
-    // publicados.
+    // The search pages by key cursor: the whole sequence is
+    // that of the published paths sorted, and the total, that of those
+    // published.
     let repositories = dgraph.repositories(&account).await.expect("the repos");
     let query = SearchQuery::new().with_repository(repo).with_limit(2);
     let mut dgraph_page = dgraph

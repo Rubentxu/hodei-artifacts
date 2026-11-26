@@ -298,8 +298,8 @@ async fn concurrent_equivalent_requests_create_exactly_one_entity() {
     assert_eq!(store.len(), 1);
 }
 
-/// Una decisión que no se pudo tomar no es un permiso denegado: el alta
-/// dice que no pudo decidir, y no dice que no.
+/// A decision that could not be made is not a denied permission: the creation
+/// says it could not decide, and does not say no.
 #[tokio::test]
 async fn indeterminate_authorizer_is_500_and_has_no_effect() {
     let (app, store, _tmp) = app(Arc::new(IndeterminateAuthorizer)).await;

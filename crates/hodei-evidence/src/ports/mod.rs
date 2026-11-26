@@ -191,9 +191,9 @@ pub trait ContentStore: Send + Sync {
 
     /// The size of a content, in bytes, WITHOUT reading it.
     ///
-    /// Es lo que un presupuesto pregunta antes de cargar: no se baja un
-    /// blob entero para truncarlo despues. None si el contenido no esta:
-    /// la ausencia no es un error, es una respuesta.
+    /// It is what a budget asks before loading: a whole
+    /// blob is not downloaded just to truncate it afterwards. None if the content is not there:
+    /// absence is not an error, it is an answer.
     async fn size(&self, digest: &ContentDigest) -> Result<Option<u64>, StoreError>;
 }
 

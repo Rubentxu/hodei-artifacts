@@ -1,13 +1,13 @@
-//! La politica de cache de un repositorio proxy y la decision de frescura.
+//! The cache policy of a proxy repository and the freshness decision.
 //!
-//! Este modulo es **puro**: no toca la red, el reloj ni el almacen. Recibe
-//! la politica, lo que el libro de procedencia sabe de una ruta y la hora, y
-//! contesta una pregunta: que hay que hacer con esta peticion. Quien ejecuta
-//! la decision (traer, revalidar, servir, rechazar) es el servicio.
+//! This module is **pure**: it does not touch the network, the clock or the store. It receives
+//! the policy, what the provenance ledger knows about a path, and the time, and
+//! answers one question: what to do with this request. Whoever executes
+//! the decision (fetch, revalidate, serve, reject) is the service.
 //!
-//! # La configuracion
+//! # The configuration
 //!
-//! Vive en `config_settings.proxy.cache`, junto a `proxy.upstream`:
+//! It lives in `config_settings.proxy.cache`, next to `proxy.upstream`:
 //!
 //! ```json
 //! { "proxy": { "cache": {
@@ -19,23 +19,23 @@
 //! } } }
 //! ```
 //!
-//! - **Dos clases de ruta.** El *contenido* (un jar, una capa) se identifica
-//!   por sus bytes y no cambia: su TTL por defecto es "no caduca". La
-//!   *metadata* (un indice, un `maven-metadata.xml`) es mutable por
-//!   naturaleza: es lo que se revalida. Una entrada de `metadata_paths` sin
-//!   `/` final es el **nombre del ultimo segmento**; con `/` final, un
-//!   prefijo de ruta.
-//! - **TTL.** Ausente = no caduca (nunca se revalida por tiempo); `0` =
-//!   se revalida en cada lectura. Un TTL que vence no sirve nada por si
-//!   mismo: dispara una revalidacion condicional (`If-None-Match`,
-//!   `If-Modified-Since`) y un `304` renueva el recibo sin mover bytes.
-//! - **`stale_if_error_secs`.** Cuanto tiempo **mas alla** del TTL se sirve
-//!   el contenido cacheado si el upstream falla. `0` (por defecto) = nunca
-//!   se sirve contenido caducado.
-//! - **`negative_secs`.** Cuanto se recuerda un `404`. `0` (por defecto) =
-//!   no se recuerda: un `404` no es una garantia de ausencia permanente.
-//! - **`offline`.** El repositorio no sale a la red: sirve solo lo que ya
-//!   tiene con procedencia.
+//! - **Two kinds of path.** *Content* (a jar, a layer) is identified
+//!   by its bytes and does not change: its default TTL is "does not expire". *Metadata*
+//!   (an index, a `maven-metadata.xml`) is mutable by
+//!   nature: it is what gets revalidated. A `metadata_paths` entry without a
+//!   trailing `/` is the **name of the last segment**; with a trailing `/`, a
+//!   path prefix.
+//! - **TTL.** Absent = does not expire (never revalidated by time); `0` =
+//!   revalidated on every read. An expired TTL serves nothing by itself:
+//!   it triggers a conditional revalidation (`If-None-Match`,
+//!   `If-Modified-Since`) and a `304` renews the receipt without moving bytes.
+//! - **`stale_if_error_secs`.** How long **beyond** the TTL the cached
+//!   content is served if the upstream fails. `0` (default) = expired content
+//!   is never served.
+//! - **`negative_secs`.** How long a `404` is remembered. `0` (default) =
+//!   not remembered: a `404` is not a guarantee of permanent absence.
+//! - **`offline`.** The repository does not go out to the network: it serves only what it already
+//!   has with provenance.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::ContentDigest;
@@ -45,11 +45,11 @@ use serde_json::Value;
 use crate::model::RepositoryFormat;
 use crate::proxy::{ChecksumEvidence, ProvenanceReceipt, ReceiptOutcome, UpstreamConfigError};
 
-/// El tope de cualquier duracion de la politica: diez años.
+/// The cap on any policy duration: ten years.
 pub const MAX_CACHE_SECS: u64 = 315_360_000;
 
-/// Los nombres de metadata que se reconocen si la politica no declara
-/// `metadata_paths`: indices que los formatos habituales republican.
+/// The metadata names that are recognized if the policy does not declare
+/// `metadata_paths`: indexes that the usual formats republish.
 pub const DEFAULT_METADATA_NAMES: &[&str] = &[
     "maven-metadata.xml",
     "repomd.xml",
@@ -65,8 +65,8 @@ pub const DEFAULT_METADATA_NAMES: &[&str] = &[
     "index.json",
 ];
 
-/// Sufijos de los ficheros que acompañan a una metadata (su checksum o su
-/// firma): se republican con ella y se tratan igual.
+/// Suffixes of the files that accompany a piece of metadata (its checksum or its
+/// signature): they are republished with it and treated the same.
 const SIDECAR_SUFFIXES: &[&str] = &[
     ".md5", ".sha1", ".sha256", ".sha512", ".asc", ".sig", ".gpg",
 ];
@@ -75,13 +75,13 @@ fn invalid(reason: impl Into<String>) -> UpstreamConfigError {
     UpstreamConfigError(reason.into())
 }
 
-/// Si la ruta es un fichero de una version `-SNAPSHOT` con el nombre
-/// flotante de Maven (`.../1.0-SNAPSHOT/widget-1.0-SNAPSHOT.jar`).
+/// Whether the path is a file of a `-SNAPSHOT` version with Maven's
+/// floating name (`.../1.0-SNAPSHOT/widget-1.0-SNAPSHOT.jar`).
 ///
-/// Ese nombre apunta a la ultima construccion y el upstream lo republica:
-/// un cambio es lo esperado, no un incumplimiento. Los ficheros con marca
-/// de tiempo (`widget-1.0-20240101.120000-1.jar`) no llevan el nombre de
-/// la version y siguen siendo inmutables.
+/// That name points to the latest build and the upstream republishes it:
+/// a change is expected, not a breach. Files with a
+/// timestamp (`widget-1.0-20240101.120000-1.jar`) do not carry the name of
+/// the version and remain immutable.
 fn is_floating_snapshot(asset_path: &str) -> bool {
     let mut segments = asset_path.rsplit('/');
     let (Some(file), Some(directory), Some(artifact)) =
@@ -92,41 +92,41 @@ fn is_floating_snapshot(asset_path: &str) -> bool {
     if !directory.ends_with("-SNAPSHOT") {
         return false;
     }
-    // `{artifactId}-{version}` y despues la extension o un clasificador.
+    // `{artifactId}-{version}` and then the extension or a classifier.
     let floating = format!("{artifact}-{directory}");
     file.strip_prefix(floating.as_str())
         .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('-'))
 }
 
-/// Que clase de ruta es: de eso depende como se trata un cambio.
+/// What kind of path it is: how a change is treated depends on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheKind {
-    /// Bytes que se identifican por su digest y no deben cambiar.
+    /// Bytes identified by their digest that must not change.
     ///
-    /// Un upstream que entrega **otros** bytes para la misma ruta no esta
-    /// actualizando: esta incumpliendo, y el contenido se pone en
-    /// cuarentena.
+    /// An upstream that delivers **other** bytes for the same path is not
+    /// updating: it is in breach, and the content is put in
+    /// quarantine.
     Content,
-    /// Un indice que el upstream republica. Un cambio es lo esperado.
+    /// An index that the upstream republishes. A change is expected.
     Metadata,
 }
 
-/// La politica de cache de un repositorio proxy, ya validada.
+/// The cache policy of a proxy repository, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CachePolicy {
-    /// Segundos de frescura del contenido. `None` = no caduca.
+    /// Freshness seconds of the content. `None` = does not expire.
     pub content_ttl: Option<u64>,
-    /// Segundos de frescura de la metadata. `None` = no caduca.
+    /// Freshness seconds of the metadata. `None` = does not expire.
     pub metadata_ttl: Option<u64>,
-    /// Nombres de ultimo segmento (sin `/` final) y prefijos (con `/`
-    /// final) que son metadata.
+    /// Last-segment names (without trailing `/`) and prefixes (with trailing
+    /// `/`) that are metadata.
     pub metadata_paths: Vec<String>,
-    /// Segundos que se recuerda un `404`. `0` = no se recuerda.
+    /// Seconds a `404` is remembered. `0` = not remembered.
     pub negative_secs: u64,
-    /// Segundos mas alla del TTL en que se sirve contenido si el upstream
-    /// falla. `0` = nunca.
+    /// Seconds beyond the TTL during which content is served if the upstream
+    /// fails. `0` = never.
     pub stale_if_error_secs: u64,
-    /// Si el repositorio trabaja sin red.
+    /// Whether the repository works without network.
     pub offline: bool,
 }
 
@@ -171,7 +171,7 @@ struct RawTtl {
 }
 
 impl CachePolicy {
-    /// Valida la politica escrita como JSON.
+    /// Validates the policy written as JSON.
     pub fn parse(value: &Value) -> Result<Self, UpstreamConfigError> {
         let raw: RawCache = serde_json::from_value(value.clone())
             .map_err(|error| invalid(format!("the cache settings cannot be read: {error}")))?;
@@ -228,7 +228,7 @@ impl CachePolicy {
             || raw.contains('#')
             || raw.chars().any(char::is_control)
             || name.split('/').any(|segment| segment.is_empty() || segment == ".." || segment == ".")
-            // Sin barra final es un nombre de segmento: no lleva barras.
+            // Without a trailing slash it is a segment name: it carries no slashes.
             || (!prefix && name.contains('/'));
         if bad {
             return Err(invalid(
@@ -238,11 +238,11 @@ impl CachePolicy {
         Ok(())
     }
 
-    /// La clase de una ruta relativa.
+    /// The kind of a relative path.
     pub fn kind_of(&self, asset_path: &str) -> CacheKind {
         let last = asset_path.rsplit('/').next().unwrap_or(asset_path);
-        // `maven-metadata.xml.sha1` cambia cuando cambia `maven-metadata.xml`:
-        // se decide por el nombre al que acompana.
+        // `maven-metadata.xml.sha1` changes when `maven-metadata.xml` changes:
+        // it is decided by the name it accompanies.
         let named = SIDECAR_SUFFIXES
             .iter()
             .find_map(|suffix| last.strip_suffix(suffix))
@@ -262,11 +262,11 @@ impl CachePolicy {
         }
     }
 
-    /// La clase de una ruta segun el formato del repositorio.
+    /// The kind of a path according to the repository format.
     ///
-    /// En npm el contenido inmutable son los tarballs (`{nombre}/-/{fichero}.tgz`)
-    /// y todo lo demas es un packument, que el upstream republica. El resto de
-    /// formatos se rigen por las rutas de metadatos de la politica.
+    /// In npm the immutable content is the tarballs (`{name}/-/{file}.tgz`)
+    /// and everything else is a packument, which the upstream republishes. The rest of
+    /// formats are governed by the policy's metadata paths.
     pub fn kind_in(&self, format: RepositoryFormat, asset_path: &str) -> CacheKind {
         match format {
             RepositoryFormat::Npm => {
@@ -277,9 +277,9 @@ impl CachePolicy {
                 }
             }
             RepositoryFormat::PyPi => {
-                // El documento de un proyecto (`{proyecto}`) es metadata: el
-                // upstream publica versiones nuevas. Las distribuciones
-                // (`{proyecto}/{fichero}`) son contenido inmutable.
+                // A project's document (`{project}`) is metadata: the
+                // upstream publishes new versions. Distributions
+                // (`{project}/{file}`) are immutable content.
                 if asset_path.contains('/') {
                     CacheKind::Content
                 } else {
@@ -287,10 +287,10 @@ impl CachePolicy {
                 }
             }
             RepositoryFormat::Terraform => {
-                // Los zips de providers son inmutables: una version publicada
-                // no cambia de bytes. Los documentos JSON del protocolo
-                // (`index.json`, `index.json` de provider, `{version}.json`)
-                // son revalidables: el upstream publica versiones nuevas.
+                // Provider zips are immutable: a published version
+                // does not change its bytes. The protocol's JSON documents
+                // (`index.json`, a provider's `index.json`, `{version}.json`)
+                // are revalidatable: the upstream publishes new versions.
                 if asset_path.ends_with(".zip") {
                     CacheKind::Content
                 } else {
@@ -301,7 +301,7 @@ impl CachePolicy {
         }
     }
 
-    /// El TTL que le toca a una clase de ruta.
+    /// The TTL that applies to a kind of path.
     pub fn ttl_of(&self, kind: CacheKind) -> Option<u64> {
         match kind {
             CacheKind::Content => self.content_ttl,
@@ -310,43 +310,43 @@ impl CachePolicy {
     }
 }
 
-/// Un recibo que respalda el contenido que hay en el catalogo.
+/// A receipt that backs the content in the catalog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Confirmation {
-    /// El upstream que lo respaldo.
+    /// The upstream that backed it.
     pub upstream_id: String,
-    /// La version de la configuracion con la que se respaldo.
+    /// The configuration version it was backed with.
     pub config_version: u64,
-    /// Cuando se trajo o se revalido.
+    /// When it was fetched or revalidated.
     pub at: DateTime<Utc>,
-    /// La etiqueta de entidad del upstream.
+    /// The upstream's entity tag.
     pub etag: Option<String>,
-    /// El `Last-Modified` del upstream.
+    /// The upstream's `Last-Modified`.
     pub last_modified: Option<String>,
-    /// Con que se comprobo el contenido entonces.
+    /// What the content was checked with then.
     pub checksum: ChecksumEvidence,
 }
 
-/// Lo que el libro sabe del contenido que hay hoy en una ruta.
+/// What the ledger knows about the content that is at a path today.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CacheEntry {
-    /// El digest del contenido que el catalogo sirve para la ruta.
+    /// The digest of the content the catalog serves for the path.
     pub digest: ContentDigest,
-    /// Los bytes de ese contenido.
+    /// The bytes of that content.
     pub size_bytes: u64,
-    /// El recibo mas reciente que respalda **ese** digest, si hay alguno.
+    /// The most recent receipt that backs **that** digest, if there is any.
     ///
-    /// Sin el, el contenido esta en el catalogo pero no tiene procedencia
-    /// demostrable: no se sirve offline y se revalida online.
+    /// Without it, the content is in the catalog but has no demonstrable
+    /// provenance: it is not served offline and is revalidated online.
     pub confirmation: Option<Confirmation>,
-    /// La version de configuracion con la que el upstream entrego bytes que
-    /// no son los esperados, si el ultimo recibo es de cuarentena.
+    /// The configuration version under which the upstream delivered bytes that
+    /// are not the expected ones, if the last receipt is a quarantine one.
     pub quarantined_at: Option<u64>,
 }
 
 impl CacheEntry {
-    /// Lo que dicen los recibos de una ruta (el mas reciente primero) sobre
-    /// el digest que el catalogo sirve hoy.
+    /// What the receipts of a path (most recent first) say about
+    /// the digest the catalog serves today.
     pub fn of(
         asset_digest: &ContentDigest,
         size_bytes: u64,
@@ -378,86 +378,86 @@ impl CacheEntry {
     }
 }
 
-/// Lo que hace falta para revalidar un contenido que ya se tiene.
+/// What is needed to revalidate a content that is already held.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Known {
-    /// El digest que se tiene.
+    /// The digest that is held.
     pub digest: ContentDigest,
-    /// Los bytes de ese contenido.
+    /// The bytes of that content.
     pub size_bytes: u64,
-    /// Con que se comprobo cuando se respaldo, si hay respaldo vigente: es
-    /// lo que hereda un `304`, que no trae cuerpo que comprobar.
+    /// What it was checked with when it was backed, if there is a current backing: it is
+    /// what a `304` inherits, since it brings no body to check.
     pub checksum: Option<ChecksumEvidence>,
-    /// El validador `ETag` que dio el upstream, si lo dio y sigue valiendo.
+    /// The `ETag` validator the upstream gave, if it gave one and it is still valid.
     pub etag: Option<String>,
-    /// El validador `Last-Modified`, igual.
+    /// The `Last-Modified` validator, likewise.
     pub last_modified: Option<String>,
-    /// Si el contenido es inmutable: otros bytes para la misma ruta son un
-    /// incumplimiento del upstream y no una actualizacion.
+    /// Whether the content is immutable: other bytes for the same path are a
+    /// breach by the upstream and not an update.
     ///
-    /// Una revalidacion que se hace porque la configuracion cambio despues
-    /// de una cuarentena **no** es inmutable: quien administra cambio la
-    /// configuracion sabiendo que habia contenido retenido, y ese cambio es
-    /// la decision de aceptar lo que el upstream sirve ahora.
+    /// A revalidation done because the configuration changed after
+    /// a quarantine is **not** immutable: whoever administers changed the
+    /// configuration knowing there was retained content, and that change is
+    /// the decision to accept what the upstream serves now.
     pub immutable: bool,
 }
 
-/// Lo que se hace con una peticion.
+/// What is done with a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CacheDecision {
-    /// Se sirve lo que hay, sin tocar el upstream.
+    /// What is there is served, without touching the upstream.
     Fresh,
-    /// Se pregunta al upstream si lo que hay sigue valiendo.
+    /// The upstream is asked whether what is there is still valid.
     Revalidate(Known),
-    /// No hay nada: se trae.
+    /// There is nothing: it is fetched.
     Fetch,
-    /// El upstream entrego otros bytes para un contenido inmutable y esa
-    /// configuracion no se ha cambiado desde entonces.
+    /// The upstream delivered other bytes for an immutable content and that
+    /// configuration has not been changed since.
     Quarantined,
-    /// La ruta ya no cae en ningun scope: el cambio de politica la oculta.
+    /// The path no longer falls under any scope: the policy change hides it.
     OutOfScope,
-    /// Sin red: se sirve lo que hay, que tiene procedencia.
+    /// Without network: what is there is served, which has provenance.
     OfflineServe,
-    /// Sin red y sin contenido servible con procedencia.
+    /// Without network and without servable content with provenance.
     OfflineMiss,
 }
 
-/// El contexto de una peticion.
+/// The context of a request.
 #[derive(Debug, Clone)]
 pub struct Context<'a> {
-    /// El formato del repositorio.
+    /// The repository format.
     pub format: RepositoryFormat,
-    /// La politica vigente.
+    /// The policy in force.
     pub policy: &'a CachePolicy,
-    /// La ruta relativa.
+    /// The relative path.
     pub asset_path: &'a str,
-    /// El upstream vigente.
+    /// The upstream in force.
     pub upstream_id: &'a str,
-    /// Si la ruta cae hoy en algun scope del upstream.
+    /// Whether the path today falls under some upstream scope.
     pub in_scope: bool,
-    /// La version vigente de la configuracion del repositorio.
+    /// The current version of the repository configuration.
     pub config_version: u64,
-    /// Si no se puede salir a la red (la politica o el servicio).
+    /// Whether the network cannot be used (the policy or the service).
     pub offline: bool,
-    /// La hora de la decision.
+    /// The time of the decision.
     pub now: DateTime<Utc>,
-    /// La clase de la ruta, cuando quien decide ya la sabe.
+    /// The kind of the path, when whoever decides already knows it.
     ///
-    /// La superficie OCI la sabe: un manifiesto pedido por **etiqueta** es
-    /// metadata --la etiqueta se mueve-- y el mismo manifiesto pedido por
-    /// **digest** es contenido --el digest no se mueve--. Sin esto, los dos
-    /// se rigirian por la misma regla, y el digest acabaria moviendose.
+    /// The OCI surface knows it: a manifest requested by **tag** is
+    /// metadata --the tag moves-- and the same manifest requested by
+    /// **digest** is content --the digest does not move--. Without this, both
+    /// would be governed by the same rule, and the digest would end up moving.
     pub kind: Option<CacheKind>,
 }
 
-/// La edad de una confirmacion, en segundos (nunca negativa).
+/// The age of a confirmation, in seconds (never negative).
 fn age_secs(confirmation: &Confirmation, now: DateTime<Utc>) -> u64 {
     now.signed_duration_since(confirmation.at)
         .num_seconds()
         .max(0) as u64
 }
 
-/// Decide que hacer con una peticion de una ruta proxy.
+/// Decides what to do with a request for a proxy path.
 pub fn decide(ctx: &Context<'_>, entry: Option<&CacheEntry>) -> CacheDecision {
     if !ctx.in_scope {
         return CacheDecision::OutOfScope;
@@ -470,8 +470,8 @@ pub fn decide(ctx: &Context<'_>, entry: Option<&CacheEntry>) -> CacheDecision {
         };
     };
 
-    // Una cuarentena dura mientras no cambie la configuracion: es la
-    // unica palanca de quien administra para decir "ahora si".
+    // A quarantine lasts as long as the configuration does not change: it is the
+    // only lever of whoever administers to say "now yes".
     let mut forced = false;
     if let Some(version) = entry.quarantined_at {
         if ctx.offline || version == ctx.config_version {
@@ -513,10 +513,10 @@ pub fn decide(ctx: &Context<'_>, entry: Option<&CacheEntry>) -> CacheDecision {
     let Some(confirmation) = current else {
         return CacheDecision::Revalidate(known(false));
     };
-    // Una configuracion nueva (otra URL, otro `require_checksum`...) no hereda
-    // validadores ni evidencia: un `304` del origen nuevo no puede dar por
-    // bueno lo que bajo el viejo, y un `200` se comprueba con la politica de
-    // ahora. Cuesta una descarga por ruta y cambio de configuracion.
+    // A new configuration (another URL, another `require_checksum`...) inherits neither
+    // validators nor evidence: a `304` from the new origin cannot vouch for
+    // what was downloaded under the old one, and a `200` is checked with today's
+    // policy. It costs one download per path and configuration change.
     if forced || confirmation.config_version != ctx.config_version {
         return CacheDecision::Revalidate(known(false));
     }
@@ -528,11 +528,11 @@ pub fn decide(ctx: &Context<'_>, entry: Option<&CacheEntry>) -> CacheDecision {
     }
 }
 
-/// Si, tras un fallo del upstream, se puede servir el contenido cacheado.
+/// Whether, after an upstream failure, the cached content can be served.
 ///
-/// Solo si hay procedencia del upstream vigente, la politica lo permite
-/// (`stale_if_error_secs > 0`) y el contenido no lleva caducado mas que esa
-/// ventana. Un TTL ausente no caduca: la ventana no se agota nunca.
+/// Only if there is provenance from the current upstream, the policy allows it
+/// (`stale_if_error_secs > 0`) and the content has not been expired for longer than that
+/// window. An absent TTL does not expire: the window never runs out.
 pub fn stale_allowed(ctx: &Context<'_>, entry: &CacheEntry) -> bool {
     if ctx.policy.stale_if_error_secs == 0 || entry.quarantined_at.is_some() || !ctx.in_scope {
         return false;
@@ -616,7 +616,7 @@ mod tests {
             policy.kind_in(npm, "lodash/-/lodash-4.17.21.tgz"),
             CacheKind::Content
         );
-        // Los demas formatos no cambian de criterio.
+        // The other formats do not change criterion.
         assert_eq!(
             policy.kind_in(RepositoryFormat::Maven2, "a/b/maven-metadata.xml"),
             CacheKind::Metadata
@@ -675,9 +675,9 @@ mod tests {
             policy.kind_of("acme/lib/1.0/lib-1.0.jar"),
             CacheKind::Content
         );
-        // El nombre es de segmento entero: no una terminacion.
+        // The name is of a whole segment: not an ending.
         assert_eq!(policy.kind_of("x-maven-metadata.xml"), CacheKind::Content);
-        // El prefijo es de segmento: `dists-x/` no es `dists/`.
+        // The prefix is a segment prefix: `dists-x/` is not `dists/`.
         assert_eq!(policy.kind_of("dists-x/a"), CacheKind::Content);
     }
 
@@ -693,7 +693,7 @@ mod tests {
         ] {
             assert_eq!(policy.kind_of(path), CacheKind::Metadata, "{path}");
         }
-        // El checksum de un artefacto es tan inmutable como el artefacto.
+        // An artifact's checksum is as immutable as the artifact.
         assert_eq!(
             policy.kind_of("acme/lib/1.0/lib-1.0.jar.sha1"),
             CacheKind::Content
@@ -738,7 +738,7 @@ mod tests {
         assert!(known.last_modified.is_some());
         assert!(known.immutable);
 
-        // La metadata caduca antes y no es inmutable.
+        // The metadata expires sooner and is not immutable.
         assert_eq!(
             decide(&ctx(&policy, "a/maven-metadata.xml", 9), Some(&entry)),
             CacheDecision::Fresh
@@ -782,8 +782,8 @@ mod tests {
         let CacheDecision::Revalidate(known) = decide(&now, Some(&entry(1, 0))) else {
             panic!("a new configuration should be revalidated");
         };
-        // Y sin heredar validadores: otra configuracion puede apuntar a otro
-        // origen o exigir otra evidencia.
+        // And without inheriting validators: another configuration may point to another
+        // origin or demand other evidence.
         assert_eq!(known.etag, None);
     }
 
@@ -811,7 +811,7 @@ mod tests {
         let CacheDecision::Revalidate(known) = decide(&ctx(&policy, "a/b", 0), Some(&other)) else {
             panic!("another upstream means revalidate");
         };
-        // Los validadores de otro upstream no se le ensenan a este.
+        // The validators of another upstream are not shown to this one.
         assert!(known.etag.is_none());
     }
 
@@ -822,7 +822,7 @@ mod tests {
         offline.offline = true;
         offline.config_version = 9;
 
-        // El TTL y la deriva de configuracion no importan sin red.
+        // The TTL and configuration drift do not matter without network.
         assert_eq!(
             decide(&offline, Some(&entry(1, 0))),
             CacheDecision::OfflineServe
@@ -848,9 +848,9 @@ mod tests {
         assert_eq!(decide(&offline, Some(&other)), CacheDecision::OfflineMiss);
     }
 
-    /// Un recibo de importacion confirma el contenido igual que un fetch:
-    /// lo que autoriza a servirlo sin red es la configuracion vigente del
-    /// repositorio, no como llegaron los bytes.
+    /// An import receipt confirms the content just like a fetch:
+    /// what authorizes serving it without network is the repository's current
+    /// configuration, not how the bytes arrived.
     #[test]
     fn an_imported_receipt_of_the_current_upstream_is_served_offline() {
         let policy = policy(json!({"ttl": {"content_secs": 1}}));
@@ -882,8 +882,8 @@ mod tests {
         let entry = CacheEntry::of(&served, 1, std::slice::from_ref(&receipt));
         assert_eq!(decide(&offline, Some(&entry)), CacheDecision::OfflineServe);
 
-        // Lo que no es el upstream vigente tampoco se sirve sin red, y un
-        // importado no abre excepciones.
+        // What is not the current upstream is not served without network either, and an
+        // imported one opens no exceptions.
         receipt.upstream_id = "elsewhere".into();
         let entry = CacheEntry::of(&served, 1, std::slice::from_ref(&receipt));
         assert_eq!(decide(&offline, Some(&entry)), CacheDecision::OfflineMiss);
@@ -899,15 +899,15 @@ mod tests {
             decide(&ctx(&policy, "a/b", 5), Some(&quarantined)),
             CacheDecision::Quarantined
         );
-        // Con una configuracion nueva se vuelve a preguntar al upstream, y
-        // lo que este sirva ahora ya no se juzga inmutable.
+        // With a new configuration the upstream is asked again, and
+        // whatever it serves now is no longer judged immutable.
         let mut changed = ctx(&policy, "a/b", 5);
         changed.config_version = 2;
         let CacheDecision::Revalidate(known) = decide(&changed, Some(&quarantined)) else {
             panic!("a new configuration should reopen the question");
         };
         assert!(!known.immutable);
-        // Sin red nunca se levanta: seria servir lo que se rechazo.
+        // Without network it is never lifted: it would be serving what was rejected.
         changed.offline = true;
         assert_eq!(
             decide(&changed, Some(&quarantined)),
@@ -925,11 +925,11 @@ mod tests {
         assert!(stale_allowed(&ctx(&policy, "a/b", 149), &entry));
         assert!(!stale_allowed(&ctx(&policy, "a/b", 150), &entry));
 
-        // Por defecto nunca.
+        // By default never.
         let strict = CachePolicy::default();
         assert!(!stale_allowed(&ctx(&strict, "a/b", 0), &entry));
 
-        // Sin procedencia del upstream vigente, tampoco.
+        // Without provenance from the current upstream, neither.
         let mut other = entry.clone();
         other
             .confirmation
@@ -938,7 +938,7 @@ mod tests {
             .upstream_id = "elsewhere".into();
         assert!(!stale_allowed(&ctx(&policy, "a/b", 0), &other));
 
-        // Ni lo puesto en cuarentena.
+        // Nor what was put in quarantine.
         let mut quarantined = entry.clone();
         quarantined.quarantined_at = Some(1);
         assert!(!stale_allowed(&ctx(&policy, "a/b", 0), &quarantined));
@@ -976,11 +976,11 @@ mod tests {
         let entry = CacheEntry::of(&served, 1, &receipts);
         assert_eq!(entry.quarantined_at, Some(2));
         let confirmation = entry.confirmation.expect("confirmed");
-        // El recibo de cuarentena no confirma nada; el mas reciente que si, manda.
+        // The quarantine receipt confirms nothing; the most recent one that does rules.
         assert_eq!(confirmation.at, at(20));
         assert_eq!(confirmation.etag.as_deref(), Some("\"e20\""));
 
-        // Un recibo de otro digest no respalda el que se sirve.
+        // A receipt for another digest does not back the one being served.
         let strangers = vec![receipt(digest('c'), ReceiptOutcome::Fetched, 1, 1)];
         assert!(
             CacheEntry::of(&served, 1, &strangers)
@@ -989,7 +989,7 @@ mod tests {
         );
         assert!(CacheEntry::of(&served, 1, &[]).confirmation.is_none());
 
-        // Una cuarentena que ya no es la ultima no cuenta.
+        // A quarantine that is no longer the last one does not count.
         let healed = vec![
             receipt(served.clone(), ReceiptOutcome::Revalidated, 40, 3),
             receipt(digest('b'), ReceiptOutcome::Quarantined, 30, 2),
@@ -1013,7 +1013,7 @@ mod tests {
             "org/acme/widget/1.0/widget-1.0.jar",
             "widget-1.0-SNAPSHOT.jar",
             "org/acme/widget/1.0-SNAPSHOT/readme.txt",
-            // El nombre de la version dentro de otro nombre no es flotante.
+            // The version name inside another name is not floating.
             "org/acme/lib/1.0-SNAPSHOT/lib-11.0-SNAPSHOT.jar",
             "org/acme/lib/1.0-SNAPSHOT/other-1.0-SNAPSHOT.jar",
             "org/acme/lib/1.0-SNAPSHOT/lib-1.0-SNAPSHOTS.jar",

@@ -1,10 +1,10 @@
-//! Maven 2 hosted de HSP-109 / HAR-15, contra el wire.
+//! Maven 2 hosted for HSP-109 / HAR-15, against the wire.
 //!
-//! El servicio es un proceso de verdad con catalogo, almacen de bytes y
-//! Cedar reales. Lo que se mide es lo que hace un cliente Maven: publicar
-//! POM, jar y checksums bajo el path estandar, leerlos de vuelta, ver los
-//! `maven-metadata.xml` derivados, y los rechazos (credencial, permiso,
-//! coordenadas, checksum, version, inmutabilidad) tambien tras un reinicio.
+//! The service is a real process with a real catalog, byte store and
+//! Cedar. What is measured is what a Maven client does: publish
+//! POM, jar and checksums under the standard path, read them back, see the derived
+//! `maven-metadata.xml`, and the rejections (credential, permission,
+//! coordinates, checksum, version, immutability) also after a restart.
 
 mod support;
 
@@ -22,7 +22,7 @@ const BASE: &str = "com/acme/lib";
 const JAR: &str = "com/acme/lib/1.0/lib-1.0.jar";
 const POM: &str = "com/acme/lib/1.0/lib-1.0.pom";
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -123,8 +123,8 @@ impl Lab {
         self.call(port, "GET", repository, path, &alice, None)
     }
 
-    /// Publica como lo hace `mvn deploy`: el jar, su checksum, el POM y el
-    /// suyo.
+    /// Publishes the way `mvn deploy` does: the jar, its checksum, the POM and its
+    /// own.
     fn deploy(&self, port: u16, repository: &str, version: &str, jar: &[u8]) {
         let dir = format!("{BASE}/{version}");
         let jar_path = format!("{dir}/lib-{version}.jar");
@@ -159,7 +159,7 @@ impl Lab {
 }
 
 // ---------------------------------------------------------------------------
-// Despliegue y lectura
+// Deployment and reading
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -178,12 +178,12 @@ fn a_deployed_artifact_is_resolved_with_its_checksums_and_metadata() {
         pom("com.acme", "lib", "1.0")
     );
 
-    // El checksum sale del contenido, no de lo que se subio.
+    // The checksum comes from the content, not from what was uploaded.
     let sidecar = lab.get(port, MIXED, &format!("{JAR}.sha1"));
     assert_eq!(sidecar.status, 200);
     assert_eq!(sidecar.text().trim(), sha1_hex(&jar));
 
-    // Los metadatos del artefacto los deriva el servicio.
+    // The artifact metadata is derived by the service.
     let metadata = lab.get(port, MIXED, &format!("{BASE}/maven-metadata.xml"));
     assert_eq!(metadata.status, 200);
     let xml = metadata.text();
@@ -198,14 +198,14 @@ fn a_deployed_artifact_is_resolved_with_its_checksums_and_metadata() {
     assert_eq!(metadata_sum.status, 200);
     assert_eq!(metadata_sum.text().trim(), sha1_hex(xml.as_bytes()));
 
-    // HEAD describe sin cuerpo.
+    // HEAD describes without a body.
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let head = Curl::describe(port, &format!("/repository/{MIXED}/{JAR}"), &alice).run();
     assert_eq!(head.status, 200);
     assert_eq!(head.header("content-length"), Some(jar.len().to_string()));
     assert_eq!(head.size, 0);
 
-    // Una version nueva aparece en los metadatos, ordenada.
+    // A new version shows up in the metadata, sorted.
     lab.deploy(port, MIXED, "1.1", b"second");
     let xml = lab
         .get(port, MIXED, &format!("{BASE}/maven-metadata.xml"))
@@ -234,7 +234,7 @@ fn the_deployed_content_survives_a_restart() {
 }
 
 // ---------------------------------------------------------------------------
-// Acceso
+// Access
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -247,7 +247,7 @@ fn a_request_without_credential_is_401_and_without_permission_is_403() {
     assert_eq!(anonymous.status, 401);
     assert_eq!(lab.call(port, "GET", MIXED, JAR, "", None).status, 401);
 
-    // Carol esta en la cuenta, pero la politica no le da nada.
+    // Carol is in the account, but the policy gives her nothing.
     let carol = support::token(FIRST_ACCOUNT, "carol");
     assert_eq!(
         lab.call(port, "PUT", MIXED, JAR, &carol, Some(b"x")).status,
@@ -255,16 +255,16 @@ fn a_request_without_credential_is_401_and_without_permission_is_403() {
     );
     assert_eq!(lab.call(port, "GET", MIXED, JAR, &carol, None).status, 403);
 
-    // Un token de otra cuenta no ve el repositorio.
+    // A token from another account does not see the repository.
     let bob = support::token(SECOND_ACCOUNT, "bob");
     assert_eq!(lab.call(port, "GET", MIXED, JAR, &bob, None).status, 404);
 
-    // Nada de lo anterior dejo nada publicado.
+    // None of the above left anything published.
     assert_eq!(lab.get(port, MIXED, JAR).status, 404);
 }
 
 // ---------------------------------------------------------------------------
-// Validacion
+// Validation
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -299,7 +299,7 @@ fn a_bad_checksum_or_an_invalid_layout_is_rejected() {
     let service = lab.deployment.start(&[]);
     let port = service.port;
 
-    // Un checksum antes que su fichero no se puede comprobar.
+    // A checksum before its file cannot be verified.
     let early = lab.put(
         port,
         MIXED,
@@ -310,7 +310,7 @@ fn a_bad_checksum_or_an_invalid_layout_is_rejected() {
 
     assert_eq!(lab.put(port, MIXED, JAR, b"jar").status, 201);
 
-    // Hex valido pero de otro contenido: es un checksum mismatch.
+    // Valid hex but of other content: it is a checksum mismatch.
     let mismatch = lab.put(
         port,
         MIXED,
@@ -318,13 +318,13 @@ fn a_bad_checksum_or_an_invalid_layout_is_rejected() {
         sha1_hex(b"another content").as_bytes(),
     );
     assert_eq!(mismatch.status, 400, "{}", mismatch.text());
-    // Lo que no es hex no es un checksum.
+    // What is not hex is not a checksum.
     assert_eq!(
         lab.put(port, MIXED, &format!("{JAR}.sha1"), b"zzzz-not-hex")
             .status,
         400
     );
-    // El correcto se acepta.
+    // The correct one is accepted.
     assert_eq!(
         lab.put(
             port,
@@ -336,7 +336,7 @@ fn a_bad_checksum_or_an_invalid_layout_is_rejected() {
         200
     );
 
-    // Versiones y rutas invalidas.
+    // Invalid versions and paths.
     for path in [
         "com/acme/lib/1.0/other-1.0.jar",
         "com/acme/lib/bad%20version/lib-bad%20version.jar",
@@ -363,7 +363,7 @@ fn metadata_uploaded_by_a_client_is_validated_and_never_stored() {
     let accepted = lab.put(port, MIXED, &path, client.as_bytes());
     assert_eq!(accepted.status, 200, "{}", accepted.text());
 
-    // Lo que se lee es lo derivado del catalogo, no lo que el cliente dijo.
+    // What is read is what is derived from the catalog, not what the client said.
     let after = lab.get(port, MIXED, &path).text();
     assert_eq!(after, derived);
     assert!(!after.contains("9.9"));
@@ -374,7 +374,7 @@ fn metadata_uploaded_by_a_client_is_validated_and_never_stored() {
 }
 
 // ---------------------------------------------------------------------------
-// Politica de versiones e inmutabilidad
+// Version policy and immutability
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -428,7 +428,7 @@ fn snapshots_are_replaceable_and_timestamped_files_are_not() {
         201
     );
 
-    // Los metadatos de la version describen el ultimo build.
+    // The version metadata describes the latest build.
     let xml = lab
         .get(port, MIXED, "com/acme/lib/1.0-SNAPSHOT/maven-metadata.xml")
         .text();
@@ -459,12 +459,12 @@ fn a_failed_deploy_leaves_recoverable_metadata() {
     let port = service.port;
     let metadata = format!("{BASE}/maven-metadata.xml");
 
-    // Un jar sin POM no es una version resoluble: no aparece.
+    // A jar without a POM is not a resolvable version: it does not appear.
     assert_eq!(lab.put(port, MIXED, JAR, b"jar").status, 201);
     assert_eq!(lab.get(port, MIXED, &metadata).status, 404);
 
-    // Al completar el despliegue (el POM llega despues) los metadatos
-    // aparecen solos: no hay estado a reparar.
+    // When the deployment completes (the POM arrives later) the metadata
+    // appears on its own: there is no state to repair.
     assert_eq!(
         lab.put(port, MIXED, POM, &pom("com.acme", "lib", "1.0"))
             .status,
@@ -517,7 +517,7 @@ fn derived_metadata_answers_head_and_conditional_requests() {
     lab.deploy(port, MIXED, "1.0", b"jar");
     let path = format!("/repository/{MIXED}/{BASE}/maven-metadata.xml");
 
-    // HEAD de los metadatos y de su checksum: tamano real, sin cuerpo.
+    // HEAD of the metadata and its checksum: real size, no body.
     let body = lab
         .get(port, MIXED, &format!("{BASE}/maven-metadata.xml"))
         .body;
@@ -529,7 +529,7 @@ fn derived_metadata_answers_head_and_conditional_requests() {
     assert_eq!(head.status, 200);
     assert_eq!(head.size, 0);
 
-    // Con el ETag que dio el servicio, el cliente recibe un 304.
+    // With the ETag the service gave, the client receives a 304.
     let etag = Curl::describe(port, &path, &alice)
         .run()
         .header("etag")
@@ -547,7 +547,7 @@ fn derived_metadata_answers_head_and_conditional_requests() {
     assert_eq!(same.status, 304);
     assert_eq!(same.size, 0);
 
-    // Un If-Match que no es el ETag actual: 412.
+    // An If-Match that is not the current ETag: 412.
     let stale = Curl::call_with_headers(
         port,
         "GET",
@@ -560,7 +560,7 @@ fn derived_metadata_answers_head_and_conditional_requests() {
     .run();
     assert_eq!(stale.status, 412);
 
-    // Tras un despliegue el contenido cambia y el ETag viejo ya no vale.
+    // After a deployment the content changes and the old ETag is no longer valid.
     lab.deploy(port, MIXED, "1.1", b"jar-two");
     let changed = Curl::call_with_headers(
         port,

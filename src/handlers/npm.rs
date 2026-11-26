@@ -1,34 +1,34 @@
-//! La superficie **npm**: `npm publish`, `npm install`, `npm dist-tag` y
-//! `npm deprecate` contra un repositorio de Hodei.
+//! The **npm** surface: `npm publish`, `npm install`, `npm dist-tag` and
+//! `npm deprecate` against a Hodei repository.
 //!
-//! Vive en `/npm/{repositorio}/...` y habla el protocolo del registro: la
-//! gramatica de rutas y de documentos esta en `hodei_catalog::npm` (pura) y
-//! aqui solo hay lo que necesita efectos.
+//! Lives at `/npm/{repository}/...` and speaks the registry protocol: the
+//! grammar of paths and documents is in `hodei_catalog::npm` (pure) and
+//! here there is only what needs effects.
 //!
 //! # Hosted
 //!
-//! El packument es una **instantanea**: cada publicacion, deprecacion o
-//! movimiento de dist-tag escribe un documento nuevo en el almacen de
-//! contenido y mueve el puntero de la ruta con una precondicion sobre el
-//! digest anterior (`If-Match` del catalogo). Los bytes de las instantaneas
-//! anteriores no se tocan, y dos escritores concurrentes no se pisan: el que
-//! pierde relee y reintenta.
+//! The packument is a **snapshot**: each publication, deprecation or
+//! dist-tag move writes a new document in the content store
+//! and moves the path pointer with a precondition on the previous
+//! digest (the catalog's `If-Match`). The bytes of earlier snapshots
+//! are not touched, and two concurrent writers do not overwrite each other: the one that
+//! loses re-reads and retries.
 //!
-//! Los tarballs son contenido inmutable en `{nombre}/-/{fichero}.tgz`:
-//! publicar otra vez la misma version es un `403`, como en el registro de
-//! npm (un `409` haria que `libnpmpublish` intente fusionar documentos).
+//! Tarballs are immutable content at `{name}/-/{file}.tgz`:
+//! publishing the same version again is a `403`, as in the npm registry
+//! (a `409` would make `libnpmpublish` try to merge documents).
 //!
 //! # Unpublish
 //!
-//! La politica es conservadora: **no se borra nada**. `npm unpublish` recibe
-//! un `403` que dice que se use `npm deprecate`, y el intento queda en el
-//! rastro de auditoria.
+//! The policy is conservative: **nothing is deleted**. `npm unpublish` receives
+//! a `403` saying to use `npm deprecate`, and the attempt is left in the
+//! audit trail.
 //!
-//! # Proxy y grupo
+//! # Proxy and group
 //!
-//! Reutilizan la misma resolucion que el resto de formatos: el packument se
-//! trata como metadato revalidable (TTL, offline) y el tarball como
-//! contenido inmutable. En un grupo gana el primer miembro que responde.
+//! They reuse the same resolution as the rest of the formats: the packument is
+//! treated as revalidatable metadata (TTL, offline) and the tarball as
+//! immutable content. In a group the first member that responds wins.
 
 use axum::{
     body::Body,
@@ -59,23 +59,23 @@ use crate::resolution::{
     the_publication_error, the_repository_in, write_content,
 };
 
-/// Cuantas veces se reintenta una escritura del packument que pierde la
-/// carrera con otra.
+/// How many times a packument write that loses the race to another
+/// is retried.
 const MAX_ATTEMPTS: usize = 6;
 
-/// Lo que se le dice al cliente cuando se agotan los reintentos.
+/// What the client is told when the retries run out.
 const CONTENDED: &str = "the package is being updated concurrently; retry";
 
-/// Lo que pasa con una peticion que no se puede servir.
+/// What happens to a request that cannot be served.
 ///
-/// npm lee el cuerpo de un error como JSON: `{"error": "..."}`.
+/// npm reads the body of an error as JSON: `{"error": "..."}`.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error del protocolo npm.
+    /// An error from the npm protocol.
     Npm(NpmError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -149,7 +149,7 @@ impl Failure {
             },
             Self::Npm(error) => {
                 let status = match error {
-                    // npm responde 403 al publicar sobre una version existente.
+                    // npm answers 403 when publishing over an existing version.
                     NpmError::VersionExists(_) | NpmError::Unpublish => StatusCode::FORBIDDEN,
                     NpmError::InvalidPath(_) | NpmError::UnknownVersion(_) => StatusCode::NOT_FOUND,
                     NpmError::InvalidName(_)
@@ -167,9 +167,9 @@ impl IntoResponse for Failure {
     fn into_response(self) -> Response {
         let (status, message) = self.status_and_message();
         let mut response = (status, axum::Json(json!({ "error": message }))).into_response();
-        // El consejo de cuando volver viaja con la negativa por
-        // saturacion, tambien en esta superficie: el veredicto es uno
-        // solo, y la cabecera no es un detalle del transporte crudo.
+        // The advice on when to come back travels with the refusal for
+        // saturation, in this surface as well: the verdict is a single
+        // one, and the header is not a detail of the raw transport.
         if let Self::Raw(error) = &self
             && let Some(seconds) = error.the_retry_after()
             && let Ok(value) = HeaderValue::from_str(&seconds.to_string())
@@ -185,11 +185,11 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El repositorio y el resto de la ruta de `/npm/{repositorio}/{resto}`.
+/// The repository and the rest of the path of `/npm/{repository}/{rest}`.
 ///
-/// El resto se lee **sin decodificar**: el nombre de un paquete con alcance
-/// llega como `@alcance%2fnombre` y decodificarlo antes de tiempo lo
-/// confundiria con dos segmentos.
+/// The rest is read **undecoded**: the name of a scoped package
+/// arrives as `@scope%2fname` and decoding it too early would
+/// confuse it with two segments.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -202,11 +202,11 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// La URL base de este repositorio tal y como la ve el cliente.
+/// The base URL of this repository as the client sees it.
 ///
-/// El origen lo decide el despliegue y no la peticion: el `Host` y el
-/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
-/// una URL que el cliente mueve es una URL que el cliente envenena.
+/// The origin is decided by the deployment and not by the request: the `Host` and
+/// `X-Forwarded-Proto` of a request can be written by anyone, and
+/// a URL the client moves is a URL the client poisons.
 fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
     origin
         .url(&format!("/npm/{repository}"))
@@ -236,7 +236,7 @@ fn json_response(
     response
 }
 
-/// Cualquier peticion de `/npm/{repositorio}/...`.
+/// Any request to `/npm/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -245,7 +245,7 @@ pub async fn handle(
     headers: HeaderMap,
     request: Request<Body>,
 ) -> Result<Response, Failure> {
-    // La autenticacion es la primera puerta, como en el resto de superficies.
+    // Authentication is the first gate, as in the rest of the surfaces.
     let context = the_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
     let (repository_key, rest) = the_split(&uri)?;
@@ -340,8 +340,8 @@ pub async fn handle(
         (Route::DistTag { name, tag }, false) if method == Method::DELETE => {
             delete_dist_tag(&state, &context, &repository, name, tag, &correlation).await
         }
-        // `npm unpublish <nombre>@<version>` hace `PUT .../-rev/{rev}` con el
-        // documento sin esa version; el paquete entero, un `DELETE`.
+        // `npm unpublish <name>@<version>` does `PUT .../-rev/{rev}` with the
+        // document without that version; the whole package, a `DELETE`.
         (Route::UnpublishPackage { name } | Route::UnpublishTarball { name, .. }, false)
             if method == Method::DELETE || method == Method::PUT =>
         {
@@ -352,7 +352,7 @@ pub async fn handle(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
 #[allow(clippy::too_many_arguments)]
@@ -380,8 +380,8 @@ async fn read(
         origin: resolution_origin,
         repository: backing,
     } = resolve_asset(state, context, repository, &asset_path, correlation).await?;
-    // La compuerta de confianza va antes de las condiciones de lectura: un
-    // 304 diria que el contenido existe.
+    // The trust gate goes before the read conditions: a
+    // 304 would say the content exists.
     crate::trust::admit(state, context.account().as_str(), &backing, &digest)
         .await
         .map_err(the_admission_error)?;
@@ -434,8 +434,8 @@ async fn read(
             let document = match route {
                 Route::DistTags { .. } => npm::dist_tags(&packument),
                 Route::DistTag { tag, .. } => {
-                    // `npm view` y los clientes que piden un tag leen la
-                    // version como una cadena JSON.
+                    // `npm view` and clients that request a tag read the
+                    // version as a JSON string.
                     packument
                         .get("dist-tags")
                         .and_then(Value::as_object)
@@ -473,31 +473,31 @@ async fn read(
         HeaderValue::from_static("nosniff"),
     );
     if head && let Ok(value) = HeaderValue::from_str(&length.to_string()) {
-        // Un HEAD dice cuanto traeria el GET.
+        // A HEAD says how much the GET would bring.
         response.headers_mut().insert(header::CONTENT_LENGTH, value);
     }
     Ok(response)
 }
 
 // ---------------------------------------------------------------------------
-// Escritura
+// Writes
 // ---------------------------------------------------------------------------
 
-/// Lo que dejo una escritura del packument.
+/// What a packument write left behind.
 struct Written {
     digest: ContentDigest,
     changed: bool,
 }
 
-/// El permiso de escribir: Cedar y el modo del repositorio.
+/// The permission to write: Cedar and the repository mode.
 fn the_write_gate(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
 ) -> Result<(), Failure> {
     the_decision(state, context, crate::actions::upload_asset(), repository)?;
-    // Lo que dice un proxy sale de su upstream. Va despues de Cedar: quien
-    // no puede subir recibe el mismo 403 en cualquier repositorio.
+    // What a proxy says comes from its upstream. It goes after Cedar: whoever
+    // cannot upload receives the same 403 in any repository.
     if !repository.mode.accepts_client_writes() {
         return Err(
             RawApiError::MethodNotAllowed("this repository does not accept uploads").into(),
@@ -506,11 +506,11 @@ fn the_write_gate(
     Ok(())
 }
 
-/// Aplica un cambio al packument y lo publica como instantanea nueva.
+/// Applies a change to the packument and publishes it as a new snapshot.
 ///
-/// El cambio se **reevalua** contra lo que hay en cada intento: si otro
-/// escritor movio el puntero entre la lectura y la escritura, el catalogo
-/// rechaza la precondicion, se relee y se vuelve a aplicar.
+/// The change is **re-evaluated** against what is there on each attempt: if another
+/// writer moved the pointer between the read and the write, the catalog
+/// rejects the precondition, it is re-read and applied again.
 async fn update_packument<F>(
     state: &AppState,
     context: &VerifiedContext,
@@ -560,8 +560,8 @@ where
         let publication = Publication {
             repository: repository.repo_key.clone(),
             asset_path: name.full().to_string(),
-            // Cada instantanea es una version distinta del packument: la
-            // identifica su contenido, y la anterior sigue estando.
+            // Each snapshot is a distinct version of the packument: it is
+            // identified by its content, and the previous one is still there.
             coordinates: PackageCoordinates {
                 package_name: format!("{}{}", name.full(), npm::PACKUMENT_COORDINATES_SUFFIX),
                 package_version: digest.value.clone(),
@@ -586,12 +586,12 @@ where
                 });
             }
             Err(CatalogError::PreconditionFailed { .. }) => continue,
-            // El motor puede arbitrar la carrera con su guarda y decir
-            // conflicto DESPUÉS de que otro escritor movió el puntero
-            // entre la lectura y el commit: el que pierde relee y
-            // reintenta, igual que el que pierde la precondición. Las
-            // coordenadas de esta instantánea llevan el digest de ESTE
-            // intento, así que un conflicto de versión no puede serlo.
+            // The engine may arbitrate the race with its guard and report
+            // a conflict AFTER another writer moved the pointer
+            // between the read and the commit: the loser re-reads and
+            // retries, just like the one that loses the precondition. The
+            // coordinates of this snapshot carry the digest of THIS
+            // attempt, so a version conflict cannot be one.
             Err(CatalogError::Conflict { .. }) => continue,
             Err(error) => return Err(the_publication_error(&error).into()),
         }
@@ -599,7 +599,7 @@ where
     Err(Failure::plain(StatusCode::CONFLICT, CONTENDED))
 }
 
-/// El `rev` que npm espera ver en las respuestas de escritura.
+/// The `rev` npm expects to see in write responses.
 fn the_rev(digest: &ContentDigest) -> String {
     let short: String = digest.value.chars().take(32).collect();
     format!("1-{short}")
@@ -615,10 +615,10 @@ fn written_response(name: &PackageName, written: &Written, correlation: &str) ->
     )
 }
 
-/// El cuerpo de una escritura, con tope.
+/// The body of a write, with a cap.
 ///
-/// Un `npm publish` lleva el tarball en base64 dentro del JSON: el tope es el
-/// del contenido mas el 4/3 del base64 y un margen para el `package.json`.
+/// An `npm publish` carries the tarball in base64 inside the JSON: the cap is that
+/// of the content plus the 4/3 of the base64 and a margin for the `package.json`.
 async fn read_body(state: &AppState, request: Request<Body>) -> Result<bytes::Bytes, Failure> {
     let limit = state.max_body_size / 3 * 4 + 1024 * 1024 + 1024;
     axum::body::to_bytes(request.into_body(), limit)
@@ -626,8 +626,8 @@ async fn read_body(state: &AppState, request: Request<Body>) -> Result<bytes::By
         .map_err(|_| RawApiError::PayloadTooLarge.into())
 }
 
-/// La politica de alcances del repositorio: vale para toda escritura de un
-/// paquete (publicar, deprecar, mover o quitar un dist-tag).
+/// The repository's scope policy: applies to every write of a
+/// package (publish, deprecate, move or remove a dist-tag).
 fn the_scope_gate(repository: &RepositoryDescriptor, name: &PackageName) -> Result<(), Failure> {
     let config = NpmConfig::of_settings(&repository.config.config_settings)
         .map_err(|_| RawApiError::Internal)?;
@@ -641,7 +641,7 @@ fn the_scope_gate(repository: &RepositoryDescriptor, name: &PackageName) -> Resu
     }
 }
 
-/// `PUT /npm/{repositorio}/{nombre}`: publicar una version o deprecar.
+/// `PUT /npm/{repository}/{name}`: publish a version or deprecate.
 async fn put_packument(
     state: &AppState,
     context: &VerifiedContext,
@@ -651,7 +651,7 @@ async fn put_packument(
     correlation: &str,
 ) -> Result<Response, Failure> {
     the_write_gate(state, context, repository)?;
-    // Publicar exige las reglas estrictas de nombres nuevos.
+    // Publishing requires the strict rules for new names.
     let name = PackageName::parse(route_name.full(), true)?;
     the_scope_gate(repository, &name)?;
     let body = read_body(state, request).await?;
@@ -682,7 +682,7 @@ async fn put_packument(
                     Ok(response)
                 }
                 Err(Failure::Npm(NpmError::Unpublish)) => {
-                    // Quitar una version en un PUT es un unpublish disfrazado.
+                    // Removing a version in a PUT is a disguised unpublish.
                     audit_unpublish(state, context, repository, &name, correlation);
                     Err(Failure::Npm(NpmError::Unpublish))
                 }
@@ -701,8 +701,8 @@ async fn publish_version(
     correlation: &str,
 ) -> Result<Response, Failure> {
     let bytes = &new.attachment.bytes;
-    // Lo que el servicio sabe del tarball es lo que calcula, no lo que dice
-    // el cliente: si el cliente declara otra cosa, se rechaza.
+    // What the service knows about the tarball is what it computes, not what the
+    // client says: if the client declares otherwise, it is rejected.
     let facts = npm::TarballFacts {
         shasum: hex_of(&sha1::Sha1::digest(bytes)),
         integrity: format!(
@@ -712,7 +712,7 @@ async fn publish_version(
     };
     npm::check_declared_dist(&new.manifest, &facts)?;
 
-    // Una version publicada no se reescribe: se dice antes de escribir bytes.
+    // A published version is not rewritten: this is said before writing bytes.
     if let Some(current) =
         the_current_asset(state, context, &repository.repo_key, name.full()).await?
     {
@@ -726,7 +726,7 @@ async fn publish_version(
         }
     }
 
-    // 1. El tarball, como contenido inmutable en su propia ruta.
+    // 1. The tarball, as immutable content at its own path.
     let WrittenContent { digest, length } = write_content(
         state,
         context.account().as_str(),
@@ -757,14 +757,14 @@ async fn publish_version(
         .await
     {
         Ok(_) => {}
-        // Otro contenido en la misma version: la version ya existe.
+        // Other content at the same version: the version already exists.
         Err(CatalogError::Conflict { .. }) => {
             return Err(NpmError::VersionExists(new.version.clone()).into());
         }
         Err(error) => return Err(the_publication_error(&error).into()),
     }
 
-    // 2. El packument: una instantanea nueva que apunta a ese tarball.
+    // 2. The packument: a new snapshot that points to that tarball.
     let origin_actor = context.principal().subject().as_str().to_string();
     let written = update_packument(
         state,
@@ -787,7 +787,7 @@ async fn publish_version(
     Ok(written_response(name, &written, correlation))
 }
 
-/// `PUT /npm/{repositorio}/-/package/{nombre}/dist-tags/{tag}`
+/// `PUT /npm/{repository}/-/package/{name}/dist-tags/{tag}`
 async fn put_dist_tag(
     state: &AppState,
     context: &VerifiedContext,
@@ -800,7 +800,7 @@ async fn put_dist_tag(
     the_write_gate(state, context, repository)?;
     the_scope_gate(repository, name)?;
     let body = read_body(state, request).await?;
-    // npm manda la version como una cadena JSON.
+    // npm sends the version as a JSON string.
     let version: String = serde_json::from_slice(&body).map_err(|_| {
         NpmError::InvalidDocument("the body has to be a JSON string with a version")
     })?;
@@ -820,7 +820,7 @@ async fn put_dist_tag(
     Ok(response)
 }
 
-/// `DELETE /npm/{repositorio}/-/package/{nombre}/dist-tags/{tag}`
+/// `DELETE /npm/{repository}/-/package/{name}/dist-tags/{tag}`
 async fn delete_dist_tag(
     state: &AppState,
     context: &VerifiedContext,
@@ -849,7 +849,7 @@ async fn delete_dist_tag(
     Ok(response)
 }
 
-/// `DELETE .../-rev/{rev}`: no se borra nada, y el intento queda en el rastro.
+/// `DELETE .../-rev/{rev}`: nothing is deleted, and the attempt is left in the trail.
 fn refuse_unpublish(
     state: &AppState,
     context: &VerifiedContext,

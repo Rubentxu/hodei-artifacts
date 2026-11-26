@@ -1,19 +1,19 @@
-//! La importacion del paquete: resolver sin salir a la red.
+//! The bundle import: resolving without going out to the network.
 //!
-//! Importar es la operacion inversa y asimetrica. Asimetrica porque el
-//! origen del paquete es **procedencia, no autoridad**: lo que autoriza a
-//! servir un contenido en el destino es la configuracion del destino, y por
-//! eso el recibo que se escribe aqui se firma con el upstream y la version
-//! de configuracion vigentes, con el resultado `imported`, mientras la URL
-//! y la decision originales se conservan solo como evidencia dentro del
-//! manifiesto.
+//! Importing is the inverse and asymmetric operation. Asymmetric because the
+//! bundle's origin is **provenance, not authority**: what authorizes serving
+//! a content at the destination is the destination's configuration, and for
+//! that reason the receipt written here is signed with the current upstream and
+//! configuration version, with the `imported` result, while the original URL
+//! and decision are kept only as evidence inside the
+//! manifest.
 //!
-//! La visibilidad se gana al reves de como se cuenta: **nada queda
-//! publicable hasta que el paquete entero se ha verificado**. Primero se
-//! comprueban y se almacenan los blobs contra el digito por digito del
-//! manifiesto; solo despues, y en un orden que no deja rutas huérfanas, se
-//! escriben los recibos y se publican las rutas. Un manifiesto mentiroso o
-//! un fichero corrupto abortan la importacion sin hacer visible nada.
+//! Visibility is earned the other way around from how it is told: **nothing becomes
+//! publishable until the whole bundle has been verified**. First the
+//! blobs are checked and stored against the manifest's digest, digit by digit;
+//! only afterwards, and in an order that leaves no orphan paths, are the
+//! receipts written and the paths published. A lying manifest or
+//! a corrupt file aborts the import without making anything visible.
 
 use std::path::Path;
 
@@ -26,30 +26,30 @@ use hodei_hub::BlobStore;
 use super::manifest::{BundleManifest, MANIFEST_NAME};
 use super::{BundleError, content_digest};
 
-/// Lo que hizo una importacion.
+/// What an import did.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ImportReport {
-    /// Las rutas publicadas por esta importacion.
+    /// The paths published by this import.
     pub imported: usize,
-    /// Las rutas que ya estaban, con el mismo contenido.
+    /// The paths that were already there, with the same content.
     pub already_present: usize,
-    /// Los bytes de blobs que llegaron al almacen del destino.
+    /// The bytes of blobs that reached the destination's store.
     pub blob_bytes: u64,
 }
 
-/// Como importar un paquete en un destino que no es el del origen.
+/// How to import a bundle into a destination that is not the origin's.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Mapping {
-    /// Permitir importar en una cuenta o un repositorio distintos del
-    /// origen. Sin esto, la importacion cruzada se rechaza: el que importa
-    /// tiene que decir explicitamente que esa ruta le pertenece.
+    /// Allow importing into an account or a repository different from the
+    /// origin. Without this, the cross import is rejected: whoever imports
+    /// has to state explicitly that this path belongs to them.
     pub allow: bool,
-    /// Permitir que una ruta del paquete sustituya otra en el destino.
-    /// Sin esto, el choque de rutas aborta la importacion.
+    /// Allow a path in the bundle to replace another one at the destination.
+    /// Without this, a path collision aborts the import.
     pub overwrite: bool,
 }
 
-/// Lee y comprueba el manifiesto de un paquete, sin tocar el catalogo.
+/// Reads and checks the manifest of a bundle, without touching the catalog.
 pub fn read_manifest(directory: &Path) -> Result<BundleManifest, BundleError> {
     let raw = std::fs::read(directory.join(MANIFEST_NAME)).map_err(|error| {
         BundleError::Read(format!(
@@ -62,8 +62,8 @@ pub fn read_manifest(directory: &Path) -> Result<BundleManifest, BundleError> {
     Ok(manifest)
 }
 
-/// Importa el paquete de `directory` en el repositorio proxy `repository`
-/// de `account`.
+/// Imports the bundle from `directory` into the proxy repository `repository`
+/// of `account`.
 #[allow(clippy::too_many_arguments)]
 pub async fn import(
     reader: &dyn CatalogReader,
@@ -118,8 +118,8 @@ pub async fn import(
         )));
     }
 
-    // 1. Verificar y almacenar los blobs. Nada del catalogo se toca aqui:
-    //    un paquete podrido aborta antes de que ninguna ruta sea visible.
+    // 1. Verify and store the blobs. Nothing in the catalog is touched here:
+    //    a rotten bundle aborts before any path becomes visible.
     let mut blob_bytes = 0;
     for blob in &manifest.blobs {
         let digest = content_digest(&blob.digest).expect("a checked manifest has real digests");
@@ -155,9 +155,9 @@ pub async fn import(
         blob_bytes += blob.length;
     }
 
-    // 2. Hacer visibles las rutas: primero el recibo que las respalda,
-    //    despues la publicacion. Un corte entre las dos deja respaldo sin
-    //    ruta, nunca una ruta sin respaldo.
+    // 2. Make the paths visible: first the receipt that backs them,
+    //    then the publication. A cut between the two leaves backing without a
+    //    path, never a path without backing.
     let mut imported = 0;
     let mut already_present = 0;
     for entry in &manifest.assets {

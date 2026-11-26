@@ -1,8 +1,8 @@
-//! El contrato de recuperacion de bytes del CAS en disco.
+//! The recovery contract for the on-disk CAS bytes.
 //!
-//! Lo que garantiza: se lista solo lo que es un blob; el borrado respeta
-//! la edad; reutilizar un blob (dedup) renueva su edad y por tanto lo
-//! protege; y borrar dos veces no falla ni borra nada mas.
+//! What it guarantees: only what is a blob is listed; deletion respects
+//! age; reusing a blob (dedup) renews its age and therefore
+//! protects it; and deleting twice neither fails nor deletes anything else.
 
 use std::time::{Duration, SystemTime};
 
@@ -23,7 +23,7 @@ async fn the_listing_has_only_blobs_with_their_length_and_age() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store = FileBlobStore::new(dir.path()).expect("store");
     let digest = store.put(b"alpha").await.expect("put");
-    // Cosas que no son blobs: no se listan.
+    // Things that are not blobs: they are not listed.
     std::fs::write(dir.path().join("README"), b"x").expect("write");
     std::fs::create_dir_all(dir.path().join("zz/yy")).expect("dirs");
     std::fs::write(dir.path().join("zz/yy/not-a-digest"), b"x").expect("write");
@@ -61,7 +61,7 @@ async fn a_blob_inside_the_grace_is_kept_and_an_old_one_is_deleted_once() {
         Reclaimed::Deleted { length: 4 }
     );
     assert!(!store.exists(&digest).await.expect("exists"));
-    // Segunda vez: ya no esta, y no es un error.
+    // Second time: it is gone, and that is not an error.
     assert_eq!(
         store
             .delete_if_older_than(&digest, grace)
@@ -79,7 +79,7 @@ async fn reusing_a_blob_renews_its_age_so_the_collector_cannot_take_it() {
     age_the_blob(&store, &digest, Duration::from_secs(7200));
     let grace = Duration::from_secs(3600);
 
-    // Un `put` del mismo contenido reutiliza el blob...
+    // A `put` of the same content reuses the blob...
     store.put(b"gamma").await.expect("dedup put");
     assert_eq!(
         store
@@ -90,7 +90,7 @@ async fn reusing_a_blob_renews_its_age_so_the_collector_cannot_take_it() {
         "el put que reutiliza el blob renueva su edad"
     );
 
-    // ...y un commit de sesion tambien.
+    // ...and a session commit does too.
     age_the_blob(&store, &digest, Duration::from_secs(7200));
     let mut session = store.begin().await.expect("session");
     session.append(b"gamma").await.expect("append");
@@ -113,9 +113,9 @@ async fn reusing_a_blob_renews_its_age_so_the_collector_cannot_take_it() {
 
 #[tokio::test]
 async fn a_concurrent_publisher_and_collector_never_lose_the_blob() {
-    // Mil carreras: el recolector borra "lo viejo" mientras alguien
-    // vuelve a subir el mismo contenido. Al acabar, si el put dijo que
-    // estaba, el blob esta.
+    // A thousand races: the collector deletes "the old" while someone
+    // uploads the same content again. At the end, if the put said it
+    // was there, the blob is there.
     let dir = tempfile::tempdir().expect("tempdir");
     let store = std::sync::Arc::new(FileBlobStore::new(dir.path()).expect("store"));
     for round in 0..200 {

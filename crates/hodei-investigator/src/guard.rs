@@ -1,94 +1,94 @@
-//! La guardia de capacidades: lo que el investigador puede hacer y lo que
-//! necesita aprobacion.
+//! The capability guard: what the investigator can do and what
+//! needs approval.
 //!
-//! El investigador **lee**. Leer no necesita permiso: es lo que se le ha
-//! pedido. Pero cualquier otra cosa --abrir un PR, tocar un despliegue,
-//! reevaluar una decision-- **necesita la aprobacion de una persona
-//! autorizada**, y la aprobacion queda en la traza.
+//! The investigator **reads**. Reading needs no permission: it is what it has been
+//! asked to do. But anything else (opening a PR, touching a deployment,
+//! re-evaluating a decision) **needs the approval of an authorized
+//! person**, and the approval is left in the trace.
 //!
-//! Y mientras no haya aprobacion, la accion **sigue pendiente**: no se
-//! ejecuta, no se programa y no se olvida. Una accion a la espera de una
-//! aprobacion que nadie ve es una accion que se ejecuta sola un dia.
+//! And while there is no approval, the action **remains pending**: it is not
+//! executed, not scheduled and not forgotten. An action waiting for an
+//! approval that nobody sees is an action that runs by itself one day.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Lo que el investigador quiere hacer.
+/// What the investigator wants to do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProposedAction {
-    /// Que clase de accion es.
+    /// What kind of action it is.
     pub kind: ActionKind,
-    /// Que dice la accion, en palabras.
+    /// What the action says, in words.
     pub description: String,
-    /// De quien es la decision que la accion tomaria.
+    /// Whose decision the action would take.
     pub subject: String,
-    /// Quien la pide.
+    /// Who requests it.
     pub requested_by: String,
-    /// Cuando se pide.
+    /// When it is requested.
     pub requested_at: DateTime<Utc>,
 }
 
-/// Que clase de accion es.
+/// What kind of action it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionKind {
-    /// Leer. No necesita aprobacion.
+    /// Read. Needs no approval.
     Read,
-    /// Escribir en el grafo o en las decisiones. Necesita aprobacion.
+    /// Write to the graph or to the decisions. Needs approval.
     Mutate,
-    /// Correr algo. Necesita aprobacion.
+    /// Run something. Needs approval.
     Execute,
-    /// Proponer una promocion. Necesita aprobacion.
+    /// Propose a promotion. Needs approval.
     Promote,
 }
 
-/// Lo que una accion puede hacer.
+/// What an action can do.
 impl ActionKind {
-    /// Si la accion necesita aprobacion.
+    /// Whether the action needs approval.
     ///
-    /// La lectura no: es lo que se le pidio. Todo lo demas, si.
+    /// Reading does not: it is what was asked for. Everything else does.
     pub fn needs_approval(&self) -> bool {
         !matches!(self, Self::Read)
     }
 }
 
-/// El estado de una accion propuesta.
+/// The state of a proposed action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActionState {
-    /// A la espera de una aprobacion.
+    /// Waiting for an approval.
     Pending {
-        /// Quien puede aprobar.
+        /// Who can approve.
         approver: String,
     },
-    /// Aprobada.
+    /// Approved.
     Approved {
-        /// Quien la aprobo.
+        /// Who approved it.
         by: String,
-        /// Cuando.
+        /// When.
         at: DateTime<Utc>,
     },
-    /// Denegada.
+    /// Denied.
     Denied {
-        /// Quien la denego.
+        /// Who denied it.
         by: String,
-        /// Cuando.
+        /// When.
         at: DateTime<Utc>,
-        /// Por que.
+        /// Why.
         reason: String,
     },
 }
 
-/// Una accion propuesta y su estado.
+/// A proposed action and its state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TracedAction {
-    /// La accion.
+    /// The action.
     pub action: ProposedAction,
-    /// Su estado.
+    /// Its state.
     pub state: ActionState,
 }
 
 impl TracedAction {
-    /// Una accion que espera aprobacion.
+    /// An action awaiting approval.
     pub fn pending(action: ProposedAction, approver: impl Into<String>) -> Self {
         Self {
             action,
@@ -98,22 +98,22 @@ impl TracedAction {
         }
     }
 
-    /// La accion sigue esperando.
+    /// The action keeps waiting.
     pub fn is_pending(&self) -> bool {
         matches!(self.state, ActionState::Pending { .. })
     }
 
-    /// La accion esta aprobada.
+    /// The action is approved.
     pub fn is_approved(&self) -> bool {
         matches!(self.state, ActionState::Approved { .. })
     }
 }
 
-/// La guardia de capacidades.
+/// The capability guard.
 ///
-/// La guardia **no** ejecuta nada: registra lo que se pide y deja claro
-/// que hace falta una aprobacion. Y la aprobacion la da una persona, con
-/// su nombre y su momento, y eso queda en la traza.
+/// The guard does **not** execute anything: it records what is requested and makes clear
+/// that an approval is needed. And the approval is given by a person, with
+/// their name and their moment, and that is left in the trace.
 #[derive(Debug, Clone, Default)]
 pub struct CapabilityGuard {
     actions: Vec<TracedAction>,
@@ -121,12 +121,12 @@ pub struct CapabilityGuard {
 }
 
 impl CapabilityGuard {
-    /// Una guardia sin aprobadores: nadie puede aprobar nada.
+    /// A guard without approvers: nobody can approve anything.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Una guardia con quien puede aprobar.
+    /// A guard with those who can approve.
     pub fn with_approvers(approvers: Vec<String>) -> Self {
         Self {
             actions: Vec::new(),
@@ -134,10 +134,10 @@ impl CapabilityGuard {
         }
     }
 
-    /// Registra una accion propuesta.
+    /// Records a proposed action.
     ///
-    /// Una accion de lectura queda **aprobada** de entrada, porque leer es
-    /// lo que se le ha pedido. Todo lo demos queda **pendiente**.
+    /// A read action is **approved** from the start, because reading is
+    /// what it has been asked to do. Everything else stays **pending**.
     pub fn propose(&mut self, action: ProposedAction) -> &TracedAction {
         if action.kind.needs_approval() {
             let approver = self
@@ -158,7 +158,7 @@ impl CapabilityGuard {
         self.actions.last().expect("la accion se acaba de anadir")
     }
 
-    /// Aprueba una accion, si quien aprueba puede.
+    /// Approves an action, if the approver can.
     pub fn approve(&mut self, index: usize, by: &str, at: DateTime<Utc>) -> Result<(), GuardError> {
         let approver = self
             .approvers
@@ -179,7 +179,7 @@ impl CapabilityGuard {
         Ok(())
     }
 
-    /// Deniega una accion.
+    /// Denies an action.
     pub fn deny(
         &mut self,
         index: usize,
@@ -207,12 +207,12 @@ impl CapabilityGuard {
         Ok(())
     }
 
-    /// Las acciones registradas.
+    /// The recorded actions.
     pub fn actions(&self) -> &[TracedAction] {
         &self.actions
     }
 
-    /// Las que siguen esperando.
+    /// Those that are still waiting.
     pub fn pending(&self) -> Vec<&TracedAction> {
         self.actions
             .iter()
@@ -221,14 +221,14 @@ impl CapabilityGuard {
     }
 }
 
-/// Por que la guardia no pudo hacer lo que se le pedia.
+/// Why the guard could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GuardError {
-    /// Quien aprueba no puede aprobar.
+    /// The approver cannot approve.
     NotAnApprover(String),
-    /// No hay esa accion.
+    /// There is no such action.
     NoSuchAction(usize),
-    /// La accion no estaba esperando.
+    /// The action was not waiting.
     NotPending,
 }
 

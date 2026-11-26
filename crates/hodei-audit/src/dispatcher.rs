@@ -1,22 +1,22 @@
-//! El dispatcher: quien lleva el evento del outbox al sink.
+//! The dispatcher: whoever carries the event from the outbox to the sink.
 //!
-//! El dispatcher es el único que toca el sink, y hace tres cosas en un
-//! orden que no se puede cambiar:
+//! The dispatcher is the only one that touches the sink, and it does three
+//! things in an order that cannot be changed:
 //!
-//! 1. **Reclama** el evento (compare-and-set: si otro worker se lo llevó,
-//!    no se entrega).
-//! 2. **Entrega** al sink.
-//! 3. **Marca** lo entregado, **solo si el sink lo dijo**.
+//! 1. **Claims** the event (compare-and-set: if another worker took it,
+//!    it is not delivered).
+//! 2. **Delivers** to the sink.
+//! 3. **Marks** what was delivered, **only if the sink said so**.
 //!
-//! # Lo que el dispatcher nunca dice
+//! # What the dispatcher never says
 //!
-//! Nunca dice "entregado" por una entrega que no ocurrió. El sink puede
-//! fallar, y cuando falla el evento vuelve al mercado con su error y su
-//! intento contado. Y hay un tercer caso, el menos cómodo: el sink dijo
-//! que sí, pero la marca no se pudo escribir. Ahí la entrega **ocurrió** y
-//! el outbox **no lo sabe**: eso no es "entregado", es "incierto", y se
-//! dice como tal. La reconciliación lo resuelve: el `event_id` hace que
-//! la reentrega sea el mismo evento.
+//! It never says "delivered" for a delivery that did not happen. The sink can
+//! fail, and when it fails the event goes back to the market with its error and
+//! its attempt counted. And there is a third case, the least comfortable: the sink said
+//! yes, but the mark could not be written. There the delivery **happened** and
+//! the outbox **does not know it**: that is not "delivered", it is "uncertain", and it is
+//! said as such. Reconciliation resolves it: the `event_id` makes
+//! the redelivery the same event.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,48 +26,48 @@ use chrono::{DateTime, Utc};
 use crate::outbox::AuditOutbox;
 use crate::sink::{AuditError, AuditSink};
 
-/// Lo que pasó con un evento en una ronda de entrega.
+/// What happened to an event in a delivery round.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchOutcome {
-    /// El sink lo dijo y la marca se escribió.
+    /// The sink said so and the mark was written.
     Delivered,
-    /// El sink no lo dijo: el evento vuelve a estar pendiente.
+    /// The sink did not say so: the event is pending again.
     NotDelivered {
-        /// Por qué.
+        /// Why.
         detail: String,
     },
-    /// El sink lo dijo, pero la marca no se pudo escribir: nadie sabe si
-    /// el outbox lo sabe.
+    /// The sink said so, but the mark could not be written: nobody knows whether
+    /// the outbox knows it.
     Uncertain {
-        /// Lo que falló al marcar.
+        /// What failed when marking.
         detail: String,
     },
 }
 
-/// Lo que pasó en una ronda de entrega.
+/// What happened in a delivery round.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DispatchReport {
-    /// Los eventos que quedaron marcados como entregados.
+    /// The events that ended up marked as delivered.
     pub delivered: Vec<String>,
-    /// Los eventos que no se pudieron entregar, con el motivo.
+    /// The events that could not be delivered, with the reason.
     pub not_delivered: Vec<(String, String)>,
-    /// Los eventos cuya entrega ocurrió y cuya marca no se pudo escribir.
+    /// The events whose delivery happened and whose mark could not be written.
     pub uncertain: Vec<(String, String)>,
 }
 
 impl DispatchReport {
-    /// Cuántos eventos se entregaron.
+    /// How many events were delivered.
     pub fn delivered(&self) -> usize {
         self.delivered.len()
     }
 
-    /// Si no pasó nada en la ronda.
+    /// Whether nothing happened in the round.
     pub fn is_empty(&self) -> bool {
         self.delivered.is_empty() && self.not_delivered.is_empty() && self.uncertain.is_empty()
     }
 }
 
-/// Quien lleva los eventos del outbox al sink.
+/// Whoever carries the events from the outbox to the sink.
 pub struct AuditDispatcher {
     outbox: Arc<dyn AuditOutbox>,
     sink: Arc<dyn AuditSink>,
@@ -75,7 +75,7 @@ pub struct AuditDispatcher {
 }
 
 impl AuditDispatcher {
-    /// Un dispatcher sobre un outbox y un sink.
+    /// A dispatcher over an outbox and a sink.
     pub fn new(outbox: Arc<dyn AuditOutbox>, sink: Arc<dyn AuditSink>) -> Self {
         Self {
             outbox,
@@ -84,29 +84,29 @@ impl AuditDispatcher {
         }
     }
 
-    /// El dispatcher con otro lease.
+    /// The dispatcher with another lease.
     ///
-    /// El lease es cuánto tiempo un worker puede tener un evento sin
-    /// entregarlo: cuando expira, el evento vuelve al mercado y otro
-    /// worker puede tomarlo. Un lease corto hace que un worker muerto no
-    /// retenga el evento mucho tiempo; uno largo hace que un evento no se
-    /// entregue dos veces por el camino.
+    /// The lease is how long a worker may hold an event without
+    /// delivering it: when it expires, the event goes back to the market and another
+    /// worker can take it. A short lease keeps a dead worker from
+    /// holding the event for long; a long one keeps an event from being
+    /// delivered twice along the way.
     pub fn with_lease(mut self, lease: Duration) -> Self {
         self.lease = lease;
         self
     }
 
-    /// El lease que usa el dispatcher.
+    /// The lease the dispatcher uses.
     pub fn lease(&self) -> Duration {
         self.lease
     }
 
-    /// Entrega lo que está esperando.
+    /// Delivers what is waiting.
     ///
-    /// Da una vuelta completa: reclama cada pendiente, lo entrega y lo
-    /// marca. Un evento que otro worker tiene en este momento no se
-    /// entrega, y eso no es un fallo: es el compare-and-set haciendo su
-    /// trabajo.
+    /// Makes a full pass: claims each pending event, delivers it and
+    /// marks it. An event that another worker holds at this moment is not
+    /// delivered, and that is not a failure: it is the compare-and-set doing its
+    /// job.
     pub async fn dispatch_pending(
         &self,
         worker: &str,
@@ -124,7 +124,7 @@ impl AuditDispatcher {
                 .claim(&entry.event.event_id, worker, lease_until, now)
                 .await?
             else {
-                // Otro worker se lo llevó: no se entrega dos veces.
+                // Another worker took it: it is not delivered twice.
                 continue;
             };
 
@@ -141,18 +141,18 @@ impl AuditDispatcher {
                 },
                 Err(error) => {
                     let mut detail = error.to_string();
-                    // La entrega NO ocurrió: el evento vuelve al mercado con
-                    // su error y su intento contado. Marcarlo como entregado
-                    // sería mentir sobre un hecho.
+                    // The delivery did NOT happen: the event goes back to the market with
+                    // its error and its attempt counted. Marking it as delivered
+                    // would be lying about a fact.
                     if let Err(mark_error) = self
                         .outbox
                         .mark_undelivered(&claimed.event.event_id, worker, &detail)
                         .await
                     {
-                        // Ni siquiera se pudo devolver al mercado: el evento
-                        // se queda reclamado hasta que expire su lease. Se
-                        // dice, porque un evento atascado es un hecho que
-                        // hay que poder mirar.
+                        // It could not even be returned to the market: the event
+                        // stays claimed until its lease expires. This is
+                        // said, because a stuck event is a fact that
+                        // has to be possible to look at.
                         detail = format!(
                             "{detail} (and it could not be returned to the market: {mark_error})"
                         );
@@ -237,7 +237,7 @@ mod tests {
         let sink = Arc::new(InMemoryAuditSink::new());
         let dispatcher = AuditDispatcher::new(outbox.clone(), sink.clone());
 
-        // La caída: el sink recibió el evento, pero la marca no se escribió.
+        // The failure: the sink received the event, but the mark was not written.
         let claimed = outbox
             .claim(
                 "e-1",
@@ -250,7 +250,7 @@ mod tests {
             .expect("the claim");
         sink.record(&claimed.event).expect("the sink received it");
 
-        // El lease expira y el evento vuelve al mercado.
+        // The lease expires and the event goes back to the market.
         let later = the_moment() + chrono::Duration::minutes(10);
         let report = dispatcher
             .dispatch_pending("worker-2", later)

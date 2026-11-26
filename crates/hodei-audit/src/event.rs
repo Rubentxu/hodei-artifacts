@@ -1,34 +1,34 @@
-//! El evento de auditoría: lo que se dice de una operación.
+//! The audit event: what is said about an operation.
 //!
-//! El evento es una afirmación sobre una operación, y por eso lleva lo que
-//! la hace comprobable: **quién** actuó, **en qué cuenta**, **qué** hizo,
-//! **sobre qué** recurso, **con qué contenido**, **cómo acabó** y **con
-//! qué correlación**. Lo que nunca lleva es una credencial: un evento que
-//! dice quién actuó no necesita decir con qué se autenticó, y si lo
-//! dijera, el rastro se convertiría en un secreto más que hay que
-//! proteger.
+//! The event is a statement about an operation, and for that reason it carries what
+//! makes it verifiable: **who** acted, **in which account**, **what** they did,
+//! **on which** resource, **with what content**, **how it ended** and **with
+//! what correlation**. What it never carries is a credential: an event that
+//! says who acted does not need to say what they authenticated with, and if it
+//! did, the trail would become one more secret that has to be
+//! protected.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// La cota de un campo de texto del evento.
+/// The bound of a text field of the event.
 ///
-/// Los campos de texto del evento los pone quien llama, y van tanto a una
-/// fila **durable** como a una línea de log. Sin cota, un principal al que
-/// se le deniega una publicación puede escribir filas arbitrarias e
-/// ilimitadas en el outbox, y un salto de línea en el `resource` es una
-/// inyección en el log.
+/// The text fields of the event are set by the caller, and they go both to a
+/// **durable** row and to a log line. Without a bound, a principal who is denied
+/// a publication can write arbitrary and unbounded rows into the outbox, and a
+/// line break in `resource` is a log
+/// injection.
 pub const MAX_FIELD_LENGTH: usize = 256;
 
-/// Limpia un texto que va al evento o al outbox.
+/// Cleans a text that goes into the event or the outbox.
 ///
-/// Quita los caracteres de control —un salto de línea en un log es una
-/// inyección— y corta lo que se pasa de la cota. La cuenta de caracteres
-/// es de caracteres, no de bytes, así que el texto no queda partido por la
-/// mitad de un UTF-8.
+/// Removes control characters (a line break in a log is an
+/// injection) and truncates whatever exceeds the bound. The character count
+/// is in characters, not bytes, so the text is not split in the
+/// middle of a UTF-8 sequence.
 ///
-/// **Esto no es un saneamiento de secretos.** El evento no lleva
-/// credenciales porque el código no las mete, no porque aquí se limpien.
+/// **This is not secret sanitization.** The event carries no
+/// credentials because the code does not put them in, not because they are cleaned here.
 pub fn sanitize_text(value: &str) -> String {
     value
         .chars()
@@ -37,20 +37,20 @@ pub fn sanitize_text(value: &str) -> String {
         .collect()
 }
 
-/// Cómo acabó la operación que el evento describe.
+/// How the operation that the event describes ended.
 ///
-/// Los cuatro resultados son cuatro hechos distintos y no se confunden: un
-/// rechazo no es un fallo, y un conflicto no es un rechazo.
+/// The four outcomes are four distinct facts and are not conflated: a
+/// rejection is not a failure, and a conflict is not a rejection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditResult {
-    /// Se permitió y la operación se completó.
+    /// It was allowed and the operation completed.
     Allowed,
-    /// La autorización lo denegó y no se escribió nada.
+    /// Authorization denied it and nothing was written.
     Denied,
-    /// Ya había algo con otro contenido y no se sobrescribió.
+    /// There was already something with different content and it was not overwritten.
     Conflict,
-    /// Algo falló y la operación no se completó.
+    /// Something failed and the operation did not complete.
     Failed,
 }
 
@@ -65,30 +65,30 @@ impl std::fmt::Display for AuditResult {
     }
 }
 
-/// Quién actuó, en qué cuenta y con qué correlación.
+/// Who acted, in which account and with what correlation.
 ///
-/// Las tres cosas viajan juntas porque siempre viajan juntas: la cuenta es
-/// el **tenant verificado**, y no se deduce de la petición sino del
-/// principal que la máquina ya verificó. Una cuenta que se deduce es una
-/// cuenta que se puede repartir.
+/// The three things travel together because they always travel together: the account is
+/// the **verified tenant**, and it is not deduced from the request but from the
+/// principal that the machine already verified. An account that is deduced is an
+/// account that can be handed out.
 ///
-/// El **actor** es el HRN de quien actuó. En la capa HTTP sale del
-/// principal verificado, así que está verificado. En el catálogo lo declara
-/// quien publica, porque el catálogo verifica la **cuenta** contra el
-/// autorizador y no el subject: por eso la palabra "verificado" no se usa
-/// aquí, y quien publique tiene que poner el actor que de verdad actuó.
+/// The **actor** is the HRN of whoever acted. In the HTTP layer it comes from the
+/// verified principal, so it is verified. In the catalog it is declared by
+/// the publisher, because the catalog verifies the **account** against the
+/// authorizer and not the subject: for that reason the word "verified" is not used
+/// here, and whoever publishes has to supply the actor that actually acted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditContext {
-    /// El actor: el HRN del subject.
+    /// The actor: the HRN of the subject.
     pub actor: String,
-    /// La cuenta verificada del actor: el tenant.
+    /// The verified account of the actor: the tenant.
     pub tenant: String,
-    /// La correlación de la petición.
+    /// The correlation of the request.
     pub correlation_id: String,
 }
 
 impl AuditContext {
-    /// El contexto de una operación.
+    /// The context of an operation.
     pub fn new(
         actor: impl Into<String>,
         tenant: impl Into<String>,
@@ -102,45 +102,45 @@ impl AuditContext {
     }
 }
 
-/// Un evento de auditoría.
+/// An audit event.
 ///
-/// Nunca lleva un bearer token ni una credencial: solo identidades, hechos
-/// y el resultado.
+/// It never carries a bearer token or a credential: only identities, facts
+/// and the outcome.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEvent {
-    /// El identificador del evento.
+    /// The identifier of the event.
     ///
-    /// Es la **clave de idempotencia**: reentregar este evento es entregar
-    /// el mismo evento, y un sink que lo trate así no duplica el efecto.
+    /// It is the **idempotency key**: redelivering this event is delivering
+    /// the same event, and a sink that treats it that way does not duplicate the effect.
     pub event_id: String,
-    /// Quién actuó, en qué cuenta y con qué correlación.
+    /// Who acted, in which account and with what correlation.
     pub context: AuditContext,
-    /// Cuándo ocurrió.
+    /// When it happened.
     pub timestamp: DateTime<Utc>,
-    /// Qué se hizo: `publish`, `create_repository`, `move_tag`…
+    /// What was done: `publish`, `create_repository`, `move_tag`...
     pub action: String,
-    /// Sobre qué se hizo: el recurso canónico.
+    /// On what it was done: the canonical resource.
     pub resource: String,
-    /// El digest del contenido, cuando la operación trata de contenido.
+    /// The digest of the content, when the operation deals with content.
     ///
-    /// Va como texto (`algoritmo:valor`) para que el evento no dependa del
-    /// modelo de ningún dominio: el evento dice qué contenido se movió, no
-    /// cómo lo representa el catálogo.
+    /// It is a string (`algorithm:value`) so that the event does not depend on the
+    /// model of any domain: the event says what content was moved, not
+    /// how the catalog represents it.
     pub digest: Option<String>,
-    /// Cómo acabó.
+    /// How it ended.
     pub result: AuditResult,
 }
 
 impl AuditEvent {
-    /// El evento, con el identificador y el momento tomados de las costuras
-    /// que los producen.
+    /// The event, with the identifier and the moment taken from the seams
+    /// that produce them.
     ///
-    /// El momento y el identificador son **hechos de la máquina**, no de la
-    /// operación: tomarlos de una costura es lo que permite fijarlos en una
-    /// prueba y comparar dos ejecuciones de la misma operación.
+    /// The moment and the identifier are **facts of the machine**, not of the
+    /// operation: taking them from a seam is what makes it possible to pin them in
+    /// a test and compare two executions of the same operation.
     ///
-    /// Los textos van **limitados**: los pone quien llama, y van a una fila
-    /// durable y a una línea de log. Ver [`sanitize_text`].
+    /// The texts are **bounded**: they are set by the caller, and they go to a durable
+    /// row and to a log line. See [`sanitize_text`].
     pub fn new(
         event_id: impl Into<String>,
         context: AuditContext,
@@ -161,27 +161,27 @@ impl AuditEvent {
         }
     }
 
-    /// El actor que actuó.
+    /// The actor that acted.
     pub fn actor(&self) -> &str {
         &self.context.actor
     }
 
-    /// La cuenta verificada en la que actuó.
+    /// The verified account in which it acted.
     pub fn tenant(&self) -> &str {
         &self.context.tenant
     }
 
-    /// La correlación de la operación.
+    /// The correlation of the operation.
     pub fn correlation_id(&self) -> &str {
         &self.context.correlation_id
     }
 
-    /// Si dos eventos dicen el mismo hecho.
+    /// Whether two events state the same fact.
     ///
-    /// El instante **no** se compara: un reloj no conserva necesariamente la
-    /// misma precisión al pasar por un almacén, y dos expresiones del mismo
-    /// hecho dejarían de serlo sólo por eso. Lo que decide es quién, en qué
-    /// cuenta, qué hizo, sobre qué, con qué contenido y cómo acabó.
+    /// The instant is **not** compared: a clock does not necessarily keep the
+    /// same precision when passing through a store, and two expressions of the same
+    /// fact would stop being equal just because of that. What decides is who, in which
+    /// account, what they did, on what, with what content and how it ended.
     pub fn same_fact(&self, other: &AuditEvent) -> bool {
         self.context == other.context
             && self.action == other.action

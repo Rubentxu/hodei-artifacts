@@ -1,18 +1,18 @@
-//! La cache del repositorio proxy (HSP-107 / HAR-13), contra el wire.
+//! The cache of the proxy repository (HSP-107 / HAR-13), against the wire.
 //!
-//! La superficie que ejercita es la del formato **raw**: el upstream
-//! sirve bytes opacos y la cache los guarda y los vuelve a servir con
-//! sus validadores, que es lo que la cache de un proxy raw promete.
+//! The surface it exercises is that of the **raw** format: the upstream
+//! serves opaque bytes and the cache stores them and serves them again with
+//! their validators, which is what the cache of a raw proxy promises.
 //!
-//! El servicio es un proceso de verdad con catalogo, almacen de bytes y
-//! Cedar reales. El upstream es un servidor local que este fichero
-//! controla: cambia lo que sirve, deja de contestar, tarda, y apunta las
-//! cabeceras condicionales que le llegan.
+//! The service is a real process with a real catalog, byte store and
+//! Cedar. The upstream is a local server that this file
+//! controls: it changes what it serves, stops answering, is slow, and records the
+//! conditional headers that reach it.
 //!
-//! Lo que se mide es lo que una persona ve: de donde sale cada respuesta
-//! (`x-hodei-cache`), cuantas veces se molesta al upstream y que recibo
-//! queda. Un upstream que cambia, que cae o que no esta nunca puede acabar
-//! presentado como contenido verificado que no es.
+//! What is measured is what a person sees: where each response comes from
+//! (`x-hodei-cache`), how many times the upstream is bothered and what receipt
+//! is left. An upstream that changes, goes down or is absent can never end up
+//! presented as verified content that it is not.
 
 mod support;
 
@@ -28,7 +28,7 @@ use support::{Curl, Deployment, FIRST_ACCOUNT};
 const BODY: &[u8] = b"content that lives upstream";
 const NEWER: &[u8] = b"content that the upstream changed";
 
-/// Una peticion que llego al upstream.
+/// A request that reached the upstream.
 #[derive(Debug, Clone)]
 struct Seen {
     path: String,
@@ -36,7 +36,7 @@ struct Seen {
     if_modified_since: Option<String>,
 }
 
-/// Un documento que sirve el upstream.
+/// A document that the upstream serves.
 #[derive(Debug, Clone)]
 struct Doc {
     body: Vec<u8>,
@@ -44,7 +44,7 @@ struct Doc {
     last_modified: Option<String>,
 }
 
-/// El estado del upstream, que la prueba cambia mientras corre.
+/// The state of the upstream, which the test changes while it runs.
 struct World {
     docs: Mutex<HashMap<String, Doc>>,
     failing: AtomicBool,
@@ -197,13 +197,13 @@ fn serve(mut stream: TcpStream, world: &World) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// La configuracion `proxy` de un repositorio: el upstream y su cache.
+/// The `proxy` configuration of a repository: the upstream and its cache.
 fn proxy_of(upstream: &Upstream, scopes: &[&str], cache: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "upstream": {
@@ -222,7 +222,7 @@ struct Lab {
 }
 
 impl Lab {
-    /// `repositories`: clave del repositorio y su politica de cache.
+    /// `repositories`: repository key and its cache policy.
     fn new(repositories: &[(&str, serde_json::Value)]) -> Self {
         let upstream = Upstream::start();
         let deployment = Deployment::new();
@@ -248,14 +248,14 @@ impl Lab {
         self.deployment.start(&environment)
     }
 
-    /// Cambia la configuracion de un repositorio con el servicio parado.
+    /// Changes the configuration of a repository while the service is stopped.
     fn reconfigure(&self, key: &str, scopes: &[&str], cache: serde_json::Value) {
         self.deployment
             .reconfigure_proxy(key, proxy_of(&self.upstream, scopes, cache));
     }
 }
 
-/// Una respuesta: codigo, cuerpo y cabeceras que interesan.
+/// A response: status code, body and the headers of interest.
 struct Reply {
     status: u16,
     body: String,
@@ -297,7 +297,7 @@ fn get(lab: &Lab, port: u16, repository: &str, path: &str) -> Reply {
     fetch_into(port, &alice, repository, path, &into)
 }
 
-/// Los recibos de una ruta: `(outcome, status)` en el orden en que llegan.
+/// The receipts of a path: `(outcome, status)` in the order they arrive.
 fn outcomes(lab: &Lab, port: u16, repository: &str, path: &str) -> Vec<(String, u64)> {
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let into = lab.deployment.directory.path().join("receipts.json");
@@ -335,7 +335,7 @@ fn outcomes(lab: &Lab, port: u16, repository: &str, path: &str) -> Vec<(String, 
 }
 
 // ---------------------------------------------------------------------------
-// TTL, validadores y revalidacion.
+// TTL, validators and revalidation.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -359,7 +359,7 @@ fn a_stale_metadata_is_revalidated_with_the_validators_and_a_304_keeps_it() {
     assert_eq!(first.body.as_bytes(), BODY);
     assert_eq!(first.cache.as_deref(), Some("miss"));
 
-    // TTL 0: cada lectura pregunta, y lo que pregunta es condicional.
+    // TTL 0: every read asks, and what it asks is conditional.
     let second = get(&lab, service.port, "pxy-meta", "pkg/index.json");
     assert_eq!(second.status, 200);
     assert_eq!(second.body.as_bytes(), BODY);
@@ -369,7 +369,7 @@ fn a_stale_metadata_is_revalidated_with_the_validators_and_a_304_keeps_it() {
     assert_eq!(seen[0].if_none_match, None);
     assert_eq!(seen[1].if_none_match.as_deref(), Some("\"m1\""));
 
-    // El recibo de la confirmacion existe y no movio nada.
+    // The confirmation receipt exists and moved nothing.
     assert_eq!(
         outcomes(&lab, service.port, "pxy-meta", "pkg/index.json"),
         vec![
@@ -378,7 +378,7 @@ fn a_stale_metadata_is_revalidated_with_the_validators_and_a_304_keeps_it() {
         ]
     );
 
-    // Sin ETag, la condicion es la fecha.
+    // Without an ETag, the condition is the date.
     let _ = get(&lab, service.port, "pxy-meta", "pkg/dated/index.json");
     let again = get(&lab, service.port, "pxy-meta", "pkg/dated/index.json");
     assert_eq!(again.cache.as_deref(), Some("revalidated"));
@@ -411,19 +411,19 @@ fn a_metadata_the_upstream_changed_is_refreshed_and_content_is_served_from_the_c
             .as_deref(),
         Some("miss")
     );
-    // Dentro del TTL no se molesta al upstream.
+    // Within the TTL the upstream is not bothered.
     let fresh = get(&lab, service.port, "pxy-ttl", "pkg/index.json");
     assert_eq!(fresh.cache.as_deref(), Some("hit"));
     assert_eq!(lab.upstream.hits("pkg/index.json"), 1);
 
-    // El contenido no tiene TTL: una vez bajado no caduca.
+    // The content has no TTL: once downloaded it does not expire.
     let _ = get(&lab, service.port, "pxy-ttl", "pkg/lib.bin");
     std::thread::sleep(Duration::from_millis(3300));
     let lib = get(&lab, service.port, "pxy-ttl", "pkg/lib.bin");
     assert_eq!(lib.cache.as_deref(), Some("hit"));
     assert_eq!(lab.upstream.hits("pkg/lib.bin"), 1);
 
-    // Caducada la metadata, y cambiada upstream, se actualiza.
+    // The metadata expired, and changed upstream, so it is updated.
     lab.upstream
         .put("pkg/index.json", NEWER, Some("\"m2\""), None);
     let refreshed = get(&lab, service.port, "pxy-ttl", "pkg/index.json");
@@ -441,8 +441,8 @@ fn a_metadata_the_upstream_changed_is_refreshed_and_content_is_served_from_the_c
 fn concurrent_requests_for_the_same_content_download_it_once() {
     let lab = Lab::new(&[("pxy-flight", serde_json::json!({}))]);
     lab.upstream.put("pkg/big.bin", BODY, Some("\"b1\""), None);
-    // Holgura de sobra para que los ocho `curl` arranquen dentro de una
-    // misma descarga aunque la maquina vaya cargada.
+    // Plenty of slack so that the eight `curl`s start within the
+    // same download even if the machine is loaded.
     lab.upstream.delay(2000);
     let mut service = lab.start();
     let alice = support::token(FIRST_ACCOUNT, "alice");
@@ -468,8 +468,8 @@ fn concurrent_requests_for_the_same_content_download_it_once() {
     for reply in &replies {
         assert_eq!(reply.status, 200, "{}", reply.body);
         assert_eq!(reply.body.as_bytes(), BODY);
-        // Todas compartieron la misma descarga: ninguna vio una copia ya
-        // publicada.
+        // All of them shared the same download: none saw an already
+        // published copy.
         assert_eq!(reply.cache.as_deref(), Some("miss"));
     }
     assert_eq!(
@@ -485,7 +485,7 @@ fn concurrent_requests_for_the_same_content_download_it_once() {
 }
 
 // ---------------------------------------------------------------------------
-// Upstream caido, stale y 404.
+// Upstream down, stale and 404.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -524,8 +524,8 @@ fn a_stale_copy_is_served_only_when_the_policy_allows_it_and_says_so() {
         "a stale answer must say when the upstream last confirmed it"
     );
 
-    // Un 404 del upstream no es un fallo: el contenido ya no existe alli y
-    // no se sirve como si siguiera existiendo.
+    // A 404 from the upstream is not a failure: the content no longer exists there and
+    // is not served as if it still did.
     lab.upstream.fail(false);
     lab.upstream.remove("pkg/lib.bin");
     let gone = get(&lab, service.port, "pxy-stale", "pkg/lib.bin");
@@ -560,7 +560,7 @@ fn a_missing_path_is_remembered_only_when_the_policy_says_so() {
 }
 
 // ---------------------------------------------------------------------------
-// Offline determinista.
+// Deterministic offline.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -577,7 +577,7 @@ fn offline_serves_only_verified_cached_content_and_never_touches_the_network() {
     support::stop(&mut service);
     let before = lab.upstream.total();
 
-    // El servicio entero sin red.
+    // The whole service without network.
     let mut service = lab.start_with(&[("HODEI_PROXY__OFFLINE", "true")]);
     let hit = get(&lab, service.port, "pxy-off", "pkg/lib.bin");
     assert_eq!(hit.status, 200, "{}", hit.body);
@@ -591,7 +591,7 @@ fn offline_serves_only_verified_cached_content_and_never_touches_the_network() {
     assert_eq!(lab.upstream.total(), before, "offline touched the network");
     support::stop(&mut service);
 
-    // El repositorio solo, por su politica.
+    // The repository alone, by its policy.
     lab.reconfigure("pxy-off", &["/"], serde_json::json!({ "offline": true }));
     let mut service = lab.start();
     let hit = get(&lab, service.port, "pxy-off", "pkg/lib.bin");
@@ -606,10 +606,10 @@ fn offline_serves_only_verified_cached_content_and_never_touches_the_network() {
 }
 
 // ---------------------------------------------------------------------------
-// Revocacion: la confianza se evalua en cada lectura, tambien las degradadas.
+// Revocation: trust is evaluated on every read, degraded ones too.
 // ---------------------------------------------------------------------------
 
-/// Una peticion JSON `POST` con el token de alice; devuelve el codigo.
+/// A JSON `POST` request with alice's token; returns the status code.
 fn post_json(lab: &Lab, port: u16, path: &str, body: &serde_json::Value) -> u16 {
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let directory = lab.deployment.directory.path();
@@ -670,7 +670,7 @@ fn a_revoked_digest_is_not_served_fresh_stale_or_offline() {
     });
 
     let mut service = lab.start_with(&[("HODEI_TRUST__POLICY_FILE", &policy)]);
-    // Bajado pero sin promover: el canal trusted no lo sirve.
+    // Downloaded but not promoted: the trusted channel does not serve it.
     assert_eq!(
         get(&lab, service.port, "pxy-rev", "pkg/lib.bin").status,
         404
@@ -682,7 +682,7 @@ fn a_revoked_digest_is_not_served_fresh_stale_or_offline() {
     let served = get(&lab, service.port, "pxy-rev", "pkg/lib.bin");
     assert_eq!(served.status, 200, "{}", served.body);
 
-    // Revocado: ni revalidando, ni con el upstream caido (stale).
+    // Revoked: neither revalidating, nor with the upstream down (stale).
     assert_eq!(
         post_json(&lab, service.port, "/api/v1/promotions/revoke", &revocation),
         200
@@ -694,7 +694,7 @@ fn a_revoked_digest_is_not_served_fresh_stale_or_offline() {
     assert_eq!(stale.status, 404, "a revoked digest was served stale");
     support::stop(&mut service);
 
-    // Ni con el servicio sin red.
+    // Nor with the service offline.
     let mut service = lab.start_with(&[
         ("HODEI_TRUST__POLICY_FILE", &policy),
         ("HODEI_PROXY__OFFLINE", "true"),
@@ -705,7 +705,7 @@ fn a_revoked_digest_is_not_served_fresh_stale_or_offline() {
 }
 
 // ---------------------------------------------------------------------------
-// Mismatch, cuarentena, cambio de politica.
+// Mismatch, quarantine, policy change.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -719,7 +719,7 @@ fn other_bytes_for_immutable_content_are_quarantined_until_the_configuration_cha
         200
     );
 
-    // El upstream entrega otros bytes para lo mismo.
+    // The upstream delivers other bytes for the same thing.
     lab.upstream.put("pkg/lib.bin", NEWER, Some("\"c2\""), None);
     let held = get(&lab, service.port, "pxy-quar", "pkg/lib.bin");
     assert_eq!(held.status, 502, "{}", held.body);
@@ -727,7 +727,7 @@ fn other_bytes_for_immutable_content_are_quarantined_until_the_configuration_cha
     assert_eq!(held.cache, None, "withheld content carries no cache status");
     assert_eq!(lab.upstream.hits("pkg/lib.bin"), 2);
 
-    // La cuarentena es dura: ni se sirve lo viejo ni se vuelve a preguntar.
+    // The quarantine is hard: the old content is not served and it is not asked again.
     let still = get(&lab, service.port, "pxy-quar", "pkg/lib.bin");
     assert_eq!(still.status, 502);
     assert_eq!(lab.upstream.hits("pkg/lib.bin"), 2);
@@ -740,15 +740,15 @@ fn other_bytes_for_immutable_content_are_quarantined_until_the_configuration_cha
     );
     support::stop(&mut service);
 
-    // Una configuracion nueva es la palanca para reabrirla.
+    // A new configuration is the lever to reopen it.
     lab.reconfigure("pxy-quar", &["/"], cache);
     let mut service = lab.start();
     let reopened = get(&lab, service.port, "pxy-quar", "pkg/lib.bin");
     assert_eq!(reopened.status, 200, "{}", reopened.body);
     assert_eq!(reopened.body.as_bytes(), NEWER);
     assert_eq!(reopened.cache.as_deref(), Some("refreshed"));
-    // Y una vez aceptado, lo nuevo es lo que el upstream confirma: no vuelve
-    // a retenerse.
+    // And once accepted, the new content is what the upstream confirms: it is not
+    // held back again.
     let again = get(&lab, service.port, "pxy-quar", "pkg/lib.bin");
     assert_eq!(again.status, 200, "{}", again.body);
     assert_eq!(again.cache.as_deref(), Some("revalidated"));
@@ -768,13 +768,13 @@ fn a_policy_change_that_leaves_a_path_out_of_scope_hides_what_was_cached() {
 
     lab.reconfigure("pxy-scope", &["ok/"], serde_json::json!({}));
     let mut service = lab.start();
-    // Lo que ya no cae en el scope no se sirve ni se pregunta.
+    // What no longer falls in the scope is neither served nor asked for.
     assert_eq!(
         get(&lab, service.port, "pxy-scope", "pkg/lib.bin").status,
         404
     );
     assert_eq!(lab.upstream.hits("pkg/lib.bin"), 1);
-    // Lo que sigue dentro se revalida una vez bajo la configuracion nueva.
+    // What stays inside is revalidated once under the new configuration.
     let kept = get(&lab, service.port, "pxy-scope", "ok/lib.bin");
     assert_eq!(kept.status, 200, "{}", kept.body);
     assert_eq!(kept.cache.as_deref(), Some("revalidated"));

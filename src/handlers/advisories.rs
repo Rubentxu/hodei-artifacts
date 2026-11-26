@@ -1,19 +1,19 @@
-//! La entrada soportada de advisories: el ciclo reactivo CVE (HSP-137).
+//! The supported advisories entry point: the reactive CVE cycle (HSP-137).
 //!
-//! `POST /api/v1/advisories/accept` admite un advisory OSV contra el
-//! grafo y **corre el ciclo completo en la misma llamada**: la proyeccion
-//! del dominio escribe el caso, el motor dice los intents de reevaluacion
-//! y el servicio de promociones decide contra la politica activa y el
-//! libro mayor. Cuando el advisory toca un artefacto concedido, la
-//! reevaluacion retira la concesion antes de que esta funcion responda:
-//! el pull siguiente del digest ya es 404. No hay un consumidor externo
-//! que haya estado caido, y por eso no hay latencia que prometer: la
-//! distribucion bloquea cuando el ciclo bloquea.
+//! `POST /api/v1/advisories/accept` admits an OSV advisory against the
+//! graph and **runs the full cycle in the same call**: the domain projection
+//! writes the case, the engine emits the re-evaluation intents
+//! and the promotions service decides against the active policy and the
+//! ledger. When the advisory touches a granted artifact, the
+//! re-evaluation withdraws the grant before this function responds:
+//! the next pull of the digest is already a 404. There is no external consumer
+//! that could have been down, and so there is no latency to promise: the
+//! distribution blocks when the cycle blocks.
 //!
-//! La ruta es administrativa a proposito: admitir un advisory es decirle
-//! al servicio "esto es un hecho", y quien puede decir eso puede apagar
-//! el canal trusted de un artefacto. El gate Cedar de `/api/v1/admin`
-//! decide que principal puede; aqui no se vuelve a decidir.
+//! The route is administrative on purpose: admitting an advisory is telling
+//! the service "this is a fact", and whoever can say that can switch off
+//! an artifact's trusted channel. The Cedar gate of `/api/v1/admin`
+//! decides which principal may; no new decision is made here.
 
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
@@ -31,25 +31,25 @@ use hodei_catalog::CatalogError;
 use hodei_evidence::ContentDigest;
 use serde::Deserialize;
 
-/// El cuerpo de la admision.
+/// The admission body.
 #[derive(Debug, Deserialize)]
 pub struct AcceptAdvisoryRequest {
-    /// El repositorio cuyo canal protege el ciclo.
+    /// The repository whose channel the cycle protects.
     pub repository: String,
-    /// El digest del artefacto afectado, como `sha256:<hex>`: es el
-    /// sujeto que la proyeccion nombra, igual que en la promocion.
+    /// The digest of the affected artifact, as `sha256:<hex>`: it is the
+    /// subject the projection names, same as in the promotion.
     pub digest: String,
-    /// El advisory OSV, como el estandar lo publica.
+    /// The OSV advisory, as the standard publishes it.
     pub advisory: serde_json::Value,
-    /// El inventario CycloneDX del artefacto afectado, cuando el emisor
-    /// lo tiene: es lo que escribe los componentes y el `affected_by` en
-    /// el grafo. Sin el, el advisory se admite como hecho suelto y la
-    /// reevaluacion solo toca a quien el inventario ya proyectado nombre.
+    /// The CycloneDX inventory of the affected artifact, when the issuer
+    /// has it: it is what writes the components and the `affected_by` in
+    /// the graph. Without it, the advisory is admitted as a loose fact and the
+    /// re-evaluation only touches whatever the already-projected inventory names.
     #[serde(default)]
     pub inventory: Option<serde_json::Value>,
 }
 
-/// Por que la admision no pudo correr.
+/// Why the admission could not run.
 pub struct AdvisoryApiError {
     status: StatusCode,
     message: String,
@@ -67,10 +67,10 @@ impl AdvisoryApiError {
 impl From<ReactorError> for AdvisoryApiError {
     fn from(error: ReactorError) -> Self {
         match error {
-            // El detalle del motivo es del cliente: un documento que no
-            // se lee es un 400 con la razon.
+            // The reason detail belongs to the client: a document that cannot
+            // be read is a 400 with the reason.
             ReactorError::BadRequest(reason) => Self::new(StatusCode::BAD_REQUEST, reason),
-            // El detalle de una dependencia que no responde es del log.
+            // The detail of an unresponsive dependency belongs to the log.
             ReactorError::Unavailable(reason) => {
                 tracing::warn!(%reason, "the reactive cycle could not run");
                 Self::new(
@@ -92,8 +92,8 @@ impl IntoResponse for AdvisoryApiError {
     }
 }
 
-/// El digest del cuerpo: `sha256:<hex>`, la MISMA forma que la
-/// promocion y el libro mayor usan para nombrar el sujeto.
+/// The body digest: `sha256:<hex>`, the SAME form the
+/// promotion and the ledger use to name the subject.
 fn parse_digest(text: &str) -> Option<ContentDigest> {
     let value = text.strip_prefix("sha256:")?;
     if value.chars().any(|c| c.is_ascii_uppercase()) {
@@ -103,10 +103,10 @@ fn parse_digest(text: &str) -> Option<ContentDigest> {
     digest.is_well_formed().then_some(digest)
 }
 
-/// El documento de un cuerpo JSON a texto: el lector del estandar pide
-/// texto, y el valor ya parseado se re-serializa de forma canonica para
-/// que el identificador de la evidencia sea el mismo para todos los que
-/// digan el mismo advisory.
+/// The document of a JSON body as text: the standard's reader asks for
+/// text, and the already-parsed value is re-serialized canonically so
+/// that the evidence identifier is the same for everyone who
+/// states the same advisory.
 fn document_of(value: &serde_json::Value) -> String {
     value.to_string()
 }
@@ -132,10 +132,10 @@ pub async fn accept(
         AdvisoryApiError::new(StatusCode::NOT_IMPLEMENTED, "the catalog is not available")
     })?;
 
-    // El repositorio da la region del tenant del grafo, la MISMA_region
-    // con la que la promocion escribio el sujeto. Un repositorio que no
-    // existe o es de otra cuenta es el mismo 404 de siempre: la consulta
-    // va acotada a la cuenta verificada.
+    // The repository gives the graph tenant's region, the SAME region
+    // with which the promotion wrote the subject. A repository that does not
+    // exist or belongs to another account is the same old 404: the query
+    // is scoped to the verified account.
     let repository = reader
         .repository(&account, &request.repository)
         .await
@@ -159,12 +159,12 @@ pub async fn accept(
         )
     })?;
 
-    // El sujeto del ciclo es EL ARTEFACTO que el cuerpo nombra
-    // (repositorio + digest), no "todo lo que el advisory toca": la
-    // proyeccion escribe los componentes y el `affected_by` contra ese
-    // sujeto, y el radio de impacto parte de ellos. La region la da el
-    // repositorio --la MISMA region con la que la promocion estampo el
-    // HRN del sujeto, o el ciclo preguntaria el grafo de otro tenant.
+    // The cycle's subject is THE ARTIFACT the body names
+    // (repository + digest), not "everything the advisory touches": the
+    // projection writes the components and the `affected_by` against that
+    // subject, and the blast radius starts from them. The region is given by the
+    // repository --the SAME region with which the promotion stamped the
+    // subject's HRN, or the cycle would query another tenant's graph.
     let outcome = reactor
         .admit_advisory(
             &account,

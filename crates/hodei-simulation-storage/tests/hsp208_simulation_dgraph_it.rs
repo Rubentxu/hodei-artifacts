@@ -1,5 +1,5 @@
-//! HSP-208: la simulacion sobre el snapshot y sus overlays en la
-//! autoridad del grafo.
+//! HSP-208: the simulation over the snapshot and its overlays in the
+//! graph authority.
 //!
 //! IT conditioned on `HODEI_GRAPH_IT_ENDPOINT`, as every test of the
 //! stack. It runs against the REAL shared alpha (membership asserts over

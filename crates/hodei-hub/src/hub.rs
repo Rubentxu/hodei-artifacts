@@ -1,15 +1,15 @@
-//! El hub de artefactos de confianza: la cuarentena, el canal de
-//! confianza y la promocion gobernada.
+//! The trusted artifact hub: quarantine, the trust channel and
+//! governed promotion.
 //!
-//! La regla del hito es una sola y es tajante: **sin decision de confianza
-//! no hay promocion**, y **promocionar no muta los bytes**. El digest es
-//! la identidad del contenido, y la promocion cambia el **canal** en el que
-//! vive, no lo que hay dentro.
+//! The milestone's rule is a single, sharp one: **without a trust decision
+//! there is no promotion**, and **promoting does not mutate the bytes**. The digest is
+//! the identity of the content, and promotion changes the **channel** it
+//! lives in, not what is inside.
 //!
-//! Y hay un detalle que parece pequeno y no lo es: un artefacto **recien
-//! admitido esta en cuarentena**, siempre. La cuarentena no es un estado
-//! exceptional: es el estado por defecto, porque un artefacto sin decision
-//! no ha dicho nada todavia.
+//! And there is a detail that seems small and is not: a **newly
+//! admitted artifact is in quarantine**, always. Quarantine is not an
+//! exceptional state: it is the default state, because an artifact without a decision
+//! has not said anything yet.
 
 use std::sync::Arc;
 
@@ -20,53 +20,53 @@ use serde::{Deserialize, Serialize};
 
 use crate::blob::BlobStore;
 
-/// Donde esta un artefacto.
+/// Where an artifact is.
 ///
-/// Los estados son los que el ADR-0015 declara, y son **verificables**: un
-/// artefacto del que Hodei solo tiene la referencia no es lo mismo que
-/// uno que Hodei tiene y ha promovido.
+/// The states are those declared by ADR-0015, and they are **verifiable**: an
+/// artifact of which Hodei only has the reference is not the same as
+/// one that Hodei has and has promoted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Availability {
-    /// Solo hay una referencia: Hodei no tiene los bytes.
+    /// There is only a reference: Hodei does not have the bytes.
     ReferenceOnly,
-    /// Hodei tiene los bytes, en cuarentena.
+    /// Hodei has the bytes, in quarantine.
     Quarantined,
-    /// Hodei tiene los bytes y estan en el canal de confianza.
+    /// Hodei has the bytes and they are in the trust channel.
     Trusted,
-    /// Hodei no tiene los bytes.
+    /// Hodei does not have the bytes.
     Unavailable,
 }
 
-/// Un artefacto del hub.
+/// An artifact of the hub.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HubArtifact {
-    /// El digest: la identidad del contenido.
+    /// The digest: the identity of the content.
     pub digest: ContentDigest,
-    /// Donde esta.
+    /// Where it is.
     pub availability: Availability,
-    /// La referencia externa, si la tiene.
+    /// The external reference, if it has one.
     ///
-    /// Un artefacto que Hodei no posee puede estar referenciado, y esa
-    /// referencia es real sin que Hodei tenga que migrar nada.
+    /// An artifact that Hodei does not own may be referenced, and that
+    /// reference is real without Hodei having to migrate anything.
     pub external_reference: Option<String>,
 }
 
-/// La decision de confianza que gobierna una promocion.
+/// The trust decision that governs a promotion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustVerdict {
-    /// El identificador de la decision.
+    /// The decision's identifier.
     pub decision_id: String,
-    /// Lo que se decidio.
+    /// What was decided.
     pub outcome: Outcome,
-    /// Los motivos, con codigos.
+    /// The reasons, with codes.
     pub reasons: Vec<String>,
-    /// La version de la politica que decidio.
+    /// The version of the policy that decided.
     pub policy_version: String,
 }
 
 impl TrustVerdict {
-    /// Una decision que permite.
+    /// A decision that allows.
     pub fn allowing(decision_id: impl Into<String>, policy_version: impl Into<String>) -> Self {
         Self {
             decision_id: decision_id.into(),
@@ -76,7 +76,7 @@ impl TrustVerdict {
         }
     }
 
-    /// Una decision que deniega, con sus motivos.
+    /// A decision that denies, with its reasons.
     pub fn denying(
         decision_id: impl Into<String>,
         policy_version: impl Into<String>,
@@ -91,21 +91,21 @@ impl TrustVerdict {
     }
 }
 
-/// Por que no se pudo promover.
+/// Why it could not be promoted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PromotionError {
-    /// No hay decision: sin decision no hay promocion.
+    /// There is no decision: without a decision there is no promotion.
     NoDecision,
-    /// La decision deniega.
+    /// The decision denies.
     Denied {
-        /// El identificador de la decision.
+        /// The decision's identifier.
         decision_id: String,
-        /// Los motivos.
+        /// The reasons.
         reasons: Vec<String>,
     },
-    /// El artefacto no esta en el hub.
+    /// The artifact is not in the hub.
     NotInTheHub,
-    /// El almacen no esta disponible.
+    /// The store is not available.
     Unavailable(String),
 }
 
@@ -134,24 +134,24 @@ impl std::fmt::Display for PromotionError {
     }
 }
 
-/// La traza de una promocion.
+/// The trace of a promotion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromotionAudit {
-    /// El digest promovido.
+    /// The promoted digest.
     pub digest: ContentDigest,
-    /// La decision que lo permitting.
+    /// The decision that allowed it.
     pub decision_id: String,
-    /// La version de la politica.
+    /// The policy version.
     pub policy_version: String,
-    /// Quien lo promovio.
+    /// Who promoted it.
     pub by: String,
-    /// Cuando.
+    /// When.
     pub at: DateTime<Utc>,
-    /// Si se denego, los motivos.
+    /// If it was denied, the reasons.
     pub reasons: Vec<String>,
 }
 
-/// El hub de artefactos de confianza.
+/// The trusted artifact hub.
 pub struct ArtifactHub {
     store: Arc<dyn BlobStore>,
     artifacts: std::sync::Mutex<std::collections::BTreeMap<String, HubArtifact>>,
@@ -159,7 +159,7 @@ pub struct ArtifactHub {
 }
 
 impl ArtifactHub {
-    /// El hub sobre un almacen de contenido.
+    /// The hub over a content store.
     pub fn new(store: Arc<dyn BlobStore>) -> Self {
         Self {
             store,
@@ -168,10 +168,10 @@ impl ArtifactHub {
         }
     }
 
-    /// Admite un artefacto y lo deja **en cuarentena**.
+    /// Admits an artifact and leaves it **in quarantine**.
     ///
-    /// El artefacto tiene los bytes, y no esta en el canal de confianza:
-    /// hasta que haya una decision, no sale de ahi.
+    /// The artifact has the bytes, and is not in the trust channel:
+    /// until there is a decision, it does not leave there.
     pub async fn ingest(&self, bytes: &[u8]) -> Result<HubArtifact, PromotionError> {
         let digest = self
             .store
@@ -190,11 +190,11 @@ impl ArtifactHub {
         Ok(artifact)
     }
 
-    /// Registra un artefacto **referenciado** pero no poseido.
+    /// Registers an artifact that is **referenced** but not owned.
     ///
-    /// Es la coexistencia con los registros externos: Hodei sabe del
-    /// artefacto, lo cita y lo referencia, sin migrar sus bytes ni
-    /// afirmar que los tiene.
+    /// This is coexistence with external registries: Hodei knows about the
+    /// artifact, cites it and references it, without migrating its bytes or
+    /// claiming to have them.
     pub fn reference(
         &self,
         digest: ContentDigest,
@@ -212,10 +212,10 @@ impl ArtifactHub {
         artifact
     }
 
-    /// Promueve un artefacto al canal de confianza.
+    /// Promotes an artifact to the trust channel.
     ///
-    /// La promocion **no copia y no muta los bytes**: lo que cambia es el
-    /// canal, y el canal de confianza referencia **el digest exacto**.
+    /// Promotion **does not copy and does not mutate the bytes**: what changes is the
+    /// channel, and the trust channel references **the exact digest**.
     pub async fn promote(
         &self,
         digest: &ContentDigest,
@@ -228,7 +228,7 @@ impl ArtifactHub {
             return Err(PromotionError::NotInTheHub);
         };
 
-        // Sin decision, no hay promocion.
+        // Without a decision, there is no promotion.
         let Some(verdict) = verdict else {
             let audit = PromotionAudit {
                 digest: digest.clone(),
@@ -264,7 +264,7 @@ impl ArtifactHub {
             });
         }
 
-        // El digest NO cambia: la promocion cambia el canal.
+        // The digest does NOT change: promotion changes the channel.
         artifact.availability = Availability::Trusted;
         let promoted = artifact.clone();
 
@@ -283,7 +283,7 @@ impl ArtifactHub {
         Ok(promoted)
     }
 
-    /// Los bytes de un artefacto, verificados por su digest.
+    /// An artifact's bytes, verified by its digest.
     pub async fn bytes_of(&self, digest: &ContentDigest) -> Result<Vec<u8>, PromotionError> {
         self.store
             .get(digest)
@@ -291,7 +291,7 @@ impl ArtifactHub {
             .map_err(|error| PromotionError::Unavailable(error.to_string()))
     }
 
-    /// Un artefacto del hub.
+    /// An artifact of the hub.
     pub fn artifact(&self, digest: &ContentDigest) -> Option<HubArtifact> {
         self.artifacts
             .lock()
@@ -300,7 +300,7 @@ impl ArtifactHub {
             .cloned()
     }
 
-    /// El canal de confianza: lo que se puede publicar.
+    /// The trust channel: what can be published.
     pub fn trusted(&self) -> Vec<HubArtifact> {
         self.artifacts
             .lock()
@@ -311,7 +311,7 @@ impl ArtifactHub {
             .collect()
     }
 
-    /// La cuarentena: lo que no se puede publicar todavia.
+    /// Quarantine: what cannot be published yet.
     pub fn quarantine(&self) -> Vec<HubArtifact> {
         self.artifacts
             .lock()
@@ -322,7 +322,7 @@ impl ArtifactHub {
             .collect()
     }
 
-    /// La traza de las promociones.
+    /// The promotion trace.
     pub fn audits(&self) -> Vec<PromotionAudit> {
         self.audits
             .lock()

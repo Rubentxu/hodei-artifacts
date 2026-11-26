@@ -1,42 +1,42 @@
-//! La pasada coordinada y fenced entre replicas (HSP-192).
+//! The coordinated, fenced pass across replicas (HSP-192).
 //!
-//! El `sweep` del servicio es el modo legacy: un proceso, un cerrojo de
-//! memoria. La pasada coordinada es el modo entre replicas, y por eso
-//! nada de su estado vive en la memoria del worker:
+//! The service's `sweep` is the legacy mode: one process, one in-memory
+//! lock. The coordinated pass is the cross-replica mode, and that is why
+//! none of its state lives in the worker's memory:
 //!
-//! 1. **El claim es durable.** Se toma con `claim_gc_pass` sobre el
-//!    scope; expira por lease; cada operacion posterior presenta el
-//!    token de su generacion. Un worker zombie con la generacion
-//!    vencida no puede marcar, ni confirmar, ni cerrar: la autoridad
-//!    lo rechaza. El exito del claim se decide **releyendo despues de
-//!    commitear** (regla HSP-205), no porque la transaccion de claim
-//!    haya commiteado.
-//! 2. **La marca es transaccional con guardas.** `mark_run_fenced`
-//!    escribe la pasada verificando el claim vigente y las
-//!    referencias vivas en la MISMA transaccion (patron de frontier,
-//!    HSP-199) y devuelve lo marcado leido post-commit.
-//! 3. **Antes de tocar un byte, se revalida.** `live_reference_count`
-//!    contra el estado real: si un publisher nombro el blob, se
-//!    descarta y su intencion no se confirma. Tras el efecto, el
-//!    veredicto sale de releer el almacén (confirmacion solo
-//!    post-aplicado), y una intencion huérfana de un corte se
-//!    reconcilia por relectura: intentada + blob ido = confirmado.
-//! 4. **El object store decide como se retira (AC2).** Con delete
-//!    condicional, el borrado va condicionado a la version marcada:
-//!    una reescritura concurrente produce `NotApplied` y la clave NO
-//!    se reutiliza hasta reconciliar. Con capacidad de version pero
-//!    sin delete condicional, cuarentena versionada: los bytes
-//!    marcados van a un nombre NUEVO (nunca reescritura) y la clave
-//!    queda reservada en el libro. Sin ninguna de las dos, la pasada
-//!    **no borra nada** y todo queda `Unknown`. La pregunta la
-//!    responde el tipo del almacen, no una configuracion.
-//! 5. **El censo va por paginas (AC3).** `root_page` recorre las
-//!    raices con cota `page_limit` sin materializar el grafo. Mientras
-//!    el censo no termina, `roots_are_complete` es falso y el plan
-//!    puro degrada lo huerfano a `Unknown`: **Unknown jamas borra**.
-//! 6. **La reanudacion sale del libro.** Un corte entre marca y
-//!    barrido se recupera con `pending_scoped_run` + `mark_of_run`:
-//!    el rastro durable, no la memoria.
+//! 1. **The claim is durable.** It is taken with `claim_gc_pass` over the
+//!    scope; it expires by lease; every later operation presents the
+//!    token of its generation. A zombie worker with an expired
+//!    generation cannot mark, confirm or close: the authority
+//!    rejects it. The success of the claim is decided by **re-reading after
+//!    committing** (HSP-205 rule), not because the claim transaction
+//!    committed.
+//! 2. **The mark is transactional with guards.** `mark_run_fenced`
+//!    writes the pass verifying the current claim and the live
+//!    references in the SAME transaction (frontier pattern,
+//!    HSP-199) and returns what was marked, read post-commit.
+//! 3. **Before touching a byte, revalidate.** `live_reference_count`
+//!    against the real state: if a publisher named the blob, it is
+//!    discarded and its intent is not confirmed. After the effect, the
+//!    verdict comes from re-reading the store (confirmation only
+//!    post-applied), and an orphaned intent from a cut is
+//!    reconciled by re-reading: attempted + blob gone = confirmed.
+//! 4. **The object store decides how it is removed (AC2).** With conditional
+//!    delete, the deletion is conditioned on the marked version:
+//!    a concurrent rewrite produces `NotApplied` and the key is NOT
+//!    reused until reconciled. With version capability but
+//!    no conditional delete, versioned quarantine: the marked
+//!    bytes go to a NEW name (never a rewrite) and the key
+//!    stays reserved in the ledger. With neither, the pass
+//!    **deletes nothing** and everything stays `Unknown`. The question is
+//!    answered by the store's type, not by a configuration.
+//! 5. **The census goes by pages (AC3).** `root_page` walks the
+//!    roots bounded by `page_limit` without materializing the graph. While
+//!    the census has not finished, `roots_are_complete` is false and the pure
+//!    plan degrades the orphaned to `Unknown`: **Unknown never deletes**.
+//! 6. **Resumption comes from the ledger.** A cut between mark and
+//!    sweep is recovered with `pending_scoped_run` + `mark_of_run`:
+//!    the durable trail, not memory.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -54,27 +54,27 @@ use serde::Serialize;
 use super::plan::{self, Input, Plan};
 use super::service::{GcError, GcService};
 
-/// Cuantas raices caben en una pagina del censo coordinado.
+/// How many roots fit in one page of the coordinated census.
 ///
-/// Es la cota de materializacion: el censo nunca apila el grafo
-/// completo en memoria. En un deployment se configura; aqui es
-/// constante para que la prueba la exercite.
+/// It is the materialization bound: the census never piles the whole graph
+/// in memory. In a deployment it is configured; here it is
+/// a constant so the test can exercise it.
 pub const ROOT_PAGE_LIMIT: usize = 512;
 
-/// Los knobs de una pasada coordinada.
+/// The knobs of a coordinated pass.
 #[derive(Debug, Clone)]
 pub struct PassConfig {
-    /// El scope de autoridad bajo el que se coordina (p. ej. la HRN de
-    /// la cuenta unica del deployment). Dos workers con el mismo scope
-    /// se excluyen por el claim; con scopes distintos no se ven, que
-    /// es como se demuestra "entre replicas" sobre una sola autoridad.
+    /// The authority scope under which it is coordinated (e.g. the HRN of
+    /// the deployment's single account). Two workers with the same scope
+    /// exclude each other through the claim; with different scopes they do not see each other, which
+    /// is how "across replicas" is shown over a single authority.
     pub scope: String,
-    /// Quien es este worker. Un claim ajeno vigente ocupa el scope
-    /// (Busy); un claim vencido se take-over con generacion nueva.
+    /// Who this worker is. A live claim held by someone else occupies the scope
+    /// (Busy); an expired claim is taken over with a new generation.
     pub owner: String,
-    /// Cuanto vale el claim. Se renueva entre marcas.
+    /// How long the claim is worth. It is renewed between marks.
     pub lease_for: Duration,
-    /// La cota de paginas del censo.
+    /// The page bound of the census.
     pub page_limit: usize,
     /// Whether the census spans every account of the deployment (the
     /// platform-wide sweep) instead of the one account the scope names.
@@ -85,7 +85,7 @@ pub struct PassConfig {
 }
 
 impl PassConfig {
-    /// El constructor minimo: scope, owner y lease; pagina por defecto.
+    /// The minimal constructor: scope, owner and lease; default page.
     pub fn new(scope: impl Into<String>, owner: impl Into<String>, lease_for: Duration) -> Self {
         Self {
             scope: scope.into(),
@@ -114,93 +114,93 @@ impl PassConfig {
         self.actor.as_deref().unwrap_or(&self.owner)
     }
 
-    /// Cambia la cota de pagina (las pruebas la bajan para forzar el
-    /// recorrido paginado con cientos de raices).
+    /// Changes the page bound (tests lower it to force the
+    /// paginated walk with hundreds of roots).
     pub fn with_page_limit(mut self, page_limit: usize) -> Self {
         self.page_limit = page_limit.max(1);
         self
     }
 }
 
-/// Que hizo la pasada sobre un candidato.
+/// What the pass did to a candidate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PassAction {
-    /// El blob se borro condicionado a la version marcada.
+    /// The blob was deleted conditioned on the marked version.
     Deleted,
-    /// Los bytes se movieron a cuarentena versionada (AC2, almacenes
-    /// sin delete condicional).
+    /// The bytes were moved to versioned quarantine (AC2, stores
+    /// without conditional delete).
     Quarantined,
-    /// Algo nombra el contenido: se descarto sin tocarlo.
+    /// Something names the content: it was discarded without touching it.
     Republished,
-    /// La version cambio desde la marca: **no se reutilizo la clave**
-    /// hasta reconciliar (AC2).
+    /// The version changed since the mark: **the key was not reused**
+    /// until reconciled (AC2).
     NotApplied,
-    /// El blob ya no estaba: otra pasada lo actuo antes.
+    /// The blob was no longer there: another pass acted on it first.
     Gone,
-    /// No hay guarda aplicable: `Unknown`, nunca se borra.
+    /// No guard applies: `Unknown`, never deleted.
     Skipped,
 }
 
-/// El resultado de una pasada coordinada.
+/// The result of a coordinated pass.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PassReport {
-    /// La pasada.
+    /// The pass.
     pub run_id: String,
-    /// La generacion del claim bajo la que se barre.
+    /// The generation of the claim under which it sweeps.
     pub generation: u64,
-    /// Si la pasada reanudo una marca pendiente.
+    /// Whether the pass resumed a pending mark.
     pub resumed: bool,
-    /// Cuantos candidatos quedaron marcados.
+    /// How many candidates were marked.
     pub marked: u64,
-    /// Cuantos se borraron (incluidos los confirmados por relectura).
+    /// How many were deleted (including those confirmed by re-reading).
     pub deleted: u64,
-    /// Los bytes liberados.
+    /// The bytes freed.
     pub bytes_freed: u64,
-    /// Cuantos quedaron en cuarentena versionada.
+    /// How many ended up in versioned quarantine.
     pub quarantined: u64,
-    /// Cuantos se descartaron porque algo los nombro (revalidacion).
+    /// How many were discarded because something named them (revalidation).
     pub republished: u64,
-    /// Cuantos no se tocaron porque su version cambio (AC2).
+    /// How many were not touched because their version changed (AC2).
     pub not_applied: u64,
-    /// Cuantos quedaron en `Unknown`: nunca se borraron.
+    /// How many ended up as `Unknown`: they were never deleted.
     pub unknown: u64,
-    /// Cuantas paginas de raices se leyeron (AC3: la cota visible).
-    /// Cero si la pasada reanudo y no necesito censo nuevo.
+    /// How many pages of roots were read (AC3: the visible bound).
+    /// Zero if the pass resumed and needed no new census.
     pub census_pages: u64,
-    /// Accion por digest, para las aserciones por membresia.
+    /// Action per digest, for membership assertions.
     pub actions: HashMap<String, PassAction>,
 }
 
-/// Como el almacén permite retirar la version marcada.
+/// How the store allows removing the marked version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StoreMode {
-    /// Delete condicionado a la version: la carrera la cierra el
-    /// almacén. `NotApplied` veda la reutilizacion de clave.
+    /// Delete conditioned on the version: the store
+    /// closes the race. `NotApplied` forbids key reuse.
     Conditional,
-    /// Solo cuarentena versionada: nombre nuevo, nunca reescritura.
+    /// Versioned quarantine only: new name, never a rewrite.
     Quarantine,
-    /// Ninguna de las dos: la pasada coordinada no toca nada.
+    /// Neither: the coordinated pass touches nothing.
     Refuse,
 }
 
-/// El worker de la pasada coordinada.
+/// The coordinated pass worker.
 ///
-/// Vive sin estado entre llamadas: todo lo que necesita para reanudar
-/// esta en el libro. Dos instancias sobre el mismo scope compiten por
-/// el claim; la autoridad decide.
+/// It lives without state between calls: everything it needs to resume
+/// is in the ledger. Two instances over the same scope compete for
+/// the claim; the authority decides.
 pub struct CoordinatedPass {
     service: Arc<GcService>,
     config: PassConfig,
 }
 
 impl CoordinatedPass {
-    /// Crea el worker sobre el servicio existente.
+    /// Creates the worker over the existing service.
     pub fn new(service: Arc<GcService>, config: PassConfig) -> Self {
         Self { service, config }
     }
 
-    /// El libro detras de la pasada.
+    /// The ledger behind the pass.
     fn ledger(&self) -> &Arc<dyn ContentLedger> {
         self.service.ledger()
     }
@@ -209,9 +209,9 @@ impl CoordinatedPass {
         Utc::now()
     }
 
-    /// El claim fenced: `claim_gc_pass` + relectura post-commit
-    /// (regla HSP-205: manda lo que la autoridad dice al leer, no el
-    /// hecho de que el claim haya commiteado).
+    /// The fenced claim: `claim_gc_pass` + post-commit re-read
+    /// (HSP-205 rule: what the authority says on reading rules, not the
+    /// fact that the claim committed).
     async fn claim(&self) -> Result<GcLease, GcError> {
         if !self.ledger().supports_fenced_pass() {
             return Err(GcError::Unsupported);
@@ -234,15 +234,15 @@ impl CoordinatedPass {
                 GcError::Unknown("the claim was not readable after commit".to_string())
             })?;
         if back.token != lease.token || back.generation != lease.generation {
-            // Otra replica gano la carrera del claim: nosotros NO
-            // somos el holder y no barremos.
+            // Another replica won the claim race: we are NOT
+            // the holder and we do not sweep.
             return Err(GcError::Busy);
         }
         Ok(lease)
     }
 
-    /// El error de claim: si el scope esta ocupado o la condicion del
-    /// CAS no se cumplio, es Busy; lo demas, del libro.
+    /// The claim error: if the scope is occupied or the CAS condition
+    /// was not met, it is Busy; anything else comes from the ledger.
     fn busy_or_ledger(error: CatalogError) -> GcError {
         match error {
             CatalogError::Conflict { .. } | CatalogError::PreconditionFailed { .. } => {
@@ -252,8 +252,8 @@ impl CoordinatedPass {
         }
     }
 
-    /// La marca pendiente bajo el claim vigente, leida de la
-    /// autoridad. `None` si no hay pasada que reanudar.
+    /// The pending mark under the current claim, read from the
+    /// authority. `None` if there is no pass to resume.
     async fn pending_mark(&self, lease: &GcLease) -> Result<Option<GcRun>, GcError> {
         let Some(run) = self
             .ledger()
@@ -268,22 +268,22 @@ impl CoordinatedPass {
                 run.id
             )));
         }
-        // La reconfirmacion fenced: si el rastro ya no existe bajo la
-        // generacion vigente (la autoridad lo veto), no se reanuda; se
-        // abre marca nueva.
+        // The fenced reconfirmation: if the trail no longer exists under the
+        // current generation (the authority vetoed it), it is not resumed; a
+        // new mark is opened.
         Ok(self
             .ledger()
             .mark_of_run(&self.config.scope, lease, &run.id)
             .await?)
     }
 
-    /// El censo paginado (AC3): recorre `root_page` con cota
-    /// `page_limit` sin materializar el grafo y produce el plan con el
-    /// mismo nucleo puro del dry-run.
+    /// The paginated census (AC3): walks `root_page` bounded by
+    /// `page_limit` without materializing the graph and produces the plan with the
+    /// same pure core as the dry-run.
     ///
-    /// `roots_are_complete` solo es cierto cuando el recorrido termino
-    /// sin `has_more`: con un censo a medias nada es reclamable — el
-    /// veredicto es `Unknown`, que jamas se borra.
+    /// `roots_are_complete` is only true when the walk finished
+    /// without `has_more`: with a half-done census nothing is reclaimable -- the
+    /// verdict is `Unknown`, which is never deleted.
     pub async fn paged_plan(&self) -> Result<(Plan, u64), GcError> {
         let store = Arc::clone(self.service.store());
         let blobs = store
@@ -308,7 +308,7 @@ impl CoordinatedPass {
         // Reaching here means every page was read: a failure above aborts.
         let complete = true;
 
-        // Las aristas de manifiesto, sobre las raices ya paginadas.
+        // The manifest edges, over the already paginated roots.
         let mut edges: HashMap<ContentDigest, Vec<ContentDigest>> = HashMap::new();
         let mut seen: HashSet<ContentDigest> = HashSet::new();
         for root in &roots {
@@ -349,17 +349,17 @@ impl CoordinatedPass {
         Ok((plan, pages))
     }
 
-    /// Una pasada completa: claim -> marca durable -> revalidacion ->
-    /// destino segun el modo del almacén -> cierre fenced.
+    /// A full pass: claim -> durable mark -> revalidation ->
+    /// destination according to the store's mode -> fenced close.
     ///
-    /// Si el lease se pierde en medio (otra replica tomo el scope),
-    /// la pasada para con `GcError::Busy` y ni una marca mas: el
-    /// zombie no continua borrando la generacion nueva (AC1).
+    /// If the lease is lost midway (another replica took the scope),
+    /// the pass stops with `GcError::Busy` and not one more mark: the
+    /// zombie does not keep deleting the new generation (AC1).
     pub async fn run(&self) -> Result<PassReport, GcError> {
         let _single = self.service.gate().try_lock().map_err(|_| GcError::Busy)?;
         let mut lease = self.claim().await?;
 
-        // 1. Reanudacion durable o marca nueva fenced.
+        // 1. Durable resumption or new fenced mark.
         let pending = self.pending_mark(&lease).await?;
         let resumed = pending.is_some();
         let (run, census_pages, plan_unknown) = match pending {
@@ -388,9 +388,9 @@ impl CoordinatedPass {
                     scope: Some(self.config.scope.clone()),
                     generation: Some(lease.generation),
                 };
-                // La marca va con guardas en la MISMA transaccion;
-                // lo que se barre es lo que la autoridad devolvio
-                // leido post-commit, no lo que el plan soñ6.
+                // The mark goes with guards in the SAME transaction;
+                // what is swept is what the authority returned
+                // read post-commit, not what the plan imagined.
                 let marked = self
                     .ledger()
                     .mark_run_fenced(
@@ -416,7 +416,7 @@ impl CoordinatedPass {
             }
         };
 
-        // 2. Sweep con revalidacion por candidato.
+        // 2. Sweep with per-candidate revalidation.
         let store = Arc::clone(self.service.store());
         let mode = match store.conditional() {
             Some(blob) if blob.supports_conditional_delete() => StoreMode::Conditional,
@@ -433,15 +433,15 @@ impl CoordinatedPass {
         let mut republished = 0u64;
 
         for candidate in &run.candidates {
-            // El lease se renueva en cada candidato: un worker cuyo
-            // claim paso a otra generacion deja de barrer al instante.
+            // The lease is renewed on every candidate: a worker whose
+            // claim passed to another generation stops sweeping instantly.
             lease = self.renew(&lease).await?;
 
             let key = candidate.digest.to_string();
 
-            // El rastro durable propio primero: una intencion de este
-            // run puede venir de antes del corte y se resuelve SOLO
-            // releyendo el estado real.
+            // The own durable trail first: an intent of this
+            // run may predate the cut and is resolved ONLY by
+            // re-reading the real state.
             if let Some(trace) = self.ledger().deletion_of(&candidate.digest).await?
                 && trace.run_id == run.id
             {
@@ -454,9 +454,9 @@ impl CoordinatedPass {
                     }
                     DeletionState::Intended => {
                         let vanished = if mode == StoreMode::Refuse {
-                            // Sin capacidad condicional no se escriben
-                            // intenciones propias; si llegan de un
-                            // almacén reemplazado, se decide por `exists`.
+                            // Without conditional capability no own intents are
+                            // written; if they arrive from a replaced
+                            // store, it is decided by `exists`.
                             !store
                                 .exists(&candidate.digest)
                                 .await
@@ -465,10 +465,10 @@ impl CoordinatedPass {
                             self.version_of(&candidate.digest).await?.is_none()
                         };
                         if vanished {
-                            // El corte cayo entre el retiro y la
-                            // confirmacion: el estado real dice que la
-                            // version marcada ya no esta, y eso
-                            // confirma (veredicto post-commit).
+                            // The cut fell between the removal and the
+                            // confirmation: the real state says the marked
+                            // version is no longer there, and that
+                            // confirms it (post-commit verdict).
                             self.confirm(&lease, &run, candidate, trace.marker.as_deref())
                                 .await?;
                             deleted += 1;
@@ -476,16 +476,16 @@ impl CoordinatedPass {
                             actions.insert(key, PassAction::Deleted);
                             continue;
                         }
-                        // Sigue presente: se reintenta el destino,
-                        // idempotente bajo la guarda de version.
+                        // Still present: the destination is retried,
+                        // idempotent under the version guard.
                     }
                 }
             }
 
-            // Revalidacion post-censo: la autoridad fresca. Un
-            // publisher concurrente que nombro el blob lo saca aqui
-            // sin tocar un byte (AC1: las referencias vivas nunca se
-            // borran).
+            // Post-census revalidation: the fresh authority. A
+            // concurrent publisher that named the blob takes it out here
+            // without touching a byte (AC1: live references are never
+            // deleted).
             let live = self
                 .ledger()
                 .live_reference_count(&candidate.digest)
@@ -499,16 +499,16 @@ impl CoordinatedPass {
                 continue;
             }
 
-            // AC2/fail-closed: sin capacidad de guarda en el almacén,
-            // esta pasada NO borra. Queda `Unknown`.
+            // AC2/fail-closed: without guard capability in the store,
+            // this pass does NOT delete. It stays `Unknown`.
             if mode == StoreMode::Refuse {
                 unknown += 1;
                 actions.insert(key, PassAction::Skipped);
                 continue;
             }
 
-            // La marca de version es lo que hace seguro el retiro:
-            // sin version observable no hay guarda, y no se toca.
+            // The version mark is what makes the removal safe:
+            // without an observable version there is no guard, and it is not touched.
             let Some(marker) = self.version_of(&candidate.digest).await? else {
                 actions.insert(key, PassAction::Gone);
                 continue;
@@ -544,7 +544,7 @@ impl CoordinatedPass {
             actions.insert(key, action);
         }
 
-        // 3. Cierre fenced bajo la generacion vigente.
+        // 3. Fenced close under the current generation.
         lease = self.renew(&lease).await?;
         self.ledger()
             .complete_scoped_run(
@@ -586,9 +586,9 @@ impl CoordinatedPass {
         })
     }
 
-    /// Renueva el propio claim entre marcas. Un token de generacion
-    /// anterior no puede renovar: PreconditionFailed -> Busy -> la
-    /// pasada deja de borrar.
+    /// Renews its own claim between marks. A previous generation
+    /// token cannot renew: PreconditionFailed -> Busy -> the
+    /// pass stops deleting.
     async fn renew(&self, lease: &GcLease) -> Result<GcLease, GcError> {
         self.ledger()
             .renew_gc_lease(
@@ -602,7 +602,7 @@ impl CoordinatedPass {
             .map_err(Self::busy_or_ledger)
     }
 
-    /// La marca de version actual del blob, si sigue presente.
+    /// The blob's current version mark, if it is still present.
     async fn version_of(&self, digest: &ContentDigest) -> Result<Option<VersionMarker>, GcError> {
         self.service
             .store()
@@ -613,9 +613,9 @@ impl CoordinatedPass {
             .map_err(|error| GcError::Store(format!("{error:?}")))
     }
 
-    /// El destino de un candidato ya marcado, segun el modo del
-    /// almacén. La confirmacion del rastro solo va despues de que la
-    /// accion se haya APLICADO (veredicto post-efecto).
+    /// The destination of an already marked candidate, according to the
+    /// store's mode. The trail's confirmation only goes after the
+    /// action has been APPLIED (post-effect verdict).
     async fn retire(
         &self,
         lease: &GcLease,
@@ -641,16 +641,16 @@ impl CoordinatedPass {
                     Ok(PassAction::Deleted)
                 }
                 ConditionalOutcome::Gone => Ok(PassAction::Gone),
-                // AC2: la version marcada ya no es la vigente. No se
-                // toca la nueva y su clave queda vedada a la
-                // reutilizacion hasta reconciliar: el registro guarda
-                // la marca intentada y `NotApplied` se reporta, no se
-                // re-borra "a ver si ahora si".
+                // AC2: the marked version is no longer the current one. The
+                // new one is not touched and its key is barred from
+                // reuse until reconciled: the record keeps
+                // the attempted mark and `NotApplied` is reported, it is not
+                // re-deleted "to see if it works this time".
                 ConditionalOutcome::NotApplied => Ok(PassAction::NotApplied),
             },
             StoreMode::Quarantine => {
-                // Cuarentena versionada: nombre NUEVO, nunca
-                // reescritura de la clave original.
+                // Versioned quarantine: NEW name, never a
+                // rewrite of the original key.
                 let key = blob.quarantine_key_of(&candidate.digest, &run.id);
                 match blob
                     .quarantine_if_untouched(&candidate.digest, marker, &key)
@@ -685,7 +685,7 @@ impl CoordinatedPass {
         }
     }
 
-    /// Confirma el rastro bajo el claim vigente.
+    /// Confirms the trail under the current claim.
     async fn confirm(
         &self,
         lease: &GcLease,

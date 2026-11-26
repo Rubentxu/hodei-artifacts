@@ -1,34 +1,34 @@
-//! HSP-220: el drenaje del outbox del servidor de laboratorio compartido.
+//! HSP-220: draining the outbox of the shared lab server.
 //!
-//! El servidor Dgraph compartido (h186) acumula los hechos de auditoría
-//! pendientes de TODAS las corridas: ninguna suite los marca entregados y
-//! no hay worker desplegado que los consuma. El censo global `pending()`
-//! del puerto los devuelve todos con su `AuditEvent` completo, y cuando el
-//! conjunto cruza el límite de mensaje gRPC (4 MiB) la respuesta muere con
-//! `OutOfRange`: el fallo probado por HSP-194 que bloqueaba las suites
-//! 187/190/191/193 (estado compartido del servidor, no código).
+//! The shared Dgraph server (h186) accumulates the pending audit facts
+//! of ALL runs: no suite marks them delivered and
+//! there is no deployed worker to consume them. The port's global `pending()`
+//! census returns all of them with their full `AuditEvent`, and when the
+//! set crosses the gRPC message limit (4 MiB) the response dies with
+//! `OutOfRange`: the failure proven by HSP-194 that blocked suites
+//! 187/190/191/193 (shared server state, not code).
 //!
-//! Esta IT es la utilidad de drenaje del laboratorio: reclama cada hecho
-//! pendiente y lo marca entregado con LA MISMA mecánica que promete el
-//! puerto (`claim` atómico + `mark_delivered`, hsp187), por lotes, para
-//! que el servidor no guarde un conjunto pendiente global que desborde.
-//! No borra ni reescribe nada: la entrega es la semántica de drenaje para
-//! hechos que ningún consumidor va a releer; el historial queda en el
-//! grafo como `delivered`.
+//! This IT is the lab's drain utility: it claims each pending fact
+//! and marks it delivered with THE SAME mechanics that the port promises
+//! (atomic `claim` + `mark_delivered`, hsp187), in batches, so
+//! that the server does not hold a global pending set that overflows.
+//! It deletes and rewrites nothing: delivery is the drain semantics for
+//! facts that no consumer is going to reread; the history stays in the
+//! graph as `delivered`.
 //!
-//! La raíz de la consulta de claves va acotada (`first:`), porque el
-//! drenaje arranca justamente cuando el censo sin acotar ya no cabe. Los
-//! conteos van a stdout y a `target/uat/hsp220/`; nunca los payloads.
+//! The root of the key query is bounded (`first:`), because the
+//! drain starts precisely when the unbounded census no longer fits. The
+//! counts go to stdout and to `target/uat/hsp220/`; never the payloads.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT`, como todos los IT del stack. Una
-//! sola prueba: el drenaje es una operación del servidor, no por cuenta.
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT`, like all the stack's ITs. A
+//! single test: draining is a server operation, not per account.
 //!
-//! El censo por tenant (`eq(hodei.catalog.outbox.tenant, cuenta)`, índice
-//! exacto) es la prevención para las suites; este drenaje es la cura del
-//! servidor ya desbordado. El consumidor real del puerto
-//! (`AuditDispatcher::dispatch_pending`) sigue llamando a `pending()` sin
-//! acotar: si se despliega contra un servidor compartido, necesita
-//! paginación — la recomendación de seguimiento vive en la evidencia.
+//! The per-tenant census (`eq(hodei.catalog.outbox.tenant, account)`, exact
+//! index) is the prevention for the suites; this drain is the cure for the
+//! already overflowed server. The port's real consumer
+//! (`AuditDispatcher::dispatch_pending`) still calls `pending()` without
+//! bounds: if deployed against a shared server, it needs
+//! pagination -- the follow-up recommendation lives in the evidence.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -40,18 +40,18 @@ use hodei_catalog_storage::DgraphAuditOutbox;
 use hodei_graph_client::{GraphClient, GraphClientConfig};
 use tokio::task::JoinSet;
 
-/// El lote por ronda: la respuesta de claves debe ser pequeña aunque el
-/// servidor esté desbordado (de ahí `first:`).
+/// The batch per round: the key response must be small even if the
+/// server is overflowed (hence `first:`).
 const KEYS_PER_ROUND: usize = 500;
 
-/// La concurrencia del drenaje: cada hecho cuesta varias llamadas gRPC
-/// (claim + marca + lecturas) y 8 pares en vuelo no ahogan al alpha.
+/// The drain's concurrency: each fact costs several gRPC calls
+/// (claim + mark + reads) and 8 pairs in flight do not choke the alpha.
 const DRAIN_CONCURRENCY: usize = 8;
 
-/// Tope de rondas: un drenaje que no termina no es un drenaje.
+/// Round cap: a drain that does not finish is not a drain.
 const MAX_ROUNDS: usize = 200;
 
-/// La ejecución: un worker distinto por corrida.
+/// The run: a distinct worker per execution.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -81,7 +81,7 @@ fn config_from_env() -> Option<GraphClientConfig> {
     Some(GraphClientConfig::from_toml_str(&text).expect("the IT configuration validates"))
 }
 
-/// El directorio de la evidencia: `target/uat/hsp220/`.
+/// The evidence directory: `target/uat/hsp220/`.
 fn the_evidence_dir() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
@@ -90,9 +90,9 @@ fn the_evidence_dir() -> PathBuf {
     dir
 }
 
-/// Cuántos hechos esperan entrega AHORA: los `pending` y los `claimed`
-/// cuyo lease expiró, la MISMA definición que el censo global del puerto.
-/// El conteo viaja acotado (un número), nunca el payload.
+/// How many facts are awaiting delivery NOW: the `pending` ones and the `claimed`
+/// ones whose lease expired, the SAME definition as the port's global census.
+/// The count travels bounded (a number), never the payload.
 async fn the_waiting_count(client: &GraphClient) -> usize {
     let now = Utc::now();
     let response = client
@@ -116,9 +116,9 @@ async fn the_waiting_count(client: &GraphClient) -> usize {
     (pending + expired) as usize
 }
 
-/// Las claves del siguiente lote que espera entrega, con la misma
-/// definición que `pending()`. La raíz va acotada (`first:`) para que la
-/// respuesta sea pequeña aunque el servidor esté desbordado.
+/// The keys of the next batch awaiting delivery, with the same
+/// definition as `pending()`. The root is bounded (`first:`) so that the
+/// response is small even if the server is overflowed.
 async fn the_next_waiting_keys(client: &GraphClient) -> Vec<String> {
     let now = Utc::now();
     let response = client
@@ -151,9 +151,9 @@ async fn the_next_waiting_keys(client: &GraphClient) -> Vec<String> {
     keys
 }
 
-/// Un lote se drena en paralelo acotado: reclamar y marcar es el par del
-/// worker; lo que otro se llevó no es un fallo, es el claim haciendo su
-/// trabajo.
+/// A batch is drained in bounded parallel: claiming and marking is the worker's
+/// pair; what another one took away is not a failure, it is the claim doing its
+/// job.
 async fn drain_batch(client: &Arc<GraphClient>, worker: &str, keys: Vec<String>) -> (usize, usize) {
     let mut rounds = JoinSet::new();
     let in_flight = Arc::new(tokio::sync::Semaphore::new(DRAIN_CONCURRENCY));
@@ -223,8 +223,8 @@ async fn drains_the_shared_outbox_waiting_facts_with_claim_and_mark() {
          in {rounds} rounds, {total_skipped} lost to other workers)"
     );
 
-    // El drenaje cumple cuando el servidor ya no guarda un conjunto
-    // pendiente global que desborde el mensaje gRPC.
+    // The drain succeeds when the server no longer holds a global
+    // pending set that overflows the gRPC message.
     assert_eq!(
         after, 0,
         "the shared outbox must drain to zero waiting facts, not {after}"

@@ -1,41 +1,41 @@
-//! El almacen de contenido por su digest: el CAS.
+//! The content store by its digest: the CAS.
 //!
-//! A partir de M9 Hodei **posee los bytes**, y la primera propiedad de un
-//! almacen que los posee es que **el mismo contenido no se guarda dos
-//! veces**: la identidad del contenido es su digest, y el digest es lo que
-//! se guarda.
+//! Starting with M9 Hodei **owns the bytes**, and the first property of a
+//! store that owns them is that **the same content is not stored twice**:
+//! the identity of the content is its digest, and the digest is what
+//! is stored.
 //!
-//! Y la segunda es que lo que sale por el digest es **exactamente** lo que
-//! entro: al leer, el digest se vuelve a calcular y se compara. Un almacen
-//! que devuelve algo sin comprobar no es un almacen de contenido, es una
-//! guess de lo que habia ahi.
+//! And the second is that what comes out by the digest is **exactly** what
+//! went in: on read, the digest is recomputed and compared. A store
+//! that returns something without checking is not a content store, it is a
+//! guess about what was there.
 //!
-//! # Lo que cambia con el CAS de produccion
+//! # What changes with the production CAS
 //!
-//! El CAS de M9 era correcto en su garantia central pero no operable como
-//! base de un producto que recibe bytes de clientes:
+//! The M9 CAS was correct in its central guarantee but not operable as the
+//! basis of a product that receives client bytes:
 //!
-//! - **Escribia el temporal con un nombre por digest.** Dos productores que
-//!   suben el mismo contenido al mismo tiempo escribian en el **mismo**
-//!   fichero temporal, y el renombrado del uno podia publicar los bytes
-//!   del otro. Ahora cada escritura en curso tiene su **propio** fichero de
-//!   staging, y el commit es lo unico que publica.
-//! - **Bufferizaba el contenido entero.** `put(&[u8])` ya recibia el
-//!   contenido en memoria. Ahora hay una sesion de escritura que acepta
-//!   trozos: la memoria del proceso no crece con el tamano del artefacto.
-//! - **No validaba lo que publicaba.** El commit comprueba el algoritmo, la
-//!   longitud y el digest contra lo que el cliente declara, y si no
-//!   coincide, el staging se elimina y **no queda ninguna referencia
-//!   visible**.
-//! - **No distinguia los fallos.** Un error de disco y un contenido que no
-//!   esta salian los dos como `NotFound`. Ahora cada fallo tiene su error:
-//!   lo que no esta, lo que esta roto y lo que no se pudo leer.
-//! - **No sabia limparse.** Las escrituras que quedaron a medias al caerse
-//!   un proceso se quedan en disco para siempre. Ahora hay staging con
-//!   caducidad y una operacion que lo limpia.
+//! - **It wrote the temporary file with a name per digest.** Two producers that
+//!   upload the same content at the same time wrote to the **same**
+//!   temporary file, and the rename of one could publish the bytes
+//!   of the other. Now each write in progress has its **own** staging
+//!   file, and the commit is the only thing that publishes.
+//! - **It buffered the whole content.** `put(&[u8])` already received the
+//!   content in memory. Now there is a write session that accepts
+//!   parts: process memory does not grow with the size of the artifact.
+//! - **It did not validate what it published.** The commit checks the algorithm,
+//!   length and digest against what the client declares, and if it does not
+//!   match, the staging is removed and **no visible reference
+//!   remains**.
+//! - **It did not distinguish failures.** A disk error and a content that is not
+//!   there both came out as `NotFound`. Now each failure has its error:
+//!   what is not there, what is broken and what could not be read.
+//! - **It did not know how to clean itself.** Writes left half done when
+//!   a process crashes stay on disk forever. Now there is staging with
+//!   expiry and an operation that cleans it.
 //!
-//! Y lo que **no** cambia es la garantia: el mismo contenido no se guarda
-//! dos veces, y lo que sale por el digest es lo que entro.
+//! And what does **not** change is the guarantee: the same content is not stored
+//! twice, and what comes out by the digest is what went in.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -50,41 +50,41 @@ use crate::reclaim::{
     BlobReclaim, ConditionalBlob, ConditionalOutcome, Reclaimed, StoredBlob, VersionMarker,
 };
 
-/// El directorio, dentro de la raiz del almacen, donde viven las
-/// escrituras en curso.
+/// The directory, inside the store root, where writes in progress
+/// live.
 const STAGING_DIR: &str = "staging";
 
-/// Por que el almacen de contenido no pudo hacer lo que se le pedia.
+/// Why the content store could not do what it was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BlobError {
-    /// El contenido no esta.
+    /// The content is not there.
     NotFound,
-    /// El contenido leido no coincide con su digest.
+    /// The content read does not match its digest.
     Corrupted {
-        /// El digest que se pidio.
+        /// The digest that was requested.
         expected: ContentDigest,
-        /// El digest que tiene lo leido.
+        /// The digest of what was read.
         found: ContentDigest,
     },
-    /// El contenido no tiene la longitud que se esperaba.
+    /// The content does not have the length that was expected.
     LengthMismatch {
-        /// La longitud que se esperaba.
+        /// The length that was expected.
         expected: u64,
-        /// La longitud que tiene el contenido.
+        /// The length the content has.
         found: u64,
     },
-    /// El contenido no es el que se declaraba.
+    /// The content is not the one that was declared.
     DigestMismatch {
-        /// El digest que se declaraba.
+        /// The digest that was declared.
         expected: ContentDigest,
-        /// El digest que tiene el contenido.
+        /// The digest the content has.
         found: ContentDigest,
     },
-    /// El algoritmo del digest no lo calcula este almacen.
+    /// The digest algorithm is not computed by this store.
     UnsupportedAlgorithm(String),
-    /// La sesion de escritura ya no admite mas operaciones.
+    /// The write session no longer accepts more operations.
     SessionClosed,
-    /// El almacen no esta disponible.
+    /// The store is not available.
     Unavailable(String),
 }
 
@@ -118,35 +118,35 @@ impl std::fmt::Display for BlobError {
     }
 }
 
-/// Como se comporta una lectura.
+/// How a read behaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadPolicy {
-    /// Se recalcula el digest y se compara con el pedido.
+    /// The digest is recomputed and compared with the requested one.
     ///
-    /// Es la politica por defecto, y la unica que se puede usar para
-    /// contenido de un cliente: lo que sale tiene que ser lo que entro.
+    /// It is the default policy, and the only one that can be used for
+    /// client content: what comes out has to be what went in.
     Verify,
-    /// Se lee sin recalcular, para contenido ya verificado.
+    /// It is read without recomputing, for already verified content.
     ///
-    /// Ahorra el recalculo, y **no** comprueba nada: usarla sobre
-    /// contenido no verificado es devolver una guess.
+    /// It saves the recomputation, and checks **nothing**: using it on
+    /// unverified content is returning a guess.
     Trust,
 }
 
-/// Lo que un commit espera encontrar.
+/// What a commit expects to find.
 ///
-/// Un commit no publica "lo que ha entrado": publica **exactamente** lo
-/// que el cliente declara. Si algo no coincide, no se publica nada.
+/// A commit does not publish "what has come in": it publishes **exactly** what
+/// the client declares. If anything does not match, nothing is published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitExpectation {
-    /// El digest del contenido esperado.
+    /// The digest of the expected content.
     pub digest: ContentDigest,
-    /// La longitud del contenido esperado, en bytes.
+    /// The length of the expected content, in bytes.
     pub length: u64,
 }
 
 impl CommitExpectation {
-    /// La expectativa para un contenido que ya se tiene en memoria.
+    /// The expectation for content already held in memory.
     pub fn of(bytes: &[u8]) -> Self {
         Self {
             digest: ContentDigest::of_bytes(bytes),
@@ -155,163 +155,163 @@ impl CommitExpectation {
     }
 }
 
-/// Una escritura en curso.
+/// A write in progress.
 ///
-/// Los bytes entran a trozos y el commit publica el contenido entero o no
-/// publica nada: **nunca** queda un blob a medio escribir.
+/// The bytes come in parts and the commit publishes the whole content or
+/// publishes nothing: a half-written blob **never** remains.
 #[async_trait::async_trait]
 pub trait BlobWriteSession: Send {
-    /// Anade un trozo al contenido en curso.
+    /// Adds a part to the content in progress.
     async fn append(&mut self, chunk: &[u8]) -> Result<(), BlobError>;
 
-    /// Publica el contenido si y solo si es exactamente el esperado.
+    /// Publishes the content if and only if it is exactly the expected one.
     ///
-    /// Si el algoritmo, la longitud o el digest no coinciden, el staging
-    /// se elimina y el error lo dice: no queda ninguna referencia visible.
+    /// If the algorithm, length or digest do not match, the staging
+    /// is removed and the error says so: no visible reference remains.
     async fn commit(&mut self, expectation: CommitExpectation) -> Result<ContentDigest, BlobError>;
 
-    /// Descarta el contenido en curso.
+    /// Discards the content in progress.
     async fn abort(&mut self) -> Result<(), BlobError>;
 
-    /// Cuantos bytes llevan escritos.
+    /// How many bytes have been written.
     fn bytes_written(&self) -> u64;
 
-    /// El digest de lo que lleva escrito.
+    /// The digest of what has been written.
     ///
-    /// Se calcula mientras pasan los trozos, y es el mismo digest que el
-    /// commit va a comprobar: quien lo consulta no vuelve a calcularlo
-    /// por su cuenta, porque dos calculos del mismo contenido son dos
-    /// oportunidades de discrepar.
+    /// It is computed as the parts pass through, and it is the same digest that the
+    /// commit is going to check: whoever consults it does not recompute it
+    /// on their own, because two computations of the same content are two
+    /// opportunities to disagree.
     fn the_digest(&self) -> ContentDigest;
 
-    /// Donde se esta escribiendo, si el almacen tiene esa nocion.
+    /// Where it is being written, if the store has that notion.
     ///
-    /// Sirve para comprobar que dos escrituras en curso **no** comparten
-    /// fichero: es lo que garantiza que dos productores del mismo
-    /// contenido no se pisen.
+    /// It serves to check that two writes in progress do **not** share a
+    /// file: it is what guarantees that two producers of the same
+    /// content do not step on each other.
     fn the_staging_path(&self) -> Option<&Path>;
 
-    /// El identificador **persistible** de este staging.
+    /// The **persistable** identifier of this staging.
     ///
-    /// Un registro de sesiones durable guarda este handle y, al
-    /// reabrir la sesion en otro proceso, se lo devuelve a
-    /// [`BlobStore::resume`] para que el almacén recupere la escritura
-    /// exacta: la ruta del fichero en el almacen de ficheros, el par
-    /// `key`/`upload_id` del multipart en el object store. `None` dice
-    /// que este almacen no puede reabrir una escritura: sus sesiones
-    /// mueren con el proceso, como siempre.
+    /// A durable session registry keeps this handle and, when
+    /// reopening the session in another process, hands it back to
+    /// [`BlobStore::resume`] so that the store recovers the exact
+    /// write: the file path in the file store, the `key`/`upload_id`
+    /// pair of the multipart in the object store. `None` says
+    /// that this store cannot reopen a write: its sessions
+    /// die with the process, as always.
     fn the_staging_handle(&self) -> Option<String> {
         None
     }
 
-    /// Si el digest de la sesion cubre **todos** los bytes del staging.
+    /// Whether the session digest covers **all** the bytes of the staging.
     ///
-    /// Una sesion reabierta en frio puede no tener el hasher del
-    /// contenido que ya esta en el almacén —es el caso del multipart
-    /// reanudado, cuyos trozos ya subidos no vuelven a pasar por aqui—.
-    /// Quien cierra no debe comparar un digest parcial contra lo
-    /// declarado: el almacén comprueba el contenido entero al publicar,
-    /// que es la promesa de siempre —no se publica nada que no cuadre—.
+    /// A session reopened cold may not have the hasher of the
+    /// content that is already in the store --this is the case of the resumed
+    /// multipart, whose already uploaded parts do not pass through here again--.
+    /// Whoever closes must not compare a partial digest against what was
+    /// declared: the store checks the whole content on publishing,
+    /// which is the usual promise --nothing that does not add up is published--.
     fn the_digest_covers_all(&self) -> bool {
         true
     }
 
-    /// Marca la escritura como **durable**: su staging sobrevive al
-    /// Drop del mango.
+    /// Marks the write as **durable**: its staging survives the
+    /// Drop of the handle.
     ///
-    /// Un registro con journal puede quedarse sin mango local (cache
-    /// desalojado, réplica cambiada) sin que eso signifique que nadie
-    /// abandonó la subida: lo que decide el destino del staging es el
-    /// journal —commit, abort explicito o barrido—, no el último Drop.
+    /// A registry with a journal can be left without a local handle (cache
+    /// evicted, replica changed) without that meaning that nobody
+    /// abandoned the upload: what decides the fate of the staging is the
+    /// journal --commit, explicit abort or sweep--, not the last Drop.
     fn mark_durable(&mut self) {}
 
-    /// Suelta el mango local **sin borrar** el staging durable.
+    /// Releases the local handle **without deleting** the durable staging.
     ///
-    /// Es la mano que cambia de réplica: el registro deja el almacén
-    /// cerrado —y su bloqueo advisory libre para que otra réplica lo
-    /// reclame— despues de cada peticion, cuando ya no queda nada por
-    /// debajo del offset que la autoridad declaro
-    /// ([`BlobWriteSession::flush_durable`]). Un mango soltado aqui no
-    /// es un abandono: la autoridad sigue abierta y el reanudado retoma
-    /// la escritura por su handle.
+    /// It is the hand that changes replica: the registry leaves the store
+    /// closed --and its advisory lock free for another replica to
+    /// claim-- after each request, when nothing remains below
+    /// the offset that the authority declared
+    /// ([`BlobWriteSession::flush_durable`]). A handle released here is not
+    /// an abandonment: the authority remains open and the resume picks up
+    /// the write by its handle.
     fn detach(&mut self) -> Result<(), BlobError> {
-        // Por defecto no hay staging durable que soltar: cerrar es
-        // cerrar, y el Drop del almacén hace su limpieza de siempre.
+        // By default there is no durable staging to release: closing is
+        // closing, and the store's Drop does its usual cleanup.
         Ok(())
     }
 
-    /// Los bytes que **ya estan** en el almacén, no en el buffer del
-    /// mango.
+    /// The bytes that are **already in** the store, not in the buffer of the
+    /// handle.
     ///
-    /// En un multipart, un trozo subido es durable y lo que queda en el
-    /// buffer no: si el proceso muere, la autoridad del journal solo
-    /// puede declarar lo que el almacén tiene. El registro usa esto para
-    /// saber si **puede soltar** el mango sin perder bytes: solo cuando
-    /// lo durable llega a lo escrito. Un journal avanza hasta aqui, nunca
-    /// mas alla.
+    /// In a multipart, an uploaded part is durable and what remains in the
+    /// buffer is not: if the process dies, the journal's authority can only
+    /// declare what the store has. The registry uses this to
+    /// know whether it **can release** the handle without losing bytes: only when
+    /// what is durable reaches what was written. A journal advances up to here, never
+    /// beyond.
     fn the_durable_offset(&self) -> u64 {
         self.bytes_written()
     }
 
-    /// Deja en el almacén lo que ya es durable y devuelve ese offset: lo
-    /// que sobrevive a la muerte de este proceso.
+    /// Leaves in the store what is already durable and returns that offset: what
+    /// survives the death of this process.
     ///
-    /// El journal solo puede avanzar hasta aqui. En el almacen de
-    /// ficheros es el fichero sincronizado —todo lo escrito—. En el
-    /// multipart son los trozos **confirmados** por el servidor, con los
-    /// que estaban en vuelo ya recogidos: lo que queda en el buffer no
-    /// salio del proceso, y el cliente lo reenvia contra el `Range` que
-    /// la autoridad declara.
+    /// The journal can only advance up to here. In the file store
+    /// it is the synced file --everything written--. In the
+    /// multipart it is the parts **confirmed** by the server, with those
+    /// in flight already collected: what remains in the buffer did not
+    /// leave the process, and the client resends it against the `Range` that
+    /// the authority declares.
     async fn flush_durable(&mut self) -> Result<u64, BlobError> {
         Ok(self.bytes_written())
     }
 }
 
-/// El almacen de contenido.
+/// The content store.
 #[async_trait::async_trait]
 pub trait BlobStore: Send + Sync {
-    /// Guarda el contenido y devuelve su digest.
+    /// Stores the content and returns its digest.
     ///
-    /// Guardar el mismo contenido dos veces no es un error ni guarda dos
-    /// veces: el digest es la identidad, y lo que hay con ese digest ya
-    /// esta.
+    /// Storing the same content twice is not an error nor does it store it twice:
+    /// the digest is the identity, and what has that digest is already
+    /// there.
     async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError>;
 
-    /// Lee el contenido de un digest.
+    /// Reads the content of a digest.
     ///
-    /// Lo que se devuelve tiene **el digest pedido**, y el almacen lo
-    /// comprueba antes de devolverlo.
+    /// What is returned has **the requested digest**, and the store
+    /// checks it before returning it.
     async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError>;
 
-    /// Si el contenido esta.
+    /// Whether the content is there.
     ///
-    /// Esto dice si el contenido **esta**, no si esta **bien**: la
-    /// integridad se comprueba con `verify` o con una lectura que
-    /// verifica. Un almacen que usa esto para afirmar que sus bytes son
-    /// los que dice su digest esta mintiendo.
+    /// This says whether the content **is there**, not whether it is **intact**: integrity
+    /// is checked with `verify` or with a verifying read. A store
+    /// that uses this to assert that its bytes are those its digest says
+    /// is lying.
     async fn exists(&self, digest: &ContentDigest) -> Result<bool, BlobError>;
 
-    /// Abre una sesion de escritura en streaming.
+    /// Opens a streaming write session.
     ///
-    /// La sesion es la via para subir contenido que no cabe en memoria:
-    /// los bytes van entrando a trozos y el commit publica el todo.
+    /// The session is the way to upload content that does not fit in memory:
+    /// the bytes come in in parts and the commit publishes the whole.
     async fn begin(&self) -> Result<Box<dyn BlobWriteSession>, BlobError>;
 
-    /// Reabre una escritura en curso por el handle que dejo
+    /// Reopens a write in progress by the handle left by
     /// [`BlobWriteSession::the_staging_handle`].
     ///
-    /// Es la via de un registro de sesiones **durable**: una sesion
-    /// abierta en una réplica se reanuda en otra sin perder los bytes
-    /// que ya estan en el almacén. El handle es opaco para el
-    /// llamante —una ruta propia del almacen, un par
-    /// `key`/`upload_id`— y el offset `written` es lo que el journal
-    /// declaro: el almacén lo acepta como verdad **solo si lo que hay
-    /// en el staging cuadra con él**; si no, el resume falla y el
-    /// registro aborta la sesion, nunca la reanuda sobre bytes
-    /// dudosos.
+    /// It is the path of a **durable** session registry: a session
+    /// opened on one replica is resumed on another without losing the bytes
+    /// that are already in the store. The handle is opaque to the
+    /// caller --a path of the store's own, a
+    /// `key`/`upload_id` pair-- and the `written` offset is what the journal
+    /// declared: the store accepts it as truth **only if what is
+    /// in the staging matches it**; if not, the resume fails and the
+    /// registry aborts the session, never resuming it over doubtful
+    /// bytes.
     ///
-    /// El default dice que este almacen no reabre: una sesion suya
-    /// muere con el proceso.
+    /// The default says that this store does not reopen: a session of its own
+    /// dies with the process.
     async fn resume(
         &self,
         _handle: &str,
@@ -322,27 +322,27 @@ pub trait BlobStore: Send + Sync {
         ))
     }
 
-    /// Lee el contenido aplicando una politica explicita.
+    /// Reads the content applying an explicit policy.
     async fn get_with(
         &self,
         digest: &ContentDigest,
         policy: ReadPolicy,
     ) -> Result<Vec<u8>, BlobError>;
 
-    /// La longitud del contenido, sin leerlo.
+    /// The length of the content, without reading it.
     async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError>;
 
-    /// Lee un **tramo** del contenido.
+    /// Reads a **range** of the content.
     ///
-    /// El tramo empieza en `offset` y tiene `length` bytes. Es la vía
-    /// para servir una parte de un contenido sin traerse el contenido
-    /// entero: un `Range` de HTTP no puede pedir un byte y obligar al
-    /// almacén a leerlo todo.
+    /// The range starts at `offset` and has `length` bytes. It is the way
+    /// to serve a part of a content without fetching the whole content:
+    /// an HTTP `Range` cannot ask for one byte and force the store
+    /// to read it all.
     ///
-    /// Si el contenido no llega a cubrir el tramo, el error es
-    /// `LengthMismatch`: el almacén no devuelve un tramo corto como si
-    /// fuera el pedido, porque un cliente que pide 100 bytes y recibe 40
-    /// no puede saber que le faltan 60.
+    /// If the content does not cover the range, the error is
+    /// `LengthMismatch`: the store does not return a short range as if
+    /// it were the requested one, because a client that asks for 100 bytes and receives 40
+    /// cannot know that 60 are missing.
     async fn read_range(
         &self,
         digest: &ContentDigest,
@@ -350,57 +350,57 @@ pub trait BlobStore: Send + Sync {
         length: u64,
     ) -> Result<Vec<u8>, BlobError>;
 
-    /// Comprueba que el contenido sigue siendo el que su digest dice.
+    /// Checks that the content is still the one its digest says.
     ///
-    /// Si el contenido no esta, el error es `NotFound`; si esta pero no
-    /// corresponde a su digest, el error es `Corrupted`. Son fallos
-    /// distintos y no se confunden.
+    /// If the content is not there, the error is `NotFound`; if it is there but does not
+    /// correspond to its digest, the error is `Corrupted`. They are distinct
+    /// failures and are not confused.
     async fn verify(&self, digest: &ContentDigest) -> Result<(), BlobError>;
 
-    /// La vista de recuperacion de bytes, si el almacen la tiene.
+    /// The byte-reclaim view, if the store has it.
     ///
-    /// Un almacen que no sabe listar ni borrar con barrera no se puede
-    /// recolectar: el recolector se niega en vez de adivinar.
+    /// A store that cannot list or delete with a barrier cannot be
+    /// collected: the collector refuses instead of guessing.
     fn reclaimer(&self) -> Option<&dyn BlobReclaim> {
         None
     }
 
-    /// La vista de borrado condicional, si el almacen la tiene (HSP-192,
+    /// The conditional-delete view, if the store has it (HSP-192,
     /// AC2).
     ///
-    /// Un almacen sin capacidad condicional segura puede aun ser
-    /// recolectado en modo legacy; lo que no puede es participar de una
-    /// pasada coordinada sobre la clave original sin cuarentena
-    /// versionada. El recolector pregunta esto, no una bandera de
-    /// configuracion.
+    /// A store without a safe conditional capability can still be
+    /// collected in legacy mode; what it cannot do is take part in a
+    /// coordinated pass over the original key without versioned
+    /// quarantine. The collector asks this, not a configuration
+    /// flag.
     fn conditional(&self) -> Option<&dyn crate::reclaim::ConditionalBlob> {
         None
     }
 }
 
-/// El almacen de contenido en un directorio.
+/// The content store in a directory.
 ///
-/// El blob vive en `<directorio>/<ab>/<cd>/<digest>`: los dos primeros
-/// caracteres reparten los ficheros en directorios, que es lo que hace que
-/// un directorio con un millon de blobs no sea un problema del sistema de
-/// ficheros.
+/// The blob lives at `<directory>/<ab>/<cd>/<digest>`: the first two
+/// characters spread the files across directories, which is what makes
+/// a directory with a million blobs not a problem for the file
+/// system.
 ///
-/// Y las escrituras en curso viven aparte, en
-/// `<directorio>/staging/<id>.part`, con un nombre **propio** de cada
-/// escritura: dos producers del mismo contenido nunca comparten fichero.
+/// And the writes in progress live apart, in
+/// `<directory>/staging/<id>.part`, with a name **of its own** for each
+/// write: two producers of the same content never share a file.
 pub struct FileBlobStore {
     root: PathBuf,
-    /// La barrera entre publicar un blob y recolectarlo.
+    /// The barrier between publishing a blob and collecting it.
     ///
-    /// Los commits que publican o reutilizan un blob, y el borrado del
-    /// recolector, pasan por aqui: ninguno ve a medias lo del otro.
+    /// The commits that publish or reuse a blob, and the collector's
+    /// delete, go through here: neither sees the other's work half done.
     gate: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl FileBlobStore {
-    /// El almacen sobre un directorio.
+    /// The store over a directory.
     ///
-    /// El directorio se crea si no esta.
+    /// The directory is created if it is not there.
     pub fn new(root: impl AsRef<Path>) -> Result<Self, BlobError> {
         let root = root.as_ref().to_path_buf();
         std::fs::create_dir_all(&root)
@@ -411,23 +411,23 @@ impl FileBlobStore {
         })
     }
 
-    /// Donde vive un blob.
+    /// Where a blob lives.
     pub fn the_path_of(&self, digest: &ContentDigest) -> PathBuf {
         blob_path(&self.root, digest)
     }
 
-    /// El directorio donde viven las escrituras en curso.
+    /// The directory where the writes in progress live.
     pub fn the_staging_dir(&self) -> PathBuf {
         self.root.join(STAGING_DIR)
     }
 
-    /// Las escrituras en curso que hay ahora mismo.
+    /// The writes in progress that exist right now.
     ///
-    /// Solo las que son **de este almacen**: el staging es una convencion
-    /// del directorio, y un fichero con otro nombre ahi no es una
-    /// escritura en curso nuestra. Se listan con la edad que tienen, y un
-    /// fichero cuya fecha no se puede leer **no** se lista: sin fecha no
-    /// hay edad, y lo que no se sabe no se toca.
+    /// Only those that are **of this store**: staging is a convention
+    /// of the directory, and a file with another name there is not a
+    /// write in progress of ours. They are listed with the age they have, and a
+    /// file whose date cannot be read is **not** listed: without a date there is no
+    /// age, and what is not known is not touched.
     pub fn staging_entries(&self) -> Result<Vec<StagingEntry>, BlobError> {
         let mut entries = Vec::new();
         let read = match std::fs::read_dir(self.the_staging_dir()) {
@@ -445,7 +445,7 @@ impl FileBlobStore {
                 .metadata()
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
             let Some(modified) = metadata.modified().ok() else {
-                // Sin fecha no se puede decidir nada: el fichero se queda.
+                // Without a date nothing can be decided: the file stays.
                 continue;
             };
             let age = SystemTime::now()
@@ -460,30 +460,30 @@ impl FileBlobStore {
         Ok(entries)
     }
 
-    /// Elimina las escrituras en curso mas antiguas que `max_age`.
+    /// Removes the writes in progress older than `max_age`.
     ///
-    /// Es la operacion de recuperacion: un proceso que se cae a mitad de
-    /// una subida deja su staging en disco, y ese staging no se publica
-    /// nunca. Con la caducidad, se limpia solo.
+    /// It is the recovery operation: a process that crashes halfway through
+    /// an upload leaves its staging on disk, and that staging is never
+    /// published. With expiry, it cleans itself up.
     ///
-    /// Lo que decide no es la edad, sino el **bloqueo**: mientras una
-    /// escritura vive, su fichero esta bloqueado por el proceso que
-    /// escribe, y un fichero bloqueado no se borra. Por eso la edad es el
-    /// margen de prudencia y no el criterio: un fichero viejo de una
-    /// subida que lleva horas sin escribir sigue siendo de una subida
-    /// viva, y quitarselo de debajo rompe la subida.
+    /// What decides is not the age, but the **lock**: while a
+    /// write lives, its file is locked by the process that
+    /// writes, and a locked file is not deleted. That is why age is the
+    /// margin of prudence and not the criterion: an old file from an
+    /// upload that has gone hours without writing is still from a live
+    /// upload, and pulling it out from under it breaks the upload.
     ///
-    /// Un fichero que no se pudo borrar **no** es un motivo para que el
-    /// almacen no sirva: se avisa y se sigue. Lo que no puede borrar es un
-    /// problema de disco, no un motivo para no arrancar.
+    /// A file that could not be deleted is **not** a reason for the
+    /// store not to serve: a warning is given and it carries on. What it cannot delete is a
+    /// disk problem, not a reason not to start.
     pub fn clean_expired_staging(&self, max_age: Duration) -> Result<StagingCleanup, BlobError> {
         let mut cleanup = StagingCleanup::default();
         for entry in self.staging_entries()? {
             if entry.age < max_age {
                 continue;
             }
-            // El bloqueo dice si alguien esta escribiendo este fichero:
-            // si lo esta, es de una subida viva y no se toca.
+            // The lock says whether someone is writing this file:
+            // if so, it belongs to a live upload and is not touched.
             let file = match std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -528,11 +528,11 @@ impl FileBlobStore {
     }
 }
 
-/// Si el nombre es el de una escritura en curso de este almacen.
+/// Whether the name is that of a write in progress of this store.
 ///
-/// El patron lo pone `new_session_id`: `<pid>-<nanos:x>-<counter:x>.part`.
-/// Un fichero con otro nombre en el directorio del staging no es de este
-/// almacen: no se lista, no se borra y no se cuenta.
+/// The pattern is set by `new_session_id`: `<pid>-<nanos:x>-<counter:x>.part`.
+/// A file with another name in the staging directory is not of this
+/// store: it is not listed, not deleted and not counted.
 fn is_a_staging_file(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(".part") else {
         return false;
@@ -551,31 +551,31 @@ fn is_a_staging_file(name: &str) -> bool {
         && counter.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// Lo que paso al limpiar el staging.
+/// What happened when cleaning the staging.
 ///
-/// La limpieza **no** falla: un fichero que no se pudo borrar se cuenta y
-/// se avisa, y el almacen sigue sirviendo. Lo que se necesita para
-/// contarlo es esto.
+/// The cleanup does **not** fail: a file that could not be deleted is counted and
+/// a warning is given, and the store keeps serving. What is needed to
+/// count it is this.
 ///
-/// Compartido por los dos backends: para el de ficheros el identificador
-/// es la ruta; para el de objetos, la clave. Ambas se muestran igual.
+/// Shared by both backends: for the file one the identifier
+/// is the path; for the object one, the key. Both are displayed the same.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct StagingCleanup {
-    /// Cuantos restos se eliminaron.
+    /// How many leftovers were removed.
     pub removed: usize,
-    /// Cuantos restos habia que estan escribiendo ahora mismo.
+    /// How many leftovers there were that are being written right now.
     ///
-    /// Son de subidas vivas: no se tocan.
+    /// They are from live uploads: they are not touched.
     pub alive: usize,
-    /// Los restos que no se pudieron borrar, con su motivo.
+    /// The leftovers that could not be deleted, with their reason.
     pub failed: Vec<(String, String)>,
 }
 
-/// Una escritura en curso en el almacen de fichero.
+/// A write in progress in the file store.
 ///
-/// El staging se borra solo si la sesion se abandona sin commitear: el
-/// `Drop` lo limpia, de modo que un error, un `?` o un panic no dejan
-/// basura en disco.
+/// The staging is deleted only if the session is abandoned without committing: the
+/// `Drop` cleans it up, so that an error, a `?` or a panic leave no
+/// garbage on disk.
 pub struct FileBlobWriteSession {
     root: PathBuf,
     gate: Arc<tokio::sync::Mutex<()>>,
@@ -584,41 +584,41 @@ pub struct FileBlobWriteSession {
     hasher: Sha256,
     written: u64,
     open: bool,
-    /// El journal del registro declaro la sesion durable: el Drop del
-    /// mango **no** toca el staging. Su destino lo decide el journal.
+    /// The registry journal declared the session durable: the handle's Drop
+    /// does **not** touch the staging. Its fate is decided by the journal.
     durable: bool,
-    /// Si el hasher local cubre el staging entero. Un mango reabierto en
-    /// frio no volvio a ver los bytes que ya estaban en el fichero: su
-    /// digest local es parcial, y el commit comprueba el contenido
-    /// completo antes de publicar.
+    /// Whether the local hasher covers the whole staging. A handle reopened
+    /// cold has not seen again the bytes that were already in the file: its
+    /// local digest is partial, and the commit checks the complete
+    /// content before publishing.
     covers_all: bool,
 }
 
 impl FileBlobWriteSession {
-    /// El fichero de staging de esta escritura.
+    /// The staging file of this write.
     pub fn the_staging_path(&self) -> &Path {
         &self.staging_path
     }
 
-    /// El mango sobre un fichero de staging ya existente, en append.
+    /// The handle over an already existing staging file, in append mode.
     ///
-    /// El resume de un journal pasa por aqui: se reclama el bloqueo del
-    /// fichero —el `try_lock` del `begin`— y se recorta al offset que la
-    /// autoridad declaro. Sin el bloqueo, la subida sigue escribiendo en
-    /// otra réplica y este resume falla: no hay dos escritores del mismo
+    /// The resume of a journal goes through here: the file lock
+    /// --the `try_lock` of `begin`-- is claimed and the file is trimmed to the offset that the
+    /// authority declared. Without the lock, the upload is still writing on
+    /// another replica and this resume fails: there are not two writers of the same
     /// staging.
     ///
-    /// Un fichero **mas largo** que lo declarado no es un error: son los
-    /// bytes que un escritor escribio y no alcanzo a registrar antes de
-    /// morir. Se recortan —nunca se publican por delante de la
-    /// autoridad—, y la subida sigue desde el offset declarado. Mas
-    /// corto si lo seria: la autoridad no puede deber bytes al disco.
+    /// A file **longer** than declared is not an error: these are the
+    /// bytes that a writer wrote and did not manage to record before
+    /// dying. They are trimmed --never published ahead of the
+    /// authority--, and the upload continues from the declared offset. A
+    /// shorter one would be: the authority cannot owe bytes to the disk.
     ///
-    /// El hasher NO se recorre aqui: un resume puede darse en cada
-    /// peticion y recalcular el fichero entero seria pagar el doble. La
-    /// sesion reabierta se marca como **parcial** y el commit comprueba
-    /// el digest releyendo el staging —la verificacion es la misma, se
-    /// paga una sola vez, al publicar—.
+    /// The hasher is NOT walked here: a resume can happen on every
+    /// request and recomputing the whole file would be paying twice. The
+    /// reopened session is marked as **partial** and the commit checks
+    /// the digest by rereading the staging --the verification is the same, it is
+    /// paid once, on publishing--.
     fn reopen(
         root: PathBuf,
         gate: Arc<tokio::sync::Mutex<()>>,
@@ -630,8 +630,8 @@ impl FileBlobWriteSession {
             .open(&staging_path)
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         if let Err(error) = file.try_lock() {
-            // El bloqueo es la prueba de que el dueno anterior murio:
-            // un staging que otra escritura tiene tomado NO se reabre.
+            // The lock is the proof that the previous owner died:
+            // a staging that another write has taken is NOT reopened.
             return Err(BlobError::Unavailable(match error {
                 std::fs::TryLockError::WouldBlock => {
                     "the staging file is being written by another process".to_owned()
@@ -650,20 +650,20 @@ impl FileBlobWriteSession {
             )));
         }
         if length > declared {
-            // Lo que la autoridad no registro no se publica: se recorta
-            // al offset declarado. Son los bytes de un escritor muerto
-            // —vivo no seria, el bloqueo lo impide— que no llego a
-            // registrar su avance, o un duplicado que el CAS ya revento.
-            // El cliente los reenvia contra el `Range` declarado.
+            // What the authority did not record is not published: it is trimmed
+            // to the declared offset. These are the bytes of a dead writer
+            // --it would not be alive, the lock prevents it-- that did not manage to
+            // record its progress, or a duplicate that the CAS already burst.
+            // The client resends them against the declared `Range`.
             file.set_len(declared)
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         }
-        // El hasher no se recalcula aqui: un resume puede darse en cada
-        // peticion y releer el fichero entero seria pagarlo dos veces.
-        // La sesion reabierta se marca como **parcial** —`covers_all`
-        // abajo— y el commit comprueba el digest contra el staging
-        // completo, que es la misma verificacion honesta, una sola vez,
-        // al publicar.
+        // The hasher is not recomputed here: a resume can happen on every
+        // request and rereading the whole file would be paying twice.
+        // The reopened session is marked as **partial** --`covers_all`
+        // below-- and the commit checks the digest against the complete
+        // staging, which is the same honest verification, only once,
+        // on publishing.
         let file = tokio::fs::File::from_std(file);
         Ok(Self {
             root,
@@ -678,7 +678,7 @@ impl FileBlobWriteSession {
         })
     }
 
-    /// Cierra la sesion y borra el staging, sin publicar nada.
+    /// Closes the session and deletes the staging, publishing nothing.
     fn discard(&mut self) {
         self.open = false;
         self.file = None;
@@ -713,8 +713,8 @@ impl BlobWriteSession for FileBlobWriteSession {
         if !self.open {
             return Err(BlobError::SessionClosed);
         }
-        // El algoritmo tiene que ser uno que este almacen sepa calcular:
-        // si no, no se puede ni verificar lo que se ha escrito.
+        // The algorithm has to be one this store knows how to compute:
+        // otherwise what has been written cannot even be verified.
         if expectation.digest.algorithm != DigestAlgorithm::Sha256 {
             self.discard();
             return Err(BlobError::UnsupportedAlgorithm(
@@ -722,7 +722,7 @@ impl BlobWriteSession for FileBlobWriteSession {
             ));
         }
 
-        // Lo que se publica esta en disco, no en el buffer del sistema.
+        // What is published is on disk, not in the system buffer.
         {
             let file = self.file.as_mut().ok_or(BlobError::SessionClosed)?;
             file.flush()
@@ -733,13 +733,13 @@ impl BlobWriteSession for FileBlobWriteSession {
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         }
 
-        // La comprobacion honesta del digest. Cuando el mango paso por
-        // todos los bytes, el hasher local es la verdad y no hay que
-        // volver a leer. Cuando la sesion se reablo en frio —otro
-        // proceso escribio los primeros bytes—, el hasher local NO los
-        // cubre: comparar ese digest parcial contra lo declarado daria
-        // un `DigestMismatch` falso y abortaria una subida buena. Se
-        // recalcula sobre el staging completo, una sola vez, al publicar.
+        // The honest digest check. When the handle has passed through
+        // all the bytes, the local hasher is the truth and there is no need to
+        // read again. When the session was reopened cold --another
+        // process wrote the first bytes--, the local hasher does NOT
+        // cover them: comparing that partial digest against what was declared would give
+        // a false `DigestMismatch` and abort a good upload. It is
+        // recomputed over the complete staging, only once, on publishing.
         let found = if self.covers_all {
             ContentDigest::sha256(hex_of(&self.hasher.finalize_reset()))
         } else {
@@ -749,7 +749,7 @@ impl BlobWriteSession for FileBlobWriteSession {
             ContentDigest::of_bytes(&bytes)
         };
 
-        // La longitud se comprueba contra la declarada.
+        // The length is checked against the declared one.
         if self.written != expectation.length {
             self.discard();
             return Err(BlobError::LengthMismatch {
@@ -757,7 +757,7 @@ impl BlobWriteSession for FileBlobWriteSession {
                 found: self.written,
             });
         }
-        // Y el digest, contra el declarado.
+        // And the digest, against the declared one.
         if found != expectation.digest {
             self.discard();
             return Err(BlobError::DigestMismatch {
@@ -773,32 +773,32 @@ impl BlobWriteSession for FileBlobWriteSession {
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         }
 
-        // Desde aqui hasta publicar, el recolector no puede borrar nada:
-        // lo que se mira (el blob esta) sigue siendo cierto al actuar.
+        // From here until publishing, the collector cannot delete anything:
+        // what is looked at (the blob is there) remains true when acting.
         let gate = Arc::clone(&self.gate);
         let _barrier = gate.lock().await;
 
-        // El mismo contenido no se guarda dos veces: si el blob ya esta,
-        // el staging se tira y se devuelve el mismo digest. Y se renueva
-        // su fecha: reutilizar un blob es lo que le dice al recolector
-        // que no es huerfano aunque el catalogo todavia no lo vea.
+        // The same content is not stored twice: if the blob is already there,
+        // the staging is thrown away and the same digest is returned. And its
+        // date is renewed: reusing a blob is what tells the collector
+        // that it is not an orphan even if the catalog does not see it yet.
         if target.exists() {
             touch(&target)?;
             self.discard();
             return Ok(found);
         }
 
-        // El renombrado es atomico: un lector ve el blob entero o no ve
-        // nada. Nunca ve bytes a medio escribir.
+        // The rename is atomic: a reader sees the whole blob or sees
+        // nothing. It never sees half-written bytes.
         tokio::fs::rename(&self.staging_path, &target)
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
-        // El fichero conserva la fecha de su ultimo trozo, que puede ser
-        // anterior a la gracia si la sesion estuvo parada: la fecha de
-        // publicacion es la de ahora.
+        // The file keeps the date of its last part, which may be
+        // earlier than the grace if the session was stopped: the publication
+        // date is now's.
         touch(&target)?;
-        // Y el directorio se sincroniza, para que el renombrado sobreviva
-        // a un corte de luz.
+        // And the directory is synced, so that the rename survives
+        // a power cut.
         if let Some(parent) = target.parent()
             && let Ok(directory) = tokio::fs::File::open(parent).await
         {
@@ -829,9 +829,9 @@ impl BlobWriteSession for FileBlobWriteSession {
     }
 
     fn the_digest(&self) -> ContentDigest {
-        // El hasher se clona para no consumirlo: la sesion puede seguir
-        // escribiendo, y el digest de lo escrito hasta ahora tiene que
-        // seguir siendo el mismo despues del siguiente trozo.
+        // The hasher is cloned so as not to consume it: the session can keep
+        // writing, and the digest of what has been written so far has to
+        // remain the same after the next part.
         ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()))
     }
 
@@ -839,42 +839,42 @@ impl BlobWriteSession for FileBlobWriteSession {
         Some(&self.staging_path)
     }
 
-    /// El handle persistible: la ruta del fichero de staging.
+    /// The persistable handle: the path of the staging file.
     ///
-    /// Otro proceso que comparta el disco puede reclamar la escritura
-    /// exacta por esta ruta, y la marca del fichero —el `try_lock`—
-    /// dice si el dueño anterior sigue vivo: no hay dos escritores de
-    /// un mismo staging.
+    /// Another process sharing the disk can claim the exact write
+    /// by this path, and the file mark --the `try_lock`--
+    /// says whether the previous owner is still alive: there are not two writers of
+    /// the same staging.
     fn the_staging_handle(&self) -> Option<String> {
         Some(self.staging_path.display().to_string())
     }
 
-    /// El journal toma la propiedad del staging: el Drop del mango ya
-    /// no lo borra, su ciclo de vida lo decide el journal.
+    /// The journal takes ownership of the staging: the handle's Drop no longer
+    /// deletes it, its life cycle is decided by the journal.
     fn mark_durable(&mut self) {
         self.durable = true;
     }
 
-    /// Suelta el fichero **sin borrarlo**: cerrar el descriptor libera el
-    /// bloqueo advisory, y la autoridad del journal decide cuando el
-    /// staging dejo de tener dueño. Es la mano que cambia de réplica.
+    /// Releases the file **without deleting it**: closing the descriptor releases the
+    /// advisory lock, and the journal's authority decides when the
+    /// staging ceased to have an owner. It is the hand that changes replica.
     fn detach(&mut self) -> Result<(), BlobError> {
         self.open = false;
         self.file = None;
         Ok(())
     }
 
-    /// Un mango reabierto en frio no volvio a pasar los primeros bytes
-    /// por el hasher: su digest local es parcial y el commit comprueba
-    /// el fichero completo.
+    /// A handle reopened cold has not again passed the first bytes
+    /// through the hasher: its local digest is partial and the commit checks
+    /// the complete file.
     fn the_digest_covers_all(&self) -> bool {
         self.covers_all
     }
 
-    /// El fichero de staging es durable byte a byte: soltar el mango —o
-    /// que muera el proceso— no pierde bytes, y la autoridad puede
-    /// declarar todo lo escrito. Lo que queda por debajo es la pagina
-    /// del sistema: se fuerza antes de declarar.
+    /// The staging file is durable byte by byte: releasing the handle --or
+    /// the process dying-- loses no bytes, and the authority can
+    /// declare everything written. What remains below is the system
+    /// page: it is forced before declaring.
     async fn flush_durable(&mut self) -> Result<u64, BlobError> {
         let file = self.file.as_mut().ok_or(BlobError::SessionClosed)?;
         file.flush()
@@ -893,10 +893,10 @@ impl BlobStore for FileBlobStore {
         let digest = ContentDigest::of_bytes(bytes);
         let length = bytes.len() as u64;
 
-        // El mismo contenido no se guarda dos veces. Si el blob ya esta,
-        // se comprueba al menos que no sea un resto truncado: la
-        // verificacion completa del contenido guardado es tarea del
-        // scrub, no de cada escritura.
+        // The same content is not stored twice. If the blob is already there,
+        // at least it is checked that it is not a truncated leftover: the
+        // complete verification of the stored content is a task for the
+        // scrub, not for every write.
         let gate = Arc::clone(&self.gate);
         let barrier = gate.lock().await;
         if self.exists(&digest).await.unwrap_or(false) {
@@ -915,8 +915,8 @@ impl BlobStore for FileBlobStore {
             }
         }
 
-        // La barrera se suelta antes de escribir: el commit la toma por
-        // su cuenta, y escribir los bytes no necesita excluir a nadie.
+        // The barrier is released before writing: the commit takes it on
+        // its own, and writing the bytes does not need to exclude anyone.
         drop(barrier);
         let mut session = self.begin().await?;
         session.append(bytes).await?;
@@ -953,17 +953,17 @@ impl BlobStore for FileBlobStore {
         tokio::fs::create_dir_all(&staging_dir)
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
-        // El nombre es **propio** de esta escritura: dos productores del
-        // mismo contenido escriben en ficheros distintos.
+        // The name is **its own** for this write: two producers of the
+        // same content write to different files.
         let staging_path = staging_dir.join(format!("{}.part", new_session_id()));
         let file = tokio::fs::File::create(&staging_path)
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
-        // El fichero se bloquea mientras se escribe: el bloqueo es lo que
-        // dice que esta escritura **viva**, y lo que impide que la
-        // limpieza de otro proceso se lo lleve de debajo. Sin esto, un
-        // arranque que encuentra el fichero viejo se lo lleva y la subida
-        // que llevaba minutos escribiendo falla al publicar.
+        // The file is locked while it is written: the lock is what
+        // says that this write is **alive**, and what prevents another
+        // process's cleanup from taking it from underneath. Without this, a
+        // startup that finds the old file takes it and the upload
+        // that had been writing for minutes fails on publishing.
         let std_file = match file.try_into_std() {
             Ok(std_file) => std_file,
             Err(file) => file.into_std().await,
@@ -985,22 +985,22 @@ impl BlobStore for FileBlobStore {
         }))
     }
 
-    /// Reabrir una escritura en curso a partir del handle que guardo
-    /// un journal: la ruta del fichero de staging.
+    /// Reopens a write in progress from the handle that a
+    /// journal stored: the path of the staging file.
     ///
-    /// Solo una réplica puede tener el fichero tomado —el bloqueo
-    /// advisory del `begin`—. Un resume que llega despues de la muerte
-    /// del dueno anterior reclava el bloqueo y sigue escribiendo donde
-    /// lo dejo; uno que llega mientras el dueno vive, falla.
+    /// Only one replica can have the file taken --the advisory
+    /// lock of `begin`--. A resume that arrives after the death
+    /// of the previous owner reclaims the lock and keeps writing where
+    /// it left off; one that arrives while the owner lives, fails.
     async fn resume(
         &self,
         handle: &str,
         written: u64,
     ) -> Result<Box<dyn BlobWriteSession>, BlobError> {
         let path = std::path::Path::new(handle);
-        // El handle debe ser un staging de este almacen, no una ruta
-        // arbitraria: se rechaza todo lo que no cuelgue del directorio
-        // de staging propio.
+        // The handle must be a staging of this store, not an
+        // arbitrary path: everything that does not hang from the
+        // store's own staging directory is rejected.
         let staging_dir = tokio::fs::canonicalize(self.the_staging_dir())
             .await
             .map_err(|error| BlobError::Unavailable(error.to_string()))?;
@@ -1070,19 +1070,19 @@ impl BlobStore for FileBlobStore {
             }
             Err(error) => return Err(BlobError::Unavailable(error.to_string())),
         };
-        // El tramo se pide en el sitio: se salta lo que no se quiere y se
-        // leen solo los bytes pedidos. Un almacén que leyera el fichero
-        // entero para devolver 100 bytes de un gigabyte estaria
-        // obedeciendo al cliente a costa de todos los demas.
+        // The range is requested in place: what is not wanted is skipped and
+        // only the requested bytes are read. A store that read the whole file
+        // to return 100 bytes of a gigabyte would be
+        // obeying the client at the expense of everyone else.
         if offset > 0 {
             file.seek(std::io::SeekFrom::Start(offset))
                 .await
                 .map_err(|error| BlobError::Unavailable(error.to_string()))?;
         }
-        // El buffer se reserva con lo que **hay**, no con lo que pide el
-        // llamante: un tramo que no cabe en el fichero no se reserva,
-        // se dice que no existe. Pedir un tramo de un gigabyte de un
-        // fichero de un kilobyte no puede tumbar el proceso por un
+        // The buffer is reserved with what **there is**, not with what the
+        // caller asks for: a range that does not fit in the file is not reserved,
+        // it is said not to exist. Asking for a range of a gigabyte from a
+        // one-kilobyte file cannot bring down the process over a
         // `vec![0; length]`.
         let size = file
             .metadata()
@@ -1097,10 +1097,10 @@ impl BlobStore for FileBlobStore {
             });
         }
         let mut bytes = vec![0u8; usize::try_from(length).unwrap_or(0)];
-        // Se lee hasta llenar el buffer o hasta el final del fichero: una
-        // sola lectura puede devolver menos de lo pedido sin que falte
-        // nada, y un tramo a medias sería un tramo que no es el que se
-        // pidió.
+        // It is read until the buffer is full or the end of the file: a
+        // single read may return less than requested without anything missing,
+        // and a half range would be a range that is not the one
+        // requested.
         let mut read = 0usize;
         while read < bytes.len() {
             let chunk = file
@@ -1113,9 +1113,9 @@ impl BlobStore for FileBlobStore {
             read += chunk;
         }
         if read as u64 != length {
-            // El contenido es más corto de lo pedido: el tramo no existe.
-            // Se dice cuanto se leyó, para que el que pidió sepa que le
-            // faltan bytes.
+            // The content is shorter than requested: the range does not exist.
+            // It is said how much was read, so that whoever asked knows that
+            // bytes are missing.
             return Err(BlobError::LengthMismatch {
                 expected: length,
                 found: read as u64,
@@ -1129,35 +1129,35 @@ impl BlobStore for FileBlobStore {
     }
 }
 
-/// El almacen de contenido en memoria.
+/// The in-memory content store.
 ///
-/// Es el que se usa en las pruebas y el modo fixture; la semántica es la
-/// misma que la del almacen en disco, incluida la comprobacion del digest
-/// al leer.
+/// It is the one used in tests and fixture mode; the semantics are the
+/// same as those of the on-disk store, including the digest check
+/// on read.
 ///
-/// La diferencia es que **guarda los bytes en memoria**, y eso es
-/// inherente a lo que es: sirve para fixtures y pruebas, no para artefactos
-/// de cliente.
+/// The difference is that it **keeps the bytes in memory**, and that is
+/// inherent to what it is: it serves for fixtures and tests, not for client
+/// artifacts.
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryBlobStore {
     blobs: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>>,
 }
 
 impl InMemoryBlobStore {
-    /// El almacen, vacio.
+    /// The store, empty.
     pub fn empty() -> Self {
         Self::default()
     }
 }
 
-/// Una escritura en curso en el almacen en memoria.
+/// A write in progress in the in-memory store.
 ///
-/// Acumula los bytes porque es lo que hace un almacen en memoria; la
-/// garantia de integridad es la misma.
+/// It accumulates the bytes because that is what an in-memory store does; the
+/// integrity guarantee is the same.
 ///
-/// Y el commit **guarda**: el contenido entra en el almacen con el mismo
-/// digest que el del almacen en disco. Una sesion que valida y no guarda
-/// seria un digest de nada.
+/// And the commit **stores**: the content enters the store with the same
+/// digest as that of the on-disk store. A session that validates and does not store
+/// would be a digest of nothing.
 pub struct InMemoryBlobWriteSession {
     blobs: Arc<std::sync::Mutex<std::collections::BTreeMap<String, Vec<u8>>>>,
     bytes: Vec<u8>,
@@ -1200,8 +1200,8 @@ impl BlobWriteSession for InMemoryBlobWriteSession {
                 found,
             });
         }
-        // Y lo que se ha validado se guarda: el mismo contenido, con el
-        // mismo digest, guardado una sola vez.
+        // And what has been validated is stored: the same content, with the
+        // same digest, stored only once.
         let mut blobs = self.blobs.lock().expect("el almacén no está envenenado");
         blobs.insert(found.value.clone(), std::mem::take(&mut self.bytes));
         Ok(found)
@@ -1231,7 +1231,7 @@ impl BlobStore for InMemoryBlobStore {
     async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError> {
         let digest = ContentDigest::of_bytes(bytes);
         let mut blobs = self.blobs.lock().expect("el almacén no está envenenado");
-        // El mismo contenido no se guarda dos veces: la clave es el
+        // The same content is not stored twice: the key is the
         // digest.
         blobs.insert(digest.value.clone(), bytes.to_vec());
         Ok(digest)
@@ -1310,7 +1310,7 @@ impl BlobStore for InMemoryBlobStore {
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
         let end = start.saturating_add(usize::try_from(length).unwrap_or(usize::MAX));
         if start > bytes.len() || end > bytes.len() {
-            // El contenido es más corto de lo pedido: el tramo no existe.
+            // The content is shorter than requested: the range does not exist.
             let found = bytes.len().saturating_sub(start) as u64;
             return Err(BlobError::LengthMismatch {
                 expected: length,
@@ -1325,28 +1325,28 @@ impl BlobStore for InMemoryBlobStore {
     }
 }
 
-/// Una escritura en curso que ha quedado en disco.
+/// A write in progress that has been left on disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagingEntry {
-    /// Donde esta el fichero de staging.
+    /// Where the staging file is.
     pub path: PathBuf,
-    /// Cuantos bytes tiene escritos.
+    /// How many bytes it has written.
     pub length: u64,
-    /// Cuanto tiempo lleva escrito.
+    /// How long it has been written.
     pub age: Duration,
 }
 
-/// Donde vive un blob, dentro de una raiz.
+/// Where a blob lives, within a root.
 fn blob_path(root: &Path, digest: &ContentDigest) -> PathBuf {
     let hex = &digest.value;
     root.join(&hex[..2]).join(&hex[2..4]).join(hex)
 }
 
-/// Un identificador unico para una escritura en curso.
+/// A unique identifier for a write in progress.
 ///
-/// Combina el proceso, el reloj y un contador, para que dos escrituras
-/// **del mismo** contenido, y hasta de procesos distintos, nunca
-/// compartan fichero de staging.
+/// It combines the process, the clock and a counter, so that two writes
+/// **of the same** content, and even from different processes, never
+/// share a staging file.
 fn new_session_id() -> String {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -1357,7 +1357,7 @@ fn new_session_id() -> String {
     format!("{}-{nanos:x}-{counter:x}", std::process::id())
 }
 
-/// El hexadecimal de los bytes.
+/// The hexadecimal of the bytes.
 fn hex_of(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -1367,11 +1367,11 @@ fn hex_of(bytes: &[u8]) -> String {
     out
 }
 
-/// Renueva la fecha de un blob: "se uso ahora".
+/// Renews the date of a blob: "it was used now".
 ///
-/// Es la marca que lee el recolector. Si no se puede escribir, el error
-/// sube: reutilizar un blob sin dejar la marca es dejar al recolector
-/// libre para borrarlo.
+/// It is the mark that the collector reads. If it cannot be written, the error
+/// propagates: reusing a blob without leaving the mark is leaving the collector
+/// free to delete it.
 fn touch(path: &Path) -> Result<(), BlobError> {
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -1381,11 +1381,11 @@ fn touch(path: &Path) -> Result<(), BlobError> {
         .map_err(|error| BlobError::Unavailable(error.to_string()))
 }
 
-/// El digest que dice la ruta de un blob, si la ruta es la de uno.
+/// The digest that the path of a blob says, if the path is that of one.
 ///
-/// Un blob es `<root>/<ab>/<cd>/<64 hex>`, con `ab` y `cd` los dos pares
-/// de caracteres iniciales del nombre. Cualquier otra cosa no es de este
-/// almacen y no se lista.
+/// A blob is `<root>/<ab>/<cd>/<64 hex>`, with `ab` and `cd` the two pairs
+/// of initial characters of the name. Anything else is not of this
+/// store and is not listed.
 fn digest_of_blob_file(prefix_a: &str, prefix_b: &str, name: &str) -> Option<ContentDigest> {
     let valid = name.len() == 64
         && name
@@ -1420,10 +1420,10 @@ impl BlobReclaim for FileBlobStore {
                     for file in std::fs::read_dir(second.path()).map_err(unavailable)? {
                         let file = file.map_err(unavailable)?;
                         let name = file.file_name().to_string_lossy().into_owned();
-                        // Primero la forma del nombre: un objeto de
-                        // cuarentena (HSP-192) comparte shard pero lleva
-                        // sufijo, y lo que no es un digest exacto no es
-                        // de este almacen: no se lista ni se borra.
+                        // First the shape of the name: a quarantine
+                        // object (HSP-192) shares the shard but carries a
+                        // suffix, and what is not an exact digest is not
+                        // of this store: it is neither listed nor deleted.
                         if name.len() != 64
                             || !name
                                 .bytes()
@@ -1438,14 +1438,14 @@ impl BlobReclaim for FileBlobStore {
                         let metadata = match file.metadata() {
                             Ok(metadata) if metadata.is_file() => metadata,
                             Ok(_) => continue,
-                            // Se borro mientras se listaba: ya no esta.
+                            // It was deleted while it was being listed: it is no longer there.
                             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                                 continue;
                             }
                             Err(error) => return Err(unavailable(error)),
                         };
-                        // Sin fecha no hay edad, y sin edad no se puede
-                        // decidir nada: es un fallo, no un blob joven.
+                        // Without a date there is no age, and without age nothing can be
+                        // decided: it is a failure, not a young blob.
                         let modified = metadata.modified().map_err(unavailable)?;
                         blobs.push(StoredBlob {
                             digest,
@@ -1493,8 +1493,8 @@ impl BlobReclaim for FileBlobStore {
         }
         match tokio::fs::remove_file(&path).await {
             Ok(()) => {
-                // El borrado se sincroniza con el directorio: un corte de
-                // luz no resucita un blob que ya se dio por borrado.
+                // The delete is synced with the directory: a power
+                // cut does not resurrect a blob that was already considered deleted.
                 if let Some(parent) = path.parent()
                     && let Ok(directory) = tokio::fs::File::open(parent).await
                 {
@@ -1510,11 +1510,11 @@ impl BlobReclaim for FileBlobStore {
     }
 }
 
-/// La marca de una version de fichero: el mtime en nanos y el tamano.
+/// The mark of a file version: the mtime in nanos and the size.
 ///
-/// Dos escrituras concurrentes de contenido distinto producen marcas
-/// distintas; el rename no toca la marca, asi que una cuarentena o un
-/// borrado condicional bajo la barrera es atomo-seguro.
+/// Two concurrent writes of different content produce different
+/// marks; the rename does not touch the mark, so a quarantine or a
+/// conditional delete under the barrier is atomic-safe.
 fn file_marker(path_key: &str, metadata: &std::fs::Metadata) -> VersionMarker {
     let modified = metadata
         .modified()
@@ -1532,9 +1532,9 @@ fn file_marker(path_key: &str, metadata: &std::fs::Metadata) -> VersionMarker {
 #[async_trait::async_trait]
 impl crate::reclaim::ConditionalBlob for FileBlobStore {
     fn supports_conditional_delete(&self) -> bool {
-        // El rename sobre la barrera del almacen es atomico y no toca
-        // la marca: en un POSIX local si se puede borrar una version
-        // exacta sin pisar la reescritura de otro.
+        // The rename under the store barrier is atomic and does not touch
+        // the mark: on a local POSIX an exact version can be deleted
+        // without trampling another's rewrite.
         true
     }
 
@@ -1580,8 +1580,8 @@ impl crate::reclaim::ConditionalBlob for FileBlobStore {
             }
             Err(error) => return Err(BlobError::Unavailable(error.to_string())),
         };
-        // La condicion se mira con la barrera tomada: sigue siendo
-        // cierta cuando se borra debajo.
+        // The condition is looked at with the barrier taken: it remains
+        // true when deleting underneath.
         let current = file_marker(&path.to_string_lossy(), &metadata);
         if current.marker != marker.marker {
             return Ok(ConditionalOutcome::NotApplied);
@@ -1629,10 +1629,10 @@ impl crate::reclaim::ConditionalBlob for FileBlobStore {
         if current.marker != marker.marker {
             return Ok(ConditionalOutcome::NotApplied);
         }
-        // La cuarentena es un nombre NUEVO, jamas la clave original:
-        // un rename sobre la barrera deja la version marcada leible
-        // bajo el nombre nuevo y libera la clave para la reescritura
-        // del publisher sin carrera posible.
+        // The quarantine is a NEW name, never the original key:
+        // a rename under the barrier leaves the marked version readable
+        // under the new name and frees the key for the publisher's
+        // rewrite without a possible race.
         if let Some(parent) = quarantine.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -1654,8 +1654,8 @@ impl crate::reclaim::ConditionalBlob for FileBlobStore {
 mod tests {
     use super::*;
 
-    /// El contenido de la prueba: bytes distinguibles, para que un tramo
-    /// equivocado se note.
+    /// The content of the test: distinguishable bytes, so that a wrong
+    /// range is noticed.
     fn the_bytes() -> Vec<u8> {
         (0u8..=255).collect()
     }
@@ -1681,8 +1681,8 @@ mod tests {
         let store = InMemoryBlobStore::empty();
         store.put(&bytes).await.expect("the content is stored");
 
-        // Un tramo que se sale del final no es un tramo corto: es un
-        // tramo que no existe, y el error lo dice.
+        // A range that goes past the end is not a short range: it is a
+        // range that does not exist, and the error says so.
         let error = store
             .read_range(&digest, 250, 10)
             .await
@@ -1734,7 +1734,7 @@ mod tests {
         );
     }
 
-    /// HSP-192, AC2: la marca de version protege al que no fue visto.
+    /// HSP-192, AC2: the version mark protects the one that was not seen.
     #[tokio::test]
     async fn a_conditional_delete_never_touches_an_unmarked_version() {
         let directory = tempfile::tempdir().expect("a temp dir");
@@ -1751,8 +1751,8 @@ mod tests {
             .expect("head works")
             .expect("the blob is there");
 
-        // Otra version (la que un publisher pondria tras reescribir):
-        // la condicion no se cumple y NO se toca nada.
+        // Another version (the one a publisher would put after rewriting):
+        // the condition is not met and NOTHING is touched.
         let stale = VersionMarker {
             marker: format!("{}-otro", marker.marker),
             ..marker.clone()
@@ -1769,7 +1769,7 @@ mod tests {
             "an unmarked version is never deleted"
         );
 
-        // La version marcada si se borra.
+        // The marked version does get deleted.
         let outcome = store
             .conditional()
             .unwrap()
@@ -1783,8 +1783,8 @@ mod tests {
         assert!(!store.exists(&digest).await.expect("exists"));
     }
 
-    /// HSP-192, AC2: la cuarentena es versionada —nombre nuevo, nunca
-    /// reescritura de la clave original— y deja los bytes reconciliables.
+    /// HSP-192, AC2: the quarantine is versioned --new name, never a
+    /// rewrite of the original key-- and leaves the bytes reconcilable.
     #[tokio::test]
     async fn a_quarantine_moves_the_marked_version_to_a_new_name() {
         let directory = tempfile::tempdir().expect("a temp dir");
@@ -1818,15 +1818,15 @@ mod tests {
             "the marked version is quarantined: {outcome:?}"
         );
 
-        // La clave original se libero; los bytes viven bajo el nombre
-        // nuevo, intactos.
+        // The original key was freed; the bytes live under the new
+        // name, intact.
         assert!(!store.exists(&digest).await.expect("exists"));
         let moved = std::fs::read(&quarantine_key).expect("the quarantined bytes are there");
         assert_eq!(moved, bytes);
 
-        // Y list_blobs no los ve: lo que no reconoce como suyo no se
-        // lista ni se borra. La cuarentena es de la reconciliacion, no
-        // del censo.
+        // And list_blobs does not see them: what it does not recognize as its own is not
+        // listed nor deleted. The quarantine belongs to reconciliation, not
+        // to the census.
         let listed = store
             .reclaimer()
             .unwrap()

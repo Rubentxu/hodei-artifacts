@@ -1,32 +1,32 @@
 //! Fail-closed contract of the unique Dgraph profile (HSP-209).
 //!
-//! El AC#1 de HSP-209 tiene dos mitades y esta suite fija ambas sin tocar
-//! red ni discos:
+//! HSP-209 AC#1 has two halves and this suite pins both without touching
+//! network or disks:
 //!
-//! 1. **El perfil se valida consigo mismo.** Un `AppConfig` con `[graph]`
-//!    declarado valida la sección del alpha (endpoint con puerto, TLS con
-//!    su CA, credenciales completas). Un despliegue que declara mal el
-//!    alpha no arranca.
-//! 2. **No hay otro perfil.** Desde HSP-314 F4 el motor embebido no existe:
-//!    con `[graph]`, `[database] db_type = "rocksdb"` produce un rechazo que
-//!    nombra el valor rechazado, y una configuración sin `[graph]` (el
-//!    perfil antiguo) se rechaza con el mensaje de migración.
+//! 1. **The profile validates against itself.** An `AppConfig` with `[graph]`
+//!    declared validates the alpha section (endpoint with port, TLS with
+//!    its CA, complete credentials). A deployment that declares the
+//!    alpha wrongly does not start.
+//! 2. **There is no other profile.** Since HSP-314 F4 the embedded engine does not exist:
+//!    with `[graph]`, `[database] db_type = "rocksdb"` produces a rejection that
+//!    names the rejected value, and a configuration without `[graph]` (the
+//!    old profile) is rejected with the migration message.
 //!
-//! Los caminos usan el mismo deserializador estratificado y el mismo
-//! `validate()`/`preflight_storage()` que el arranque del binario, y los
-//! ficheros que la distribución emite de verdad: una regresión aquí
-//! significa que un perfil emitido arranca mal, no que un struct discute
-//! consigo mismo.
+//! The paths use the same layered deserializer and the same
+//! `validate()`/`preflight_storage()` as the binary's boot, and the
+//! files the distribution actually emits: a regression here
+//! means an emitted profile boots badly, not that a struct argues
+//! with itself.
 
 use std::path::PathBuf;
 
 use hodei_artifacts_api::config::AppConfig;
 
-/// El perfil productivo del grafo tal y como lo emite la distribución.
+/// The production graph profile as the distribution emits it.
 const SHIPPED_GRAPH_PROFILE: &str = "config/dgraph.toml";
 
-/// La base que la distribución emite para todos los perfiles: sin `[graph]`
-/// no es un perfil arrancable.
+/// The base the distribution emits for all profiles: without `[graph]`
+/// it is not a bootable profile.
 const SHIPPED_BASE_PROFILE: &str = "config/default.toml";
 
 /// The message the Dgraph profile answers with when a backend that is not the
@@ -54,8 +54,8 @@ fn deserialize_like_the_boot(sources: &[String]) -> Result<AppConfig, config::Co
     Ok(app_config)
 }
 
-/// Sustituye una línea `clave = ...` de un perfil por el valor dado, sin
-/// tocar el resto: la única variable bajo prueba es el knob declarado.
+/// Replaces a `key = ...` line of a profile with the given value, without
+/// touching the rest: the only variable under test is the declared knob.
 fn with_line(profile: &str, key: &str, value: &str) -> String {
     let replacement = format!("{key} = {value}");
     let replaced = profile
@@ -77,17 +77,17 @@ fn with_line(profile: &str, key: &str, value: &str) -> String {
 }
 
 /// G1: the shipped graph profile is a valid deployment of the single
-/// authority: `[graph]` presente y validada (endpoint con puerto, TLS con
-/// su CA declarada, credenciales completas — la contraseña llega por el
-/// entorno del proceso, que es la cadena que la config promete y que aquí
-/// se simula con una fuente superpuesta), y `db_type = "dgraph"`.
+/// authority: `[graph]` present and validated (endpoint with port, TLS with
+/// its declared CA, complete credentials: the password arrives through the
+/// process environment, which is the chain the config promises and which here
+/// is simulated with an overlaid source), and `db_type = "dgraph"`.
 #[test]
 fn the_shipped_graph_profile_boots_on_the_single_authority() {
-    // HODEI_GRAPH__CREDENTIALS__PASSWORD entra por el entorno del
-    // proceso, nunca por el TOML: el overlay simula esa fuente sin tocar
-    // el entorno compartido del test. Un TOML que exija la contraseña
-    // para validar sería, además, el fallo que esta suite existe para
-    // impedir.
+    // HODEI_GRAPH__CREDENTIALS__PASSWORD comes in through the process
+    // environment, never through the TOML: the overlay simulates that source without touching
+    // the shared test environment. A TOML that required the password
+    // to validate would be, moreover, the failure this suite exists to
+    // prevent.
     let config = deserialize_like_the_boot(&[
         shipped_profile(SHIPPED_GRAPH_PROFILE),
         "[graph.credentials]\npassword = \"from-the-process-environment\"".to_string(),
@@ -110,8 +110,8 @@ fn the_shipped_graph_profile_boots_on_the_single_authority() {
 #[test]
 fn the_graph_profile_refuses_the_rocksdb_fallback_by_name() {
     let graph_profile = shipped_profile(SHIPPED_GRAPH_PROFILE);
-    // La forma literal en que un despliegue intenta el fallback: mantener
-    // [graph] y reclamar el motor embebido en [database].
+    // The literal way a deployment attempts the fallback: keep
+    // [graph] and claim the embedded engine in [database].
     let claims_rocksdb = with_line(&graph_profile, "db_type", "\"rocksdb\"");
     let error = deserialize_like_the_boot(&[claims_rocksdb])
         .expect_err("db_type = \"rocksdb\" with [graph] must be refused, never booted");
@@ -132,7 +132,7 @@ fn the_graph_profile_refuses_the_rocksdb_fallback_by_name() {
 #[test]
 fn an_impossible_graph_deployment_does_not_boot() {
     let graph_profile = shipped_profile(SHIPPED_GRAPH_PROFILE);
-    // Sin puerto no hay endpoint: ni localhost implícito ni intento.
+    // Without a port there is no endpoint: neither an implicit localhost nor an attempt.
     let no_port = with_line(&graph_profile, "endpoint", "\"alpha.internal\"");
     let error = deserialize_like_the_boot(&[no_port])
         .expect_err("an endpoint without port must be refused");
@@ -140,7 +140,7 @@ fn an_impossible_graph_deployment_does_not_boot() {
         error.to_string().to_lowercase().contains("endpoint"),
         "the error names the endpoint: {error}"
     );
-    // TLS habilitado sin CA propia es la decisión que no se toma sola.
+    // TLS enabled without its own CA is a decision that does not take itself.
     let tls_without_ca = with_line(&graph_profile, "ca_cert_path", "none");
     let error = deserialize_like_the_boot(&[tls_without_ca])
         .expect_err("TLS without its CA must be refused");
@@ -150,10 +150,10 @@ fn an_impossible_graph_deployment_does_not_boot() {
     );
 }
 
-/// G4: no hay perfil embebido. La base que emite la distribución, sin
-/// `[graph]`, es el perfil antiguo y se rechaza con el mensaje de
-/// migración; y reclamar el backend del grafo sin declarar `[graph]` sigue
-/// siendo un rechazo, no un arranque.
+/// G4: there is no embedded profile. The base the distribution emits, without
+/// `[graph]`, is the old profile and is rejected with the migration
+/// message; and claiming the graph backend without declaring `[graph]` is
+/// still a rejection, not a boot.
 #[test]
 fn a_configuration_without_the_graph_is_refused_with_the_migration_message() {
     let base = shipped_profile(SHIPPED_BASE_PROFILE);

@@ -1,21 +1,21 @@
-//! El modelo del catálogo.
+//! The catalog model.
 //!
-//! Aquí se separan las cuatro cosas que un repositorio de artefactos
-//! confunde con facilidad, y que este catálogo mantiene separadas:
+//! Here the four things that an artifact repository easily
+//! confuses are separated, and this catalog keeps them separate:
 //!
-//! 1. **La identidad del repositorio**: cuenta, clave, formato, modo y
-//!    configuración versionada.
-//! 2. **La identidad del contenido**: el digest, que no depende de donde
-//!    vive ni de quien lo publicó.
-//! 3. **Las coordenadas del paquete**: el nombre y la versión, que son
-//!    inmutables una vez publicadas.
-//! 4. **La ruta del asset**: la posición dentro del repositorio, que es lo
-//!    que el cliente pide y lo que puede apuntar a otra versión sin tocar
-//!    los bytes.
+//! 1. **The repository identity**: account, key, format, mode and
+//!    versioned configuration.
+//! 2. **The content identity**: the digest, which does not depend on where it
+//!    lives or who published it.
+//! 3. **The package coordinates**: the name and the version, which are
+//!    immutable once published.
+//! 4. **The asset path**: the position within the repository, which is what
+//!    the client requests and what can point to another version without touching
+//!    the bytes.
 //!
-//! La separación no es estética. Es lo que permite que una etiqueta
-//! mutable se mueva sin alterar un blob, y que dos cuentas usen el mismo
-//! camino sin pisarse.
+//! The separation is not aesthetic. It is what allows a mutable tag
+//! to move without altering a blob, and two accounts to use the same
+//! path without stepping on each other.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::ContentDigest;
@@ -23,75 +23,75 @@ use kernel::Hrn;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// El formato del contenido que guarda un repositorio.
+/// The format of the content that a repository stores.
 ///
-/// El catálogo los conoce todos porque tiene que poder describir un
-/// repositorio antes de que exista el adaptador que lo sirve. Un formato
-/// que aún no se sirve no es un error: es un repositorio que se declara y
-/// que espera su turno.
+/// The catalog knows all of them because it must be able to describe a
+/// repository before the adapter that serves it exists. A format
+/// that is not served yet is not an error: it is a repository that is declared and
+/// waits for its turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RepositoryFormat {
-    /// Contenido opaco, served tal cual. Es el formato de laRaw 1.0.
+    /// Opaque content, served as is. It is the Raw 1.0 format.
     Raw,
-    /// Imágenes OCI, con manifests y tags.
+    /// OCI images, with manifests and tags.
     Oci,
-    /// Maven2, con `maven-metadata.xml` y layouts de grupo.
+    /// Maven2, with `maven-metadata.xml` and group layouts.
     Maven2,
-    /// npm, con packuments, scopes y dist-tags.
+    /// npm, with packuments, scopes and dist-tags.
     Npm,
-    /// PyPI, con la Simple API.
+    /// PyPI, with the Simple API.
     PyPi,
-    /// Cargo, con el índice sparse.
+    /// Cargo, with the sparse index.
     Cargo,
-    /// NuGet v3, con service index y flat container.
+    /// NuGet v3, with service index and flat container.
     NuGet,
-    /// Go Modules, con el protocolo GOPROXY.
+    /// Go Modules, with the GOPROXY protocol.
     Go,
-    /// Helm, con charts y repositorio de índices.
+    /// Helm, with charts and index repository.
     Helm,
-    /// APT, con índices y firmas.
+    /// APT, with indexes and signatures.
     Apt,
-    /// RPM, con creación de repositorios.
+    /// RPM, with repository creation.
     Rpm,
-    /// Terraform/OpenTofu, como **network mirror** de providers.
+    /// Terraform/OpenTofu, as a provider **network mirror**.
     ///
-    /// La modalidad servida es la de espejo: sirve los documentos del
-    /// protocolo (`index.json`, el índice del provider, el documento de
-    /// versión y los zips) traídos del upstream y guardados tal cual. No es
-    /// un registry de origen ni un module registry: no se publica en él.
+    /// The served modality is the mirror one: it serves the protocol documents
+    /// (`index.json`, the provider index, the version
+    /// document and the zips) brought from the upstream and stored as is. It is not
+    /// an origin registry or a module registry: nothing is published to it.
     Terraform,
-    /// Conan 2, con recipes y binarios identificados por recipe revision,
-    /// `package_id` y package revision.
+    /// Conan 2, with recipes and binaries identified by recipe revision,
+    /// `package_id` and package revision.
     ///
-    /// La modalidad servida es la hosted: un cliente Conan 2 publica con
-    /// `conan upload` y resuelve con `conan install` contra el remote de
-    /// Hodei. El proxy necesita el dialecto de upstream validado con
-    /// cliente real antes de poder declararse.
+    /// The served modality is the hosted one: a Conan 2 client publishes with
+    /// `conan upload` and resolves with `conan install` against the Hodei
+    /// remote. The proxy needs the upstream dialect validated with a
+    /// real client before it can be declared.
     Conan,
-    /// Ansible Galaxy, collections por API v3.
+    /// Ansible Galaxy, collections via API v3.
     ///
-    /// La modalidad servida es la hosted: un cliente `ansible-galaxy`
-    /// publica con `collection publish` y resuelve con `collection
-    /// install`/`verify` contra la superficie v3 de Hodei. El proxy no se
-    /// declara: el upstream real entrega por redirects firmados y no hay
-    /// cliente verificado contra el.
+    /// The served modality is the hosted one: an `ansible-galaxy` client
+    /// publishes with `collection publish` and resolves with `collection
+    /// install`/`verify` against Hodei's v3 surface. The proxy is not
+    /// declared: the real upstream delivers through signed redirects and there is no
+    /// client verified against it.
     Galaxy,
-    /// Hugging Face, modelos por el dialecto de lectura del hub.
+    /// Hugging Face, models via the hub's read dialect.
     ///
-    /// Es una superficie de **lectura de contenido sembrado**, no una
-    /// modalidad servida: un cliente `hf` (`huggingface_hub`) resuelve con
-    /// `hf download` contra la superficie del hub de Hodei (revision JSON y
-    /// resolve con redirects relativos hacia el CAS), pero el release no
-    /// tiene ingesta por API —el handler solo admite GET/HEAD y el
-    /// contenido entra por la siembra del operador—. Por eso `serves_modes`
-    /// es vacio, no se ofrece al crear repositorios y la matriz de
-    /// conformidad lo marca como no soportado en las tres modalidades.
+    /// It is a **read surface for seeded content**, not a
+    /// served modality: an `hf` client (`huggingface_hub`) resolves with
+    /// `hf download` against Hodei's hub surface (JSON revision and
+    /// resolve with relative redirects to the CAS), but the release has no
+    /// API ingestion --the handler only admits GET/HEAD and the
+    /// content enters through the operator's seeding--. For that reason `serves_modes`
+    /// is empty, it is not offered when creating repositories and the conformance
+    /// matrix marks it as unsupported in all three modalities.
     Hf,
 }
 
 impl RepositoryFormat {
-    /// El nombre canónico del formato, el que va al cable y a la base.
+    /// The canonical name of the format, the one that goes to the wire and to the database.
     pub fn as_str(&self) -> &'static str {
         match self {
             RepositoryFormat::Raw => "raw",
@@ -150,8 +150,8 @@ impl RepositoryFormat {
     /// the three modalities: what a client publishes, what a proxy brings
     /// from its upstream, and what a group composes of its members. The
     /// OCI surface serves the hosted one, the proxy one and the group one:
-    /// un grupo OCI resuelve la referencia entre sus miembros con la
-    /// precedencia que declara su configuracion. The cargo one serves only the hosted
+    /// an OCI group resolves the reference among its members with the
+    /// precedence declared by its configuration. The cargo one serves only the hosted
     /// one for now: a push is a write, and a write lands where the client
     /// publishes. The proxy semantics of cargo need a client-verified
     /// upstream before they can be declared. The go surface serves the
@@ -202,27 +202,27 @@ impl RepositoryFormat {
                 RepositoryMode::Proxy,
                 RepositoryMode::Group,
             ],
-            // Terraform habla dos dialectos segun la modalidad: el mirror
-            // de providers es proxy (sirve lo que el upstream tiene,
-            // cacheado; no publica y no ensambla grupos) y el registry de
-            // modulos es hosted (el hub guarda los tarballs que se
-            // publican en el, versionados e inmutables).
+            // Terraform speaks two dialects depending on the modality: the provider
+            // mirror is proxy (it serves what the upstream has,
+            // cached; it does not publish and does not assemble groups) and the module
+            // registry is hosted (the hub stores the tarballs that are
+            // published to it, versioned and immutable).
             RepositoryFormat::Terraform => &[RepositoryMode::Proxy, RepositoryMode::Hosted],
-            // Conan sirve la hosted: el cliente publica lo que ha creado y
-            // resuelve lo que el remote guarda. El proxy necesita el
-            // dialecto de upstream probado con cliente real, y el group
-            // una resolución compuesta probada, antes de poder prometerse.
+            // Conan serves the hosted one: the client publishes what it has created and
+            // resolves what the remote stores. The proxy needs the upstream
+            // dialect proven with a real client, and the group needs a
+            // composed resolution proven, before they can be promised.
             RepositoryFormat::Conan => &[RepositoryMode::Hosted],
-            // Galaxy sirve la hosted: el cliente publica con `collection
-            // publish` y resuelve con `collection install`/`verify`. El
-            // proxy no se declara: el upstream real entrega por redirects
-            // firmados, un dialecto que no se ha probado con cliente.
+            // Galaxy serves the hosted one: the client publishes with `collection
+            // publish` and resolves with `collection install`/`verify`. The
+            // proxy is not declared: the real upstream delivers through signed
+            // redirects, a dialect that has not been proven with a client.
             RepositoryFormat::Galaxy => &[RepositoryMode::Hosted],
-            // Hf no sirve ninguna modalidad: sin ingesta por API (el
-            // handler solo lee y el contenido lo siembra el operador) no
-            // hay un hosted que prometer, y sin escritura tampoco proxy ni
-            // group. La lectura del contenido sembrado existe y esta
-            // probada con cliente real, pero no es una modalidad.
+            // Hf serves no modality: without API ingestion (the
+            // handler only reads and the content is seeded by the operator) there
+            // is no hosted to promise, and without writes there is no proxy or
+            // group either. Reading the seeded content exists and is
+            // proven with a real client, but it is not a modality.
             RepositoryFormat::Hf => &[],
             RepositoryFormat::Helm => &[],
         }
@@ -290,15 +290,15 @@ impl RepositoryFormat {
     }
 }
 
-/// Como se comporta un repositorio respecto del exterior.
+/// How a repository behaves with respect to the outside.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RepositoryMode {
-    /// El repositorio guarda lo que se publica en el.
+    /// The repository stores what is published to it.
     Hosted,
-    /// El repositorio resuelve contra un upstream y cachea lo que baja.
+    /// The repository resolves against an upstream and caches what it downloads.
     Proxy,
-    /// El repositorio agrupa otros repositorios y resuelve en ellos.
+    /// The repository groups other repositories and resolves in them.
     Group,
 }
 
@@ -309,7 +309,7 @@ impl std::fmt::Display for RepositoryMode {
 }
 
 impl RepositoryMode {
-    /// El nombre canónico del modo, el que va al cable y a la base.
+    /// The canonical name of the mode, the one that goes to the wire and to the database.
     pub fn as_str(&self) -> &'static str {
         match self {
             RepositoryMode::Hosted => "hosted",
@@ -332,73 +332,73 @@ impl RepositoryMode {
         }
     }
 
-    /// Si esta release sabe comportarse así.
+    /// Whether this release knows how to behave this way.
     ///
-    /// El catálogo sabe DESCRIBIR los tres modos, porque un repositorio se
-    /// declara antes de existir; la release solo los SIRVE si sabe
-    /// resolverlos. El `match` es exhaustivo a propósito: un modo nuevo
-    /// obliga a decidir aquí si ya se sirve, y prometerlo sin cumplirlo sería
-    /// una promesa falsa que se paga cuando alguien publica donde no hay
-    /// nada.
+    /// The catalog knows how to DESCRIBE the three modes, because a repository is
+    /// declared before it exists; the release only SERVES them if it knows how to
+    /// resolve them. The `match` is exhaustive on purpose: a new mode
+    /// forces a decision here on whether it is already served, and promising it without delivering would be
+    /// a false promise that is paid for when someone publishes where there is
+    /// nothing.
     ///
-    /// Un proxy resuelve contra el upstream que declara su configuración y
-    /// lo que baja lo guarda como cualquier otro contenido. Un grupo resuelve
-    /// en sus miembros, en orden, y no guarda nada propio.
+    /// A proxy resolves against the upstream declared by its configuration and
+    /// what it downloads is stored like any other content. A group resolves
+    /// in its members, in order, and stores nothing of its own.
     pub fn is_served_by_this_release(&self) -> bool {
         match self {
             RepositoryMode::Hosted | RepositoryMode::Proxy | RepositoryMode::Group => true,
         }
     }
 
-    /// Si el repositorio guarda contenido propio (assets, versiones, blobs).
+    /// Whether the repository stores its own content (assets, versions, blobs).
     ///
-    /// Un grupo solo contiene una lista de miembros: lo que lee sale de
-    /// ellos, nunca de filas suyas. Por eso ninguna escritura de contenido
-    /// -- ni la de un cliente ni la caché de un proxy -- puede llegar a él.
+    /// A group only contains a list of members: what it reads comes from
+    /// them, never from rows of its own. For that reason no content write
+    /// -- neither a client's nor a proxy's cache -- can reach it.
     pub fn stores_content(&self) -> bool {
         matches!(self, RepositoryMode::Hosted | RepositoryMode::Proxy)
     }
 
-    /// Si los clientes pueden publicar, etiquetar y mover aliases aquí.
+    /// Whether clients can publish, tag and move aliases here.
     ///
-    /// Solo un repositorio `Hosted` guarda lo que se publica en él. Un
-    /// proxy escribe su propio contenido al resolver, pero ninguna petición
-    /// de un cliente lo escribe ni lo mueve: lo que dice un proxy sale del
-    /// upstream, no de quien pregunta.
+    /// Only a `Hosted` repository stores what is published to it. A
+    /// proxy writes its own content when resolving, but no request
+    /// from a client writes or moves it: what a proxy says comes from the
+    /// upstream, not from whoever asks.
     pub fn accepts_client_writes(&self) -> bool {
         matches!(self, RepositoryMode::Hosted)
     }
 }
 
-/// Donde vive el blob de un digest.
+/// Where the blob of a digest lives.
 ///
-/// El digest identifica el contenido, pero no dice donde se guardan sus
-/// bytes. Esa es una decision de la cuenta, y por eso es política y no
-/// detalle de implementación.
+/// The digest identifies the content, but does not say where its
+/// bytes are stored. That is a decision of the account, and for that reason it is policy and not
+/// an implementation detail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DigestScope {
-    /// Un solo blob por digest, compartido por todas las cuentas.
+    /// A single blob per digest, shared by all accounts.
     ///
-    /// Dos cuentas que publican el mismo contenido comparten los bytes.
-    /// Es lo que hace un registro eficiente, y también lo que hace que el
-    /// borrado de un blob tenga que tener en cuenta a todos.
+    /// Two accounts that publish the same content share the bytes.
+    /// It is what makes a registry efficient, and also what makes
+    /// deleting a blob have to take everyone into account.
     Global,
-    /// Un blob por digest y cuenta: el mismo contenido en dos cuentas son
-    /// dos juegos de bytes.
+    /// One blob per digest and account: the same content in two accounts is
+    /// two sets of bytes.
     ///
-    /// Es lo que necesita una cuenta que no quiere que su contenido se
-    /// pueda deduplicar contra el de otra cuenta.
+    /// It is what an account needs when it does not want its content to
+    /// be deduplicated against that of another account.
     AccountPartitioned,
 }
 
 impl DigestScope {
-    /// La clave con la que el CAS guarda el blob.
+    /// The key with which the CAS stores the blob.
     ///
-    /// El CAS guarda los digests SHA-256 por su valor hexadecimal, así que
-    /// la clave global es ese valor. La forma particionada antepone la
-    /// cuenta, y por eso las dos políticas no pueden colar el mismo blob
-    /// en la misma ranura.
+    /// The CAS stores SHA-256 digests by their hexadecimal value, so
+    /// the global key is that value. The partitioned form prefixes the
+    /// account, and for that reason the two policies cannot slip the same blob
+    /// into the same slot.
     pub fn blob_key(&self, account: &str, digest: &ContentDigest) -> String {
         match self {
             DigestScope::Global => digest.value.clone(),
@@ -407,25 +407,25 @@ impl DigestScope {
     }
 }
 
-/// Donde vive un blob concreto.
+/// Where a specific blob lives.
 ///
-/// El digest dice **que** es el contenido; la ubicación dice **donde**
-/// están sus bytes. Preguntar al almacén de bytes por el contenido
-/// significa preguntar por las dos cosas: el mismo digest puede estar en
-/// la ranura global o en la particionada de una cuenta, y quien busca solo
-/// una de las dos encuentra un blob que no es el suyo, o no encuentra nada.
+/// The digest says **what** the content is; the location says **where**
+/// its bytes are. Asking the byte store for the content
+/// means asking for both things: the same digest can be in
+/// the global slot or in an account's partitioned one, and whoever looks for only
+/// one of the two finds a blob that is not theirs, or finds nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobLocation {
-    /// La cuenta a la que pertenece el contenido.
+    /// The account the content belongs to.
     pub account: String,
-    /// El ámbito en el que vive.
+    /// The scope in which it lives.
     pub scope: DigestScope,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
 }
 
 impl BlobLocation {
-    /// La ubicación de un contenido en un ámbito.
+    /// The location of a content in a scope.
     pub fn new(account: &str, scope: DigestScope, digest: ContentDigest) -> Self {
         Self {
             account: account.to_string(),
@@ -434,35 +434,35 @@ impl BlobLocation {
         }
     }
 
-    /// La clave con la que el CAS guarda ese blob.
+    /// The key with which the CAS stores that blob.
     pub fn blob_key(&self) -> String {
         self.scope.blob_key(&self.account, &self.digest)
     }
 }
 
-/// La configuración de un repositorio, con la versión que la identifica.
+/// The configuration of a repository, with the version that identifies it.
 ///
-/// La versión no es decorativa: es lo que permite saber si lo que tiene el
-/// cliente delante es lo que el repositorio tiene guardado. Un cambio de
-/// configuración incrementa la versión, y dos configuraciones con la misma
-/// versión son la misma configuración.
+/// The version is not decorative: it is what makes it possible to know whether what the
+/// client has in front of it is what the repository has stored. A change in
+/// configuration increments the version, and two configurations with the same
+/// version are the same configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepositoryConfig {
-    /// La versión de esta configuración.
+    /// The version of this configuration.
     pub version: u64,
-    /// Donde viven los blobs de este repositorio.
+    /// Where the blobs of this repository live.
     pub digest_scope: DigestScope,
-    /// Los ajustes propios del formato.
+    /// The format's own settings.
     ///
-    /// Un objeto vacío es un objeto válido: un repositorio recién creado
-    /// no tiene ajustes que aplicar.
+    /// An empty object is a valid object: a newly created repository
+    /// has no settings to apply.
     #[serde(default)]
     pub config_settings: Value,
 }
 
 impl RepositoryConfig {
-    /// La configuración por defecto: versión 1, digests compartidos y sin
-    /// ajustes.
+    /// The default configuration: version 1, shared digests and no
+    /// settings.
     pub fn new(digest_scope: DigestScope) -> Self {
         Self {
             version: 1,
@@ -471,45 +471,45 @@ impl RepositoryConfig {
         }
     }
 
-    /// Si los ajustes son un objeto y no otra cosa.
+    /// Whether the settings are an object and not something else.
     ///
-    /// Un `settings` que no es un objeto no tiene interpretación posible, y
-    /// aceptarlo sería aceptar una configuración que nadie puede leer.
+    /// A `settings` that is not an object has no possible interpretation, and
+    /// accepting it would be accepting a configuration that nobody can read.
     pub fn has_readable_settings(&self) -> bool {
         self.config_settings.is_object()
     }
 }
 
-/// La identidad de un repositorio.
+/// The identity of a repository.
 ///
-/// El HRN es el nombre canónico del recurso y no se deduce de nada: lo
-/// declara quien crea el repositorio, y el catálogo lo conserva tal cual
-/// para que el mismo HRN siga significando lo mismo después de un
-/// reinicio.
+/// The HRN is the canonical name of the resource and is not deduced from anything: it is
+/// declared by whoever creates the repository, and the catalog keeps it as is
+/// so that the same HRN keeps meaning the same thing after a
+/// restart.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RepositoryDescriptor {
-    /// El nombre canónico del recurso (HRN v2).
+    /// The canonical name of the resource (HRN v2).
     pub hrn: Hrn,
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// La clave corta del repositorio dentro de la cuenta.
+    /// The short key of the repository within the account.
     pub repo_key: String,
-    /// El formato del contenido.
+    /// The format of the content.
     pub format: RepositoryFormat,
-    /// Como se comporta.
+    /// How it behaves.
     pub mode: RepositoryMode,
-    /// La configuración versionada.
+    /// The versioned configuration.
     pub config: RepositoryConfig,
-    /// Cuando se creó.
+    /// When it was created.
     pub created_at: DateTime<Utc>,
-    /// Cuando se tocó por última vez.
+    /// When it was last touched.
     pub updated_at: DateTime<Utc>,
 }
 
-/// El HRN canónico de un repositorio.
+/// The canonical HRN of a repository.
 ///
-/// Se construye con la misma forma que cualquier otro recurso HRN v2, con
-/// el tipo `repository` y la clave del repositorio como identificador.
+/// It is built with the same shape as any other HRN v2 resource, with
+/// the type `repository` and the repository key as the identifier.
 pub fn repository_hrn(
     partition: &str,
     service: &str,
@@ -527,148 +527,148 @@ pub fn repository_hrn(
     )
 }
 
-/// Las coordenadas de una versión dentro de un repositorio.
+/// The coordinates of a version within a repository.
 ///
-/// Son inmutables: una versión publicada no cambia de nombre ni de
-/// contenido. Si el contenido cambia, es otra versión.
+/// They are immutable: a published version does not change its name or its
+/// content. If the content changes, it is another version.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PackageCoordinates {
-    /// El nombre del paquete.
+    /// The name of the package.
     pub package_name: String,
-    /// La versión del paquete.
+    /// The version of the package.
     pub package_version: String,
 }
 
-/// Una versión publicada: el contenido con su nombre.
+/// A published version: the content with its name.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PackageVersion {
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// El nombre y la versión.
+    /// The name and the version.
     pub coordinates: PackageCoordinates,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el contenido.
+    /// The bytes the content has.
     pub size_bytes: u64,
-    /// Cuando se publicó.
+    /// When it was published.
     pub published_at: DateTime<Utc>,
 }
 
-/// Un asset: una ruta de un repositorio.
+/// An asset: a path of a repository.
 ///
-/// El asset es la posición, no el contenido: apunta a una versión y a su
-/// digest. Mover el asset a otra versión es una operación del índice, y
-/// no toca los bytes de ninguna de las dos.
+/// The asset is the position, not the content: it points to a version and to its
+/// digest. Moving the asset to another version is an index operation, and
+/// it does not touch the bytes of either one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetRecord {
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// La ruta dentro del repositorio.
+    /// The path within the repository.
     pub asset_path: String,
-    /// La versión a la que apunta.
+    /// The version it points to.
     pub coordinates: PackageCoordinates,
-    /// El digest del contenido al que apunta.
+    /// The digest of the content it points to.
     pub digest: ContentDigest,
-    /// Los bytes que tiene ese contenido.
+    /// The bytes that content has.
     pub size_bytes: u64,
-    /// El `subject` del manifiesto, si lo tiene.
+    /// The `subject` of the manifest, if it has one.
     ///
-    /// Es el digest del manifiesto al que este apunta: lo que hace que un
-    /// manifiesto sea un **referrer** de otro. Un asset sin `subject` es
-    /// un manifiesto del todo normal, y uno con `subject` cuelga de otro.
+    /// It is the digest of the manifest this one points to: what makes a
+    /// manifest a **referrer** of another. An asset without `subject` is
+    /// a perfectly normal manifest, and one with `subject` hangs from another.
     pub subject: Option<ContentDigest>,
-    /// Cuando se movió por última vez.
+    /// When it was last moved.
     pub updated_at: DateTime<Utc>,
 }
 
-/// Un referrer: un manifiesto que apunta a otro con `subject`.
+/// A referrer: a manifest that points to another with `subject`.
 ///
-/// Es la relación que la API de referrers del protocolo expone: los
-/// manifiestos de una cuenta y un repositorio cuyo `subject` es un
-/// digest. No dice nada sobre la **validez** de lo que el referrer
-/// afirma: un referrer es un manifiesto que dice que cuelga de otro, y
-/// quien juzgue lo que dice es el motor de confianza, no el catálogo.
+/// It is the relationship that the protocol's referrers API exposes: the
+/// manifests of an account and a repository whose `subject` is a
+/// digest. It says nothing about the **validity** of what the referrer
+/// claims: a referrer is a manifest that says it hangs from another, and
+/// whoever judges what it says is the trust engine, not the catalog.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReferrerRecord {
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// La ruta del referrer dentro del repositorio.
+    /// The path of the referrer within the repository.
     pub asset_path: String,
-    /// El digest del manifiesto del referrer.
+    /// The digest of the referrer's manifest.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el manifiesto del referrer.
+    /// The bytes the referrer's manifest has.
     pub size_bytes: u64,
-    /// El digest del `subject` al que apunta.
+    /// The digest of the `subject` it points to.
     pub subject: ContentDigest,
 }
 
-/// Una referencia viva a un blob del CAS.
+/// A live reference to a blob of the CAS.
 ///
-/// La referencia dice que blob sirve **una ruta**: es la fila que se
-/// mueve con el asset, para que la descarga y la recolección no
-/// apontam a contenidos distintos.
+/// The reference says which blob serves **a path**: it is the row that
+/// moves with the asset, so that the download and the collection do not
+/// point to different contents.
 ///
-/// El blob de una versión publicada lo protege su fila de versión, que es
-/// inmutable y conserva el digest y la longitud. La referencia protege el
-/// contenido que la ruta sirve **mientras lo sirva**: mover el asset
-/// reescribe la referencia al digest nuevo, y la versión que se queda
-/// atrás sigue declarada, con su digest, en su propia fila. Quien recoja
-/// blobs tiene que tener en cuenta las dos cosas.
+/// The blob of a published version is protected by its version row, which is
+/// immutable and keeps the digest and the length. The reference protects the
+/// content that the path serves **while it serves it**: moving the asset
+/// rewrites the reference to the new digest, and the version that is left
+/// behind remains declared, with its digest, in its own row. Whoever collects
+/// blobs has to take both things into account.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlobReference {
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// La ruta que referencia el blob.
+    /// The path that references the blob.
     pub asset_path: String,
-    /// El digest del blob.
+    /// The digest of the blob.
     pub digest: ContentDigest,
-    /// Donde vive el blob.
+    /// Where the blob lives.
     pub scope: DigestScope,
-    /// Los bytes que tiene el blob.
+    /// The bytes the blob has.
     pub size_bytes: u64,
-    /// En que canal vive el contenido en este repositorio.
+    /// In which channel the content lives in this repository.
     ///
-    /// Lo escribe la **admisión**: un artefacto recién admitido esta en
-    /// cuarentena, y salir de ella exige una decision de confianza. Y no
-    /// es del blob: el blob es inmutable y lo que decide es la relación
-    /// entre el repositorio y lo que guarda.
+    /// It is written by **admission**: a newly admitted artifact is in
+    /// quarantine, and leaving it requires a trust decision. And it
+    /// does not belong to the blob: the blob is immutable and what decides is the relationship
+    /// between the repository and what it stores.
     pub trust_state: TrustState,
-    /// Cuando se escribió la referencia.
+    /// When the reference was written.
     pub updated_at: DateTime<Utc>,
 }
 
-/// En que canal vive un artefacto dentro de un repositorio.
+/// In which channel an artifact lives within a repository.
 ///
-/// El estado **no** es del blob: el blob es inmutable y su digest es su
-/// identidad, y el mismo contenido puede estar en cuarentena en una
-/// cuenta y promovido en otra. El estado es de la **relación** entre el
-/// repositorio y el contenido, que es lo que la referencia del catálogo
-/// escribe.
+/// The state is **not** the blob's: the blob is immutable and its digest is its
+/// identity, and the same content can be in quarantine in one
+/// account and promoted in another. The state belongs to the **relationship** between the
+/// repository and the content, which is what the catalog reference
+/// writes.
 ///
-/// Y el estado por defecto de un artefacto recién admitido es la
-/// **cuarentena**: sin decision de confianza no hay promocion, y un
-/// artefacto sin decision no ha dicho nada todavia.
+/// And the default state of a newly admitted artifact is
+/// **quarantine**: without a trust decision there is no promotion, and an
+/// artifact without a decision has not said anything yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustState {
-    /// El artefacto esta admitido, pero no promovido: esta en
-    /// cuarentena.
+    /// The artifact is admitted, but not promoted: it is in
+    /// quarantine.
     Quarantined,
-    /// El artefacto ha sido promovido con una decision de confianza
-    /// vigente.
+    /// The artifact has been promoted with a trust decision
+    /// in force.
     Trusted,
 }
 
 impl TrustState {
-    /// El nombre canonico, tal y como va en la base.
+    /// The canonical name, as it goes in the database.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Quarantined => "quarantined",
@@ -676,11 +676,11 @@ impl TrustState {
         }
     }
 
-    /// El estado que dice el nombre.
+    /// The state that the name says.
     ///
-    /// Lo que no se conoce es cuarentena: un estado que no se puede
-    /// leer no es un permiso, y un artefacto cuyo canal no se sabe no
-    /// puede estar en el canal de confianza.
+    /// What is not known is quarantine: a state that cannot be
+    /// read is not a permission, and an artifact whose channel is not known cannot
+    /// be in the trust channel.
     pub fn of(name: &str) -> Self {
         match name {
             "trusted" => Self::Trusted,
@@ -689,167 +689,167 @@ impl TrustState {
     }
 }
 
-/// Una etiqueta mutable: un nombre que apunta a una versión.
+/// A mutable tag: a name that points to a version.
 ///
-/// Mover la etiqueta cambia esta fila y nada más. La versión que queda
-/// atrás conserva su digest y sus bytes, y sigue siendo alcanzable por
-/// sus coordenadas.
+/// Moving the tag changes this row and nothing else. The version that is left
+/// behind keeps its digest and its bytes, and remains reachable by
+/// its coordinates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutableTag {
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// El nombre de la etiqueta.
+    /// The name of the tag.
     pub tag_name: String,
-    /// La versión a la que apunta ahora.
+    /// The version it now points to.
     pub coordinates: PackageCoordinates,
-    /// Cuando se movió.
+    /// When it was moved.
     pub updated_at: DateTime<Utc>,
 }
 
-/// Lo que se quiere publicar, en una sola operación.
+/// What is to be published, in a single operation.
 ///
-/// Publicar son cuatro cosas a la vez: la versión, el asset, la referencia
-/// al blob y las etiquetas. Van juntas porque un asset sin versión no
-/// resuelve, y una versión sin asset no se puede descargar.
+/// Publishing is four things at once: the version, the asset, the blob
+/// reference and the tags. They go together because an asset without a version does not
+/// resolve, and a version without an asset cannot be downloaded.
 ///
-/// La publicación lleva **quién** publica y con qué correlación, porque
-/// publicar es una operación de alguien: sin eso, el rastro de lo que se
-/// publicó no dice quién lo publicó. Lo que **no** lleva es la cuenta: el
-/// tenant del evento de auditoría es la cuenta **verificada** del
-/// principal, y una cuenta que declara el llamante no es una cuenta
-/// verificada.
+/// The publication carries **who** publishes and with what correlation, because
+/// publishing is someone's operation: without that, the trail of what was
+/// published does not say who published it. What it does **not** carry is the account: the
+/// tenant of the audit event is the **verified** account of the
+/// principal, and an account declared by the caller is not a verified
+/// account.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Publication {
-    /// El repositorio donde se publica.
+    /// The repository where it is published.
     pub repository: String,
-    /// La ruta dentro del repositorio.
+    /// The path within the repository.
     pub asset_path: String,
-    /// El nombre y la versión.
+    /// The name and the version.
     pub coordinates: PackageCoordinates,
-    /// El digest del contenido.
+    /// The digest of the content.
     pub digest: ContentDigest,
-    /// Los bytes que tiene el contenido.
+    /// The bytes the content has.
     pub size_bytes: u64,
-    /// Las etiquetas que nacen con esta publicación.
+    /// The tags that are born with this publication.
     pub tags: Vec<String>,
-    /// El actor que publica.
+    /// The actor that publishes.
     ///
-    /// El catálogo verifica la **cuenta** contra el autorizador, no el
-    /// subject: por eso el actor lo declara quien publica, y por eso no se
-    /// llama "verificado". En la capa HTTP el actor sale del principal
-    /// verificado, así que allí sí lo es.
+    /// The catalog verifies the **account** against the authorizer, not the
+    /// subject: for that reason the actor is declared by whoever publishes, and for that reason it is not
+    /// called "verified". In the HTTP layer the actor comes from the verified
+    /// principal, so there it is indeed.
     pub actor: String,
-    /// La correlación de la petición.
+    /// The correlation of the request.
     pub correlation_id: String,
-    /// Si la ruta puede apuntar a OTRA versión cuando ya apunta a una.
+    /// Whether the path may point to ANOTHER version when it already points to one.
     ///
-    /// El catálogo es, por defecto, **inmutable**: una ruta que ya apunta
-    /// a una versión no se mueve sola, y publicar otro contenido en la
-    /// misma ruta es un conflicto. Eso es lo correcto para un catálogo de
-    /// paquetes, donde una versión publicada es un hecho que no se
-    /// reescribe.
+    /// The catalog is, by default, **immutable**: a path that already points
+    /// to a version does not move on its own, and publishing other content at the
+    /// same path is a conflict. That is correct for a package
+    /// catalog, where a published version is a fact that is not
+    /// rewritten.
     ///
-    /// Un servidor de contenido **crudo** es otra cosa: su ruta es la
-    /// dirección del contenido, y reenviar un fichero a la misma
-    /// dirección es reponer lo que hay. Por eso la sustitución es una
-    /// **decisión explícita** y no un efecto secundario: quién publica
-    /// dice si puede, y quién no lo dice, no puede.
+    /// A **raw** content server is something else: its path is the
+    /// address of the content, and resending a file to the same
+    /// address is restoring what is there. For that reason replacement is an
+    /// **explicit decision** and not a side effect: whoever publishes
+    /// says whether it can, and whoever does not say so, cannot.
     ///
-    /// Lo que se sustituye es el **puntero**: la versión anterior no se
-    /// borra ni se reescribe, sigue estando, y la ruta pasa a apuntar a
-    /// la nueva.
+    /// What is replaced is the **pointer**: the previous version is not
+    /// deleted or rewritten, it is still there, and the path now points to
+    /// the new one.
     #[serde(default)]
     pub overwrite: bool,
-    /// La condición que el cliente exige sobre lo que hay ahora.
+    /// The condition that the client demands on what is there now.
     ///
-    /// No es un adorno del llamante: es lo que hace que la escritura sea
-    /// **condicional**, y el catálogo la comprueba **dentro de la misma
-    /// transacción** que escribe las filas. Comprobarla antes, en la
-    /// frontera, deja una ventana entre la comprobación y la escritura en
-    /// la que otra publicación se cuela.
+    /// It is not a decoration of the caller: it is what makes the write
+    /// **conditional**, and the catalog checks it **inside the same
+    /// transaction** that writes the rows. Checking it earlier, at the
+    /// boundary, leaves a window between the check and the write in
+    /// which another publication slips in.
     ///
-    /// Sin condición, la publicación es lo que es: una escritura.
+    /// Without a condition, the publication is what it is: a write.
     #[serde(default)]
     pub precondition: Option<Precondition>,
-    /// El `subject` del manifiesto, si lo tiene.
+    /// The `subject` of the manifest, if it has one.
     ///
-    /// Es el digest del manifiesto al que este cuelga: lo que hace que un
-    /// manifiesto sea un **referrer** de otro. Se escribe en la **misma**
-    /// transacción que la publicación, y no en una segunda operación: un
-    /// referrer visible a medias sería un referrer que existe cuando no
-    /// existe, y la lista de referrers dejaría de ser la verdad.
+    /// It is the digest of the manifest this one hangs from: what makes a
+    /// manifest a **referrer** of another. It is written in the **same**
+    /// transaction as the publication, and not in a second operation: a
+    /// half-visible referrer would be a referrer that exists when it does not
+    /// exist, and the referrers list would stop being the truth.
     ///
-    /// El `subject` **no** se comprueba contra el catálogo: el protocolo
-    /// exige aceptar un manifiesto cuyo `subject` todavía no está, porque
-    /// un cliente puede subir el referrer antes que el sujeto.
+    /// The `subject` is **not** checked against the catalog: the protocol
+    /// requires accepting a manifest whose `subject` is not there yet, because
+    /// a client may upload the referrer before the subject.
     #[serde(default)]
     pub subject: Option<ContentDigest>,
 }
 
-/// Lo que el cliente exige que haya en la ruta antes de escribir.
+/// What the client demands be at the path before writing.
 ///
-/// No es lo mismo que un conflicto: el conflicto dice que hay algo
-/// distinto de lo que se publica, y la precondición dice que **lo que
-/// hay** no es lo que el cliente esperaba. El cliente los trata distinto,
-/// y por eso el catálogo los distingue.
+/// It is not the same as a conflict: the conflict says there is something
+/// different from what is published, and the precondition says that **what
+/// is there** is not what the client expected. The client treats them differently,
+/// and for that reason the catalog distinguishes them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Precondition {
-    /// Lo que hay en la ruta tiene que ser uno de estos contenidos.
+    /// What is at the path must be one of these contents.
     ///
-    /// Es el `If-Match` de RFC 9110: una etiqueta, o una lista de
-    /// etiquetas de las que tiene que coincidir una.
+    /// It is the `If-Match` of RFC 9110: an entity tag, or a list of
+    /// entity tags of which one must match.
     Present(Vec<ContentDigest>),
-    /// En la ruta no puede haber nada.
+    /// There must be nothing at the path.
     ///
-    /// Es el `If-None-Match: *` de RFC 9110.
+    /// It is the `If-None-Match: *` of RFC 9110.
     Absent,
-    /// En la ruta tiene que haber algo.
+    /// There must be something at the path.
     ///
-    /// Es el `If-Match: *` de RFC 9110.
+    /// It is the `If-Match: *` of RFC 9110.
     Exists,
-    /// Lo que hay en la ruta tiene que ser **otro** contenido.
+    /// What is at the path must be **other** content.
     ///
-    /// Es el `If-None-Match` con etiquetas sobre una escritura: "escribe,
-    /// pero solo si lo que hay no es ninguno de estos".
+    /// It is the `If-None-Match` with entity tags on a write: "write,
+    /// but only if what is there is none of these".
     Other(Vec<ContentDigest>),
 }
 
-/// Lo que la publicación dejó.
+/// What the publication left.
 ///
-/// `created` dice si las filas se crearon o si ya estaban ahí con el mismo
-/// contenido. Republicar lo mismo no es un error ni una escritura: es lo
-/// mismo, dicho dos veces.
+/// `created` says whether the rows were created or were already there with the same
+/// content. Republishing the same thing is neither an error nor a write: it is the
+/// same thing, said twice.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PublishOutcome {
-    /// La versión.
+    /// The version.
     pub version: PackageVersion,
-    /// El asset.
+    /// The asset.
     pub asset: AssetRecord,
-    /// La referencia al blob.
+    /// The reference to the blob.
     pub reference: BlobReference,
-    /// Si las filas se crearon.
+    /// Whether the rows were created.
     pub created: bool,
-    /// Lo que pasó con la fila del asset.
+    /// What happened to the asset row.
     ///
-    /// `created` dice si se escribió algo, y no dice **qué**: publicar
-    /// por primera vez y reponer lo que hay escriben filas las dos, y
-    /// para el cliente no es lo mismo. La disposición lo dice.
+    /// `created` says whether something was written, and does not say **what**: publishing
+    /// for the first time and restoring what is there both write rows, and
+    /// for the client it is not the same. The disposition says it.
     pub disposition: AssetDisposition,
 }
 
-/// Lo que pasó con la fila del asset de una publicación.
+/// What happened to the asset row of a publication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AssetDisposition {
-    /// La fila no existía, y se ha creado.
+    /// The row did not exist, and has been created.
     Created,
-    /// La fila existía, y se ha movido a otro contenido.
+    /// The row existed, and has been moved to other content.
     ///
-    /// La versión anterior no se borra ni se reescribe: lo que se mueve es
-    /// el puntero.
+    /// The previous version is not deleted or rewritten: what moves is
+    /// the pointer.
     Replaced,
-    /// La fila ya estaba con este contenido, y no se ha tocado.
+    /// The row was already there with this content, and has not been touched.
     Unchanged,
 }
 

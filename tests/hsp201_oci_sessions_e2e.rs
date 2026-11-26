@@ -1,26 +1,26 @@
-//! HSP-201: sesiones OCI reanudables entre dos réplicas sobre el
-//! almacén de ficheros de verdad.
+//! HSP-201: resumable OCI sessions between two replicas over the
+//! real file store.
 //!
-//! El slice saca el registro de sesión de la memoria del proceso. Este
-//! corte lo prueba sin servidor: un **journal** compartido (la autoridad
-//! del offset), dos **registros** —las dos réplicas— y un
-//! [`FileBlobStore`] de verdad en un directorio temporal.
+//! The slice takes the session registry out of the process memory. This
+//! cut tests it without a server: a shared **journal** (the offset
+//! authority), two **registries** -- the two replicas -- and a real
+//! [`FileBlobStore`] in a temporary directory.
 //!
-//! - **AC1**: una subida abierta en la réplica A continúa en la réplica
-//!   B, y el `PUT` de cierre se hace en B: el offset y el digest del
-//!   blob publicado son los de siempre. Un escritor rancio (replay) no
-//!   mueve la autoridad; un staging con bytes por encima de la autoridad
-//!   se recorta al reanudar, y un cierre cuya longitud no cuadra no
-//!   publica nada.
-//! - **AC2**: una sesión de otra cuenta no existe para esta: ni se
-//!   reanuda ni su offset se lee desde otro ámbito.
-//! - **AC3**: el barrido del TTL cierra la autoridad y aborta el staging
-//!   huérfano de una sesión que otra réplica abandonó, sin publicar
-//!   nunca bytes no verificados.
+//! - **AC1**: an upload opened on replica A continues on replica
+//!   B, and the closing `PUT` is done on B: the offset and the digest of the
+//!   published blob are the usual ones. A stale writer (replay) does not
+//!   move the authority; a staging with bytes above the authority
+//!   is trimmed on resume, and a close whose length does not match
+//!   publishes nothing.
+//! - **AC2**: a session of another account does not exist for this one: it is neither
+//!   resumed nor is its offset read from another scope.
+//! - **AC3**: the TTL sweep closes the authority and aborts the orphan
+//!   staging of a session that another replica abandoned, without ever publishing
+//!   unverified bytes.
 //!
-//! El journal de Dgraph (la misma autoridad sobre el grafo real, con su
-//! CAS arbitrado por el servidor y su barrido acotado al inquilino) se
-//! prueba en `tests/hsp201_sessions_dgraph_it.rs`.
+//! The Dgraph journal (the same authority over the real graph, with its
+//! CAS arbitrated by the server and its sweep bounded to the tenant) is
+//! tested in `tests/hsp201_sessions_dgraph_it.rs`.
 
 use std::io::Write;
 use std::sync::Arc;
@@ -32,27 +32,27 @@ use hodei_artifacts_api::quota::{QuotaLedger, QuotaLimits};
 use hodei_evidence::ContentDigest;
 use hodei_hub::blob::{BlobStore, CommitExpectation, FileBlobStore};
 
-/// El contenido de un trozo: veinte kilobytes deterministas.
+/// The content of a chunk: twenty deterministic kilobytes.
 fn a_piece(seed: u8) -> Vec<u8> {
     (0u16..20_480)
         .map(|value| ((value as u8).wrapping_add(seed)) % 251)
         .collect()
 }
 
-/// Una reserva sin límites: estas pruebas prueban sesiones, no cuotas.
+/// A reservation without limits: these tests test sessions, not quotas.
 fn an_unlimited_ticket(account: &str) -> hodei_artifacts_api::quota::QuotaTicket {
     QuotaLedger::new(QuotaLimits::default())
         .begin(account, None)
         .expect("an unlimited ledger admits everything")
 }
 
-/// El digest declarado de un contenido.
+/// The declared digest of a content.
 fn a_declared_digest(content: &[u8]) -> ContentDigest {
     ContentDigest::of_bytes(content)
 }
 
-/// Abre una sesión en la réplica, escribe un trozo y lo confiesa ante la
-/// autoridad: el camino del `PATCH`, menos el alambre.
+/// Opens a session on the replica, writes a chunk and confesses it to the
+/// authority: the `PATCH` path, minus the wire.
 async fn write_a_piece(
     registry: &UploadRegistry,
     store: &FileBlobStore,
@@ -79,8 +79,8 @@ async fn write_a_piece(
         Advance::Admitted(next) => {
             let mut session = session.lock().await;
             session.set_journal_version(next);
-            // La réplica suelta el mango: el staging es del journal, y
-            // la próxima petición —aquí o en la otra réplica— lo toma.
+            // The replica lets go of the handle: the staging belongs to the journal, and
+            // the next request -- here or on the other replica -- takes it.
             session.release_writer_when_possible();
             next
         }
@@ -88,7 +88,7 @@ async fn write_a_piece(
     }
 }
 
-/// AC1 — lo que la réplica A empezó lo termina la réplica B.
+/// AC1 — what replica A started, replica B finishes.
 #[tokio::test]
 async fn two_replicas_publish_one_blob_through_the_authority() {
     let root = tempfile::tempdir().expect("a scratch root");
@@ -103,7 +103,7 @@ async fn two_replicas_publish_one_blob_through_the_authority() {
     let second = a_piece(2);
     let whole = [first.as_slice(), second.as_slice()].concat();
 
-    // POST en A: la sesión nace en la autoridad y el mango se suelta.
+    // POST on A: the session is born in the authority and the handle is released.
     let session = replica_a
         .open(
             "acme",
@@ -116,18 +116,18 @@ async fn two_replicas_publish_one_blob_through_the_authority() {
     let id = session.lock().await.the_id().to_string();
     drop(session);
 
-    // PATCH del primer trozo en A: escribe, la autoridad admite, el
-    // mango vuelve a soltarse.
+    // PATCH of the first chunk on A: it writes, the authority admits, the
+    // handle is released again.
     write_a_piece(&replica_a, &store, "acme", "releases", &id, 0, &first).await;
 
-    // PATCH del segundo trozo en B: B no tiene asiento; la autoridad
-    // dice el offset y el almacén reabre el staging.
+    // PATCH of the second chunk on B: B has no seat; the authority
+    // states the offset and the store reopens the staging.
     write_a_piece(&replica_b, &store, "acme", "releases", &id, 1, &second).await;
 
-    // PUT de cierre en B: el último mango commitea contra el digest
-    // declarado. La sesión arrancó en otro proceso, así que el digest
-    // local no cubre los primeros bytes; quien publica es el almacén,
-    // y la promesa no cambia.
+    // Closing PUT on B: the last handle commits against the declared
+    // digest. The session started in another process, so the local digest
+    // does not cover the first bytes; the one that publishes is the store,
+    // and the promise does not change.
     let shared = replica_b
         .find_or_resume("acme", "releases", &id, &store)
         .await
@@ -155,7 +155,7 @@ async fn two_replicas_publish_one_blob_through_the_authority() {
         "the published bytes are not the bytes the two replicas wrote"
     );
 
-    // La autoridad se quedó en el offset final y la sesión se cierra.
+    // The authority stayed at the final offset and the session is closed.
     let record = journal
         .get(&id)
         .await
@@ -179,8 +179,8 @@ async fn two_replicas_publish_one_blob_through_the_authority() {
     );
 }
 
-/// AC1 — un escritor rancio no mueve la autoridad y un staging por
-/// encima de ella no duplica bytes al publicar.
+/// AC1 — a stale writer does not move the authority and a staging above
+/// it does not duplicate bytes when publishing.
 #[tokio::test]
 async fn a_stale_replay_never_duplicates_bytes() {
     let root = tempfile::tempdir().expect("a scratch root");
@@ -206,20 +206,20 @@ async fn a_stale_replay_never_duplicates_bytes() {
     let id = session.lock().await.the_id().to_string();
     drop(session);
 
-    // El primer trozo se confiesa: autoridad en `first`, revision 1.
+    // The first chunk is confessed: authority at `first`, revision 1.
     write_a_piece(&replica_a, &store, "acme", "releases", &id, 0, &first).await;
 
-    // Un replay con la revision vieja no mueve nada: es el `416` del
-    // protocolo, y la autoridad sigue donde estaba.
+    // A replay with the old revision moves nothing: it is the protocol's
+    // `416`, and the authority stays where it was.
     match replica_a.advance(&id, 0, 999_999).await {
         Advance::Conflict(offset) => assert_eq!(offset, first.len() as u64),
         other => panic!("the stale writer was not refused: {other:?}"),
     }
 
-    // Y los bytes por encima de la autoridad se van al reanudar: un
-    // staging mas largo que lo declarado se recorta, no se publica.
-    // El handle sale de la autoridad, no de un asiento: la réplica A
-    // ya solto su mango y no lo vuelve a tomar.
+    // And the bytes above the authority go away on resume: a
+    // staging longer than declared is trimmed, not published.
+    // The handle comes from the authority, not from a seat: replica A
+    // already let go of its handle and does not take it again.
     let handle = journal
         .get(&id)
         .await
@@ -233,8 +233,8 @@ async fn a_stale_replay_never_duplicates_bytes() {
         .write_all(&second)
         .expect("a stray piece is scribbled past the authority");
 
-    // La réplica B reanuda con la autoridad como verdad: lo que sobra
-    // se corta y el cursor que B ve es el de la autoridad.
+    // Replica B resumes with the authority as truth: what is left over
+    // is cut and the cursor B sees is the authority's.
     let shared = replica_b
         .find_or_resume("acme", "releases", &id, &store)
         .await
@@ -279,7 +279,7 @@ async fn a_stale_replay_never_duplicates_bytes() {
         "a replayed piece reached the published blob"
     );
 
-    // Un cierre cuya longitud no cuadra no publica: el almacén descarta.
+    // A close whose length does not match does not publish: the store discards.
     let session = replica_b
         .open(
             "acme",
@@ -320,7 +320,7 @@ async fn a_stale_replay_never_duplicates_bytes() {
     );
 }
 
-/// AC2 — una sesión de otra cuenta no existe: no se reanuda ni se lee.
+/// AC2 — a session of another account does not exist: it is neither resumed nor read.
 #[tokio::test]
 async fn an_alien_session_is_invisible() {
     let root = tempfile::tempdir().expect("a scratch root");
@@ -343,8 +343,8 @@ async fn an_alien_session_is_invisible() {
     let id = session.lock().await.the_id().to_string();
     drop(session);
 
-    // Otra cuenta no la ve —ni siquiera en la otra réplica— y su offset
-    // tampoco es legible desde su ambito.
+    // Another account does not see it -- not even on the other replica -- and its offset
+    // is not readable from its scope either.
     assert!(
         replica_b
             .find_or_resume("other", "releases", &id, &store)
@@ -366,7 +366,7 @@ async fn an_alien_session_is_invisible() {
             .expect("the journal answers"),
         None
     );
-    // La dueña si la ve.
+    // The owner does see it.
     assert!(
         replica_b
             .find_or_resume("acme", "releases", &id, &store)
@@ -376,17 +376,17 @@ async fn an_alien_session_is_invisible() {
     );
 }
 
-/// AC3 — el barrido reconcilia el staging huerfano y no publica nada.
+/// AC3 — the sweep reconciles the orphan staging and publishes nothing.
 #[tokio::test]
 async fn the_ttl_sweep_aborts_the_orphan_without_publishing() {
     let root = tempfile::tempdir().expect("a scratch root");
     let store = FileBlobStore::new(root.path()).expect("the file store");
     let journal: Arc<dyn SessionJournal> = Arc::new(MemoryJournal::new());
-    // Una gracia de unos milisegundos: la subida no termina nunca.
+    // A grace of a few milliseconds: the upload never finishes.
     let ttl = Duration::from_millis(20);
     let replica_a = UploadRegistry::with_journal(ttl, 8, Arc::clone(&journal));
-    // La "otra réplica" es el mismo journal sin asientos: es la
-    // autoridad que sobrevivio al crash.
+    // The "other replica" is the same journal without seats: it is the
+    // authority that survived the crash.
     let replica_b = UploadRegistry::with_journal(ttl, 8, Arc::clone(&journal));
 
     let piece = a_piece(3);
@@ -403,7 +403,7 @@ async fn the_ttl_sweep_aborts_the_orphan_without_publishing() {
     drop(session);
     write_a_piece(&replica_a, &store, "acme", "releases", &id, 0, &piece).await;
 
-    // El crash: la réplica B espera a que la gracia pase y barre.
+    // The crash: replica B waits for the grace to pass and sweeps.
     tokio::time::sleep(Duration::from_millis(80)).await;
     let reconciled = replica_b.sweep(&store).await.expect("the sweep answers");
     assert!(
@@ -411,7 +411,7 @@ async fn the_ttl_sweep_aborts_the_orphan_without_publishing() {
         "the orphan of a dead replica was not reconciled"
     );
 
-    // Nada publicado: el staging murio y el blob no existe.
+    // Nothing published: the staging died and the blob does not exist.
     assert!(
         !store
             .exists(&a_declared_digest(&piece))
@@ -419,7 +419,7 @@ async fn the_ttl_sweep_aborts_the_orphan_without_publishing() {
             .expect("the store answers"),
         "the sweep published unverified bytes"
     );
-    // La autoridad la cerró el propio barrido.
+    // The authority was closed by the sweep itself.
     let record = journal
         .get(&id)
         .await

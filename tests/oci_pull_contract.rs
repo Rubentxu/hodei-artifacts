@@ -1,16 +1,16 @@
-//! El corte pull de OCI Distribution (HSP-100 / HAR-06), contra el wire.
+//! The OCI Distribution pull slice (HSP-100 / HAR-06), against the wire.
 //!
-//! `hodei-hub::oci` ya lee manifiestos como **tipos**; esta suite prueba el
-//! protocolo **de verdad**: un binario real, un catálogo real, un almacén
-//! de bytes real y `curl` de verdad, sobre los endpoints `/v2` de la
-//! distribución OCI.
+//! `hodei-hub::oci` already reads manifests as **types**; this suite tests the
+//! protocol **for real**: a real binary, a real catalog, a real byte
+//! store and a real `curl`, over the `/v2` endpoints of the OCI
+//! distribution.
 //!
-//! El corte es **pull**: `GET /v2/`, blobs y manifests por digest y por
-//! tag, con negociación de tipos. El push no se anuncia todavia.
+//! The slice is **pull**: `GET /v2/`, blobs and manifests by digest and by
+//! tag, with type negotiation. Push is not announced yet.
 //!
-//! Los fixtures (blobs, manifest, tag) se siembran en un **proceso
-//! aparte**, como el resto del catálogo, contra el namespace Dgraph del
-//! despliegue.
+//! The fixtures (blobs, manifest, tag) are seeded in a **separate
+//! process**, like the rest of the catalog, against the deployment's
+//! Dgraph namespace.
 
 mod support;
 
@@ -23,47 +23,47 @@ use support::{
     SECOND_REPOSITORY,
 };
 
-/// El media type de un manifiesto OCI.
+/// The media type of an OCI manifest.
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
-/// El media type de un manifiesto Docker schema2.
+/// The media type of a Docker schema2 manifest.
 const DOCKER_MANIFEST: &str = "application/vnd.docker.distribution.manifest.v2+json";
-/// Un media type que este registro NO soporta en este corte (index).
+/// A media type this registry does NOT support in this slice (index).
 const INDEX_MEDIA_TYPE: &str = "application/vnd.oci.image.index.v1+json";
 
-/// Un tipo que este registro **no** sirve: la firma de Notary.
+/// A type this registry does **not** serve: the Notary signature.
 ///
-/// El indice de OCI ya se sirve --lo publico HSP-102--, asi que el
-/// ejemplo de "un tipo que no se sirve" tiene que ser uno que no se vaya
-/// a servir nunca, y no el que antes lo era.
+/// The OCI index is already served --HSP-102 published it--, so the
+/// example of "a type that is not served" has to be one that is never
+/// going to be served, and not the one that used to be.
 const UNSERVED_MEDIA_TYPE: &str = "application/vnd.cncf.notary.signature";
 
-/// El seeder del catálogo (repositorios por cuenta).
+/// The catalog seeder (repositories per account).
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El localizador del tenant (base) y la ruta del CAS que el fixture de OCI usa.
+/// The tenant locator (base) and the CAS path the OCI fixture uses.
 const SEED_DB: &str = "HODEI_OCI_SEED_DB";
 const SEED_CAS: &str = "HODEI_OCI_SEED_CAS";
 
-/// El contenido de una capa de ejemplo.
+/// The content of a sample layer.
 fn a_layer(seed: u8) -> Vec<u8> {
     (0u16..2048)
         .map(|value| ((value as u8).wrapping_add(seed)) % 251)
         .collect()
 }
 
-/// El contenido de la configuración de la imagen.
+/// The content of the image configuration.
 fn a_config() -> Vec<u8> {
     br#"{"architecture":"amd64","os":"linux","rootfs":{"type":"layers"}}"#.to_vec()
 }
 
-/// El manifiesto que referencia la configuración y la capa.
+/// The manifest that references the configuration and the layer.
 ///
-/// El manifiesto es un blob mas: su digest es el de sus propios bytes,
-/// y sus descriptores apuntan a los digests de la configuración y de la
-/// capa. Los bytes que se sirven son EXACTAMENTE estos.
+/// The manifest is just another blob: its digest is that of its own bytes,
+/// and its descriptors point to the digests of the configuration and of the
+/// layer. The bytes that are served are EXACTLY these.
 fn a_manifest(config_digest: &str, layer_digest: &str, media_type: &str) -> Vec<u8> {
     serde_json::json!({
         "schemaVersion": 2,
@@ -83,15 +83,15 @@ fn a_manifest(config_digest: &str, layer_digest: &str, media_type: &str) -> Vec<
     .into_bytes()
 }
 
-/// El digest de un contenido, sin el prefijo del algoritmo.
+/// The digest of a content, without the algorithm prefix.
 fn the_digest(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// La ruta del fixture de OCI, en su propio proceso.
+/// The OCI fixture's path, in its own process.
 ///
-/// Igual que el semillero del catálogo: el arnés le pasa la ruta de la
-/// base y del CAS por el entorno, este la escribe y se acaba.
+/// Like the catalog seeder: the harness passes it the database and
+/// CAS paths through the environment, this one writes it and ends.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo de los tests de pull OCI"]
 async fn the_oci_fixture_can_be_seeded() {
@@ -113,19 +113,19 @@ async fn the_oci_fixture_can_be_seeded() {
         .expect("the locator names a graph tenant");
     let catalog = tenant.catalog_store().await.with_probe(probe);
 
-    // La configuración, la capa y el manifiesto OCI, como blobs del
-    // almacén y como assets del repositorio de la primera cuenta.
+    // The configuration, the layer and the OCI manifest, as blobs of the
+    // store and as assets of the first account's repository.
     let config = a_config();
     let layer = a_layer(1);
     let manifest = a_manifest(&the_digest(&config), &the_digest(&layer), OCI_MANIFEST);
 
-    // La etiqueta v1 nace con la publicacion del manifiesto: apunta a
-    // las coordenadas de ese asset. La identidad del contenido sigue
-    // siendo el digest del manifiesto; la etiqueta es la referencia
-    // mutable que lo resuelve.
-    // El registro tiene los dos manifiestos: el OCI y el Docker schema2.
-    // Un cliente pide el que quiere por su digest, y el registro lo sirve
-    // con el tipo de medio que el propio manifiesto declara.
+    // The v1 tag is born with the manifest's publication: it points to
+    // the coordinates of that asset. The content's identity is still
+    // the manifest's digest; the tag is the mutable reference
+    // that resolves it.
+    // The registry has both manifests: the OCI one and the Docker schema2 one.
+    // A client asks for the one it wants by its digest, and the registry serves it
+    // with the media type the manifest itself declares.
     let manifest_digest = the_digest(&manifest);
     let docker_manifest = a_manifest(&the_digest(&config), &the_digest(&layer), DOCKER_MANIFEST);
     let docker_digest = the_digest(&docker_manifest);
@@ -182,7 +182,7 @@ async fn the_oci_fixture_can_be_seeded() {
     }
 }
 
-/// Siembra el catálogo y los fixtures de OCI en procesos aparte.
+/// Seeds the catalog and the OCI fixtures in separate processes.
 fn a_oci_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed();
@@ -203,20 +203,20 @@ fn a_oci_deployment() -> Deployment {
     deployment
 }
 
-/// La ruta OCI de un recurso del repositorio de la primera cuenta.
+/// The OCI path of a resource of the first account's repository.
 fn the_oci_path(kind: &str, reference: &str) -> String {
     format!("/v2/{FIRST_REPOSITORY}/{kind}/{reference}")
 }
 
-/// La referencia de un blob o un manifest por digest.
+/// The reference of a blob or a manifest by digest.
 ///
-/// El digest lleva su algoritmo: `sha256:<hex>`. Es lo que dice el spec
-/// y lo que envian los clientes reales.
+/// The digest carries its algorithm: `sha256:<hex>`. It is what the spec says
+/// and what real clients send.
 fn the_digest_reference(digest: &str) -> String {
     format!("sha256:{digest}")
 }
 
-/// Descarga la respuesta a un fichero y la devuelve.
+/// Downloads the response to a file and returns it.
 fn get_with_accept(
     _deployment: &Deployment,
     service_port: u16,
@@ -233,7 +233,7 @@ fn get_with_accept(
     curl.run()
 }
 
-/// La cabecera de versión de la API de distribución.
+/// The distribution API's version header.
 #[test]
 fn oci_version_check_answers_the_wire_ping() {
     let deployment = a_oci_deployment();
@@ -263,8 +263,8 @@ fn oci_version_check_answers_the_wire_ping() {
     support::stop(&mut service);
 }
 
-/// Un blob referenciado por el repositorio se sirve por su digest, con
-/// sus cabeceras OCI; el HEAD lo describe sin traerlo.
+/// A blob referenced by the repository is served by its digest, with
+/// its OCI headers; HEAD describes it without fetching it.
 #[test]
 fn a_referenced_blob_is_served_by_digest_with_oci_headers() {
     let deployment = a_oci_deployment();
@@ -305,7 +305,7 @@ fn a_referenced_blob_is_served_by_digest_with_oci_headers() {
         "the response does not say the length of the blob"
     );
 
-    // Y el HEAD lo describe sin traerlo.
+    // And HEAD describes it without fetching it.
     let described = support::Curl::describe(
         service.port,
         &the_oci_path("blobs", &the_digest_reference(&digest)),
@@ -323,7 +323,7 @@ fn a_referenced_blob_is_served_by_digest_with_oci_headers() {
     support::stop(&mut service);
 }
 
-/// El manifiesto se sirve por su digest, con su tipo de medio.
+/// The manifest is served by its digest, with its media type.
 #[test]
 fn a_manifest_is_served_by_digest_with_its_media_type() {
     let deployment = a_oci_deployment();
@@ -370,12 +370,12 @@ fn a_manifest_is_served_by_digest_with_its_media_type() {
     support::stop(&mut service);
 }
 
-/// La etiqueta resuelve al contenido sin convertirse en él.
+/// The tag resolves to the content without becoming it.
 ///
-/// El oráculo de AC#2: servir por tag devuelve EXACTAMENTE los mismos
-/// bytes y el mismo digest que servir por el digest del manifiesto. La
-/// etiqueta es la referencia mutable; la identidad del contenido es el
-/// digest, y la respuesta lo dice.
+/// The oracle of AC#2: serving by tag returns EXACTLY the same
+/// bytes and the same digest as serving by the manifest's digest. The
+/// tag is the mutable reference; the content's identity is the
+/// digest, and the response says so.
 #[test]
 fn a_tag_resolves_to_the_manifest_and_the_answer_says_the_digest() {
     let deployment = a_oci_deployment();
@@ -416,15 +416,15 @@ fn a_tag_resolves_to_the_manifest_and_the_answer_says_the_digest() {
     support::stop(&mut service);
 }
 
-/// La negociación de tipos es explícita: OCI y Docker schema2 se sirven;
-/// un cliente que solo acepta tipos no soportados recibe el error OCI.
+/// Type negotiation is explicit: OCI and Docker schema2 are served;
+/// a client that only accepts unsupported types receives the OCI error.
 #[test]
 fn the_accept_negotiation_is_explicit_and_unsupported_types_fail_with_oci_errors() {
     let deployment = a_oci_deployment();
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Docker schema2 también se sirve (la negociación lo nombra).
+    // Docker schema2 is also served (the negotiation names it).
     let docker_manifest = a_manifest(
         &the_digest(&a_config()),
         &the_digest(&a_layer(1)),
@@ -452,8 +452,8 @@ fn the_accept_negotiation_is_explicit_and_unsupported_types_fail_with_oci_errors
         "the Docker manifest is not served with its media type"
     );
 
-    // Y un cliente que SOLO acepta un tipo no soportado recibe el error
-    // OCI de manifiesto desconocido, no un 200 engañoso.
+    // And a client that ONLY accepts an unsupported type receives the OCI
+    // unknown-manifest error, not a misleading 200.
     let refused = deployment.directory.path().join("refused.bin");
     let answer = get_with_accept(
         &deployment,
@@ -477,8 +477,8 @@ fn the_accept_negotiation_is_explicit_and_unsupported_types_fail_with_oci_errors
     support::stop(&mut service);
 }
 
-/// Los fallos hablan el dialecto OCI: envelope con code, y sin filtrar
-/// la existencia de lo ajeno.
+/// Failures speak the OCI dialect: envelope with code, and without leaking
+/// the existence of what belongs to others.
 #[test]
 fn the_errors_speak_oci_and_do_not_leak_the_other_account() {
     let deployment = a_oci_deployment();
@@ -486,7 +486,7 @@ fn the_errors_speak_oci_and_do_not_leak_the_other_account() {
     let first = support::token(FIRST_ACCOUNT, "alice");
     let second = support::token(SECOND_ACCOUNT, "bob");
 
-    // Blob desconocido: 404 con el código BLOB_UNKNOWN.
+    // Unknown blob: 404 with the BLOB_UNKNOWN code.
     let into = deployment.directory.path().join("unknown-blob.bin");
     let answer = get_with_accept(
         &deployment,
@@ -503,7 +503,7 @@ fn the_errors_speak_oci_and_do_not_leak_the_other_account() {
         "an unknown blob does not speak OCI: {body}"
     );
 
-    // Manifest desconocido: 404 con MANIFEST_UNKNOWN.
+    // Unknown manifest: 404 with MANIFEST_UNKNOWN.
     let into = deployment.directory.path().join("unknown-manifest.bin");
     let answer = get_with_accept(
         &deployment,
@@ -520,8 +520,8 @@ fn the_errors_speak_oci_and_do_not_leak_the_other_account() {
         "an unknown manifest does not speak OCI: {body}"
     );
 
-    // Repositorio que la cuenta no tiene: 404 NAME_UNKNOWN, sin decir
-    // si existe en otra cuenta.
+    // Repository the account does not have: 404 NAME_UNKNOWN, without saying
+    // whether it exists in another account.
     let into = deployment.directory.path().join("other-repo.bin");
     let answer = get_with_accept(
         &deployment,
@@ -548,15 +548,15 @@ fn the_errors_speak_oci_and_do_not_leak_the_other_account() {
     support::stop(&mut service);
 }
 
-/// Los paths malformados se rechazan con códigos OCI, no con un 500 ni
-/// con un 404 de router que confunde la ausencia con el error.
+/// Malformed paths are rejected with OCI codes, not with a 500 or
+/// with a router 404 that confuses absence with error.
 #[test]
 fn malformed_names_and_digests_get_oci_client_errors() {
     let deployment = a_oci_deployment();
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Un nombre con traversal: 400 NAME_INVALID.
+    // A name with traversal: 400 NAME_INVALID.
     let into = deployment.directory.path().join("bad-name.bin");
     let answer = get_with_accept(
         &deployment,
@@ -576,7 +576,7 @@ fn malformed_names_and_digests_get_oci_client_errors() {
         "a malformed name does not speak OCI: {body}"
     );
 
-    // Un digest mal formado: 400 DIGEST_INVALID.
+    // A malformed digest: 400 DIGEST_INVALID.
     let into = deployment.directory.path().join("bad-digest.bin");
     let answer = get_with_accept(
         &deployment,
@@ -599,20 +599,20 @@ fn malformed_names_and_digests_get_oci_client_errors() {
     support::stop(&mut service);
 }
 
-/// Un blob que esta en el almacén de bytes pero que el repositorio no
-/// referencia NO se sirve.
+/// A blob that is in the byte store but that the repository does not
+/// reference is NOT served.
 ///
-/// AC#4: la referencia del catálogo es la que autoriza el servir. Los
-/// bytes huerfanos del CAS no son contenido del repositorio.
+/// AC#4: the catalog's reference is what authorizes serving. Orphaned
+/// CAS bytes are not repository content.
 #[tokio::test]
 async fn a_blob_that_the_repository_does_not_reference_is_not_served() {
     let deployment = a_oci_deployment();
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Bytes **reales** en el CAS (el almacen los verifica al leer, asi que
-    // un fichero a mano con el nombre del digest serviria de poco), pero
-    // sin fila en el catálogo del repositorio que los referencia.
+    // **Real** bytes in the CAS (the store verifies them on read, so
+    // a hand-made file named after the digest would be of little use), but
+    // without a row in the catalog of the repository that references them.
     let orphan = b"orphan bytes that no manifest references".to_vec();
     let orphan_digest = the_digest(&orphan);
     let store = hodei_hub::blob::FileBlobStore::new(Path::new(&deployment.cas)).expect("the store");
@@ -648,15 +648,15 @@ async fn a_blob_that_the_repository_does_not_reference_is_not_served() {
     support::stop(&mut service);
 }
 
-/// Una fila que solo NOMBRA la ruta no autoriza a servir ese digest.
+/// A row that only NAMES the path does not authorize serving that digest.
 ///
-/// El CAS es un arbol comun: los bytes de una cuenta estan ahi, junto a
-/// los de otra. Si el pull sirviera los bytes del digest **pedido** en
-/// vez de los que la fila **referencia**, una fila que nombra una ruta
-/// serviria el contenido de otro blob, que puede ser de otra cuenta.
+/// The CAS is a common tree: one account's bytes are there, next to
+/// another's. If the pull served the bytes of the **requested** digest instead of
+/// those the row **references**, a row that names a path
+/// would serve the content of another blob, which may belong to another account.
 ///
-/// Es el reverso del caso del blob huerfano: aqui la fila existe y el
-/// contenido es de otro.
+/// It is the reverse of the orphan blob case: here the row exists and the
+/// content is someone else's.
 #[tokio::test]
 async fn a_blob_that_the_repository_only_names_by_path_is_not_served() {
     let deployment = a_oci_deployment();
@@ -664,7 +664,7 @@ async fn a_blob_that_the_repository_only_names_by_path_is_not_served() {
     let acme = support::token(FIRST_ACCOUNT, "alice");
     let other = support::token(SECOND_ACCOUNT, "bob");
 
-    // El contenido de otra cuenta: vive en el CAS global.
+    // Another account's content: it lives in the global CAS.
     let secret = b"the bytes of another account".to_vec();
     let secret_digest = the_digest(&secret);
     let secret_file = deployment.directory.path().join("secret.bin");
@@ -679,9 +679,9 @@ async fn a_blob_that_the_repository_only_names_by_path_is_not_served() {
     .run();
     assert_eq!(published.status, 201, "the other account could not publish");
 
-    // La cuenta que lo pide solo NOMBRA la ruta; la fila apunta a otro
-    // contenido. Mismo tamano a proposito: la comprobacion de tamano no
-    // debe tapar el fallo.
+    // The requesting account only NAMES the path; the row points to other
+    // content. Same size on purpose: the size check
+    // must not mask the failure.
     let filler = vec![b'x'; secret.len()];
     let filler_file = deployment.directory.path().join("filler.bin");
     std::fs::write(&filler_file, &filler).expect("the filler is written");
@@ -695,7 +695,7 @@ async fn a_blob_that_the_repository_only_names_by_path_is_not_served() {
     .run();
     assert_eq!(named.status, 201, "the naming row could not be published");
 
-    // El pull por ese digest NO devuelve los bytes ajenos.
+    // The pull by that digest does NOT return the foreign bytes.
     let into = deployment.directory.path().join("stolen.bin");
     let answer = get_with_accept(
         &deployment,
@@ -723,11 +723,11 @@ async fn a_blob_that_the_repository_only_names_by_path_is_not_served() {
     support::stop(&mut service);
 }
 
-/// Un manifiesto que declara un tipo que este registro NO sirve recibe
-/// error OCI, no un 200 con otro tipo.
+/// A manifest that declares a type this registry does NOT serve receives an
+/// OCI error, not a 200 with another type.
 ///
-/// Servirlo con un tipo distinto es un 200 que finge ser lo que el
-/// cliente pidio, y el cliente que lo pidio no lo recibio.
+/// Serving it with a different type is a 200 that pretends to be what the
+/// client asked for, and the client that asked for it did not receive it.
 #[tokio::test]
 async fn a_manifest_that_declares_an_unsupported_media_type_is_not_served_as_another_type() {
     let deployment = a_oci_deployment();
@@ -752,8 +752,8 @@ async fn a_manifest_that_declares_an_unsupported_media_type_is_not_served_as_ano
     .run();
     assert_eq!(published.status, 201, "the index could not be published");
 
-    // Y con un `Accept` que no lo limita, el registro lo rechaza igual:
-    // el tipo que declara el manifiesto es el que decide.
+    // And with an `Accept` that does not limit it, the registry rejects it all the same:
+    // the type the manifest declares is what decides.
     let into = deployment.directory.path().join("unserved-out.bin");
     let answer = get_with_accept(
         &deployment,
@@ -779,18 +779,18 @@ async fn a_manifest_that_declares_an_unsupported_media_type_is_not_served_as_ano
     support::stop(&mut service);
 }
 
-/// La negociacion limita el tipo que se sirve.
+/// Negotiation limits the type that is served.
 ///
-/// Un cliente que solo acepta el tipo OCI no recibe un manifiesto Docker
-/// schema2 con un 200: recibe el error OCI. Servirle otro tipo seria
-/// responder con algo que no pidio.
+/// A client that only accepts the OCI type does not receive a Docker
+/// schema2 manifest with a 200: it receives the OCI error. Serving it another type would be
+/// answering with something it did not ask for.
 #[tokio::test]
 async fn a_client_that_only_accepts_one_type_is_not_served_another() {
     let deployment = a_oci_deployment();
     let mut service = deployment.start(&[]);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // El manifiesto Docker schema2 esta sembrado en el fixture.
+    // The Docker schema2 manifest is seeded in the fixture.
     let docker_manifest = a_manifest(
         &the_digest(&a_config()),
         &the_digest(&a_layer(1)),

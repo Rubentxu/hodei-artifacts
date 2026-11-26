@@ -257,8 +257,8 @@ fn fetch(port: u16, repository: &str, path: &str, into: &Path) -> Reply {
 /// case is inscribed as the failure it is, and the panic is resumed so
 /// that the suite still fails.
 ///
-/// The arnés es el del laboratorio: lo ejecuta `support::lab`, y esta
-/// suite solo declara que casos son los suyos.
+/// The harness is the laboratory's: `support::lab` runs it, and this
+/// suite only declares which cases are its own.
 fn a_case(
     id: &str,
     title: &str,

@@ -1,16 +1,16 @@
-//! El prototipo de la proyeccion analitica: la otra mitad de la
-//! comparacion del SPIKE-003.
+//! The prototype of the analytical projection: the other half of the
+//! SPIKE-003 comparison.
 //!
-//! El binario de la medicion (`spike003_benchmark`) construye el grafo en
-//! SurrealDB, lo mide y lo EXPORTA. Este binario coge ese mismo grafo, lo
-//! mete en LadybugDB y hace **la misma pregunta**.
+//! The measurement binary (`spike003_benchmark`) builds the graph in
+//! SurrealDB, measures it and EXPORTS it. This binary takes that same graph, loads it
+//! into LadybugDB and asks **the same question**.
 //!
-//! La comparacion es de los mismos datos y de las mismas preguntas, que es
-//! lo que el spike pide. Y el coste de la importacion tambien se mide,
-//! porque una proyeccion secundaria hay que reconstruirla cada vez que la
-//! verdad cambia.
+//! The comparison is over the same data and the same questions, which is
+//! what the spike asks for. And the cost of the import is also measured,
+//! because a secondary projection has to be rebuilt every time the truth
+//! changes.
 //!
-//! # El comando
+//! # The command
 //!
 //! ```text
 //! HODEI_SPIKE003_EXPORT=/tmp/dataset.jsonl \
@@ -28,48 +28,48 @@ use grust::prelude::*;
 use grust::prelude::Result as _GrustResult;
 use grust_ladybug::{LadybugConfig, LadybugGraphStore, LadybugPath};
 
-/// Cuantas veces se mide cada consulta.
+/// How many times each query is measured.
 const ROUNDS: usize = 50;
 
-/// La linea del dataset.
+/// The dataset line.
 #[derive(Debug, serde::Deserialize)]
 struct Line {
-    /// Que es la linea.
+    /// What the line is.
     kind: String,
-    /// La etiqueta, si es un nodo o una relacion.
+    /// The label, if it is a node or a relation.
     #[serde(default)]
     label: String,
-    /// El identificador, si es un nodo.
+    /// The identifier, if it is a node.
     #[serde(default)]
     id: String,
-    /// El origen, si es una relacion.
+    /// The source, if it is a relation.
     #[serde(default)]
     from: String,
-    /// El destino, si es una relacion.
+    /// The target, if it is a relation.
     #[serde(default)]
     to: String,
-    /// La vulnerabilidad que se consulta.
+    /// The vulnerability being queried.
     #[serde(default)]
     vulnerability: String,
-    /// Las medidas del almacen transaccional.
+    /// The measurements of the transactional store.
     #[serde(default)]
     surrealdb: Measurements,
 }
 
-/// Las medidas del almacen transaccional.
+/// The measurements of the transactional store.
 #[derive(Debug, Default, serde::Deserialize)]
 struct Measurements {
-    /// El p50 del radio de impacto.
+    /// The p50 of the blast radius.
     blast_p50_ms: u128,
-    /// El p95 del radio de impacto.
+    /// The p95 of the blast radius.
     blast_p95_ms: u128,
-    /// El maximo del radio de impacto.
+    /// The maximum of the blast radius.
     blast_max_ms: u128,
-    /// El p50 del linaje.
+    /// The p50 of the lineage.
     lineage_p50_ms: u128,
-    /// El p95 del linaje.
+    /// The p95 of the lineage.
     lineage_p95_ms: u128,
-    /// Cuantos sujetos alcanzó el radio de impacto.
+    /// How many subjects the blast radius reached.
     subjects: usize,
 }
 
@@ -200,11 +200,11 @@ async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// El radio de impacto en la proyeccion analitica.
+/// The blast radius in the analytical projection.
 ///
-/// Es el MISMO recorrido: los componentes de los que trata la
-/// vulnerabilidad, los artefactos que los contienen y los despliegues que
-/// los ejecutan.
+/// It is the SAME traversal: the components the vulnerability is about,
+/// the artifacts that contain them and the deployments that
+/// run them.
 async fn the_blast_radius(
     store: &LadybugGraphStore,
     vulnerability: &str,

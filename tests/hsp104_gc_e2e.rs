@@ -1,21 +1,21 @@
-//! La recoleccion de basura contra el binario de verdad (HSP-104 / HAR-10).
+//! Garbage collection against the real binary (HSP-104 / HAR-10).
 //!
-//! El servicio de GC ya esta probado por dentro, con un libro en memoria y
-//! los cortes inyectados. Esto prueba lo que ese test no puede: el binario
-//! real, con el catalogo y el almacen de verdad, la superficie
-//! administrativa detras de Cedar, y el reinicio de un proceso de verdad.
+//! The GC service is already tested from the inside, with an in-memory ledger and
+//! injected cuts. This tests what that test cannot: the real
+//! binary, with the real catalog and store, the administrative surface
+//! behind Cedar, and the restart of a real process.
 //!
-//! Los casos siguen la UAT de operaciones (`uat/UAT-OPERATIONS.md`):
-//! GC-01 (lo compartido no se borra), GC-02 (lo retenido no se borra y el
-//! plan dice por que), GC-03 (el huerfano se borra una sola vez, y solo con
-//! permiso explicito) y GC-04 (tras un reinicio no hay doble borrado ni
-//! perdida).
+//! The cases follow the operations UAT (`uat/UAT-OPERATIONS.md`):
+//! GC-01 (what is shared is not deleted), GC-02 (what is retained is not deleted and the
+//! plan says why), GC-03 (the orphan is deleted exactly once, and only with
+//! explicit permission) and GC-04 (after a restart there is no double deletion nor
+//! loss).
 //!
-//! Limite honesto: el corte **entre** la marca y el barrido no se puede
-//! provocar desde fuera de un proceso sin meter un gancho de pruebas en el
-//! codigo de produccion. Esos cortes estan inyectados en
-//! `hsp104_gc_service.rs`; aqui se mata el proceso de verdad y se comprueba
-//! que lo ya hecho no se repite y lo retenido sigue retenido.
+//! Honest limit: the cut **between** the mark and the sweep cannot be
+//! provoked from outside a process without putting a test hook in the
+//! production code. Those cuts are injected in
+//! `hsp104_gc_service.rs`; here the real process is killed and it is checked
+//! that what was already done is not repeated and what was retained stays retained.
 
 mod support;
 
@@ -25,24 +25,24 @@ use std::time::Duration;
 use serde_json::Value;
 use support::{Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY, SECOND_ACCOUNT};
 
-/// La persona que opera la recoleccion: puede todo.
+/// The person who operates the collection: can do everything.
 const ALICE: &str = "alice";
 
-/// La persona que solo puede ver el plan.
+/// The person who can only see the plan.
 const BOB: &str = "bob";
 
-/// El periodo de gracia del despliegue de pruebas.
+/// The grace period of the test deployment.
 const GRACE_SECS: u64 = 2;
 
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// El seeder del catalogo (repositorios por cuenta).
+/// The catalog seeder (repositories per account).
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El esquema del despliegue, con la superficie administrativa.
+/// The deployment schema, with the administrative surface.
 fn the_schema() -> String {
     let mut schema: Value = serde_json::from_str(support::SCHEMA).expect("the schema parses");
     schema["Admin"] = serde_json::json!({
@@ -56,10 +56,10 @@ fn the_schema() -> String {
     schema.to_string()
 }
 
-/// La politica: alice opera todo; bob solo puede pedir el plan.
+/// The policy: alice operates everything; bob can only request the plan.
 ///
-/// Cada ruta administrativa es un recurso distinto, y por eso la politica
-/// de bob nombra el plan y nada mas.
+/// Each administrative route is a distinct resource, and that is why bob's
+/// policy names the plan and nothing else.
 fn the_policy() -> String {
     format!(
         "{}\npermit(principal == Iam::User::\"hrn:hodei:iam::{FIRST_ACCOUNT}:User/{ALICE}\", action == Admin::Action::\"AccessAdminApi\", resource);\n\
@@ -68,7 +68,7 @@ fn the_policy() -> String {
     )
 }
 
-/// Un despliegue con el catalogo sembrado y la administracion abierta.
+/// A deployment with the catalog seeded and administration open.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     std::fs::write(
@@ -85,7 +85,7 @@ fn a_deployment() -> Deployment {
     deployment
 }
 
-/// El entorno con el que arranca el servicio.
+/// The environment the service starts with.
 fn the_environment() -> Vec<(&'static str, String)> {
     vec![
         ("HODEI_SECURITY__ADMIN_API_ENABLED", "true".to_string()),
@@ -105,12 +105,12 @@ fn start(deployment: &Deployment, port: Option<u16>) -> support::Service {
     }
 }
 
-/// El digest de un contenido, sin el prefijo del algoritmo.
+/// The digest of a content, without the algorithm prefix.
 fn the_digest(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// Donde vive un blob en el almacen de bytes.
+/// Where a blob lives in the byte store.
 fn blob_path(deployment: &Deployment, digest: &str) -> PathBuf {
     Path::new(&deployment.cas)
         .join(&digest[..2])
@@ -118,10 +118,10 @@ fn blob_path(deployment: &Deployment, digest: &str) -> PathBuf {
         .join(digest)
 }
 
-/// Deja bytes en el almacen que ningun catalogo nombra: lo que queda si el
-/// proceso muere entre escribir el contenido y confirmar el catalogo. El
-/// registro no tiene borrado, asi que es la unica forma de tener un
-/// huerfano de verdad.
+/// Leaves bytes in the store that no catalog names: what remains if the
+/// process dies between writing the content and confirming the catalog. The
+/// registry has no deletion, so this is the only way to have a
+/// real orphan.
 fn plant_orphan(deployment: &Deployment, content: &[u8]) -> String {
     let digest = the_digest(content);
     let path = blob_path(deployment, &digest);
@@ -131,7 +131,7 @@ fn plant_orphan(deployment: &Deployment, content: &[u8]) -> String {
     digest
 }
 
-/// Una peticion administrativa. Devuelve el codigo y el cuerpo en JSON.
+/// An administrative request. Returns the code and the body as JSON.
 fn admin(
     deployment: &Deployment,
     port: u16,
@@ -162,7 +162,7 @@ fn admin(
     (answer.status, json)
 }
 
-/// Publica un blob por la distribucion OCI, sin manifiesto que lo nombre.
+/// Publishes a blob through the OCI distribution, with no manifest naming it.
 fn push_blob(deployment: &Deployment, port: u16, token: &str, content: &[u8]) -> String {
     let digest = the_digest(content);
     let file = deployment.directory.path().join("blob.bin");
@@ -186,7 +186,7 @@ fn push_blob(deployment: &Deployment, port: u16, token: &str, content: &[u8]) ->
     digest
 }
 
-/// Publica un manifiesto de imagen que nombra una configuracion y una capa.
+/// Publishes an image manifest that names a config and a layer.
 fn push_image(
     deployment: &Deployment,
     port: u16,
@@ -232,7 +232,7 @@ fn push_image(
     the_digest(&manifest)
 }
 
-/// Publica un fichero en un repositorio crudo.
+/// Publishes a file to a raw repository.
 fn push_raw(deployment: &Deployment, port: u16, token: &str, repository: &str, content: &[u8]) {
     let file = deployment.directory.path().join("raw.bin");
     std::fs::write(&file, content).expect("the file is written");
@@ -251,7 +251,7 @@ fn push_raw(deployment: &Deployment, port: u16, token: &str, repository: &str, c
     );
 }
 
-/// El veredicto del plan para un digest.
+/// The plan's verdict for a digest.
 fn verdict_of<'a>(plan: &'a Value, digest: &str) -> &'a Value {
     plan["entries"]
         .as_array()
@@ -261,7 +261,7 @@ fn verdict_of<'a>(plan: &'a Value, digest: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("the plan does not list sha256:{digest}:\n{plan:#}"))
 }
 
-/// Lo que sirve el registro para un manifiesto por digest.
+/// What the registry serves for a manifest by digest.
 fn manifest_status(port: u16, token: &str, digest: &str) -> u16 {
     support::Curl::call(
         port,
@@ -276,8 +276,8 @@ fn manifest_status(port: u16, token: &str, digest: &str) -> u16 {
     .status
 }
 
-/// GC-01, GC-02 y GC-03: lo compartido y lo retenido se conservan, el plan
-/// dice por que, y el huerfano se borra una sola vez con permiso explicito.
+/// GC-01, GC-02 and GC-03: what is shared and what is retained are kept, the plan
+/// says why, and the orphan is deleted exactly once with explicit permission.
 #[test]
 fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
     let deployment = a_deployment();
@@ -286,8 +286,8 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
     let mut service = start(&deployment, None);
     let port = service.port;
 
-    // El mismo contenido es un fichero en dos repositorios y la capa de una
-    // imagen: un solo blob con tres raices.
+    // The same content is a file in two repositories and the layer of an
+    // image: a single blob with three roots.
     let shared: Vec<u8> = (0u16..2048).map(|value| (value % 241) as u8).collect();
     let shared_digest = the_digest(&shared);
     push_raw(&deployment, port, &alice, FIRST_REPOSITORY, &shared);
@@ -297,7 +297,7 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
     assert_eq!(layer, shared_digest, "the layer is the shared content");
     let manifest = push_image(&deployment, port, &alice, "v1", &config, &layer);
 
-    // Un huerfano de verdad, y otro que tiene una retencion.
+    // A real orphan, and another that has a retention.
     let orphan_bytes = b"orphan: nobody names this blob".to_vec();
     let orphan = plant_orphan(&deployment, &orphan_bytes);
     let held = plant_orphan(&deployment, b"held: legal hold on this blob");
@@ -319,11 +319,11 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
         .expect("the hold has an id")
         .to_string();
 
-    // Pasa la gracia y entra uno nuevo: ese sigue dentro de ella.
+    // The grace passes and a new one comes in: that one is still within it.
     std::thread::sleep(Duration::from_secs(GRACE_SECS + 1));
     let fresh = plant_orphan(&deployment, b"fresh: uploaded a moment ago");
 
-    // --- El plan explica cada veredicto.
+    // --- The plan explains each verdict.
     let (status, plan) = admin(&deployment, port, "GET", "/gc/plan", &alice, None);
     assert_eq!(status, 200, "the plan failed:\n{}", deployment.the_log());
     assert_eq!(plan["grace_secs"], GRACE_SECS);
@@ -359,7 +359,7 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
         orphan_bytes.len() as u64
     );
 
-    // --- Quien solo puede ver el plan no puede barrer.
+    // --- Whoever can only see the plan cannot sweep.
     let (status, _) = admin(&deployment, port, "GET", "/gc/plan", &bob, None);
     assert_eq!(status, 200, "bob may read the plan");
     let (status, _) = admin(
@@ -375,7 +375,7 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
     assert_eq!(status, 401, "no credential, no plan");
     assert!(blob_path(&deployment, &orphan).exists());
 
-    // --- Sin permiso explicito (`execute`), el barrido es el dry-run.
+    // --- Without explicit permission (`execute`), the sweep is the dry-run.
     let (status, dry) = admin(
         &deployment,
         port,
@@ -391,7 +391,7 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
         "a dry-run deletes nothing"
     );
 
-    // --- Con permiso explicito, borra el huerfano y solo el huerfano.
+    // --- With explicit permission, it deletes the orphan and only the orphan.
     let (status, swept) = admin(
         &deployment,
         port,
@@ -425,7 +425,7 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
         "the manifest still serves after the sweep"
     );
 
-    // --- Una segunda pasada no encuentra nada que borrar.
+    // --- A second pass finds nothing to delete.
     let (status, again) = admin(
         &deployment,
         port,
@@ -440,8 +440,8 @@ fn shared_and_held_content_survive_and_the_orphan_is_swept_once() {
     support::stop(&mut service);
 }
 
-/// GC-04: tras matar el proceso, lo hecho no se repite, la retencion sigue
-/// y soltarla hace reclamable lo que protegia.
+/// GC-04: after killing the process, what was done is not repeated, the retention remains
+/// and releasing it makes reclaimable what it protected.
 #[test]
 fn a_killed_service_keeps_its_holds_and_does_not_sweep_twice() {
     let deployment = a_deployment();
@@ -478,7 +478,7 @@ fn a_killed_service_keeps_its_holds_and_does_not_sweep_twice() {
     assert_eq!(swept["report"]["deleted"], 1);
     assert!(!blob_path(&deployment, &gone).exists());
 
-    // El proceso muere de golpe, como una maquina que se apaga.
+    // The process dies abruptly, like a machine that is switched off.
     support::kill(&mut service);
     let mut service = start(&deployment, Some(port));
 
@@ -517,8 +517,8 @@ fn a_killed_service_keeps_its_holds_and_does_not_sweep_twice() {
         "the hold still holds"
     );
 
-    // Soltar la retencion hace reclamable lo que protegia, y el barrido
-    // siguiente lo borra.
+    // Releasing the retention makes reclaimable what it protected, and the next
+    // sweep deletes it.
     let (status, _) = admin(
         &deployment,
         port,
@@ -553,7 +553,7 @@ fn a_killed_service_keeps_its_holds_and_does_not_sweep_twice() {
     support::stop(&mut service);
 }
 
-/// Una peticion invalida no borra nada y dice por que.
+/// An invalid request deletes nothing and says why.
 #[test]
 fn an_invalid_hold_is_refused() {
     let deployment = a_deployment();

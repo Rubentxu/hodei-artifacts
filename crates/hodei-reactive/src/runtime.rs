@@ -1,27 +1,27 @@
 //! The runtime of the reactions.
 //!
-//! The runtime does four things and nothing mas: **subscribe**, **guard**,
+//! The runtime does four things and nothing more: **subscribe**, **guard**,
 //! **record** and **bound**. It does not decide what a reaction means, and
 //! it does not have a language in which to say it.
 //!
-//! That is the conclusion of the SPIKE-006, y se puede escribir entera:
+//! That is the conclusion of SPIKE-006, and it can be written in full:
 //!
-//! - **Suscribir**: un registro de comportamientos, cada uno con lo que
-//!   le interesa. Es un registro y no un plan.
-//! - **Guardar**: la condicion se comprueba, y si no se cumple la
-//!   reaccion no corre y el motivo queda en la traza.
-//! - **Registrar**: la ejecucion es durable, con su cadena de causalidad,
-//!   su numero de intentos y su traza.
-//! - **Acotar**: un presupuesto corta la cadena cuando se excede, y el
-//!   corte queda en la traza.
+//! - **Subscribe**: a registry of behaviours, each with what it is
+//!   interested in. It is a registry and not a plan.
+//! - **Guard**: the condition is checked, and if it is not met the
+//!   reaction does not run and the reason is left in the trace.
+//! - **Record**: the execution is durable, with its causation chain,
+//!   its attempt count and its trace.
+//! - **Bound**: a budget cuts the chain when it is exceeded, and the
+//!   cut is left in the trace.
 //!
-//! Lo que un manejador de eventos ordinario NO tiene, y por lo que el
-//! runtime minimo si hace falta: la idempotencia por clave, el presupuesto
-//! de bucles, la traza durable y la reconstruccion sin repetir los
-//! efectos externos. Un manejador ordinario es una llamada a una funcion:
-//! no tiene clave, ni presupuesto, ni traza que sobreviva a un
-//! reinicio. Y la exit gate del hito lo pide literal: "observable,
-//! acotado, idempotente y reconstruible".
+//! What an ordinary event handler does NOT have, and why the
+//! minimal runtime is indeed needed: idempotency by key, the loop budget,
+//! the durable trace and reconstruction without repeating the
+//! external effects. An ordinary handler is a function call:
+//! it has no key, no budget, and no trace that survives a
+//! restart. And the milestone's exit gate asks for it literally: "observable,
+//! bounded, idempotent and reconstructible".
 
 use std::sync::Arc;
 
@@ -173,8 +173,8 @@ pub struct ReactiveRuntime {
     /// The one that touches, after the plan is recorded.
     executor: Option<Arc<dyn IntentExecutor>>,
     /// The outbox where the intents wait between being said and being
-    /// done. The planned path does not start without one: un intent que
-    /// no se dice durable no se puede reconciliar.
+    /// done. The planned path does not start without one: an intent that
+    /// is not said durably cannot be reconciled.
     outbox: Option<Arc<dyn IntentOutbox>>,
     /// The tenant of the runtime: the authority of the planned path. It
     /// comes from the composition, and NOT from an event payload, because
@@ -203,7 +203,7 @@ impl ReactiveRuntime {
     }
 
     /// The outbox where the intents of the planned path wait between
-    /// being said and being done. Sin outbox no hay ruta planificada.
+    /// being said and being done. Without an outbox there is no planned path.
     pub fn with_outbox(&mut self, outbox: Arc<dyn IntentOutbox>) {
         self.outbox = Some(outbox);
     }
@@ -214,8 +214,8 @@ impl ReactiveRuntime {
     }
 
     /// Registers a behaviour that PLANS, and the executor that touches
-    /// for it. Without both, the planned path does not start: un plan sin
-    /// quien lo haga dicho es un plan que nadie cumple.
+    /// for it. Without both, the planned path does not start: a plan without
+    /// someone to carry it out is a plan that nobody fulfils.
     pub fn register_planned(
         &mut self,
         planner: Arc<dyn PlanningBehavior>,
@@ -253,9 +253,9 @@ impl ReactiveRuntime {
     /// anything.
     ///
     /// The replay is what reconstructs the state after a restart: it
-    /// reads what happened and it does **not** do it again. Un efecto
-    /// externo que ya se aplico no se vuelve a aplicar, y el resultado
-    /// que se grabo es el que se usa.
+    /// reads what happened and it does **not** do it again. An external
+    /// effect that was already applied is not applied again, and the result
+    /// that was recorded is the one that is used.
     pub async fn replay(
         &self,
         event: Event,
@@ -301,8 +301,8 @@ impl ReactiveRuntime {
         let mut pending: Vec<(Event, Vec<String>)> = vec![(event.clone(), vec![event.id.clone()])];
 
         while let Some((current, causation)) = pending.pop() {
-            // The budget is checked BEFORE anything happens: un corte que
-            // llega tarde ya gasto lo que cortaba.
+            // The budget is checked BEFORE anything happens: a cut that
+            // arrives late has already spent what it was cutting.
             if let Some(reason) = state.is_exhausted(0) {
                 report.cut = Some(reason.clone());
                 let record = ExecutionRecord::new(
@@ -400,10 +400,10 @@ impl ReactiveRuntime {
                         self.store.put(record.clone()).await;
                         report.executions.push(record);
 
-                        // EVERY intent of the plan is said FIRST: una
-                        // caida a mitad de camino deja TODO lo dicho en
-                        // el outbox, y el recovery no pierda ninguna
-                        // pieza del plan.
+                        // EVERY intent of the plan is said FIRST: a
+                        // crash halfway leaves EVERYTHING said in
+                        // the outbox, and the recovery does not lose any
+                        // piece of the plan.
                         for intent in &plan.intents {
                             if let Err(reason) = outbox.put_pending(intent).await {
                                 let record = ExecutionRecord::new(
@@ -479,8 +479,8 @@ impl ReactiveRuntime {
     /// and the claimed ones whose lease died. It does NOT plan again --
     /// the plan is already recorded -- and it does NOT touch what is
     /// already applied: the receipt that says what is true closes the
-    /// intent without a second effect. Lo desconocido NO esta aqui: no
-    /// se reejecuta, se reconcilia.
+    /// intent without a second effect. What is unknown is NOT here: it is
+    /// not re-executed, it is reconciled.
     pub async fn resume(&self, now: DateTime<Utc>) -> Result<DispatchReport, RuntimeError> {
         let Some(executor) = self.executor.clone() else {
             return Err(RuntimeError::Unavailable(
@@ -523,7 +523,7 @@ impl ReactiveRuntime {
     /// became of the effect is written down. The effect lands once -- the
     /// same key the legacy effects use -- and what nobody knows waits for
     /// the reconciliation, never for a blind retry. Saying the intent is
-    /// NOT this method's job: lo que no se dijo no se trabaja.
+    /// NOT this method's job: what was not said is not worked.
     async fn work_intent(
         &self,
         outbox: &Arc<dyn IntentOutbox>,

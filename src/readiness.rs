@@ -1,21 +1,21 @@
-//! La readiness del despliegue: que dependencias exige el perfil activo y
-//! si estan disponibles.
+//! Deployment readiness: which dependencies the active profile requires and
+//! whether they are available.
 //!
-//! La readiness **no** es la liveness. La liveness dice que el proceso
-//! vive; la readiness dice que el proceso sabe servir: que las
-//! dependencias que el perfil activo exige --el grafo y el almacen de
-//! contenido-- estan a mano. Un despliegue sin grafo no puede decir
-//! que repositorio existe, y un despliegue sin almacen de contenido no
-//! tiene bytes que servir: en los dos casos la readiness es un `503`, y el
-//! proceso sigue vivo.
+//! Readiness is **not** liveness. Liveness says the process
+//! is alive; readiness says the process can serve: that the
+//! dependencies the active profile requires --the graph and the content
+//! store-- are at hand. A deployment without a graph cannot say
+//! which repository exists, and a deployment without a content store has no
+//! bytes to serve: in both cases readiness is a `503`, and the
+//! process stays alive.
 //!
-//! El puerto vive aqui y no en el handler por dos razones:
+//! The port lives here and not in the handler for two reasons:
 //!
-//! - el handler no tiene estado: el presupuesto de red y el cache corto
-//!   estan en el envoltorio, y se pueden probar sin un servidor;
-//! - el cuerpo de la respuesta es **grueso** a proposito: dice que
-//!   dependencia falla y como, pero nunca donde esta ni con que se
-//!   autentica.
+//! - the handler has no state: the network budget and the short cache
+//!   are in the wrapper, and can be tested without a server;
+//! - the response body is **coarse** on purpose: it says which
+//!   dependency fails and how, but never where it is or what it
+//!   authenticates with.
 
 use async_trait::async_trait;
 use hodei_graph_client::{GraphClientError, GraphHealthPort};
@@ -23,51 +23,51 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// El presupuesto de red de **una** dependencia.
+/// The network budget of **one** dependency.
 ///
-/// Es corto a proposito: la readiness la consulta un orquestador cada
-/// pocos segundos, y una comprobacion que se cuelga es una comprobacion
-/// que se acumula. Un segundo basta para notar que un almacen local no
-/// esta y que un bucket remoto no contesta.
+/// It is short on purpose: readiness is queried by an orchestrator every
+/// few seconds, and a check that hangs is a check that
+/// piles up. One second is enough to notice that a local store is not
+/// there and that a remote bucket does not answer.
 pub const DEPENDENCY_BUDGET: Duration = Duration::from_secs(1);
 
-/// El presupuesto de red de **todo** el probe.
+/// The network budget of the **whole** probe.
 ///
-/// Con dos dependencias exigidas y un presupuesto de un segundo cada una,
-/// el probe entero no pasa de dos segundos. Un despliegue que exija mas
-/// dependencias que presupuesto solo comprueba las que caben, y las
-/// demas se declaran `Timeout`: es mejor decir que no se pudo comprobar
-/// que mentir diciendo que estan bien.
+/// With two required dependencies and a one-second budget each,
+/// the whole probe does not exceed two seconds. A deployment that requires more
+/// dependencies than budget only checks the ones that fit, and the
+/// rest are declared `Timeout`: it is better to say it could not be checked
+/// than to lie by saying they are fine.
 pub const PROBE_BUDGET: Duration = Duration::from_secs(2);
 
-/// El tiempo que un veredicto se cachea.
+/// The time a verdict is cached.
 ///
-/// Es corto a proposito: un segundo es suficiente para que dos sondeos
-/// seguidos --un orquestador que pregunta cada poco-- no gasten el
-/// presupuesto dos veces, y es lo bastante corto para que la
-/// recuperacion de una dependencia se vea al instante.
+/// It is short on purpose: one second is enough so that two consecutive
+/// probes --an orchestrator asking every so often-- do not spend the
+/// budget twice, and it is short enough that the
+/// recovery of a dependency shows up immediately.
 pub const VERDICT_TTL: Duration = Duration::from_secs(1);
 
-/// Una dependencia que el perfil activo exige para servir.
+/// A dependency the active profile requires in order to serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dependency {
-    /// El almacen de contenido: los bytes.
+    /// The content store: the bytes.
     ContentStore,
-    /// La autoridad de grafo (Dgraph): alcanzable y con el login ACL valido.
+    /// The graph authority (Dgraph): reachable and with a valid ACL login.
     Graph,
-    /// El almacen de confianza, cuando su lectura ocurre en caliente.
+    /// The trust store, when its read happens hot.
     ///
-    /// En este despliegue la politica de confianza se carga en memoria al
-    /// arrancar: no se puede perder en caliente, y una comprobacion que
-    /// siempre sale bien es una mentira. Por eso no lo exige nadie.
+    /// In this deployment the trust policy is loaded into memory at
+    /// startup: it cannot be lost hot, and a check that
+    /// always passes is a lie. That is why nobody requires it.
     TrustPolicy,
 }
 
 impl Dependency {
-    /// El nombre de la dependencia, como va en el cuerpo de la respuesta.
+    /// The name of the dependency, as it appears in the response body.
     ///
-    /// Es el **nombre** y no la direccion: el cuerpo dice que dependencia
-    /// falla, no donde esta.
+    /// It is the **name** and not the address: the body says which dependency
+    /// fails, not where it is.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ContentStore => "content_store",
@@ -77,24 +77,24 @@ impl Dependency {
     }
 }
 
-/// Por que una dependencia exigida no esta disponible.
+/// Why a required dependency is not available.
 ///
-/// Grueso a proposito: el cuerpo de la respuesta no puede llevar ni una
-/// URL, ni un bucket, ni una ruta, ni una credencial. El error crudo del
-/// driver puede traer las tres cosas --un error de S3 trae el endpoint y
-/// a veces la credencial--, asi que no viaja.
+/// Coarse on purpose: the response body cannot carry a URL, a bucket,
+/// a path or a credential. The driver's raw error
+/// can carry all three --an S3 error carries the endpoint and
+/// sometimes the credential--, so it does not travel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DependencyFailure {
-    /// No se puede alcanzar.
+    /// It cannot be reached.
     Unreachable,
-    /// No contesta dentro del presupuesto.
+    /// It does not answer within the budget.
     Timeout,
-    /// Esta declarada de una forma que no se puede usar.
+    /// It is declared in a way that cannot be used.
     Misconfigured,
 }
 
 impl DependencyFailure {
-    /// El estado de la dependencia, como va en el cuerpo de la respuesta.
+    /// The state of the dependency, as it appears in the response body.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Unreachable => "unreachable",
@@ -104,46 +104,46 @@ impl DependencyFailure {
     }
 }
 
-/// El veredicto del despliegue.
+/// The deployment's verdict.
 ///
-/// Es grueso como el motivo del fallo: dice **que** dependencia no esta,
-/// y no dice nada mas.
+/// It is coarse like the failure reason: it says **which** dependency is not there,
+/// and nothing more.
 #[derive(Debug, Clone)]
 pub struct ReadinessReport {
-    /// Si el despliegue puede servir.
+    /// Whether the deployment can serve.
     pub ready: bool,
-    /// Las dependencias exigidas que fallan, con su motivo.
+    /// The required dependencies that fail, with their reason.
     pub failing: Vec<(Dependency, DependencyFailure)>,
 }
 
-/// El comprobador de las dependencias exigidas por el perfil activo.
+/// The checker of the dependencies required by the active profile.
 #[async_trait]
 pub trait ReadinessProbe: Send + Sync {
-    /// Las dependencias que el perfil activo exige.
+    /// The dependencies the active profile requires.
     ///
-    /// Las que no estan aqui no se comprueban y no pueden hacer fallar el
-    /// readiness: una dependencia opcional que el perfil no exige no es
-    /// una dependencia.
+    /// The ones that are not here are not checked and cannot make
+    /// readiness fail: an optional dependency that the profile does not require is not
+    /// a dependency.
     fn required(&self) -> Vec<Dependency>;
 
-    /// Comprueba **una** dependencia.
+    /// Checks **one** dependency.
     ///
-    /// Un error de la dependencia **no** es un panic ni un `500`: es un
-    /// estado de readiness.
+    /// A dependency error is **not** a panic or a `500`: it is a
+    /// readiness state.
     async fn check(&self, dependency: Dependency) -> Result<(), DependencyFailure>;
 
-    /// El veredicto del despliegue.
+    /// The deployment's verdict.
     ///
-    /// El metodo por defecto es el que aplica el presupuesto: cada
-    /// dependencia tiene su propio plazo y el probe entero tiene el suyo.
-    /// Un probe que devuelve un veredicto sin presupuesto --uno de
-    /// mentira-- lo dice aqui.
+    /// The default method is the one that applies the budget: each
+    /// dependency has its own deadline and the whole probe has its own.
+    /// A probe that returns a verdict without a budget --a fake
+    /// one-- says so here.
     async fn report(&self) -> ReadinessReport {
         let mut failing = Vec::new();
         let deadline = Instant::now() + PROBE_BUDGET;
         for dependency in self.required() {
-            // El presupuesto del probe manda sobre el de la dependencia:
-            // lo que no cabe no se comprueba, y se declara `Timeout`.
+            // The probe's budget overrides the dependency's:
+            // what does not fit is not checked, and is declared `Timeout`.
             if Instant::now() >= deadline {
                 failing.push((dependency, DependencyFailure::Timeout));
                 continue;
@@ -162,17 +162,17 @@ pub trait ReadinessProbe: Send + Sync {
     }
 }
 
-/// Un veredicto cacheado, con el instante en que se tomo.
+/// A cached verdict, with the instant at which it was taken.
 struct Cached {
     at: Instant,
     report: ReadinessReport,
 }
 
-/// El probe con el cache corto del veredicto.
+/// The probe with the short verdict cache.
 ///
-/// El cache va **aqui** y no en el handler: el handler no tiene estado, y
-/// el probe se puede probar solo. Dos readiness seguidos dentro del TTL
-/// no gastan presupuesto: el segundo devuelve el veredicto cacheado.
+/// The cache goes **here** and not in the handler: the handler has no state, and
+/// the probe can be tested alone. Two consecutive readiness checks within the TTL
+/// do not spend budget: the second returns the cached verdict.
 pub struct CachedProbe {
     inner: Arc<dyn ReadinessProbe>,
     ttl: Duration,
@@ -180,15 +180,15 @@ pub struct CachedProbe {
 }
 
 impl CachedProbe {
-    /// El probe real, envuelto en el cache corto.
+    /// The real probe, wrapped in the short cache.
     pub fn new(inner: Arc<dyn ReadinessProbe>) -> Self {
         Self::with_ttl(inner, VERDICT_TTL)
     }
 
-    /// El probe real, envuelto en un cache del plazo que se le dice.
+    /// The real probe, wrapped in a cache with the given deadline.
     ///
-    /// El plazo por defecto es el de [`VERDICT_TTL`]; el que se le pasa es
-    /// para las pruebas, que no pueden dormir un segundo por caso.
+    /// The default deadline is that of [`VERDICT_TTL`]; the one passed in is
+    /// for tests, which cannot sleep a second per case.
     pub fn with_ttl(inner: Arc<dyn ReadinessProbe>, ttl: Duration) -> Self {
         Self {
             inner,
@@ -197,7 +197,7 @@ impl CachedProbe {
         }
     }
 
-    /// El probe real que este envuelve.
+    /// The real probe this one wraps.
     pub fn the_inner(&self) -> &Arc<dyn ReadinessProbe> {
         &self.inner
     }
@@ -213,7 +213,7 @@ impl ReadinessProbe for CachedProbe {
         self.inner.check(dependency).await
     }
 
-    /// El veredicto, cacheado.
+    /// The verdict, cached.
     async fn report(&self) -> ReadinessReport {
         {
             let cache = self
@@ -239,32 +239,32 @@ impl ReadinessProbe for CachedProbe {
     }
 }
 
-/// Como se comprueba el almacen de contenido.
+/// How the content store is checked.
 ///
-/// El perfil lo decide en el arranque: un despliegue con el contenido en
-/// un directorio y un despliegue con el contenido en un bucket no se
-/// comprueban igual, y el que lo dice es la configuracion.
+/// The profile decides it at startup: a deployment with content in
+/// a directory and a deployment with content in a bucket are not
+/// checked the same way, and what says so is the configuration.
 pub enum ContentCheck {
-    /// Un directorio del sistema de archivos.
+    /// A filesystem directory.
     Filesystem {
-        /// El directorio donde vive el contenido.
+        /// The directory where the content lives.
         root: PathBuf,
     },
-    /// Un bucket de S3.
+    /// An S3 bucket.
     S3 {
-        /// El cliente, ya configurado con la cadena de credenciales.
+        /// The client, already configured with the credentials chain.
         client: aws_sdk_s3::Client,
-        /// El bucket donde vive el contenido.
+        /// The bucket where the content lives.
         bucket: String,
     },
 }
 
 impl ContentCheck {
-    /// Comprueba el almacen de contenido.
+    /// Checks the content store.
     ///
-    /// El directorio se comprueba con una llamada al sistema de archivos:
-    /// existe y es un directorio. No se lee nada de dentro: la readiness
-    /// no necesita el contenido, necesita el sitio donde vive.
+    /// The directory is checked with a filesystem call:
+    /// it exists and is a directory. Nothing inside is read: readiness
+    /// does not need the content, it needs the place where it lives.
     pub async fn check(&self) -> Result<(), DependencyFailure> {
         match self {
             Self::Filesystem { root } => {
@@ -272,23 +272,23 @@ impl ContentCheck {
                     return Ok(());
                 }
                 if root.exists() {
-                    // Hay algo ahi, pero no es el directorio del almacen.
+                    // There is something there, but it is not the store's directory.
                     return Err(DependencyFailure::Misconfigured);
                 }
                 Err(DependencyFailure::Unreachable)
             }
             Self::S3 { client, bucket } => {
-                // `head_bucket` es la llamada mas barata que dice a la vez
-                // que el bucket existe y que las credenciales sirven. No se
-                // lista el bucket: un listado bajaria el catalogo de
-                // objetos, y la readiness no necesita los objetos.
+                // `head_bucket` is the cheapest call that says at once
+                // that the bucket exists and that the credentials work. The bucket is not
+                // listed: a listing would download the object catalog,
+                // and readiness does not need the objects.
                 match client.head_bucket().bucket(bucket).send().await {
                     Ok(_) => Ok(()),
                     Err(error) => {
-                        // El codigo dice si el bucket **no** es nuestro o
-                        // si no se pudo alcanzar. Lo que no se dice nunca es
-                        // por que: el error del driver puede traer el
-                        // endpoint y la credencial.
+                        // The code says whether the bucket is **not** ours or
+                        // whether it could not be reached. What is never said is
+                        // why: the driver error can carry the
+                        // endpoint and the credential.
                         let status = error
                             .raw_response()
                             .map(|response| response.status().as_u16());
@@ -303,18 +303,18 @@ impl ContentCheck {
     }
 }
 
-/// El probe del perfil activo: las dependencias que exige el despliegue y
-/// como se comprueba cada una.
+/// The active profile's probe: the dependencies the deployment requires and
+/// how each one is checked.
 ///
-/// Las que no estan aqui no se exigen: una dependencia que el perfil no
-/// exige no puede hacer fallar el readiness.
+/// The ones that are not here are not required: a dependency the profile does not
+/// require cannot make readiness fail.
 pub struct ProfileProbe {
     content: Option<ContentCheck>,
     graph: Option<Arc<dyn GraphHealthPort>>,
 }
 
 impl ProfileProbe {
-    /// Un perfil que no exige nada.
+    /// A profile that requires nothing.
     pub fn new() -> Self {
         Self {
             content: None,
@@ -330,7 +330,7 @@ impl ProfileProbe {
         self
     }
 
-    /// El perfil exige el almacen de contenido.
+    /// The profile requires the content store.
     pub fn with_content(mut self, content: ContentCheck) -> Self {
         self.content = Some(content);
         self
@@ -401,11 +401,11 @@ fn graph_failure(error: &GraphClientError) -> DependencyFailure {
     }
 }
 
-/// El probe de un despliegue que no exige ninguna dependencia.
+/// The probe of a deployment that requires no dependency.
 ///
-/// Es el probe por defecto del estado: un despliegue que no ha declarado
-/// que exige nada esta listo, y decirlo es mejor que inventar una
-/// dependencia que comprobar.
+/// It is the state's default probe: a deployment that has not declared
+/// that it requires anything is ready, and saying so is better than inventing a
+/// dependency to check.
 pub struct NothingRequired;
 
 #[async_trait]
@@ -424,8 +424,8 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// Un probe de mentira que cuenta las comprobaciones y falla donde se
-    /// le dice.
+    /// A fake probe that counts the checks and fails where
+    /// it is told to.
     struct Counting {
         required: Vec<Dependency>,
         checks: AtomicUsize,
@@ -458,7 +458,7 @@ mod tests {
         }
     }
 
-    /// Un probe que no contesta nunca.
+    /// A probe that never answers.
     struct Silent;
 
     #[async_trait]
@@ -486,9 +486,9 @@ mod tests {
 
     #[tokio::test]
     async fn una_dependencia_opcional_que_no_se_exige_no_puede_fallar_el_readiness() {
-        // El probe exige el grafo y la comprobacion falla: el veredicto
-        // es que no esta listo. La dependencia que no se exige --el
-        // almacen de contenido-- no aparece ni puede fallar.
+        // The probe requires the graph and the check fails: the verdict
+        // is that it is not ready. The dependency that is not required --the
+        // content store-- does not appear and cannot fail.
         let probe = CachedProbe::with_ttl(
             Arc::new(Counting::new(
                 vec![Dependency::Graph],

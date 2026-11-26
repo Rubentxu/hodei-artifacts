@@ -1,68 +1,68 @@
-//! El read-set: lo que una lectura LEYO, dicho para que se pueda
-//! verificar.
+//! The read-set: what a read READ, stated so that it can be
+//! verified.
 //!
-//! Una lectura tiene que poder demostrar QUE evidencias, relaciones
-//! y politicas consulto y sobre QUE versiones del mundo. Eso es un
-//! **manifiesto de lecturas**: identificadores, digests y generaciones,
-//! en un orden estable, sin contenido crudo y sin relojes. Es una
-//! primitiva neutral: no depende de un modelo, ni de una decision de
-//! confianza, ni de un almacen concreto.
+//! A read has to be able to prove WHICH evidence, relations
+//! and policies it consulted and over WHICH versions of the world. That is a
+//! **reads manifest**: identifiers, digests and generations,
+//! in a stable order, without raw content and without clocks. It is a
+//! neutral primitive: it does not depend on a model, nor on a trust
+//! decision, nor on a concrete store.
 //!
-//! # Las tres listas
+//! # The three lists
 //!
-//! Lo que se **recupero**, lo que se le **dio al modelo** y lo que las
-//! afirmaciones aceptadas **citaron** son tres cosas distintas, y el
-//! manifiesto las distingue: un hecho recuperado que el presupuesto
-//! dejo fuera no llego al modelo, y un hecho que llego y no se cito no
-//! sostiene nada.
+//! What was **retrieved**, what was **given to the model** and what the accepted
+//! claims **cited** are three different things, and the
+//! manifest tells them apart: a retrieved fact that the budget
+//! left out did not reach the model, and a fact that arrived and was not cited does not
+//! support anything.
 //!
-//! # La consistencia
+//! # Consistency
 //!
-//! El mundo puede cambiar mientras se lee. El manifiesto lleva las
-//! **generaciones** de las fuentes (un vector, porque puede no haber un
-//! unico cursor global), y la comprobacion dice si el mundo contra el
-//! que se leyo sigue siendo el mundo de ahora. Una lectura obsoleta se
-//! dice obsoleta: nunca se presenta como snapshot consistente.
+//! The world can change while it is being read. The manifest carries the source
+//! **generations** (a vector, because there may be no single
+//! global cursor), and the check says whether the world against which
+//! it was read is still the world of now. A stale read
+//! says it is stale: it is never presented as a consistent snapshot.
 //!
-//! # Donde vive
+//! # Where it lives
 //!
-//! Es una primitiva de DOMINIO compartido, y por eso vive aqui y no en
-//! el crate que la consume por primera vez: el investigador la usa para
-//! sus informes y la simulacion la usa para fijar la base sobre la que
-//! evalua. Un dominio que define el formato de su manifiesto y otro que
-//! lo consume tienen que hablar del MISMO manifiesto, o el sello de uno
-//! no verifica nada del otro.
+//! It is a primitive of SHARED DOMAIN, and that is why it lives here and not in
+//! the crate that consumes it first: the investigator uses it for
+//! its reports and the simulation uses it to pin the base on which it
+//! evaluates. A domain that defines the format of its manifest and another that
+//! consumes it have to speak of the SAME manifest, or the seal of one
+//! verifies nothing of the other.
 
 use serde::{Deserialize, Serialize};
 
-/// Que clase de recurso se leyo.
+/// What kind of resource was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReadKind {
-    /// Una pieza de evidencia, verificada por el digest de su contenido.
+    /// A piece of evidence, verified by the digest of its content.
     Evidence,
-    /// Una relacion del grafo, verificada por su identidad.
+    /// A graph relation, verified by its identity.
     Relation,
-    /// Una politica de confianza, verificada por su version.
+    /// A trust policy, verified by its version.
     Policy,
 }
 
-/// La lectura de UN recurso, con los metadatos que bastan para
-/// comprobar su origen. Nunca lleva el contenido: lleva el digest.
+/// The read of ONE resource, with the metadata that is enough to
+/// check its origin. It never carries the content: it carries the digest.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ReadStamp {
-    /// Que clase de recurso es.
+    /// What kind of resource it is.
     pub kind: ReadKind,
-    /// El identificador del recurso: el id de la evidencia, la identidad
-    /// de la relacion o el id de la politica.
+    /// The identifier of the resource: the evidence id, the identity
+    /// of the relation or the policy id.
     pub resource: String,
-    /// Con que se verifica el origen: el digest del contenido, la
-    /// identidad de la relacion o la version de la politica.
+    /// What the origin is verified with: the content digest, the
+    /// identity of the relation or the version of the policy.
     pub verified_by: String,
 }
 
 impl ReadStamp {
-    /// El sello de una evidencia, verificada por su digest.
+    /// The seal of a piece of evidence, verified by its digest.
     pub fn evidence(resource: impl Into<String>, digest: impl Into<String>) -> Self {
         Self {
             kind: ReadKind::Evidence,
@@ -71,7 +71,7 @@ impl ReadStamp {
         }
     }
 
-    /// El sello de una relacion, verificada por su identidad.
+    /// The seal of a relation, verified by its identity.
     pub fn relation(resource: impl Into<String>, evidence: impl Into<String>) -> Self {
         Self {
             kind: ReadKind::Relation,
@@ -80,7 +80,7 @@ impl ReadStamp {
         }
     }
 
-    /// El sello de una politica, verificada por su version.
+    /// The seal of a policy, verified by its version.
     pub fn policy(resource: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
             kind: ReadKind::Policy,
@@ -90,44 +90,44 @@ impl ReadStamp {
     }
 }
 
-/// El manifiesto de las lecturas.
+/// The manifest of the reads.
 ///
-/// Las generaciones son un VECTOR --(fuente, version)-- porque puede no
-/// haber un unico cursor global para todo lo que se lee. Los sellos van
-/// en un orden estable: el mismo conjunto de lecturas da el mismo
-/// manifiesto, se lea en el orden en que se lea.
+/// The generations are a VECTOR --(source, version)-- because there may be no
+/// single global cursor for everything that is read. The seals go
+/// in a stable order: the same set of reads gives the same
+/// manifest, whatever order it is read in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ReadSet {
-    /// La version de cada fuente en el momento de leer, sin relojes.
+    /// The version of each source at the time of reading, without clocks.
     pub generations: Vec<(String, u64)>,
-    /// Los sellos de lo que se leyo.
+    /// The seals of what was read.
     pub stamps: Vec<ReadStamp>,
 }
 
 impl ReadSet {
-    /// Un manifiesto vacio.
+    /// An empty manifest.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Registra una lectura.
+    /// Records a read.
     ///
-    /// La lectura se registra por LO QUE SE VERIFICO, no solo por el
-    /// recurso: el mismo recurso verificado de dos maneras son DOS
-    /// lecturas, y el manifiesto tiene que poder decir las dos. Guardar
-    /// solo la primera haria que un manifiesto pareciera coherente
-    /// mientras el mundo ya habia cambiado, y lo que no se ve no se
-    /// puede comprobar.
+    /// The read is recorded by WHAT WAS VERIFIED, not just by the
+    /// resource: the same resource verified in two ways is TWO
+    /// reads, and the manifest has to be able to state both. Keeping
+    /// only the first would make a manifest look coherent
+    /// while the world had already changed, and what is not seen cannot
+    /// be checked.
     ///
-    /// La misma lectura dicha dos veces --el mismo recurso con la misma
-    /// verificacion-- sigue siendo una.
+    /// The same read stated twice --the same resource with the same
+    /// verification-- is still one.
     pub fn read(&mut self, stamp: ReadStamp) {
         if !self.stamps.contains(&stamp) {
             self.stamps.push(stamp);
         }
     }
 
-    /// Registra la generacion de una fuente.
+    /// Records the generation of a source.
     pub fn generation(&mut self, source: impl Into<String>, version: u64) {
         let source = source.into();
         if !self.generations.iter().any(|(known, _)| *known == source) {
@@ -135,10 +135,10 @@ impl ReadSet {
         }
     }
 
-    /// El manifiesto canonico: los sellos ordenados por su identidad,
-    /// las generaciones ordenadas por su fuente, sin relojes y sin
-    /// orden accidental. El replay del mismo conjunto de lecturas
-    /// produce EL MISMO manifiesto.
+    /// The canonical manifest: the seals ordered by their identity,
+    /// the generations ordered by their source, without clocks and without
+    /// accidental order. The replay of the same set of reads
+    /// produces THE SAME manifest.
     pub fn manifest(&self) -> String {
         let mut stamps = self.stamps.clone();
         stamps.sort();
@@ -147,15 +147,15 @@ impl ReadSet {
         format!("readset generations={:?} stamps={:?}", generations, stamps)
     }
 
-    /// La huella del manifiesto canonico: el digest de lo que se leyo,
-    /// para comparar dos manifiestos sin leerlos enteros.
+    /// The fingerprint of the canonical manifest: the digest of what was read,
+    /// to compare two manifests without reading them in full.
     pub fn fingerprint(&self) -> String {
         crate::ContentDigest::of_bytes(self.manifest().as_bytes()).to_string()
     }
 
-    /// Si el mundo contra el que se leyo SIGUE siendo el mundo de ahora:
-    /// cada generacion registrada tiene que seguir siendo la que la
-    /// fuente dice tener.
+    /// Whether the world against which it was read is STILL the world of now:
+    /// every recorded generation has to still be the one the
+    /// source says it has.
     pub fn is_consistent_with(&self, current: &[(String, u64)]) -> bool {
         self.generations.iter().all(|(source, expected)| {
             current
@@ -169,8 +169,8 @@ impl ReadSet {
 mod tests {
     use super::*;
 
-    /// AC3: el replay del mismo conjunto de lecturas produce el mismo
-    /// manifiesto, se construya en el orden en que se construya.
+    /// AC3: the replay of the same set of reads produces the same
+    /// manifest, whatever order it is built in.
     #[test]
     fn the_same_reads_give_the_same_manifest_in_any_order() {
         let mut first = ReadSet::empty();
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(first.fingerprint(), second.fingerprint());
     }
 
-    /// La misma lectura dicha dos veces es UNA en el manifiesto.
+    /// The same read stated twice is ONE in the manifest.
     #[test]
     fn a_read_said_twice_is_one_in_the_manifest() {
         let mut read_set = ReadSet::empty();
@@ -198,10 +198,10 @@ mod tests {
         assert_eq!(read_set.stamps.len(), 1);
     }
 
-    /// El MISMO recurso verificado de dos maneras son DOS lecturas: el
-    /// manifiesto tiene que poder decir las dos, porque si se guarda
-    /// solo la primera un manifiesto puede parecer coherente mientras el
-    /// mundo ya habia cambiado.
+    /// The SAME resource verified in two ways is TWO reads: the
+    /// manifest has to be able to state both, because if only the
+    /// first is kept a manifest can look coherent while the
+    /// world had already changed.
     #[test]
     fn the_same_resource_verified_two_ways_is_two_reads() {
         let mut read_set = ReadSet::empty();
@@ -216,8 +216,8 @@ mod tests {
         assert_eq!(read_set.stamps[1].verified_by, "2.0.0");
     }
 
-    /// AC2: el mundo puede cambiar mientras se lee. Un manifiesto cuya
-    /// generacion ya no es la de la fuente esta OBSOLETO, y se dice.
+    /// AC2: the world can change while it is being read. A manifest whose
+    /// generation is no longer the source's is STALE, and says so.
     #[test]
     fn a_manifest_from_an_older_generation_is_stale() {
         let mut read_set = ReadSet::empty();
@@ -237,7 +237,7 @@ mod tests {
         );
     }
 
-    /// El manifiesto no lleva contenido: lleva identificadores y digests.
+    /// The manifest carries no content: it carries identifiers and digests.
     #[test]
     fn the_manifest_carries_digests_not_content() {
         let mut read_set = ReadSet::empty();

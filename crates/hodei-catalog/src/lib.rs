@@ -1,45 +1,45 @@
-//! El catálogo de artefactos de Hodei.
+//! The Hodei artifact catalog.
 //!
-//! Ahí se guarda **que** hay, no **donde** están los bytes: los bytes son
-//! del CAS y se llaman por su digest; el catálogo dice que existe un
-//! asset, que apunta a una versión, y que esa versión tiene un digest.
+//! What is kept there is **that** something exists, not **where** the bytes are: the bytes
+//! belong to the CAS and are called by their digest; the catalog says that an
+//! asset exists, that it points to a version, and that the version has a digest.
 //!
-//! # Las cuatro cosas que este catálogo mantiene separadas
+//! # The four things this catalog keeps separate
 //!
-//! - **La identidad del repositorio** (`RepositoryDescriptor`): cuenta,
-//!   clave, formato, modo y configuración versionada.
-//! - **La identidad del contenido** (`ContentDigest`): el mismo digest es
-//!   el mismo contenido, este o otro día, en esta o en otra cuenta.
-//! - **Las coordenadas del paquete** (`PackageCoordinates`): nombre y
-//!   versión, inmutables una vez publicadas.
-//! - **La posición** (`AssetRecord`): la ruta dentro del repositorio, que
-//!   se puede mover a otra versión sin tocar los bytes de ninguna.
+//! - **The repository identity** (`RepositoryDescriptor`): account,
+//!   key, format, mode and versioned configuration.
+//! - **The content identity** (`ContentDigest`): the same digest is
+//!   the same content, today or another day, in this account or another.
+//! - **The package coordinates** (`PackageCoordinates`): name and
+//!   version, immutable once published.
+//! - **The position** (`AssetRecord`): the path inside the repository, which
+//!   can be moved to another version without touching the bytes of either.
 //!
-//! # Por qué la separación importa
+//! # Why the separation matters
 //!
-//! Una etiqueta mutable que se mueve no puede reescribir el blob que
-//! apunta: si lo hiciera, `latest` cambiaría el contenido de una versión
-//! ya publicada, y el digest dejaría de ser la identidad de nada. Por eso
-//! la etiqueta es una fila aparte, y moverla solo escribe esa fila.
+//! A mutable tag that moves cannot rewrite the blob it
+//! points to: if it did, `latest` would change the content of an already
+//! published version, and the digest would stop being the identity of anything. That is why
+//! the tag is a separate row, and moving it only writes that row.
 //!
-//! Y por eso el digest tiene una **política de ámbito** (`DigestScope`):
-//! el mismo contenido en dos cuentas puede ser un blob compartido o dos
-//! blobs, según lo que el repositorio declare. La política se guarda
-//! junto al repositorio, no se deduce.
+//! And that is why the digest has a **scope policy** (`DigestScope`):
+//! the same content in two accounts can be one shared blob or two
+//! blobs, depending on what the repository declares. The policy is stored
+//! next to the repository, it is not deduced.
 //!
-//! # Los errores que no se confunden
+//! # The errors that are not confused
 //!
-//! `Missing`, `Denied` y `Corrupt` son tres cosas distintas y el catálogo
-//! las mantiene distintas. Un `Missing` es "no hay nada ahí"; un `Denied`
-//! es "hay algo ahí y este principal no puede verlo", y lo decide el
-//! puerto de autorización antes de mirar la base, para no filtrar la
-//! existencia de lo ajeno; un `Corrupt` es "hay algo ahí y está roto", y
-//! se detecta comparando el registro con la versión que referencia y con
-//! los bytes que el CAS dice que tiene.
+//! `Missing`, `Denied` and `Corrupt` are three different things and the catalog
+//! keeps them different. A `Missing` is "there is nothing there"; a `Denied`
+//! is "there is something there and this principal cannot see it", and it is decided by the
+//! authorization port before looking at the database, so as not to leak the
+//! existence of what belongs to others; a `Corrupt` is "there is something there and it is broken", and
+//! it is detected by comparing the record with the version it references and with
+//! the bytes the CAS says it has.
 //!
-//! Lo que la sonda comprueba es la **longitud** de los bytes, no su
-//! digest: rehashear un artefacto en cada lectura es un coste que un
-//! registro no puede pagar, y la verificación profunda es del scrub.
+//! What the probe checks is the **length** of the bytes, not their
+//! digest: rehashing an artifact on every read is a cost a
+//! registry cannot pay, and deep verification belongs to the scrub.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

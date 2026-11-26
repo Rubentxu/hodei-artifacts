@@ -1,47 +1,47 @@
-//! Import idempotente de autoridades persistentes (HSP-210 / HGS-28).
+//! Idempotent import of persistent authorities (HSP-210 / HGS-28).
 //!
-//! La copia de [`super::backup`] es un espejo del motor: solo vuelve a un
-//! destino **limpio** y trae los metadatos como SurrealQL opaco. Este
-//! modulo es la otra mitad del contrato de recuperacion: el paquete
-//! semantico portable que produce la herramienta de export (HSP-179,
-//! doc-20) —filas JSON canonicas por tabla, en orden de dependencias, con
-//! identidad canonica `tabla:clave`— se importa **contra una autoridad que
-//! ya tiene datos**, y hacerlo dos veces no puede duplicar nada.
+//! The backup of [`super::backup`] is a mirror of the engine: it only goes back to a
+//! **clean** destination and carries the metadata as opaque SurrealQL. This
+//! module is the other half of the recovery contract: the portable
+//! semantic bundle produced by the export tool (HSP-179,
+//! doc-20) —canonical JSON rows per table, in dependency order, with a
+//! canonical `table:key` identity— is imported **against an authority that
+//! already has data**, and doing so twice cannot duplicate anything.
 //!
-//! Reglas, de mas a menos importantes:
+//! Rules, from most to least important:
 //!
-//! 1. **La identidad canonica decide, el UID fisico nunca.** La clave de
-//!    una fila es su `id` canonicado (`tabla:clave`, la misma nocion que
-//!    fija el export al escribir sus lotes): se busca por ella y se
-//!    escribe con ella. Los UIDs internos del destino no se copian ni se
-//!    reasignan: una fila que ya esta, con el mismo contenido, no se toca;
-//!    una fila nueva se crea **con la identidad del origen**.
-//! 2. **Manifest-first, fail-closed.** Antes de escribir una sola fila se
-//!    comprueba el paquete entero: formato, autodigest, hashes de lote
-//!    contra fichero, recuentos, orden, bordes de lote, identidades
-//!    repetidas y digests de contenido contra el CAS. Un paquete que no
-//!    cuadra aborta nombrando al culpable; nunca se importa "lo que habia".
-//! 3. **El orden del manifiesto es el orden de aplicacion.** Las tablas
-//!    viajan en orden de dependencias (repositorios antes que versiones y
-//!    assets, el ledger despues de lo que referencia); los lotes viajan
-//!    ordenados por identidad. El import conserva ese orden y no lo
-//!    reordena.
-//! 4. **Una fila divergente es una decision del operador, no un empate
-//!    tecnico.** La misma identidad con distinto contenido es `Conflict`
-//!    tipado y aborta la corrida. Solo una reescritura explicitamente
-//!    autorizada (`overwrite`) la repara, y aun entonces la identidad
-//!    canonica se conserva.
-//! 5. **Toda corrida deja un registro resumible.** El progreso se escribe
-//!    en atomico tras cada lote; un corte a mitad se reanuda verificando
-//!    cada lote grabado contra su hash **y contra el destino** antes de
-//!    saltarlo. Reanudar tras el corte y repetir la importacion entera
-//!    convergen al mismo estado.
+//! 1. **The canonical identity decides, the physical UID never.** The key of
+//!    a row is its canonicalized `id` (`table:key`, the same notion that
+//!    the export fixes when writing its batches): it is looked up by it and
+//!    written with it. The destination's internal UIDs are neither copied nor
+//!    reassigned: a row that is already there, with the same content, is not touched;
+//!    a new row is created **with the origin's identity**.
+//! 2. **Manifest-first, fail-closed.** Before writing a single row the
+//!    whole bundle is checked: format, self-digest, batch hashes
+//!    against file, counts, order, batch bounds, repeated
+//!    identities and content digests against the CAS. A bundle that does not
+//!    match aborts naming the guilty party; "what there was" is never imported.
+//! 3. **The manifest order is the application order.** Tables
+//!    travel in dependency order (repositories before versions and
+//!    assets, the ledger after what it references); batches travel
+//!    sorted by identity. The import keeps that order and does not
+//!    reorder it.
+//! 4. **A divergent row is an operator decision, not a technical
+//!    tie.** The same identity with different content is a typed `Conflict`
+//!    and aborts the run. Only an explicitly authorized rewrite
+//!    (`overwrite`) repairs it, and even then the canonical identity
+//!    is kept.
+//! 5. **Every run leaves a resumable record.** Progress is written
+//!    atomically after each batch; a cut midway is resumed by verifying
+//!    each recorded batch against its hash **and against the destination** before
+//!    skipping it. Resuming after the cut and repeating the whole import
+//!    converge to the same state.
 //!
-//! La aplicacion vive detras de [`RowSink`]: el dominio decide (identidad,
-//! orden, conflicto, progreso) y el adaptador toca el almacen. El adaptador
-//! sobre el perfil Dgraph vigente es una costura registrada como gap en la
-//! evidencia (`target/uat/hsp210/evidencia.md`); el nucleo aqui es
-//! engine-agnostic y esta probado sobre un motor real en memoria.
+//! The application lives behind [`RowSink`]: the domain decides (identity,
+//! order, conflict, progress) and the adapter touches the store. The adapter
+//! over the current Dgraph profile is a seam recorded as a gap in the
+//! evidence (`target/uat/hsp210/evidencia.md`); the core here is
+//! engine-agnostic and is tested on a real in-memory engine.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -54,24 +54,24 @@ use sha2::{Digest, Sha256};
 
 use super::RecoveryError;
 
-/// La version del formato del paquete importable.
+/// The version of the importable bundle format.
 ///
-/// Sube cuando un paquete antiguo deja de poder leerse. Un paquete con un
-/// formato que este binario no entiende se **rechaza** nombrando ambos
-/// numeros, igual que la copia de [`super::manifest`].
+/// It goes up when an old bundle can no longer be read. A bundle with a
+/// format that this binary does not understand is **rejected** naming both
+/// numbers, just like the backup of [`super::manifest`].
 pub const IMPORT_FORMAT: u32 = 1;
 
-/// El manifiesto dentro del directorio del paquete.
+/// The manifest inside the bundle directory.
 pub const IMPORT_MANIFEST_FILE: &str = "manifest.json";
 
-/// El directorio de lotes dentro del paquete.
+/// The batches directory inside the bundle.
 pub const IMPORT_BATCHES_DIR: &str = "batches";
 
-/// El nombre canonico del marcador de progreso de una corrida a medias.
+/// The canonical name of the progress marker of a half-finished run.
 ///
-/// Vive junto a la autoridad, no junto al paquete: el paquete es
-/// inmutable, el progreso es estado de la aplicacion. Su presencia
-/// significa "corrida sin terminar"; al terminar se borra.
+/// It lives next to the authority, not next to the bundle: the bundle is
+/// immutable, progress is application state. Its presence
+/// means "unfinished run"; it is deleted on finishing.
 pub const IMPORT_PROGRESS_FILE: &str = ".import-progress.json";
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -86,100 +86,100 @@ fn sha256_hex(bytes: &[u8]) -> String {
     out
 }
 
-/// De donde vino el paquete. Es metadato del origen: el import lo registra
-/// en el informe pero nunca lo escribe en el destino.
+/// Where the bundle came from. It is metadata of the origin: the import records it
+/// in the report but never writes it to the destination.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportSource {
-    /// El motor del origen.
+    /// The origin's engine.
     pub engine: String,
-    /// La version del contrato del motor.
+    /// The version of the engine contract.
     pub engine_version: String,
-    /// El backend del origen, tal como lo declaro quien opera.
+    /// The origin's backend, as declared by whoever operates.
     pub backend: String,
-    /// El namespace del origen.
+    /// The origin's namespace.
     pub namespace: String,
-    /// La base del origen.
+    /// The origin's database.
     pub database: String,
 }
 
-/// La frontera de la fuente en el momento del export.
+/// The boundary of the source at the moment of export.
 ///
-/// El import la conserva y la reporta: es parte de la firma de **que** se
-/// importo. Dos importaciones del mismo paquete tienen la misma frontera.
+/// The import keeps it and reports it: it is part of the signature of **what** was
+/// imported. Two imports of the same bundle have the same boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportFrontier {
-    /// Recuento de filas por tabla.
+    /// Row count per table.
     pub tables: BTreeMap<String, u64>,
-    /// Filas del ledger de evidencia.
+    /// Rows of the evidence ledger.
     pub ledger_rows: u64,
-    /// La posicion mas alta del ledger, cuando no esta vacio.
+    /// The highest ledger position, when it is not empty.
     pub ledger_max_position: Option<u64>,
-    /// Filas de la tabla de cabezales del ledger.
+    /// Rows of the ledger heads table.
     pub head_rows: u64,
 }
 
-/// Un lote del paquete, y el hash que fija sus bytes.
+/// A batch of the bundle, and the hash that fixes its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportBatch {
-    /// El fichero, relativo al paquete (`batches/<tabla>-<i>.json`).
+    /// The file, relative to the bundle (`batches/<table>-<i>.json`).
     pub file: String,
-    /// El SHA-256 del fichero, en hexadecimal minusculo.
+    /// The SHA-256 of the file, in lowercase hexadecimal.
     pub sha256: String,
-    /// Filas que lleva el lote.
+    /// Rows the batch carries.
     pub rows: u64,
-    /// La identidad de la primera fila del lote.
+    /// The identity of the first row of the batch.
     pub first_id: String,
-    /// La identidad de la ultima fila del lote.
+    /// The identity of the last row of the batch.
     pub last_id: String,
 }
 
-/// Los lotes de una tabla, en orden de aplicacion.
+/// The batches of a table, in application order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportTable {
-    /// La tabla.
+    /// The table.
     pub table: String,
-    /// Filas totales de la tabla en la fuente.
+    /// Total rows of the table at the source.
     pub rows: u64,
-    /// Los lotes, en orden.
+    /// The batches, in order.
     pub batches: Vec<ImportBatch>,
 }
 
-/// La politica de blobs declarada por el paquete.
+/// The blob policy declared by the bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobPolicy {
-    /// Por que los bytes no viajaron.
+    /// Why the bytes did not travel.
     pub policy: String,
-    /// Si los bytes viajaron: nunca.
+    /// Whether the bytes traveled: never.
     pub copied: bool,
 }
 
-/// Lo que el paquete dice de si mismo.
+/// What the bundle says about itself.
 ///
-/// Espejo de lectura del formato 1 que escribe la herramienta de export
-/// (HSP-179): las claves serde coinciden, de modo que un export real se
-/// importa sin traduccion. Las tablas viajan **en orden de dependencias**;
-/// el orden del vector es contrato, no sugerencia.
+/// Read mirror of format 1 written by the export tool
+/// (HSP-179): the serde keys match, so that a real export is
+/// imported without translation. Tables travel **in dependency order**;
+/// the order of the vector is a contract, not a suggestion.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportManifest {
-    /// La version del formato.
+    /// The format version.
     pub format: u32,
-    /// La version de la herramienta que lo produjo.
+    /// The version of the tool that produced it.
     pub tool_version: String,
-    /// El origen de las filas.
+    /// The origin of the rows.
     pub source: ExportSource,
-    /// La frontera de la fuente.
+    /// The boundary of the source.
     pub frontier: ExportFrontier,
-    /// Las tablas, en orden de aplicacion.
+    /// The tables, in application order.
     pub tables: Vec<ImportTable>,
-    /// La politica de blobs: los digest viajaron, los bytes no.
+    /// The blob policy: the digests traveled, the bytes did not.
     pub blobs: BlobPolicy,
-    /// El SHA-256 del contenido entero: los hashes de lote concatenados
-    /// en orden, cada uno seguido de un salto de linea.
+    /// The SHA-256 of the whole content: the batch hashes concatenated
+    /// in order, each followed by a line break.
     pub content_sha256: String,
 }
 
 impl ImportManifest {
-    /// El autodigest recalculado desde los hashes de lote.
+    /// The self-digest recomputed from the batch hashes.
     pub fn content_digest(&self) -> String {
         let mut input = Vec::new();
         for table in &self.tables {
@@ -191,7 +191,7 @@ impl ImportManifest {
         sha256_hex(&input)
     }
 
-    /// Los lotes de todas las tablas, aplanados en orden de aplicacion.
+    /// The batches of all tables, flattened in application order.
     pub fn all_batches(&self) -> Vec<(&str, &ImportBatch)> {
         self.tables
             .iter()
@@ -204,9 +204,9 @@ impl ImportManifest {
             .collect()
     }
 
-    /// Comprueba el paquete **antes** de tocar nada: formato, tablas sin
-    /// repetir, lotes no vacios, orden de lotes por identidad y coherencia
-    /// de recuentos y de la frontera. Cada problema es tipado.
+    /// Checks the bundle **before** touching anything: format, tables without
+    /// repetition, non-empty batches, batch order by identity and coherence
+    /// of counts and of the boundary. Each problem is typed.
     pub fn check(&self) -> Result<(), ImportFailure> {
         if self.format != IMPORT_FORMAT {
             return Err(ImportFailure::Format {
@@ -269,7 +269,7 @@ impl ImportManifest {
     }
 }
 
-/// Lee y comprueba el manifiesto de un paquete de export.
+/// Reads and checks the manifest of an export bundle.
 pub fn read_import_manifest(directory: &Path) -> Result<ImportManifest, RecoveryError> {
     let text = std::fs::read(directory.join(IMPORT_MANIFEST_FILE)).map_err(|error| {
         RecoveryError::Unsound(format!(
@@ -286,50 +286,50 @@ pub fn read_import_manifest(directory: &Path) -> Result<ImportManifest, Recovery
     Ok(manifest)
 }
 
-/// La fila tal como viaja en un lote: un objeto JSON con su `id`.
+/// The row as it travels in a batch: a JSON object with its `id`.
 pub type Row = serde_json::Map<String, serde_json::Value>;
 
-/// El estado del destino que el nucleo necesita para decidir. Lo lee el
-/// sink; el nucleo no toca el almacen.
+/// The state of the destination that the core needs in order to decide. It is read by the
+/// sink; the core does not touch the store.
 #[async_trait]
 pub trait RowSink: Send + Sync {
-    /// Busca por identidad canonica completa (`tabla:clave`).
+    /// Looks up by full canonical identity (`table:key`).
     async fn lookup(&self, identity: &str) -> Result<Option<Row>, RecoveryError>;
 
-    /// Escribe la fila **con la identidad canonica dada** como clave. El
-    /// adaptador no elige otra: conservar la clave es el contrato (AC1).
+    /// Writes the row **with the given canonical identity** as key. The
+    /// adapter does not choose another: keeping the key is the contract (AC1).
     async fn put(&self, identity: &str, row: &Row) -> Result<(), RecoveryError>;
 
-    /// El digest canonico de una fila: la clave de la equivalencia.
+    /// The canonical digest of a row: the key of equivalence.
     ///
-    /// El default es la identidad estructural del JSON (claves ordenadas,
-    /// sin el `id`, que ya es la clave). Un adaptador con representacion
-    /// propia del origen puede igualarla aqui para que "mismo contenido"
-    /// signifique lo mismo en origen y destino.
+    /// The default is the structural identity of the JSON (sorted keys,
+    /// without the `id`, which is already the key). An adapter with its own
+    /// representation of the origin can equate it here so that "same content"
+    /// means the same at origin and destination.
     fn fingerprint_row(&self, row: &Row) -> String {
         canonical_digest(row)
     }
 
-    /// El resumen del destino por el que responde el AC: recuento por
-    /// tabla y el digest global de las filas que hay.
+    /// The summary of the destination that the AC answers for: count per
+    /// table and the global digest of the rows that exist.
     async fn state_summary(&self) -> Result<DestinationState, RecoveryError>;
 }
 
-/// El estado del destino, tal como lo ve el import.
+/// The state of the destination, as the import sees it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DestinationState {
-    /// Filas por tabla.
+    /// Rows per table.
     pub tables: BTreeMap<String, u64>,
-    /// El digest canonico de cada fila, ordenado como `tabla:id`.
-    /// Es el invariante del fingerprint de autoridades: dos estados con
-    /// el mismo mapa tienen las mismas autoridades, no "parecidas".
+    /// The canonical digest of each row, sorted as `table:id`.
+    /// It is the invariant of the authorities fingerprint: two states with
+    /// the same map have the same authorities, not "similar" ones.
     pub rows: BTreeMap<String, String>,
 }
 
 impl DestinationState {
-    /// El fingerprint de autoridades: un SHA-256 sobre el resumen
-    /// canonico del destino. Es lo que dos importaciones del mismo
-    /// paquete deben producir iguales (AC1).
+    /// The authorities fingerprint: a SHA-256 over the canonical
+    /// summary of the destination. It is what two imports of the same
+    /// bundle must produce equal (AC1).
     pub fn fingerprint(&self) -> String {
         let mut hasher = Sha256::new();
         for (table, count) in &self.tables {
@@ -342,10 +342,10 @@ impl DestinationState {
     }
 }
 
-/// El digest canonico de una fila: serializacion con claves ordenadas
-/// (el `Map` de serde_json serializa en el orden del parser; para el
-/// contrato se reordena explicitamente) y sin el campo `id`, que es la
-/// clave y se compara aparte.
+/// The canonical digest of a row: serialization with sorted keys
+/// (serde_json's `Map` serializes in parser order; for the
+/// contract it is reordered explicitly) and without the `id` field, which is the
+/// key and is compared separately.
 pub fn canonical_digest(row: &Row) -> String {
     let mut content = Row::new();
     for (key, value) in row {
@@ -354,17 +354,17 @@ pub fn canonical_digest(row: &Row) -> String {
         }
         content.insert(key.clone(), canonical_value(value));
     }
-    // BTreeMap da claves ordenadas: el digest no depende del orden de
-    // las claves en el fichero de origen.
+    // BTreeMap gives sorted keys: the digest does not depend on the order of
+    // the keys in the origin file.
     let ordered: BTreeMap<&String, serde_json::Value> =
         content.iter().map(|(k, v)| (k, v.clone())).collect();
     let bytes = serde_json::to_vec(&ordered).unwrap_or_default();
     sha256_hex(&bytes)
 }
 
-/// Reordena objetos anidados para que el digest sea canonico de arriba
-/// abajo: un origen que escribe `{"b":1,"a":2}` y un destino que lo leen
-/// al reves son la misma autoridad.
+/// Reorders nested objects so that the digest is canonical from top
+/// to bottom: an origin that writes `{"b":1,"a":2}` and a destination that reads it
+/// the other way around are the same authority.
 fn canonical_value(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(object) => {
@@ -386,23 +386,23 @@ fn canonical_value(value: &serde_json::Value) -> serde_json::Value {
     }
 }
 
-/// El modo de la corrida.
+/// The mode of the run.
 #[derive(Debug, Clone)]
 pub struct ImportOptions {
-    /// Tamano maximo de pagina de escrituras por bloque. Acota el trabajo
-    /// por transaccion del adaptador; el lote del paquete manda.
+    /// Maximum page size of writes per block. It bounds the work
+    /// per transaction of the adapter; the bundle's batch rules.
     pub batch_rows: usize,
-    /// Reanudar en lugar de empezar: el progreso grabado en el destino
-    /// manda, y cada lote ya aplicado se **verifica contra su hash y
-    /// contra el destino** antes de saltarlo. Un progreso que no cuadra
-    /// aborta.
+    /// Resume instead of starting: the progress recorded at the destination
+    /// rules, and each already-applied batch is **verified against its hash and
+    /// against the destination** before skipping it. A progress that does not match
+    /// aborts.
     pub resume: bool,
-    /// Reescribir filas divergentes conservando su identidad canonica.
-    /// Sin esto, una divergencia aborta la corrida (AC2).
+    /// Rewrite divergent rows while keeping their canonical identity.
+    /// Without this, a divergence aborts the run (AC2).
     pub overwrite: bool,
-    /// El operador renuncio a la reconciliacion de digests contra el CAS.
-    /// Sin reconciliador y sin esta bandera el import aborta antes de
-    /// escribir: el contrato no se cumple a ciegas.
+    /// The operator waived the reconciliation of digests against the CAS.
+    /// Without a reconciler and without this flag the import aborts before
+    /// writing: the contract is not fulfilled blindly.
     pub allow_missing_blobs: bool,
 }
 
@@ -417,9 +417,9 @@ impl Default for ImportOptions {
     }
 }
 
-/// Campos de las filas que llevan digests de contenido, por tabla. La
-/// lista es deliberadamente corta y explicita: el reconciliador no
-/// escanea valores adivinando, recorre estas claves.
+/// Fields of the rows that carry content digests, per table. The
+/// list is deliberately short and explicit: the reconciler does not
+/// scan values by guessing, it walks these keys.
 pub const DIGEST_FIELDS: &[(&str, &[&str])] = &[
     ("catalog_asset", &["sha256"]),
     ("catalog_reference", &["sha256"]),
@@ -428,212 +428,212 @@ pub const DIGEST_FIELDS: &[(&str, &[&str])] = &[
     ("catalog_audit_outbox", &["payload_digest"]),
 ];
 
-/// Que hizo una corrida de import, lote a lote.
+/// What an import run did, batch by batch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BatchOutcome {
-    /// La tabla.
+    /// The table.
     pub table: String,
-    /// El numero de lote (1-based).
+    /// The batch number (1-based).
     pub index: usize,
-    /// El fichero del lote.
+    /// The batch file.
     pub file: String,
-    /// Filas nuevas creadas con su identidad canonica.
+    /// New rows created with their canonical identity.
     pub created: u64,
-    /// Filas que ya estaban identicas: saltadas.
+    /// Rows that were already identical: skipped.
     pub skipped: u64,
-    /// Filas divergentes reescritas con autorizacion (conservando id).
+    /// Divergent rows rewritten with authorization (keeping the id).
     pub overwritten: u64,
 }
 
-/// Lo que hizo una corrida de import.
+/// What an import run did.
 #[derive(Debug, Clone, Serialize)]
 pub struct ImportReport {
-    /// El fingerprint de autoridades **antes** de la corrida.
+    /// The authorities fingerprint **before** the run.
     pub fingerprint_before: String,
-    /// El fingerprint de autoridades **despues**.
+    /// The authorities fingerprint **after**.
     pub fingerprint_after: String,
-    /// La frontera del paquete, copiada del manifiesto.
+    /// The boundary of the bundle, copied from the manifest.
     pub frontier: ExportFrontier,
-    /// El autodigest del paquete.
+    /// The self-digest of the bundle.
     pub content_sha256: String,
-    /// Los lotes aplicados por esta corrida (los resumidos no aparecen).
+    /// The batches applied by this run (the resumed ones do not appear).
     pub batches: Vec<BatchOutcome>,
-    /// Totales por categoria.
+    /// Totals per category.
     pub created: u64,
     pub skipped: u64,
     pub overwritten: u64,
-    /// Si la corrida termino (borro el marcador de progreso).
+    /// Whether the run finished (it deleted the progress marker).
     pub finished: bool,
-    /// Cuando empezo (informativo; no entra en ningun digest).
+    /// When it started (informative; it does not enter any digest).
     pub started_at: DateTime<Utc>,
-    /// Cuanto tardo.
+    /// How long it took.
     pub elapsed_ms: u64,
 }
 
-/// El estado de una corrida a medias, grabado en el destino.
+/// The state of a half-finished run, recorded at the destination.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportProgress {
-    /// La version del formato del marcador.
+    /// The version of the marker format.
     pub format: u32,
-    /// El autodigest del paquete que se esta aplicando. Un progreso de
-    /// otro paquete aborta el resume: reanudar contra un paquete
-    /// distinto no es reanudar.
+    /// The self-digest of the bundle being applied. A progress from
+    /// another bundle aborts the resume: resuming against a different
+    /// bundle is not resuming.
     pub content_sha256: String,
-    /// Los lotes aplicados, en orden.
+    /// The applied batches, in order.
     pub done: Vec<BatchOutcome>,
 }
 
-/// Por que aborta un import. Cada variante nombra al culpable (AC2).
+/// Why an import aborts. Each variant names the guilty party (AC2).
 #[derive(Debug, thiserror::Error)]
 pub enum ImportFailure {
-    /// El paquete declara un formato que este binario no puede leer.
+    /// The bundle declares a format that this binary cannot read.
     #[error("the export uses format {found}; this build reads format {expected}")]
     Format {
-        /// El formato del paquete.
+        /// The format of the bundle.
         found: u32,
-        /// El formato que este binario escribe.
+        /// The format that this binary writes.
         expected: u32,
     },
-    /// El autodigest del manifiesto no cuadra con sus lotes.
+    /// The manifest's self-digest does not match its batches.
     #[error("the manifest content digest is {declared} but its batches hash to {computed}")]
     ContentDigest {
-        /// Lo que declara el manifiesto.
+        /// What the manifest declares.
         declared: String,
-        /// Lo que calculan sus lotes.
+        /// What its batches compute.
         computed: String,
     },
-    /// La suma de filas de los lotes de una tabla no es la declarada.
+    /// The sum of rows of a table's batches is not the declared one.
     #[error("the table {table} declares {declared} rows but its batches carry {batches}")]
     CountMismatch {
-        /// La tabla.
+        /// The table.
         table: String,
-        /// Lo declarado.
+        /// What is declared.
         declared: u64,
-        /// Lo que suman los lotes.
+        /// What the batches sum to.
         batches: u64,
     },
-    /// La frontera y los lotes no cuentan lo mismo.
+    /// The boundary and the batches do not count the same.
     #[error("the frontier counts {frontier} rows but the batches carry {batches}")]
     FrontierMismatch {
-        /// Lo que cuenta la frontera.
+        /// What the boundary counts.
         frontier: u64,
-        /// Lo que cargan los lotes.
+        /// What the batches carry.
         batches: u64,
     },
-    /// Los lotes no vienen ordenados por identidad.
+    /// The batches do not come sorted by identity.
     #[error("the batches of {table} are out of order: '{previous}' then '{found}'")]
     Order {
-        /// La tabla.
+        /// The table.
         table: String,
-        /// El ultimo id del lote anterior.
+        /// The last id of the previous batch.
         previous: String,
-        /// El primer id que lo viola.
+        /// The first id that violates it.
         found: String,
     },
-    /// Una fila del lote no puede canonicarse.
+    /// A row of the batch cannot be canonicalized.
     #[error("the row '{id}' of {table} is invalid: {detail}")]
     RowInvalid {
-        /// La tabla.
+        /// The table.
         table: String,
-        /// El id declarado o inferido.
+        /// The declared or inferred id.
         id: String,
-        /// Por que no vale.
+        /// Why it is not valid.
         detail: String,
     },
-    /// Una identidad fuera del rango de bordes de su lote.
+    /// An identity outside the range of its batch's bounds.
     #[error("the row '{id}' of batch '{file}' is outside the batch range '{first}'..='{last}'")]
     RowOutOfBatch {
-        /// La identidad culpable.
+        /// The guilty identity.
         id: String,
-        /// El fichero del lote.
+        /// The batch file.
         file: String,
-        /// El borde inferior declarado.
+        /// The declared lower bound.
         first: String,
-        /// El borde superior declarado.
+        /// The declared upper bound.
         last: String,
     },
-    /// La misma identidad canonica aparece dos veces en el paquete.
+    /// The same canonical identity appears twice in the bundle.
     #[error("the export repeats the canonical identity '{key}' of table {table}")]
     DuplicateRow {
-        /// La tabla.
+        /// The table.
         table: String,
-        /// La identidad repetida.
+        /// The repeated identity.
         key: String,
     },
-    /// Una identidad canonica ya existe en el destino con otro contenido
-    /// y la reescritura no esta autorizada. Fail-closed.
+    /// A canonical identity already exists at the destination with other content
+    /// and the rewrite is not authorized. Fail-closed.
     #[error(
         "the destination already has '{key}' in {table} with different content \
          (package digest {package_digest}, destination digest {destination_digest}); pass \
          overwrite to repair it keeping the canonical identity"
     )]
     Conflict {
-        /// La tabla.
+        /// The table.
         table: String,
-        /// La identidad divergente.
+        /// The divergent identity.
         key: String,
-        /// El digest canonico de la fila del paquete.
+        /// The canonical digest of the bundle's row.
         package_digest: String,
-        /// El digest canonico de la fila del destino.
+        /// The canonical digest of the destination's row.
         destination_digest: String,
     },
-    /// El paquete referencia un digest de contenido que el CAS no tiene.
+    /// The bundle references a content digest that the CAS does not have.
     #[error(
         "the CAS lacks {missing} referenced blob(s); first is {first} referenced by \
          {referenced_by}"
     )]
     MissingBlobs {
-        /// Cuantos faltan.
+        /// How many are missing.
         missing: usize,
-        /// El primero.
+        /// The first one.
         first: String,
-        /// Quien lo referencia.
+        /// Who references it.
         referenced_by: String,
     },
-    /// El progreso grabado no pertenece a este paquete.
+    /// The recorded progress does not belong to this bundle.
     #[error(
         "the destination holds progress for content {progress} and this package is {package}; \
          resume would apply the wrong batches"
     )]
     ProgressMismatch {
-        /// El progreso que hay.
+        /// The progress that is there.
         progress: String,
-        /// El paquete que se trae.
+        /// The bundle that is brought.
         package: String,
     },
-    /// El progreso promete un lote que el paquete o el destino no respaldan.
+    /// The progress promises a batch that the bundle or the destination do not back.
     #[error("the progress for batch '{file}' of {table} is not backed: {detail}")]
     ProgressNotBacked {
-        /// La tabla.
+        /// The table.
         table: String,
-        /// El fichero.
+        /// The file.
         file: String,
-        /// Que falta o en que no cuadra.
+        /// What is missing or what does not match.
         detail: String,
     },
-    /// El paquete no declara la politica de blobs que exige el contrato.
+    /// The bundle does not declare the blob policy that the contract requires.
     #[error("the export does not declare the referenced-by-digest policy (policy '{policy}')")]
     BlobPolicy {
-        /// Lo que declara.
+        /// What it declares.
         policy: String,
     },
-    /// Una peticion invalida de quien llama.
+    /// An invalid request from the caller.
     #[error("{0}")]
     Invalid(String),
-    /// El almacen fallo.
+    /// The store failed.
     #[error("the store failed: {0}")]
     Store(#[from] RecoveryError),
 }
 
-/// Canonicar la identidad de una fila: `tabla:clave`, la misma nocion que
-/// fija el export al escribir sus lotes.
+/// Canonicalize the identity of a row: `table:key`, the same notion that
+/// the export fixes when writing its batches.
 ///
-/// Acepta las dos formas en que un id llega de un JSON:
-/// - la cadena `tabla:clave` (forma canonica, la que fija el contrato);
-/// - el objeto `{tb, id}` en que algun cliente serializa un Thing.
+/// It accepts the two forms in which an id arrives from a JSON:
+/// - the string `table:key` (canonical form, the one the contract fixes);
+/// - the `{tb, id}` object in which some client serializes a Thing.
 ///
-/// Sin `id` **no se inventa**: la identidad tiene que viajar en la fila;
-/// aborta con `RowInvalid`.
+/// Without an `id` **none is invented**: the identity has to travel in the row;
+/// it aborts with `RowInvalid`.
 pub fn canonicalize_id(table: &str, row: &Row) -> Result<String, ImportFailure> {
     let declared = row.get("id").ok_or_else(|| ImportFailure::RowInvalid {
         table: table.to_string(),
@@ -717,9 +717,9 @@ fn text_of(value: &serde_json::Value) -> String {
     }
 }
 
-/// Fija la identidad canonica en la fila antes de escribir: el `id` es
-/// siempre `tabla:clave`, nunca el UID del origen ni el que el destino
-/// quiera asignar.
+/// Sets the canonical identity in the row before writing: the `id` is
+/// always `table:key`, never the origin's UID nor the one that the destination
+/// might want to assign.
 fn with_canonical_id(mut row: Row, identity: &str) -> Row {
     row.insert(
         "id".to_string(),
@@ -728,9 +728,9 @@ fn with_canonical_id(mut row: Row, identity: &str) -> Row {
     row
 }
 
-/// Lee y verifica un lote del paquete: el fichero tiene que existir y
-/// cuadrar con el hash del manifiesto, y su contenido tiene que ser una
-/// lista de objetos del recuento declarado.
+/// Reads and verifies a batch of the bundle: the file has to exist and
+/// match the manifest's hash, and its content has to be a
+/// list of objects of the declared count.
 pub fn read_batch(package: &Path, batch: &ImportBatch) -> Result<Vec<Row>, RecoveryError> {
     let path = package.join(&batch.file);
     let bytes = std::fs::read(&path).map_err(|error| {
@@ -764,7 +764,7 @@ pub fn read_batch(package: &Path, batch: &ImportBatch) -> Result<Vec<Row>, Recov
     Ok(rows)
 }
 
-/// Los digests de contenido que referencia una fila, segun
+/// The content digests that a row references, according to
 /// [`DIGEST_FIELDS`].
 fn referenced_digests(table: &str, row: &Row) -> Vec<String> {
     let mut digests = Vec::new();
@@ -783,10 +783,10 @@ fn referenced_digests(table: &str, row: &Row) -> Vec<String> {
     digests
 }
 
-/// La reconciliacion previa: todo lote existe, cuadra con su hash, sus
-/// filas se canonican, no hay identidades repetidas, cada identidad cae
-/// dentro de los bordes de su lote y cada digest referenciado esta en el
-/// CAS. Nada de esto toca el destino; es el "manifest-first" del modulo.
+/// The prior reconciliation: every batch exists, matches its hash, its
+/// rows are canonicalized, there are no repeated identities, each identity falls
+/// within the bounds of its batch and each referenced digest is in the
+/// CAS. None of this touches the destination; it is the module's "manifest-first".
 async fn preflight(
     package: &Path,
     manifest: &ImportManifest,
@@ -829,8 +829,8 @@ async fn preflight(
     Ok(())
 }
 
-/// Verifica que un lote marcado como aplicado en el progreso esta de
-/// verdad en el destino, fila por fila y digest a digest.
+/// Verifies that a batch marked as applied in the progress is truly
+/// at the destination, row by row and digest by digest.
 async fn verify_done_batch(
     sink: &Arc<dyn RowSink>,
     package: &Path,
@@ -893,21 +893,21 @@ async fn verify_done_batch(
     Ok(())
 }
 
-/// Importa un paquete de export en una autoridad. Idempotente por
-/// identidad canonica, resumible por lote, fail-closed por defecto.
+/// Imports an export bundle into an authority. Idempotent by
+/// canonical identity, resumable by batch, fail-closed by default.
 ///
-/// - Comprueba el manifiesto y concilia el paquete entero antes de la
-///   primera escritura (formato, autodigest, hashes, orden, identidades,
-///   digests contra el CAS).
-/// - Si hay progreso sin `resume`, aborta: reanudar sin decirlo podria
-///   solaparse con una corrida que no murio. Con `resume`, cada lote
-///   grabado se verifica contra su hash **y contra el destino**.
-/// - Aplica lote a lote en el orden del manifiesto: identidad ausente se
-///   crea con la identidad del origen; identidad presente con el mismo
-///   digest canonico se salta; identidad presente con otro digest aborta
-///   (`Conflict`) salvo `overwrite`, que reescribe conservando la
-///   identidad.
-/// - Graba el progreso tras cada lote en atomico y lo borra al terminar.
+/// - Checks the manifest and reconciles the whole bundle before the
+///   first write (format, self-digest, hashes, order, identities,
+///   digests against the CAS).
+/// - If there is progress without `resume`, it aborts: resuming without saying so could
+///   overlap with a run that did not die. With `resume`, each recorded
+///   batch is verified against its hash **and against the destination**.
+/// - Applies batch by batch in manifest order: an absent identity is
+///   created with the origin's identity; a present identity with the same
+///   canonical digest is skipped; a present identity with another digest aborts
+///   (`Conflict`) unless `overwrite`, which rewrites keeping the
+///   identity.
+/// - Records progress after each batch atomically and deletes it on finishing.
 pub async fn import_export(
     package: &Path,
     sink: Arc<dyn RowSink>,
@@ -935,7 +935,7 @@ pub async fn import_export(
                 .to_string(),
         ));
     }
-    // Manifest-first: nada se aplica hasta que todo el paquete cuadra.
+    // Manifest-first: nothing is applied until the whole bundle matches.
     preflight(package, &manifest, reconciler.as_ref()).await?;
 
     let fingerprint_before = sink.state_summary().await?.fingerprint();
@@ -1103,10 +1103,10 @@ fn write_progress(path: &Path, state: &ImportProgress) -> Result<(), ImportFailu
         })
 }
 
-/// El sink de memoria para el contrato y las pruebas: un mapa de
-/// `tabla:identidad -> fila`, con la misma semantica que exige el
-/// adaptador de grafo (la identidad canonica es la clave, los UIDs no
-/// existen).
+/// The in-memory sink for the contract and the tests: a map of
+/// `table:identity -> row`, with the same semantics that the graph
+/// adapter requires (the canonical identity is the key, UIDs do not
+/// exist).
 #[derive(Debug, Default)]
 pub struct MemorySink {
     rows: tokio::sync::Mutex<BTreeMap<String, Row>>,
@@ -1114,14 +1114,14 @@ pub struct MemorySink {
 }
 
 impl MemorySink {
-    /// Uno vacio.
+    /// An empty one.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Con una funcion de digest propia: el adaptador que normaliza la
-    /// representacion del origen iguala aqui su nocion de "mismo
-    /// contenido".
+    /// With its own digest function: the adapter that normalizes the
+    /// origin's representation equates here its notion of "same
+    /// content".
     pub fn with_fingerprint(digest: fn(&Row) -> String) -> Self {
         Self {
             rows: tokio::sync::Mutex::new(BTreeMap::new()),
@@ -1129,17 +1129,17 @@ impl MemorySink {
         }
     }
 
-    /// Las filas actuales, por identidad canonica.
+    /// The current rows, by canonical identity.
     pub async fn snapshot(&self) -> BTreeMap<String, Row> {
         self.rows.lock().await.clone()
     }
 
-    /// Cuantas filas hay.
+    /// How many rows there are.
     pub async fn len(&self) -> usize {
         self.rows.lock().await.len()
     }
 
-    /// Si el destino esta vacio.
+    /// Whether the destination is empty.
     pub async fn is_empty(&self) -> bool {
         self.rows.lock().await.is_empty()
     }
@@ -1179,22 +1179,22 @@ impl RowSink for MemorySink {
     }
 }
 
-/// Reconcilia los digests que las filas referencian contra el CAS.
+/// Reconciles the digests that the rows reference against the CAS.
 #[async_trait]
 pub trait DigestReconciler: Send + Sync {
-    /// `true` si el digest existe en el almacen con su hash verificado.
+    /// `true` if the digest exists in the store with its hash verified.
     async fn has(&self, digest: &str) -> Result<bool, RecoveryError>;
 }
 
-/// El reconciliador de prueba y del rehearsal local: el conjunto de
-/// digests que el almacen tiene.
+/// The test and local-rehearsal reconciler: the set of
+/// digests that the store has.
 #[derive(Debug, Default)]
 pub struct SetReconciler {
     digests: BTreeSet<String>,
 }
 
 impl SetReconciler {
-    /// Uno que conoce exactamente estos digests.
+    /// One that knows exactly these digests.
     pub fn new<I: IntoIterator<Item = String>>(digests: I) -> Self {
         Self {
             digests: digests.into_iter().collect(),
@@ -1240,8 +1240,8 @@ mod tests {
 
     #[test]
     fn a_ledger_composite_key_survives_canonicalization() {
-        // El contrato del ledger: la identidad es `stream,pos` dentro del
-        // id; el import la conserva literal, no la reordena ni la reescribe.
+        // The ledger contract: the identity is `stream,pos` within the
+        // id; the import keeps it literal, it neither reorders nor rewrites it.
         let row = row("event_ledger", "stream_a,0", &[("position", number(0))]);
         assert_eq!(
             canonicalize_id("event_ledger", &row).unwrap(),

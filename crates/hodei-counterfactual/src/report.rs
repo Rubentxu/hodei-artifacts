@@ -1,9 +1,9 @@
-//! El contrato de la investigacion contrafactual.
+//! The contract of the counterfactual investigation.
 //!
-//! No es una prosa nueva: es el `InvestigationReport` de la
-//! investigacion y el `SimulationResult` de la simulacion, unidos por
-//! enunciados etiquetados que dicen de donde sale cada cosa y por un
-//! sello que comprueba que las dos mitades miraron el mismo mundo.
+//! It is not new prose: it is the investigation's `InvestigationReport` and
+//! the simulation's `SimulationResult`, joined by
+//! labeled statements that say where each thing comes from and by a
+//! seal that checks that both halves looked at the same world.
 
 use serde::{Deserialize, Serialize};
 
@@ -13,95 +13,95 @@ use hodei_simulation::result::{
     BaseStamp, Hypothesis, HypothesisKind, SimulationResult, SourceStamp,
 };
 
-/// La version del contrato del informe contrafactual.
+/// The version of the counterfactual report contract.
 pub const COUNTERFACTUAL_REPORT_VERSION: &str = "1.0.0";
 
-/// La clase epistemica de un enunciado del informe.
+/// The epistemic class of a report statement.
 ///
-/// Las clases no se mezclan: lo verificado lo es por el verificador
-/// determinista, lo hipotetico lo es bajo la hipotesis declarada, y la
-/// recomendacion la dice quien pregunta -- nunca el motor de politicas.
+/// The classes are not mixed: what is verified is verified by the deterministic
+/// verifier, what is hypothetical is so under the declared hypothesis, and the
+/// recommendation is stated by whoever asks -- never by the policy engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EpistemicLabel {
-    /// El verificador determinista lo verifico contra la evidencia
-    /// vigente.
+    /// The deterministic verifier verified it against the current
+    /// evidence.
     Verified,
-    /// Se observo y la cita resuelve, pero nadie verifico el
-    /// enunciado.
+    /// It was observed and the citation resolves, but nobody verified the
+    /// statement.
     Observed,
-    /// Solo vale bajo la hipotesis del escenario: no es un hecho del
-    /// grafo.
+    /// It only holds under the scenario's hypothesis: it is not a fact of the
+    /// graph.
     Hypothetical,
-    /// Una inferencia de quien narra: se declara como inferencia.
+    /// An inference by whoever narrates: it is declared as an inference.
     Inference,
-    /// Lo que no se sabe, dicho como lo que no se sabe.
+    /// What is not known, stated as what is not known.
     Unknown,
-    /// Una recomendacion: nadie la ejecuto y no cambia el estado de
-    /// confianza.
+    /// A recommendation: nobody executed it and it does not change the trust
+    /// state.
     Recommendation,
 }
 
-/// Un enunciado del informe, con su clase y sus referencias.
+/// A statement of the report, with its class and its references.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Statement {
-    /// La clase epistemica del enunciado.
+    /// The epistemic class of the statement.
     pub label: EpistemicLabel,
-    /// Que se afirma.
+    /// What is asserted.
     pub statement: String,
-    /// De donde sale: verificador, modelo, contrahistoria o motor de
-    /// politicas.
+    /// Where it comes from: verifier, model, counter-history or policy
+    /// engine.
     pub origin: String,
-    /// Las referencias: evidencias citadas, sellos de politica e
-    /// identificadores del escenario.
+    /// The references: cited evidence, policy seals and
+    /// scenario identifiers.
     pub references: Vec<String>,
 }
 
-/// La comprobacion de que las dos mitades hablaron del mismo mundo.
+/// The check that both halves spoke of the same world.
 ///
-/// Las generaciones compartidas entre el manifiesto de la investigacion
-/// y las fuentes de la base simulada tienen que coincidir: si no, no
-/// hay respuesta, hay dos preguntas sobre mundos distintos.
+/// The generations shared between the investigation manifest
+/// and the sources of the simulated base must match: otherwise there is no
+/// answer, there are two questions about different worlds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SealCoherence {
-    /// Si el sello es coherente.
+    /// Whether the seal is coherent.
     pub coherent: bool,
-    /// Las fuentes compartidas con la version en la que coinciden.
+    /// The shared sources with the version in which they match.
     pub shared: Vec<(String, u64)>,
-    /// Las discrepancias, en texto, sin identificadores de sujetos.
+    /// The discrepancies, in text, without subject identifiers.
     pub mismatched: Vec<String>,
 }
 
-/// El informe contrafactual completo.
+/// The complete counterfactual report.
 ///
-/// Es versionado y serializable, y no decide nada: describe la causa
-/// con referencias, la hipotesis como hipotesis y la diferencia de
-/// decisiones como diferencia calculada.
+/// It is versioned and serializable, and decides nothing: it describes the cause
+/// with references, the hypothesis as a hypothesis and the difference in
+/// decisions as a computed difference.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CounterfactualReport {
-    /// La version del contrato.
+    /// The contract version.
     pub version: String,
-    /// El identificador de la investigacion contrafactual.
+    /// The identifier of the counterfactual investigation.
     pub counterfactual: String,
-    /// La pregunta que se respondo.
+    /// The question that was answered.
     pub question: String,
-    /// El sujeto sobre el que se pregunto.
+    /// The subject that was asked about.
     pub subject: String,
-    /// Los enunciados etiquetados, en orden canonico: primero la
-    /// investigacion, luego la contrahistoria.
+    /// The labeled statements, in canonical order: first the
+    /// investigation, then the counter-history.
     pub statements: Vec<Statement>,
-    /// La comprobacion del sello compartido.
+    /// The check of the shared seal.
     pub seal: SealCoherence,
-    /// El sello de la base sobre la que se simulo.
+    /// The seal of the base on which it was simulated.
     pub base: BaseStamp,
-    /// La investigacion entera, como contrato propio.
+    /// The entire investigation, as its own contract.
     pub investigation: InvestigationReport,
-    /// La simulacion entera, como contrato versionado.
+    /// The entire simulation, as a versioned contract.
     pub simulation: SimulationResult,
 }
 
-/// La coherencia del sello: las fuentes que los dos manifiestos
-/// comparten, con la version que cada uno declara.
+/// The coherence of the seal: the sources that both manifests
+/// share, with the version each one declares.
 pub fn the_seal_coherence(read_set: &ReadSet, sources: &[SourceStamp]) -> SealCoherence {
     let mut shared = Vec::new();
     let mut mismatched = Vec::new();
@@ -124,7 +124,7 @@ pub fn the_seal_coherence(read_set: &ReadSet, sources: &[SourceStamp]) -> SealCo
     }
 }
 
-/// El enunciado de un finding de la investigacion, con su etiqueta.
+/// The statement of an investigation finding, with its label.
 fn the_statement_of(finding: &hodei_investigator::report::Finding) -> Statement {
     let (label, origin) = match (finding.kind, finding.status) {
         (FindingKind::VerifiedFact, _) => (EpistemicLabel::Verified, "deterministic-verifier"),
@@ -144,7 +144,7 @@ fn the_statement_of(finding: &hodei_investigator::report::Finding) -> Statement 
     }
 }
 
-/// El enunciado de una hipotesis del escenario.
+/// The statement of a scenario hypothesis.
 fn the_statement_of_hypothesis(hypothesis: &Hypothesis) -> Statement {
     let described = match &hypothesis.kind {
         HypothesisKind::Relation {
@@ -195,8 +195,8 @@ fn the_statement_of_hypothesis(hypothesis: &Hypothesis) -> Statement {
     }
 }
 
-/// Los enunciados que añade la contrahistoria: las relaciones que
-/// aparecerian, las que desaparecerian y las decisiones que cambian.
+/// The statements added by the counter-history: the relations that
+/// would appear, those that would disappear and the decisions that change.
 fn the_statements_of_the_simulation(simulation: &SimulationResult) -> Vec<Statement> {
     let mut statements: Vec<Statement> = simulation
         .hypotheses
@@ -235,9 +235,9 @@ fn the_statements_of_the_simulation(simulation: &SimulationResult) -> Vec<Statem
                 "the decision of {} would change from {:?} to {:?}",
                 change.subject, change.before, change.after
             ),
-            // El cambio lo calcula el motor de politicas sobre la
-            // hipotesis: es la unica frase del informe cuyo origen es
-            // el motor, y por eso ninguna recomendacion puede salir de el.
+            // The change is computed by the policy engine over the
+            // hypothesis: it is the only sentence of the report whose origin is
+            // the engine, and therefore no recommendation can come out of it.
             origin: "policy-engine".to_string(),
             references: vec![
                 simulation.simulation.clone(),
@@ -250,9 +250,9 @@ fn the_statements_of_the_simulation(simulation: &SimulationResult) -> Vec<Statem
     statements
 }
 
-/// El informe a partir de las dos mitades y su sello.
+/// The report from the two halves and their seal.
 ///
-/// La construccion es **pura**: no lee, no escribe y no decide.
+/// Construction is **pure**: it does not read, write or decide.
 pub fn build_report(
     counterfactual: &str,
     question: &str,

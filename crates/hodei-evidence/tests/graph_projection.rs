@@ -234,7 +234,7 @@ fn p5_a_superseded_event_withdraws_the_support_of_the_superseded_evidence() {
 fn p6_a_superseded_event_without_a_claim_projects_nothing() {
     let projector = EvidenceGraphProjector::new();
 
-    // Sin claim: no se sabe que apoyo se retira.
+    // Without a claim: it is not known which support is withdrawn.
     let no_claim = EvidencePayload {
         evidence_id: EvidenceId::new("evd-2"),
         tenant_hrn: account(),
@@ -256,7 +256,7 @@ fn p6_a_superseded_event_without_a_claim_projects_nothing() {
         "without a claim there is no withdrawal: {changes:?}"
     );
 
-    // Sin supersedes: no hay apoyo anterior que retirar.
+    // Without supersedes: there is no previous support to withdraw.
     let no_supersedes = EvidencePayload {
         evidence_id: EvidenceId::new("evd-2"),
         tenant_hrn: account(),

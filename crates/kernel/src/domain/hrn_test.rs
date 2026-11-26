@@ -1,13 +1,13 @@
-//! Tests exhaustivos para el módulo HRN (Hodei Resource Name)
+//! Exhaustive tests for the HRN (Hodei Resource Name) module
 //!
-//! Este archivo contiene tests completos que cubren:
-//! - Creación de HRNs válidos
-//! - Validación de componentes
-//! - Parsing de strings
-//! - Serialización/deserialización
-//! - Conversión a string
-//! - Edge cases y errores
-//! - Comparación e igualdad
+//! This file contains complete tests that cover:
+//! - Creation of valid HRNs
+//! - Validation of components
+//! - Parsing of strings
+//! - Serialization/deserialization
+//! - Conversion to string
+//! - Edge cases and errors
+//! - Comparison and equality
 
 #[cfg(test)]
 mod hrn_tests {
@@ -15,7 +15,7 @@ mod hrn_tests {
     use serde_json;
 
     // ============================================================================
-    // Tests de Creación
+    // Creation tests
     // ============================================================================
 
     #[test]
@@ -89,7 +89,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Parsing
+    // Parsing tests
     // ============================================================================
 
     #[test]
@@ -162,7 +162,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Conversión a String
+    // String conversion tests
     // ============================================================================
 
     #[test]
@@ -211,7 +211,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Roundtrip (Parse -> ToString -> Parse)
+    // Roundtrip tests (Parse -> ToString -> Parse)
     // ============================================================================
 
     #[test]
@@ -240,7 +240,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Igualdad y Comparación
+    // Equality and comparison tests
     // ============================================================================
 
     #[test]
@@ -324,7 +324,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Serialización
+    // Serialization tests
     // ============================================================================
 
     #[test]
@@ -370,7 +370,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Edge Cases
+    // Edge case tests
     // ============================================================================
 
     #[test]
@@ -431,7 +431,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Componentes Individuales
+    // Individual component tests
     // ============================================================================
 
     #[test]
@@ -500,7 +500,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Debug
+    // Debug tests
     // ============================================================================
 
     #[test]
@@ -519,7 +519,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Conversión a Pascal Case (helper público)
+    // Pascal Case conversion tests (public helper)
     // ============================================================================
 
     #[test]
@@ -559,7 +559,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Casos Reales de Uso
+    // Real-use case tests
     // ============================================================================
 
     #[test]
@@ -640,7 +640,7 @@ mod hrn_tests {
     }
 
     // ============================================================================
-    // Tests de Hash
+    // Hash tests
     // ============================================================================
 
     #[test]

@@ -1,18 +1,18 @@
-//! La superficie **apt**: el repositorio debian que un `apt-get` real
-//! puede leer y escribir contra un repositorio hosted de Hodei.
+//! The **apt** surface: the debian repository that a real `apt-get`
+//! can read and write against a Hodei hosted repository.
 //!
-//! Vive en `/apt/{repositorio}/...` y habla el formato de `apt-ftparchive`:
-//! la gramatica de contenedores, indices y rutas esta en
-//! `hodei_catalog::apt` (pura) y aqui solo hay lo que necesita efectos:
-//! el almacen, el catalogo y la firma OpenPGP de `Release`.
+//! Lives at `/apt/{repository}/...` and speaks the `apt-ftparchive` format:
+//! the grammar of containers, indexes and paths is in
+//! `hodei_catalog::apt` (pure) and here there is only what needs effects:
+//! the store, the catalog and the OpenPGP signature of `Release`.
 //!
-//! Cada `.deb` publicado deja **dos assets inmutables**: los bytes en
-//! `pool/main/{package}/{archivo}.deb` y su registro de indice en esa
-//! misma ruta con sufijo `.record`. El indice `Packages` se ensambla
-//! listando registros, nunca reescribiendo un documento compartido: una
-//! version publicada es para siempre y dos publicadores concurrentes no
-//! pueden pisarse. Si una caida deja el `.deb` sin registro, el paquete
-//! es invisible para apt, nunca corrupto.
+//! Each published `.deb` leaves **two immutable assets**: the bytes at
+//! `pool/main/{package}/{file}.deb` and its index record at that
+//! same path with a `.record` suffix. The `Packages` index is assembled by
+//! listing records, never by rewriting a shared document: a published
+//! version is forever and two concurrent publishers cannot
+//! overwrite each other. If an outage leaves the `.deb` without a record, the package
+//! is invisible to apt, never corrupt.
 
 use axum::{
     body::Body,
@@ -43,14 +43,14 @@ use crate::openpgp::MetadataSigner;
 use crate::raw::conditional;
 use crate::resolution::{ProxyServed, the_proxy_asset_verified};
 
-/// Lo que pasa con una peticion apt que no se puede servir.
+/// What happens to an apt request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error del formato debian.
+    /// An error from the debian format.
     Apt(AptError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -90,8 +90,8 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El resto de la ruta de `/apt/{repositorio}/{resto}`, sin decodificar:
-/// apt no escapa nombres y la gramatica es la unica que interpreta.
+/// The rest of the path of `/apt/{repository}/{rest}`, undecoded:
+/// apt does not escape names and the grammar is the only one that interprets it.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -104,9 +104,9 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// apt lleva la credencial en el userinfo de la URI: `Basic`, con el
-/// token como contrasena y el usuario informativo. La superficie
-/// compartida solo habla Bearer, asi que aqui se normaliza la cabecera.
+/// apt carries the credential in the URI userinfo: `Basic`, with the
+/// token as the password and the user informative. The shared surface
+/// only speaks Bearer, so the header is normalized here.
 pub(crate) fn normalize_authorization(headers: &mut HeaderMap) {
     if crate::handlers::bearer_token(headers).is_some() {
         return;
@@ -142,7 +142,7 @@ pub(crate) fn normalize_authorization(headers: &mut HeaderMap) {
     }
 }
 
-/// Cualquier peticion de `/apt/{repositorio}/...`.
+/// Any request to `/apt/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     method: Method,
@@ -320,20 +320,20 @@ pub async fn handle(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
-/// Un registro de indice guardado junto a su binario: la ruta del `.deb`
-/// del que habla y el cuerpo `Packages` tal cual se publico.
+/// An index record stored next to its binary: the path of the `.deb`
+/// it describes and the `Packages` body exactly as published.
 struct StoredRecord {
     architecture: String,
     updated_at: chrono::DateTime<chrono::Utc>,
     body: String,
 }
 
-/// Los registros de indice del repositorio, en el orden de ruta que
-/// mantiene el catalogo: la lista nunca reescribe nada, solo lee fichas
-/// inmutables ya publicadas.
+/// The index records of the repository, in the path order that
+/// the catalog maintains: the list never rewrites anything, it only reads immutable
+/// records already published.
 async fn records(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -377,16 +377,16 @@ async fn records(
     Ok(out)
 }
 
-/// El campo `Architecture:` de un registro ya pintado.
+/// The `Architecture:` field of an already-rendered record.
 fn record_architecture(body: &str) -> Option<&str> {
     body.lines()
         .find_map(|line| line.strip_prefix("Architecture: "))
         .map(str::trim)
 }
 
-/// El cuerpo `Packages` de una arquitectura: sus registros y los `all`,
-/// en el mismo orden de ruta para que dos lecturas del mismo estado den
-/// los mismos bytes.
+/// The `Packages` body of an architecture: its records and the `all` ones,
+/// in the same path order so that two reads of the same state give
+/// the same bytes.
 fn index_body(all: &[StoredRecord], architecture: &str) -> String {
     let mut body = String::new();
     for record in all {
@@ -418,9 +418,9 @@ async fn serve_index(
     )?)
 }
 
-/// El aggregate `Release` del dist: las cabeceras del archive y la lista
-/// SHA256 de los indices. La fecha sale del estado, no del reloj: dos
-/// lecturas sin publicaciones intermedias son byte a byte la misma.
+/// The `Release` aggregate of the dist: the archive headers and the SHA256
+/// list of the indexes. The date comes from the state, not the clock: two
+/// reads without intermediate publications are byte for byte the same.
 async fn release_bytes(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -499,8 +499,8 @@ async fn serve_release_signature(
     )?)
 }
 
-/// Un documento que sale de la clave del hub: la parte que puede fallar
-/// se evalua solo cuando el permiso ya es permiso.
+/// A document derived from the hub key: the part that can fail
+/// is evaluated only when the permission is already a permission.
 #[allow(clippy::too_many_arguments)]
 async fn serve_document<T, E>(
     state: &AppState,
@@ -532,8 +532,8 @@ where
     )?)
 }
 
-/// Los bytes de un `.deb`, verificados contra su asset y la compuerta de
-/// confianza del repositorio.
+/// The bytes of a `.deb`, verified against its asset and the repository's
+/// trust gate.
 async fn read_deb(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -609,13 +609,13 @@ fn record_read(
 }
 
 // ---------------------------------------------------------------------------
-// Escritura
+// Writes
 // ---------------------------------------------------------------------------
 
-/// Subir un `.deb`: el control dicta la ruta, y la ruta dicta los dos
-/// assets. Primero se conmutan los bytes, luego se publica el binario y
-/// por ultimo su ficha: interrumpida a la mitad, la ficha no existe y el
-/// paquete queda invisible, nunca mentiroso.
+/// Upload a `.deb`: the control dictates the path, and the path dictates the two
+/// assets. First the bytes are swapped in, then the binary is published and
+/// lastly its record: interrupted halfway, the record does not exist and the
+/// package stays invisible, never lying.
 async fn upload(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -647,7 +647,7 @@ async fn upload(
     let (_, writer) = the_catalog(state)?;
     let record_path = apt::record_path_for(asset_path);
 
-    // 1. Los bytes del .deb, conmutados antes del catalogo.
+    // 1. The .deb bytes, swapped in before the catalog.
     let (deb_digest, deb_size) = write_the_content(
         state,
         context.account().as_str(),
@@ -658,7 +658,7 @@ async fn upload(
     .await?;
     let record = apt::packages_record(&control, asset_path, deb_size, &deb_digest.value);
     let record_bytes = record.into_bytes();
-    // 2. Los bytes de la ficha.
+    // 2. The record bytes.
     let (record_digest, record_size) = write_the_content(
         state,
         context.account().as_str(),
@@ -672,8 +672,8 @@ async fn upload(
     let existing_record =
         the_current_asset(state, context, &repository.repo_key, &record_path).await?;
 
-    // La version es para siempre: identica es el eco o la reanudacion de
-    // una publicacion interrumpida, distinta es un no con explicacion.
+    // The version is forever: an identical one is the echo or resumption of
+    // an interrupted publication, a different one is a no with an explanation.
     let deb_already = existing_deb
         .as_ref()
         .map(|asset| asset.digest == deb_digest)

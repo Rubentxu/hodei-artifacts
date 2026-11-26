@@ -1,70 +1,70 @@
-//! El investigador con IA: una explicacion sobre el grafo que se pueda
-//! auditar.
+//! The AI investigator: an explanation over the graph that can be
+//! audited.
 //!
-//! M8 es el hito mas exigente del roadmap, y su exigencia es una sola
-//! cosa: **una explicacion con citas de evidencia y caminos verificables,
-//! nunca decisiones autoautorizadas**.
+//! M8 is the most demanding milestone of the roadmap, and its demand is a single
+//! thing: **an explanation with evidence citations and verifiable paths,
+//! never self-authorized decisions**.
 //!
-//! # La arquitectura es la garantia
+//! # The architecture is the guarantee
 //!
-//! Un investigador con IA que puede actuar es un investigador que puede
-//! equivocarse con consecuencias. Por eso aqui:
+//! An AI investigator that can act is an investigator that can
+//! be wrong with consequences. That is why here:
 //!
-//! - El **modelo no tiene por donde actuar**. Su puerto devuelve texto, y
-//!   el texto se **valida** antes de publicarse. No hay un camino del
-//!   modelo a las decisiones de confianza.
-//! - Lo que el modelo dice se **comprueba con las herramientas**: una
-//!   afirmacion de tipo HECHO necesita una cita que resuelva, y una cita
-//!   que no resuelve **rechaza la respuesta entera**.
-//! - La **inferencia se declara como inferencia**, y lo que no se sabe se
-//!   dice que no se sabe. Una seguridad inventada es una invitacion a no
-//!   comprobar nada.
-//! - La **recuperacion tiene alcance**: la cuenta, el sujeto y los
-//!   limites, y el alcance se comprueba dos veces (al recuperar y al
-//!   usar), porque un recuperador que se equivoca no puede meter nada.
-//! - Las **acciones que no son de lectura esperan aprobacion humana**, y
-//!   la aprobacion queda en la traza con su nombre y su momento.
+//! - The **model has no way to act**. Its port returns text, and
+//!   the text is **validated** before it is published. There is no path from the
+//!   model to the trust decisions.
+//! - What the model says is **checked with the tools**: a
+//!   FACT-type claim needs a citation that resolves, and a citation
+//!   that does not resolve **rejects the entire answer**.
+//! - **Inference is declared as inference**, and what is not known is
+//!   said to be unknown. An invented certainty is an invitation to not
+//!   check anything.
+//! - **Retrieval has a scope**: the account, the subject and the
+//!   limits, and the scope is checked twice (when retrieving and when
+//!   using), because a retriever that is wrong cannot let anything in.
+//! - **Non-read actions wait for human approval**, and
+//!   the approval stays in the trace with its name and its moment.
 //!
-//! # El texto de los terceros es DATO
+//! # Third-party text is DATA
 //!
-//! Una descripcion de SBOM la escribe quien publica el paquete. Un README
-//! lo escribe quien quiera. Los dos son texto de un atacante en cuanto el
-//! atacante es quien publica. Por eso el contexto va **delimitado y
-//! declarado como dato**, y por eso el corpus de regresion de inyeccion
-//! existe: los delimitadores **no** son la garantia (un modelo puede
-//! obedecer un texto delimitado), la garantia es que lo que dice el modelo
-//! se comprueba y que el modelo no tiene por donde actuar.
+//! An SBOM description is written by whoever publishes the package. A README
+//! is written by whoever wants. Both are attacker text as soon as the
+//! attacker is the one who publishes. That is why the context goes **delimited and
+//! declared as data**, and that is why the injection regression corpus
+//! exists: the delimiters are **not** the guarantee (a model can
+//! obey a delimited text), the guarantee is that what the model says
+//! is checked and that the model has no way to act.
 
-// # La conclusion del SPIKE-011
+// # The conclusion of SPIKE-011
 //
-//! La salida del spike es: *la funcionalidad de IA solo procede si no puede
-//! alterar el estado de confianza autoritativo y si la calidad de su
-//! fundamento llega al umbral acordado*.
+//! The output of the spike is: *the AI functionality only proceeds if it cannot
+//! alter the authoritative trust state and if the quality of its
+//! grounding reaches the agreed threshold*.
 //!
-//! Las dos condiciones se cumplen **por construccion**, y no por promesa:
+//! Both conditions are met **by construction**, and not by promise:
 //!
-//! 1. **No puede alterar el estado de confianza.** El modelo no tiene por
-//!    donde actuar: su puerto devuelve texto y el texto se comprueba. No
-//!    hay un camino del modelo a las decisiones, y las decisiones las
-//!    sigue tomando el motor de politicas determinista.
-//! 2. **El fundamento se comprueba.** Un HECHO necesita una cita que
-//!    resuelva, una cita que no resuelve **rechaza la respuesta
-//!    entera**, y una respuesta a medias es peor que ninguna: se rechaza
-//!    o no se publica.
+//! 1. **It cannot alter the trust state.** The model has no
+//!    way to act: its port returns text and the text is checked. There
+//!    is no path from the model to the decisions, and the decisions are
+//!    still taken by the deterministic policy engine.
+//! 2. **The grounding is checked.** A FACT needs a citation that
+//!    resolves, a citation that does not resolve **rejects the entire
+//!    answer**, and a half answer is worse than none: it is rejected
+//!    or not published.
 //!
-//! Y hay una tercera condicion, que es la que el rojo-team del spike
-//! («una descripcion de SBOM es un texto controlado por el atacante»)
-//! deja escrita: el texto de los terceros es DATO delimitado, y el corpus
-//! de regresion demuestra que un texto de evidencia no dirige la
-//! respuesta. Los delimitadores **no** son la garantia --un modelo puede
-//! obedecer un texto delimitado--: la garantia es que lo que dice el
-//! modelo se comprueba con las herramientas y que el modelo no tiene por
-//! donde actuar.
+//! And there is a third condition, the one that the spike's red team
+//! («an SBOM description is attacker-controlled text»)
+//! left written: third-party text is delimited DATA, and the regression
+//! corpus shows that evidence text does not steer the
+//! answer. The delimiters are **not** the guarantee --a model can
+//! obey a delimited text--: the guarantee is that what the
+//! model says is checked with the tools and that the model has no way to
+//! act.
 //
-//! El umbral de calidad se mide en la UAT de M8, y el modo de proveedor
-//! es de fixture: el spike es sobre la **seguridad** del investigador, no
-//! sobre la calidad de un modelo comercial, y esa calidad no se puede
-//! medir sin el proveedor.
+//! The quality threshold is measured in the UAT of M8, and the provider mode
+//! is fixture-based: the spike is about the **security** of the investigator, not
+//! about the quality of a commercial model, and that quality cannot be
+//! measured without the provider.
 
 #![forbid(unsafe_code)]
 

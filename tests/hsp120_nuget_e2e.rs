@@ -1,14 +1,14 @@
-//! El NuGet v3 de HSP-120, a nivel HTTP.
+//! The NuGet v3 of HSP-120, at the HTTP level.
 //!
-//! Se prueba: el service index con direcciones absolutas, la publicacion
-//! `PUT` del nupkg, el flat container ensamblado en orden NuGet, la hoja
-//! de registros, la inmutabilidad de la version, la autoridad del nuspec
-//! sobre la URL, la normalizacion de identidades y el rechazo de lo que
-//! el protocolo no sabe hacer. El proxy y su cache sobreviven sin red,
-//! byte a byte: un nupkg reescrito dejaria de casar con su `contentHash`.
+//! What is tested: the service index with absolute addresses, the `PUT`
+//! publication of the nupkg, the flat container assembled in NuGet order, the
+//! registration leaf, the immutability of the version, the authority of the
+//! nuspec over the URL, the normalization of identities and the rejection of what
+//! the protocol cannot do. The proxy and its cache survive without network,
+//! byte for byte: a rewritten nupkg would stop matching its `contentHash`.
 //!
-//! El cliente real (`dotnet`) se prueba en su propio fichero; aqui el
-//! protocolo se habla como lo hablaria el cliente.
+//! The real client (`dotnet`) is tested in its own file; here the
+//! protocol is spoken the way the client would speak it.
 
 mod support;
 
@@ -33,7 +33,7 @@ fn next(name: &str) -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{n}"))
 }
 
-/// Una peticion al servicio con token por bearer.
+/// A request to the service with a bearer token.
 fn call(port: u16, method: &str, path: &str, token: &str, body: Option<&[u8]>) -> Answer {
     let sent = body.map(|bytes| {
         let target = next("sent");
@@ -57,9 +57,9 @@ fn call(port: u16, method: &str, path: &str, token: &str, body: Option<&[u8]>) -
     .run()
 }
 
-/// El push tal y como lo hace `dotnet nuget push`: la credencial viaja
-/// en `X-NuGet-ApiKey`, no en el bearer. Aqui el bearer es basura a
-/// proposito: si la cabecera del protocolo no valiera, esto fallaria.
+/// The push exactly as `dotnet nuget push` does it: the credential travels
+/// in `X-NuGet-ApiKey`, not in the bearer. Here the bearer is garbage on
+/// purpose: if the protocol header did not count, this would fail.
 fn push_with_api_key(
     port: u16,
     repository: &str,
@@ -90,7 +90,7 @@ fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// El nuspec canonico de un paquete: id y version declarados por dentro.
+/// The canonical nuspec of a package: id and version declared inside.
 fn nuspec(id: &str, version: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -105,20 +105,20 @@ fn nuspec(id: &str, version: &str) -> String {
     )
 }
 
-/// Un nupkg de prueba: el nuspec y una dll de relleno, en un zip. A
-/// nivel HTTP el servidor solo lee el nuspec; el cliente real desarma
-/// el resto en su propio test.
+/// A test nupkg: the nuspec and a filler dll, in a zip. At the
+/// HTTP level the server only reads the nuspec; the real client unpacks
+/// the rest in its own test.
 fn nupkg(id: &str, version: &str) -> Vec<u8> {
     nupkg_declaring(id, version)
 }
 
-/// Un nupkg cuya identidad interior difiere a proposito de la URL.
+/// A nupkg whose inner identity differs on purpose from the URL.
 fn nupkg_declaring(nuspec_id: &str, nuspec_version: &str) -> Vec<u8> {
     nupkg_declaring_tagged(nuspec_id, nuspec_version, "")
 }
 
-/// El mismo, con una etiqueta que cambia los bytes sin cambiar la
-/// identidad: sirve para hablar de inmutabilidad.
+/// The same one, with a tag that changes the bytes without changing the
+/// identity: used to talk about immutability.
 fn nupkg_declaring_tagged(nuspec_id: &str, nuspec_version: &str, tag: &str) -> Vec<u8> {
     use std::io::Write;
     let entry_id = nuspec_id;
@@ -176,8 +176,8 @@ fn the_service_index_points_at_the_operations_the_client_needs() {
                 "{needed} is not declared: {types:?}"
             );
         }
-        // Las direcciones son absolutas por el host que pregunto: el
-        // cliente no adivina ni el esquema ni el puerto.
+        // The addresses are absolute through the host that asked: the
+        // client guesses neither the scheme nor the port.
         let base = body["resources"][1]["@id"].as_str().expect("an id");
         assert!(
             base.starts_with(&format!("http://127.0.0.1:{port}/nuget/nuget-hosted/")),
@@ -185,9 +185,9 @@ fn the_service_index_points_at_the_operations_the_client_needs() {
         );
     }
 
-    // El indice de servicios es anonimo: `dotnet nuget push` lo carga
-    // sin credenciales antes de usar la API key. El documento no
-    // revela nada del catalogo; el contenido del feed sigue protegido.
+    // The service index is anonymous: `dotnet nuget push` loads it
+    // without credentials before using the API key. The document
+    // reveals nothing about the catalog; the feed content remains protected.
     let anonymous = call(port, "GET", "/nuget/nuget-hosted/v3/index.json", "", None);
     assert_eq!(anonymous.status, 200, "{}", text_of(&anonymous));
     let anonymous_content = call(
@@ -204,14 +204,14 @@ fn the_service_index_points_at_the_operations_the_client_needs() {
         text_of(&anonymous_content)
     );
 
-    // Un repositorio de otro formato no es un feed nuget.
+    // A repository of another format is not a nuget feed.
     let other_format = call(port, "GET", "/nuget/registry/v3/index.json", &token, None);
     assert_eq!(other_format.status, 404, "{}", text_of(&other_format));
 }
 
-/// El push **tal y como lo hace el cliente real**: `PUT` a la
-/// direccion de publicacion sin id ni version en la URL, con el nupkg
-/// dentro de un `multipart/form-data` y la clave en `X-NuGet-ApiKey`.
+/// The push **exactly as the real client does it**: `PUT` to the
+/// publish address without id or version in the URL, with the nupkg
+/// inside a `multipart/form-data` and the key in `X-NuGet-ApiKey`.
 fn push_as_form(
     port: u16,
     repository: &str,
@@ -269,8 +269,8 @@ fn the_real_client_push_shape_is_a_multipart_form_to_the_publish_address() {
     );
     assert_eq!(pushed.status, 201, "{}", text_of(&pushed));
 
-    // El paquete vive bajo la identidad del nuspec, no de la URL: la
-    // URL del formulario no prometia nada.
+    // The package lives under the identity of the nuspec, not of the URL: the
+    // form URL promised nothing.
     let served = call(
         port,
         "GET",
@@ -281,7 +281,7 @@ fn the_real_client_push_shape_is_a_multipart_form_to_the_publish_address() {
     assert_eq!(served.status, 200, "{}", text_of(&served));
     assert_eq!(served.body, bytes, "el formulario reescribio el paquete");
 
-    // La lista de versiones y el registro tambien lo saben.
+    // The version list and the registration know it too.
     let versions = call(
         port,
         "GET",
@@ -302,14 +302,14 @@ fn a_package_is_pushed_and_served_through_the_flat_container() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // El push habla como dotnet: la clave en X-NuGet-ApiKey. La URL va
-    // en la forma que el cliente escribe (mixta), y el servidor la
-    // normaliza: NuGet es insensible a mayusculas por contrato.
+    // The push speaks like dotnet: the key in X-NuGet-ApiKey. The URL goes
+    // in the form the client writes (mixed case), and the server
+    // normalizes it: NuGet is case-insensitive by contract.
     let bytes = nupkg("Sample.Lib", "1.0.0");
     let answer = push_with_api_key(port, "nuget-hosted", &token, "Sample.Lib", "1.0.0", &bytes);
     assert_eq!(answer.status, 201, "{}", text_of(&answer));
 
-    // La lista de versiones, en la direccion canonica.
+    // The version list, at the canonical address.
     let list = call(
         port,
         "GET",
@@ -322,8 +322,8 @@ fn a_package_is_pushed_and_served_through_the_flat_container() {
     assert_eq!(body["count"], 1);
     assert_eq!(body["versions"][0], "1.0.0");
 
-    // El nupkg, byte a byte: el hash que calcule el cliente es el del
-    // paquete que subio.
+    // The nupkg, byte for byte: the hash the client computes is that of the
+    // package it uploaded.
     let served = call(
         port,
         "GET",
@@ -334,7 +334,7 @@ fn a_package_is_pushed_and_served_through_the_flat_container() {
     assert_eq!(served.status, 200, "{}", text_of(&served));
     assert_eq!(served.body, bytes, "el hosted reescribe el nupkg");
 
-    // HEAD dice el tamano sin cuerpo.
+    // HEAD gives the size without a body.
     let head = call(
         port,
         "HEAD",
@@ -351,8 +351,8 @@ fn a_package_is_pushed_and_served_through_the_flat_container() {
         head.headers
     );
 
-    // La hoja de registros apunta al flat container con la identidad
-    // normalizada.
+    // The registration leaf points to the flat container with the normalized
+    // identity.
     let leaf = call(
         port,
         "GET",
@@ -367,7 +367,7 @@ fn a_package_is_pushed_and_served_through_the_flat_container() {
         "flatcontainer/sample.lib/1.0.0/sample.lib.nupkg"
     );
 
-    // La ruta sin normalizar no nombra nada: es gramatica, no alias.
+    // The non-normalized path names nothing: it is grammar, not an alias.
     let mixed = call(
         port,
         "GET",
@@ -386,8 +386,8 @@ fn the_nuspec_is_the_authority_and_a_version_is_for_always() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // La URL promete una version que el nuspec no declara: el nuspec
-    // manda, y la publicacion se rechaza con el motivo.
+    // The URL promises a version that the nuspec does not declare: the nuspec
+    // wins, and the publication is rejected with the reason.
     let lying = nupkg_declaring("Sample.Lib", "2.0.0");
     let answer = push_with_api_key(port, "nuget-hosted", &token, "Sample.Lib", "1.0.0", &lying);
     assert_eq!(answer.status, 400, "{}", text_of(&answer));
@@ -396,12 +396,12 @@ fn the_nuspec_is_the_authority_and_a_version_is_for_always() {
         "el motivo no cita al nuspec"
     );
 
-    // Lo mismo con el id.
+    // The same with the id.
     let lying = nupkg_declaring("Other.Lib", "1.0.0");
     let answer = push_with_api_key(port, "nuget-hosted", &token, "Sample.Lib", "1.0.0", &lying);
     assert_eq!(answer.status, 400, "{}", text_of(&answer));
 
-    // Un cuerpo que no es un nupkg utilizable tampoco.
+    // A body that is not a usable nupkg is rejected too.
     let answer = call(
         port,
         "PUT",
@@ -411,17 +411,17 @@ fn the_nuspec_is_the_authority_and_a_version_is_for_always() {
     );
     assert_eq!(answer.status, 400, "{}", text_of(&answer));
 
-    // Publicar de verdad...
+    // Publish for real...
     let bytes = nupkg("Sample.Lib", "1.0.0");
     let answer = push_with_api_key(port, "nuget-hosted", &token, "Sample.Lib", "1.0.0", &bytes);
     assert_eq!(answer.status, 201, "{}", text_of(&answer));
 
-    // ...el mismo paquete otra vez es el eco de una publicacion
-    // interrumpida: no hay nada que reescribir.
+    // ...the same package again is the echo of an interrupted
+    // publication: there is nothing to rewrite.
     let answer = push_with_api_key(port, "nuget-hosted", &token, "Sample.Lib", "1.0.0", &bytes);
     assert_eq!(answer.status, 201, "{}", text_of(&answer));
 
-    // ...otras bytes para la misma version son inmutabilidad: 409.
+    // ...other bytes for the same version are immutability: 409.
     let changed = nupkg_declaring_tagged("Sample.Lib", "1.0.0", "second");
     let answer = push_with_api_key(
         port,
@@ -434,9 +434,9 @@ fn the_nuspec_is_the_authority_and_a_version_is_for_always() {
     assert_eq!(answer.status, 409, "{}", text_of(&answer));
     assert!(text_of(&answer).contains("immutable"));
 
-    // La version declarada con ceros y etiqueta de compilacion se
-    // normaliza: `01.0.0+b` es `1.0.0`, que ya existe. Mismo digest,
-    // eco; distinto, conflicto.
+    // The version declared with zeros and a build tag is
+    // normalized: `01.0.0+b` is `1.0.0`, which already exists. Same digest,
+    // echo; different, conflict.
     let answer = push_with_api_key(
         port,
         "nuget-hosted",
@@ -503,8 +503,8 @@ fn versions_sort_by_the_nuget_rules() {
         "los previos van antes que su base, y 1.2.3.4 antes que 1.10.0"
     );
 
-    // La hoja de registros dice la ultima, y cada version apunta a su
-    // flat container con la identidad normalizada del push mixto.
+    // The registration leaf says the latest, and each version points to its
+    // flat container with the normalized identity of the mixed-case push.
     let leaf = call(
         port,
         "GET",
@@ -530,7 +530,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // Un metodo que el protocolo no tiene para estas rutas.
+    // A method that the protocol does not have for these routes.
     let post = call(
         port,
         "POST",
@@ -548,7 +548,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     );
     assert_eq!(delete.status, 405, "{}", text_of(&delete));
 
-    // El flat container no se publica a mano: solo el endpoint Publish.
+    // The flat container is not published by hand: only the Publish endpoint.
     let put_flat = call(
         port,
         "PUT",
@@ -558,7 +558,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     );
     assert_eq!(put_flat.status, 405, "{}", text_of(&put_flat));
 
-    // Rutas que no son NuGet v3, ni con trampa de caminos.
+    // Paths that are not NuGet v3, not even with path tricks.
     for hostile in [
         "/nuget/nuget-hosted/random/stuff",
         "/nuget/nuget-hosted/flatcontainer/sample.lib/1.0.0/other.nupkg",
@@ -570,7 +570,7 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
         assert_eq!(answer.status, 404, "{hostile}: {}", text_of(&answer));
     }
 
-    // Un proxy no acepta publicacion: no es un hosted con otro nombre.
+    // A proxy does not accept publication: it is not a hosted under another name.
     let push_into_proxy = push_with_api_key(
         port,
         "nuget-central",
@@ -601,14 +601,14 @@ fn the_protocol_says_no_to_what_it_does_not_know() {
     );
     assert_eq!(group.status, 404, "{}", text_of(&group));
 
-    // Un repositorio de otro formato no es un feed, y no se sirve como
-    // Raw por equivalencia: no existe para esta superficie.
+    // A repository of another format is not a feed, and is not served as
+    // Raw by equivalence: it does not exist for this surface.
     let other_format = call(port, "GET", "/nuget/registry/v3/index.json", &token, None);
     assert_eq!(other_format.status, 404, "{}", text_of(&other_format));
 }
 
-/// Un upstream NuGet de verdad-en-falso: sirve lo que se le ponga por
-/// ruta y cuenta cada pedido.
+/// A truly fake NuGet upstream: it serves whatever is put on a
+/// path and counts every request.
 struct Upstream {
     port: u16,
     asked: Arc<Mutex<HashMap<String, usize>>>,
@@ -723,8 +723,8 @@ fn the_proxy_caches_the_package_and_survives_without_network() {
     assert_eq!(first.body, bytes, "el proxy reescribe el nupkg");
     assert_eq!(first.header("x-hodei-cache").as_deref(), Some("miss"));
 
-    // La segunda vez no sale: la cache sirve los mismos bytes, y el
-    // contentHash del registro sigue casando.
+    // The second time it does not go out: the cache serves the same bytes, and the
+    // registration's contentHash keeps matching.
     let second = call(port, "GET", nupkg_path, &token, None);
     assert_eq!(second.status, 200, "{}", text_of(&second));
     assert_eq!(second.body, bytes);
@@ -734,8 +734,8 @@ fn the_proxy_caches_the_package_and_survives_without_network() {
         1
     );
 
-    // La lista de versiones, igual que el paquete: por la ruta del
-    // protocolo y tal cual la dijo el upstream.
+    // The version list, like the package: through the protocol
+    // path and exactly as the upstream said it.
     let list = call(
         port,
         "GET",
@@ -750,8 +750,8 @@ fn the_proxy_caches_the_package_and_survives_without_network() {
     let before = upstream.total();
     support::stop(&mut service);
 
-    // Sin red, lo cacheado se sigue sirviendo; lo que no se cacheo es
-    // un 503 que lo dice.
+    // Without network, what is cached keeps being served; what was not cached is
+    // a 503 that says so.
     let mut service = deployment.start(&[
         ("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str()),
         ("HODEI_PROXY__OFFLINE", "true"),

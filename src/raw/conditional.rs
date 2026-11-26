@@ -1,38 +1,38 @@
-//! Las condiciones de una petición: el `ETag` y lo que el cliente dice
-//! sobre el.
+//! The conditions of a request: the `ETag` and what the client says
+//! about it.
 //!
-//! El `ETag` de un contenido es su **digest**: la identidad del
-//! contenido, que es la unica que se puede comparar sin leer los bytes.
+//! A content's `ETag` is its **digest**: the content's identity,
+//! which is the only one that can be compared without reading the bytes.
 //!
-//! Las condiciones se aplican con la regla de RFC 9110, que distingue
-//! entre leer y escribir:
+//! Conditions are applied with the RFC 9110 rule, which distinguishes
+//! between reading and writing:
 //!
-//! - Al **leer**, un `If-None-Match` que coincide quiere decir "no me
-//!   lo mandes otra vez": la respuesta es 304. Un `If-Match` que no
-//!   coincide quiere decir "solo si es ese": la respuesta es 412.
-//! - Al **escribir**, las dos condiciones que fallan se responden con
-//!   412: la petición no se hace. Un 304 sería mentira, porque 304 dice
-//!   "no hay nada nuevo", y aquí si hay algo nuevo: lo que el cliente
-//!   quiere escribir.
+//! - On **read**, a matching `If-None-Match` means "don't send it
+//!   to me again": the response is 304. A non-matching `If-Match` means
+//!   "only if it is that one": the response is 412.
+//! - On **write**, both failing conditions are answered with
+//!   412: the request is not carried out. A 304 would be a lie, because 304 says
+//!   "there is nothing new", and here there is something new: what the client
+//!   wants to write.
 
 use hodei_catalog::Precondition;
 use hodei_evidence::domain::content::ContentDigest;
 
-/// La etiqueta de un contenido.
+/// The tag of a content.
 ///
-/// Va entre comillas porque es una etiqueta de entidad, y el digest va
-/// dentro porque es lo que la distingue de otra.
+/// It is quoted because it is an entity tag, and the digest goes
+/// inside because it is what distinguishes it from another.
 pub fn the_etag(digest: &ContentDigest) -> String {
     format!("\"{}\"", digest)
 }
 
-/// Si la cabecera dice que el contenido es **este**, con comparación fuerte.
+/// Whether the header says the content is **this one**, with strong comparison.
 ///
-/// `*` dice "el que hay", y una lista de etiquetas dice "uno de estos".
+/// `*` says "the one that is there", and a list of tags says "one of these".
 ///
-/// La comparación es **fuerte**, que es lo que RFC 9110 pide para
-/// `If-Match`: una etiqueta débil `W/"..."` no es la etiqueta que se
-/// generó, y no puede decir que el contenido es ese.
+/// The comparison is **strong**, which is what RFC 9110 requires for
+/// `If-Match`: a weak tag `W/"..."` is not the tag that was
+/// generated, and cannot say the content is that one.
 pub fn the_strong_match(header: &str, etag: &str) -> bool {
     let header = header.trim();
     if header == "*" {
@@ -41,22 +41,22 @@ pub fn the_strong_match(header: &str, etag: &str) -> bool {
     let wanted = etag.trim();
     header.split(',').any(|candidate| {
         let candidate = candidate.trim();
-        // Una etiqueta débil no es la etiqueta que se generó: el digest
-        // es fuerte, y decir que dos contenidos con el mismo digest son
-        // el mismo contenido es exactamente lo que se quiere.
+        // A weak tag is not the tag that was generated: the digest
+        // is strong, and saying two contents with the same digest are
+        // the same content is exactly what is wanted.
         !candidate.starts_with("W/") && candidate == wanted
     })
 }
 
-/// Si la cabecera dice que el contenido es **este**, con comparación débil.
+/// Whether the header says the content is **this one**, with weak comparison.
 ///
-/// `*` dice "el que hay", y una lista de etiquetas dice "uno de estos".
+/// `*` says "the one that is there", and a list of tags says "one of these".
 ///
-/// La comparación es **débil**, que es lo que RFC 9110 pide para
-/// `If-None-Match`: lo que se compara es la **etiqueta opaca**, sin el
-/// prefijo `W/`. Un `W/"..."` y un `"..."` son la misma entidad para esta
-/// comparación, que es justo lo que necesita un cliente que revalida
-/// contra una caché.
+/// The comparison is **weak**, which is what RFC 9110 requires for
+/// `If-None-Match`: what is compared is the **opaque tag**, without the
+/// `W/` prefix. A `W/"..."` and a `"..."` are the same entity for this
+/// comparison, which is just what a client revalidating
+/// against a cache needs.
 pub fn the_weak_match(header: &str, etag: &str) -> bool {
     let header = header.trim();
     if header == "*" {
@@ -69,13 +69,13 @@ pub fn the_weak_match(header: &str, etag: &str) -> bool {
     })
 }
 
-/// La etiqueta opaca de una etiqueta de entidad: lo que queda sin el
-/// `W/` de delante.
+/// The opaque tag of an entity tag: what remains without the leading
+/// `W/`.
 fn the_opaque_tag(tag: &str) -> &str {
     tag.strip_prefix("W/").unwrap_or(tag)
 }
 
-/// La cabecera `If-Match` de una petición.
+/// The `If-Match` header of a request.
 pub fn the_if_match(headers: &axum::http::HeaderMap) -> Option<String> {
     headers
         .get(axum::http::header::IF_MATCH)
@@ -83,7 +83,7 @@ pub fn the_if_match(headers: &axum::http::HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-/// La cabecera `If-None-Match` de una petición.
+/// The `If-None-Match` header of a request.
 pub fn the_if_none_match(headers: &axum::http::HeaderMap) -> Option<String> {
     headers
         .get(axum::http::header::IF_NONE_MATCH)
@@ -91,33 +91,33 @@ pub fn the_if_none_match(headers: &axum::http::HeaderMap) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Lo que decide una condición de **lectura**.
+/// What a **read** condition decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOutcome {
-    /// No había condición, o la condición se cumple: se sirve el
-    /// contenido.
+    /// There was no condition, or the condition is met: the
+    /// content is served.
     Serve,
-    /// El cliente ya tiene ese contenido: la respuesta es 304, que no
-    /// es un fallo, sino la respuesta a "dame esto solo si ha cambiado".
+    /// The client already has that content: the response is 304, which
+    /// is not a failure, but the answer to "give me this only if it has changed".
     NotModified,
-    /// La condición no se cumple: la respuesta es 412.
+    /// The condition is not met: the response is 412.
     Failed,
 }
 
-/// Lo que decide una condición de **escritura**.
+/// What a **write** condition decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WriteOutcome {
-    /// No había condición, o la condición se cumple: se escribe.
+    /// There was no condition, or the condition is met: it is written.
     Write,
-    /// La condición no se cumple: la respuesta es 412 y **no** se
-    /// escribe nada. Ni los bytes, ni el asset.
+    /// The condition is not met: the response is 412 and **nothing** is
+    /// written. Neither the bytes nor the asset.
     Failed,
 }
 
-/// La condición de una **lectura**.
+/// The condition of a **read**.
 ///
-/// El `etag` es `None` cuando en esa dirección no hay nada: entonces un
-/// `If-Match` no puede cumplirse, porque no hay nada que comparar.
+/// The `etag` is `None` when there is nothing at that address: then an
+/// `If-Match` cannot be met, because there is nothing to compare.
 pub fn the_read_condition(
     if_match: Option<&str>,
     if_none_match: Option<&str>,
@@ -133,20 +133,20 @@ pub fn the_read_condition(
         && let Some(etag) = etag
         && the_weak_match(header, etag)
     {
-        // El contenido es el que el cliente ya tiene.
+        // The content is the one the client already has.
         return ReadOutcome::NotModified;
     }
     ReadOutcome::Serve
 }
 
-/// La condición de una **escritura**.
+/// The condition of a **write**.
 ///
-/// Las dos condiciones que fallan se responden con 412, y la petición no
-/// se hace: ni se escribe el contenido, ni se toca el asset.
+/// Both failing conditions are answered with 412, and the request is not
+/// carried out: neither the content is written nor the asset touched.
 ///
-/// Y un `If-Match` sobre una dirección **vacia** falla: `*` quiere decir
-/// "el recurso que hay", y si no hay recurso, no hay nada que
-/// comparar.
+/// And an `If-Match` on an **empty** address fails: `*` means
+/// "the resource that is there", and if there is no resource, there is nothing to
+/// compare.
 pub fn the_write_condition(
     if_match: Option<&str>,
     if_none_match: Option<&str>,
@@ -162,23 +162,23 @@ pub fn the_write_condition(
         && let Some(etag) = etag
         && the_weak_match(header, etag)
     {
-        // El contenido ya está: una escritura que dice "solo si no
-        // existe" no se hace.
+        // The content is already there: a write that says "only if it does not
+        // exist" is not carried out.
         return WriteOutcome::Failed;
     }
     WriteOutcome::Write
 }
 
-/// La condición que el cliente exige sobre lo que hay ahora.
+/// The condition the client requires on what is there now.
 ///
-/// Es lo que se transporta al catálogo. La comprobación de la frontera
-/// es una **cortesía**: dice pronto lo que va a pasar. La que vale es la
-/// del catálogo, porque ocurre **dentro de la transacción** que escribe,
-/// y ahí no hay ventana entre el comprobar y el escribir.
+/// It is what is carried to the catalog. The check at the boundary
+/// is a **courtesy**: it says early what is going to happen. The one that counts is
+/// the catalog's, because it happens **inside the transaction** that writes,
+/// and there is no window there between checking and writing.
 ///
-/// Lo que no se entiende no viaja: una etiqueta que no es un digest no
-/// se puede comparar con nada, y una condición que no se puede comparar
-/// no es una condición.
+/// What is not understood does not travel: a tag that is not a digest cannot
+/// be compared with anything, and a condition that cannot be compared
+/// is not a condition.
 pub fn the_precondition(
     if_match: Option<&str>,
     if_none_match: Option<&str>,
@@ -206,11 +206,11 @@ pub fn the_precondition(
     None
 }
 
-/// Los digests de una lista de etiquetas.
+/// The digests of a list of tags.
 ///
-/// Una etiqueta es un digest entre comillas, y la lista se separa por
-/// comas. Lo que no es un digest se deja fuera: una lista con una
-/// entrada que no se entiende es una lista que no se puede comparar.
+/// A tag is a quoted digest, and the list is separated by
+/// commas. What is not a digest is left out: a list with an
+/// entry that is not understood is a list that cannot be compared.
 fn the_digests_of(header: &str) -> Vec<ContentDigest> {
     header
         .split(',')
@@ -236,7 +236,7 @@ fn the_digests_of(header: &str) -> Vec<ContentDigest> {
 mod tests {
     use super::*;
 
-    /// El digest de un contenido cualquiera.
+    /// The digest of any content.
     fn a_digest() -> ContentDigest {
         ContentDigest::of_bytes(b"content")
     }
@@ -272,9 +272,9 @@ mod tests {
 
     #[test]
     fn a_weak_tag_is_the_same_entity_for_the_weak_comparison() {
-        // RFC 9110: `If-None-Match` se compara con la función **débil**,
-        // y un `W/` delante dice "comparte la representación". Un cliente
-        // que revalida contra una caché manda la etiqueta así.
+        // RFC 9110: `If-None-Match` is compared with the **weak** function,
+        // and a leading `W/` says "shares the representation". A client
+        // revalidating against a cache sends the tag this way.
         let etag = the_etag(&a_digest());
         let weak = format!("W/{etag}");
         assert!(the_weak_match(&weak, &etag));
@@ -316,9 +316,9 @@ mod tests {
 
     #[test]
     fn a_condition_that_cannot_be_compared_does_not_travel() {
-        // Una etiqueta que no es un digest no se puede comparar con
-        // nada, y una condición que no se puede comparar no es una
-        // condición.
+        // A tag that is not a digest cannot be compared with
+        // anything, and a condition that cannot be compared is not a
+        // condition.
         assert_eq!(the_precondition(Some("\"other\""), None), None);
         assert_eq!(the_precondition(None, Some("\"other\"")), None);
     }
@@ -369,8 +369,8 @@ mod tests {
 
     #[test]
     fn a_write_with_an_if_match_on_an_empty_path_fails() {
-        // `*` quiere decir "el recurso que hay", y si no hay recurso, no
-        // hay nada que comparar.
+        // `*` means "the resource that is there", and if there is no resource, there
+        // is nothing to compare.
         assert_eq!(
             the_write_condition(Some("*"), None, None),
             WriteOutcome::Failed

@@ -1,30 +1,30 @@
-//! La vigencia de las concesiones del canal trusted (HSP-135), contra el
+//! The validity of trusted-channel grants (HSP-135), against the
 //! wire.
 //!
-//! Promover no es conceder para siempre: la concesion nace con un horizonte
-//! y al cerrarse el contenido vuelve a la cuarentena sin que nadie lo
-//! revoque. Y el horizonte es una propiedad **escrita** junto a la
-//! concesion: sobrevive al reinicio del servicio, y una nueva promocion lo
-//! reabre con una decision nueva.
+//! Promoting is not granting forever: the grant is born with a horizon
+//! and when it closes the content returns to quarantine without anyone
+//! revoking it. And the horizon is a property **written** alongside the
+//! grant: it survives a service restart, and a new promotion reopens it
+//! with a new decision.
 //!
-//! Las pruebas hablan con un proceso de verdad y un catalogo real. El
-//! horizonte se acorta por configuracion (`GRANT_MAX_VALIDITY_SECS=1`) y se
-//! espera de verdad: lo que se mide es el wire, no un reloj inyectado en una
-//! capa que nadie pregunta.
+//! The tests talk to a real process and a real catalog. The
+//! horizon is shortened through configuration (`GRANT_MAX_VALIDITY_SECS=1`) and
+//! really waited out: what is measured is the wire, not a clock injected into a
+//! layer nobody asks.
 
 mod support;
 
 use support::{Deployment, FIRST_ACCOUNT, FIRST_REPOSITORY};
 
-/// El repositorio que se queda en el canal abierto.
+/// The repository that stays in the open channel.
 const OPEN_REPOSITORY: &str = "lab";
 
-/// El digest de un contenido, sin el prefijo del algoritmo.
+/// The digest of a content, without the algorithm prefix.
 fn hex_of(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// Una peticion cualquiera, con el cuerpo de la respuesta en un fichero.
+/// Any request, with the response body in a file.
 fn call(
     deployment: &Deployment,
     port: u16,
@@ -53,7 +53,7 @@ fn call(
     (answer.status, text)
 }
 
-/// Sube un fichero crudo.
+/// Uploads a raw file.
 fn put_raw(deployment: &Deployment, port: u16, token: &str, path: &str, bytes: &[u8]) -> u16 {
     call(
         deployment,
@@ -66,7 +66,7 @@ fn put_raw(deployment: &Deployment, port: u16, token: &str, path: &str, bytes: &
     .0
 }
 
-/// Pide a promover y devuelve el codigo y el cuerpo.
+/// Requests promotion and returns the code and the body.
 fn promote(
     deployment: &Deployment,
     port: u16,
@@ -90,7 +90,7 @@ fn promote(
     )
 }
 
-/// Escribe una politica de confianza que todo software cumple.
+/// Writes a trust policy that all software meets.
 fn permissive(deployment: &Deployment) -> String {
     let policy = hodei_trust_policy::TrustPolicy::new("default", "1", Vec::new());
     let path = deployment.directory.path().join("trust-policy.json");
@@ -98,7 +98,7 @@ fn permissive(deployment: &Deployment) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Un despliegue con `releases` en el canal trusted y `lab` abierto.
+/// A deployment with `releases` in the trusted channel and `lab` open.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed_trusted(&[OPEN_REPOSITORY], &[FIRST_REPOSITORY]);
@@ -109,14 +109,14 @@ fn raw(path: &str) -> String {
     format!("/repository/{FIRST_REPOSITORY}/{path}")
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la validez se agota, y el agotamiento se nota en el wire.
+// AC2: validity runs out, and the exhaustion shows on the wire.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -142,13 +142,13 @@ fn a_promotion_serves_until_its_horizon_closes_and_a_new_one_reopens_it() {
     assert_eq!(status, 200, "the fresh promotion does not serve");
     assert_eq!(served.as_bytes(), bytes.as_slice());
 
-    // El horizonte se cierra: sin revocacion de por medio, el contenido
-    // vuelve a ser cuarentena. Nadie dijo "no": simplemente nadie lo dice ya.
+    // The horizon closes: with no revocation in between, the content
+    // goes back to being quarantine. Nobody said "no": simply nobody says it anymore.
     std::thread::sleep(std::time::Duration::from_millis(1500));
     let (status, _) = call(&deployment, service.port, "GET", &path, &alice, None);
     assert_eq!(status, 404, "an expired grant was served");
 
-    // Una promocion nueva reabre el horizonte con una decision nueva.
+    // A new promotion reopens the horizon with a new decision.
     let (status, body) = promote(&deployment, service.port, &alice, "app/aging.bin", &digest);
     assert_eq!(status, 200, "{body}");
     let (status, _) = call(&deployment, service.port, "GET", &path, &alice, None);
@@ -157,7 +157,7 @@ fn a_promotion_serves_until_its_horizon_closes_and_a_new_one_reopens_it() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4: la vigencia es estado persistido, no memoria del proceso.
+// AC4: validity is persisted state, not process memory.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -176,8 +176,8 @@ fn a_promotion_survives_a_restart_with_its_validity() {
     assert_eq!(status, 200, "{body}");
     support::stop(&mut service);
 
-    // Otro proceso, la misma base: la concesion sigue admitiendo porque su
-    // vigencia viaja escrita con ella, no en la memoria de quien la dicto.
+    // Another process, the same database: the grant still admits because its
+    // validity travels written with it, not in the memory of whoever issued it.
     let mut service = deployment.start_on(port, &environment);
     let (status, served) = call(&deployment, service.port, "GET", &path, &alice, None);
     assert_eq!(status, 200, "the grant did not survive the restart");
@@ -186,7 +186,7 @@ fn a_promotion_survives_a_restart_with_its_validity() {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: la vigencia no se negocia por el cuerpo de la peticion.
+// AC1: validity is not negotiated through the request body.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -206,9 +206,9 @@ fn the_client_cannot_ask_for_a_longer_leash() {
         201
     );
 
-    // Un campo de mas en el cuerpo no abre la promocion ni alarga nada:
-    // o se ignora y se promueve con el horizonte del servidor, o se
-    // rechaza. Lo que no puede pasar es que el cliente fije la vigencia.
+    // An extra field in the body does not open the promotion nor extend anything:
+    // it is either ignored and promoted with the server's horizon, or
+    // rejected. What cannot happen is the client setting the validity.
     let body = serde_json::json!({
         "repository": FIRST_REPOSITORY,
         "path": "app/impudent.bin",

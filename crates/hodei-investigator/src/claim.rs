@@ -1,51 +1,51 @@
-//! La afirmacion de la investigacion: lo que dice el modelo, con su
-//! procedencia.
+//! The investigation's claim: what the model says, with its
+//! provenance.
 //!
-//! Un AIClaim no es texto: es una afirmacion **tipada** que dice de que
-//! tipo es, **cita** la evidencia de la que sale y lleva la traza de quien
-//! la produjo. Y una afirmacion sin cita resoluble no es una afirmacion:
-//! es una fabricacion, y no se publica.
+//! An AIClaim is not text: it is a **typed** claim that says what
+//! kind it is, **cites** the evidence it comes from and carries the trace of who
+//! produced it. And a claim without a resolvable citation is not a claim:
+//! it is a fabrication, and it is not published.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// De que tipo es la afirmacion.
+/// What kind of claim it is.
 ///
-/// La distincion entre un **hecho** y una **inferencia** es la que hace
-/// que la explicacion sea auditable: el hecho lo han calculado las
-/// herramientas deterministas, y la inferencia la ha hecho el modelo. Una
-/// explicacion que no los distingue es una explicacion en la que no se
-/// puede apoyar nada.
+/// The distinction between a **fact** and an **inference** is what
+/// makes the explanation auditable: the fact was computed by the
+/// deterministic tools, and the inference was made by the model. An
+/// explanation that does not distinguish them is one on which
+/// nothing can be relied upon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ClaimKind {
-    /// Un hecho calculado por las herramientas deterministas.
+    /// A fact computed by the deterministic tools.
     Fact,
-    /// Una inferencia del modelo a partir de los hechos.
+    /// An inference by the model from the facts.
     Inference,
-    /// Algo que no se sabe.
+    /// Something that is not known.
     ///
-    /// El modelo puede decir "no lo se", y es lo HONRATO: una
-    /// incertidumbre declarada es una invitation a comprobar, y una
-    /// seguridad inventada es una invitation a no comprobar nada.
+    /// The model may say "I don't know", and that is the HONEST thing: a
+    /// declared uncertainty is an invitation to check, and an
+    /// invented certainty is an invitation to check nothing.
     Unknown,
-    /// Una recomendacion.
+    /// A recommendation.
     Recommendation,
 }
 
-/// Una afirmacion con su procedencia.
+/// A claim with its provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AIClaim {
-    /// Lo que se afirma.
+    /// What is claimed.
     pub statement: String,
-    /// De que tipo es.
+    /// What kind it is.
     pub kind: ClaimKind,
-    /// Las citas: los identificadores de la evidencia de la que sale.
+    /// The citations: the identifiers of the evidence it comes from.
     pub citations: Vec<String>,
 }
 
 impl AIClaim {
-    /// Una afirmacion.
+    /// A claim.
     pub fn new(statement: impl Into<String>, kind: ClaimKind, citations: Vec<String>) -> Self {
         Self {
             statement: statement.into(),
@@ -55,16 +55,16 @@ impl AIClaim {
     }
 }
 
-/// Por que una afirmacion no vale.
+/// Why a claim is not valid.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimError {
-    /// No dice nada.
+    /// It says nothing.
     Empty,
-    /// Un hecho sin cita es una fabricacion.
+    /// A fact without a citation is a fabrication.
     AFactWithoutCitations,
-    /// Una cita que no resuelve.
+    /// A citation that does not resolve.
     UnresolvedCitation(String),
-    /// Una afirmacion que no es del tipo que se pidio.
+    /// A claim that is not of the requested kind.
     NotAllowed(ClaimKind),
 }
 
@@ -86,16 +86,16 @@ impl std::fmt::Display for ClaimError {
     }
 }
 
-/// Comprueba una afirmacion contra la evidencia que se recupero.
+/// Checks a claim against the evidence that was retrieved.
 ///
-/// Las reglas son tres y son deliberadas:
+/// The rules are three and are deliberate:
 ///
-/// - un **hecho** necesita al menos una cita, y la cita tiene que
-///   resolverse: un hecho sin evidencia es una fabricacion;
-/// - una **inferencia** puede no citar, pero entonces es una opinion y
-///   se declara como tal;
-/// - una **incertidumbre** no necesita citas: lo que dice es que no se
-///   sabe.
+/// - a **fact** needs at least one citation, and the citation has to
+///   resolve: a fact without evidence is a fabrication;
+/// - an **inference** may not cite, but then it is an opinion and
+///   is declared as such;
+/// - an **uncertainty** needs no citations: what it says is that it is not
+///   known.
 pub fn check_the_claim(
     claim: &AIClaim,
     known_evidence: &[String],
@@ -118,52 +118,52 @@ pub fn check_the_claim(
     Ok(())
 }
 
-/// La traza de una investigacion.
+/// The trace of an investigation.
 ///
-/// La traza dice **quien** produjo la respuesta, **con que** prompt, **sobre
-/// que** contexto y **cuando**. Sin eso, una respuesta no se puede
-/// reproducir ni auditar, y una explicacion que no se puede auditar no
-/// es una explicacion: es una opinion con formato.
+/// The trace says **who** produced the answer, with **which** prompt, on **which**
+/// context and **when**. Without that, an answer cannot be
+/// reproduced or audited, and an explanation that cannot be audited
+/// is not an explanation: it is an opinion with formatting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvestigationTrace {
-    /// El identificador de la investigacion.
+    /// The investigation's identifier.
     pub investigation: String,
-    /// Quien produjo la respuesta.
+    /// Who produced the answer.
     pub provider: String,
-    /// El modelo.
+    /// The model.
     pub model: String,
-    /// La version del modelo, si la hay.
+    /// The model's version, if any.
     pub model_version: Option<String>,
-    /// La version de la plantilla del prompt.
+    /// The prompt template's version.
     pub prompt_version: String,
-    /// Los identificadores de la evidencia que se le dio.
+    /// The identifiers of the evidence it was given.
     pub context_evidence: Vec<String>,
-    /// Cuantas palabras teve el contexto.
+    /// How many words the context had.
     pub context_words: usize,
-    /// Cuanto de lo que hay se entrego al modelo.
+    /// How much of what exists was handed to the model.
     ///
-    /// Una recuperacion parcial se DECLARA en la traza: un contexto
-    /// incompleto no puede pasar por respuesta exhaustiva.
+    /// A partial retrieval is DECLARED in the trace: an
+    /// incomplete context cannot pass as an exhaustive answer.
     #[serde(default)]
     pub coverage: crate::scope::Coverage,
-    /// El manifiesto de lo que se RECUPERO, con sus digests y
-    /// generaciones. No lleva contenido: identificadores y digests.
+    /// The manifest of what was RETRIEVED, with its digests and
+    /// generations. It carries no content: identifiers and digests.
     #[serde(default)]
     pub retrieved: crate::read_set::ReadSet,
-    /// Lo que se le DIO al modelo: los identificadores de los hechos
-    /// que entraron en el prompt.
+    /// What was GIVEN to the model: the identifiers of the facts
+    /// that went into the prompt.
     #[serde(default)]
     pub sent_to_model: Vec<String>,
-    /// Lo que las afirmaciones ACEPTADAS citaron. Un hecho que llego al
-    /// modelo y no se cito no sostiene nada.
+    /// What the ACCEPTED claims cited. A fact that reached the
+    /// model and was not cited supports nothing.
     #[serde(default)]
     pub cited: Vec<String>,
-    /// Cuando se hizo.
+    /// When it was made.
     pub at: DateTime<Utc>,
 }
 
 impl InvestigationTrace {
-    /// La traza de una investigacion.
+    /// The trace of an investigation.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         investigation: impl Into<String>,

@@ -1,45 +1,45 @@
-//! La base fijada: sobre que mundo se evalua la simulacion.
+//! The pinned base: over which world the simulation is evaluated.
 //!
-//! Una simulacion que no dice sobre que version de la verdad se
-//! calculo es una respuesta sin apellido: el mismo "que pasaria si"
-//! puede ser verdad o falso segun lo que haya cambiado entre la
-//! pregunta y la respuesta. Y una simulacion que se apoya en un mundo
-//! que ya no existe no es una simulacion vieja: es una simulacion
-//! **equivocada**, porque responde por un estado que nadie tiene.
+//! A simulation that does not say over which version of the truth it was
+//! computed is an answer without a surname: the same "what would happen if"
+//! can be true or false depending on what changed between the
+//! question and the answer. And a simulation that relies on a world
+//! that no longer exists is not an old simulation: it is a **wrong**
+//! simulation, because it answers for a state that nobody has.
 //!
-//! # Las dos partes del sello
+//! # The two parts of the seal
 //!
-//! La base se sella por partida doble, y las dos hacen falta:
+//! The base is sealed twice over, and both are needed:
 //!
-//! - La **generacion** del grafo dice si la HISTORIA del grafo ha
-//!   avanzado. Es un contador monotono, barato de leer, y es lo que
-//!   usa el investigador para lo mismo.
-//! - El **sello de contenido** dice si lo que se LIO se ha movido. La
-//!   generacion no basta: el grafo se escribe tambien por caminos que
-//!   no pasan por su historia de deltas, y una relacion sustituida por
-//!   otra mantiene el numero de relaciones. Solo el contenido
-//!   distingue una cosa de la otra.
+//! - The graph **generation** says whether the graph's HISTORY has
+//!   advanced. It is a monotonic counter, cheap to read, and it is what
+//!   the investigator uses for the same purpose.
+//! - The **content seal** says whether what was READ has moved. The
+//!   generation is not enough: the graph is also written through paths that
+//!   do not go through its delta history, and a relation replaced by
+//!   another keeps the number of relations. Only the content
+//!   tells one from the other.
 //!
-//! Y el sello de contenido se compara por su digest, no por el numero:
-//! el numero de relaciones no es una version, es un recuento, y un
-//! recuento no dice que las relaciones sean las mismas.
+//! And the content seal is compared by its digest, not by the count:
+//! the number of relations is not a version, it is a tally, and a
+//! tally does not say the relations are the same.
 //!
-//! # El reloj
+//! # The clock
 //!
-//! La base lleva el instante en el que se evaluo. El reloj no es del
-//! sistema: lo recibe quien simula, y por eso dos simulaciones con la
-//! misma base y el mismo reloj dan el mismo resultado. Un nucleo de
-//! decision que lee el reloj de pared no es reproducible, y una
-//! simulacion que no es reproducible no se puede auditar.
+//! The base carries the instant at which it was evaluated. The clock is not the
+//! system's: it is received by whoever simulates, and so two simulations with the
+//! same base and the same clock give the same result. A decision
+//! core that reads the wall clock is not reproducible, and a
+//! simulation that is not reproducible cannot be audited.
 //!
-//! # El alcance de la generacion
+//! # The scope of the generation
 //!
-//! La generacion es **de la cuenta**, no del sujeto: es el contador de
-//! la historia del grafo entero. Una escritura que no toca el conjunto
-//! que la simulacion lee tambien la invalida. Es a proposito --fallar
-//! cerrado antes que devolver una respuesta sobre un mundo que se
-//! movió--, pero conviene saberlo: la simulacion es mas estricta de lo
-//! que parece.
+//! The generation is **the account's**, not the subject's: it is the counter of
+//! the history of the whole graph. A write that does not touch the set
+//! the simulation reads also invalidates it. This is on purpose --failing
+//! closed rather than returning an answer about a world that
+//! moved--, but it is worth knowing: the simulation is stricter than
+//! it seems.
 
 use chrono::{DateTime, Utc};
 use hodei_evidence::ContentDigest;
@@ -49,47 +49,47 @@ use serde::{Deserialize, Serialize};
 
 use crate::hypothetical::RelationFact;
 
-/// La base sobre la que se evalua una simulacion.
+/// The base over which a simulation is evaluated.
 ///
-/// Es lo que se fija ANTES de simular y lo que se comprueba DESPUES:
-/// si el mundo se ha movido, la simulacion se dice obsoleta en lugar de
-/// devolver un diff que nadie sabe sobre que mundo vale.
+/// It is what is pinned BEFORE simulating and what is checked AFTER:
+/// if the world has moved, the simulation is declared stale instead of
+/// returning a diff that nobody knows which world it holds for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct SimulationBase {
-    /// La cuenta a la que pertenece la base.
+    /// The account the base belongs to.
     pub account: String,
-    /// El instante en el que se evaluo.
+    /// The instant at which it was evaluated.
     pub evaluated_at: DateTime<Utc>,
-    /// El manifiesto de lo que se leyo: las generaciones de las fuentes
-    /// y los sellos de cada recurso.
+    /// The manifest of what was read: the generations of the sources
+    /// and the seals of each resource.
     ///
-    /// Abarca las relaciones que leyo la SIMULACION, la politica contra
-    /// la que se decide y la evidencia que consume la decision.
+    /// It covers the relations read by the SIMULATION, the policy against
+    /// which it decides and the evidence the decision consumes.
     pub read_set: ReadSet,
-    /// El sello del contenido leido: el digest de las relaciones que leyo
-    /// la simulacion, con su evidencia.
+    /// The seal of the content read: the digest of the relations the
+    /// simulation read, with their evidence.
     ///
-    /// Es el sello de lo que la simulacion leyo del GRAFO. Lo que se
-    /// lee para decidir tiene su propia comprobacion --la evidencia se
-    /// compara por sus sellos-- y no entra aqui: un digest que mezclara
-    /// el grafo con la evidencia haria que un cambio de evidencia
-    /// pareciese un cambio de grafo.
+    /// It is the seal of what the simulation read from the GRAPH. What is
+    /// read to decide has its own check --evidence is
+    /// compared by its seals-- and does not enter here: a digest that mixed
+    /// the graph with the evidence would make an evidence change
+    /// look like a graph change.
     pub seal: String,
-    /// La posicion del ledger que declara el punto de partida, si se
-    /// sabe.
+    /// The ledger position that declares the starting point, if
+    /// known.
     ///
-    /// Va APARTE de las generaciones del manifiesto a proposito: las
-    /// generaciones son las versiones que se han VERIFICADO contra su
-    /// fuente, y esta posicion no se puede verificar aqui --la
-    /// simulacion no tiene un puerto de ledger contra el que
-    /// comprobarla--. Declararla como generacion la haria pasar por
-    /// comprobada.
+    /// It goes APART from the manifest generations on purpose: the
+    /// generations are the versions that have been VERIFIED against their
+    /// source, and this position cannot be verified here --the
+    /// simulation has no ledger port to check it
+    /// against--. Declaring it as a generation would make it pass for
+    /// checked.
     #[serde(default)]
     pub declared_ledger_position: Option<u64>,
 }
 
 impl SimulationBase {
-    /// Una base vacia de una cuenta.
+    /// An empty base of an account.
     pub fn new(account: impl Into<String>, evaluated_at: DateTime<Utc>) -> Self {
         Self {
             account: account.into(),
@@ -100,19 +100,19 @@ impl SimulationBase {
         }
     }
 
-    /// Registra la generacion de una fuente.
+    /// Records the generation of a source.
     pub fn with_generation(mut self, source: impl Into<String>, version: u64) -> Self {
         self.read_set.generation(source, version);
         self
     }
 
-    /// Registra las relaciones leidas: sus sellos y el sello de su
-    /// contenido.
+    /// Records the relations read: their seals and the seal of their
+    /// content.
     ///
-    /// Las dos cosas van juntas a proposito: una base que sellara las
-    /// relaciones pero no su contenido no podria comprobar si lo leido
-    /// sigue siendo lo mismo, que es justo lo que el sello de contenido
-    /// comprueba.
+    /// The two go together on purpose: a base that sealed the
+    /// relations but not their content could not check whether what was read
+    /// is still the same, which is exactly what the content seal
+    /// checks.
     pub fn with_relations(mut self, relations: &[RelationFact]) -> Self {
         for relation in relations {
             self.read_set.read(ReadStamp::relation(
@@ -120,28 +120,28 @@ impl SimulationBase {
                 relation.evidence.clone().unwrap_or_default(),
             ));
         }
-        // El sello se calcula sobre el MANIFIESTO y no sobre una lista
-        // aparte: asi cubre todo lo que la base ha leido, aunque se lea
-        // en varias tandas, y no puede quedar desincronizado de los
-        // sellos que lo nombran.
+        // The seal is computed over the MANIFEST and not over a separate
+        // list: that way it covers everything the base has read, even if it is read
+        // in several batches, and it cannot get out of sync with the
+        // seals that name it.
         self.seal = the_seal_of_the_read_set(&self.read_set);
         self
     }
 
-    /// Registra la politica contra la que se decide.
+    /// Records the policy against which it decides.
     pub fn with_policy(mut self, policy: &TrustPolicy) -> Self {
         self.read_set
             .read(ReadStamp::policy(policy.id.clone(), policy.version.clone()));
         self
     }
 
-    /// Registra lo que se ha leido para DECIDIR.
+    /// Records what has been read to DECIDE.
     ///
-    /// Es la parte de la base que no es del grafo: la evidencia que el
-    /// nucleo de decision consume. Sin ella la base diria sobre que
-    /// mundo se calculo sin decir que evidencia lo decidio, y un diff
-    /// al que le entra evidencia nueva se atribuiria al hecho
-    /// hipotetico cuando la causa fue otra.
+    /// It is the part of the base that is not the graph's: the evidence that the
+    /// decision core consumes. Without it the base would say over which
+    /// world the answer was computed without saying which evidence decided it, and a diff
+    /// into which new evidence enters would be attributed to the
+    /// hypothetical fact when the cause was another.
     pub fn with_reads(mut self, reads: &ReadSet) -> Self {
         for stamp in &reads.stamps {
             self.read_set.read(stamp.clone());
@@ -149,18 +149,18 @@ impl SimulationBase {
         self
     }
 
-    /// La huella del manifiesto de lecturas: el digest de lo que se leyo,
-    /// sin releerlo entero.
+    /// The fingerprint of the reads manifest: the digest of what was read,
+    /// without rereading all of it.
     pub fn fingerprint(&self) -> String {
         self.read_set.fingerprint()
     }
 
-    /// Si la GENERACION del mundo ya no es la que se leyo.
+    /// Whether the world's GENERATION is no longer the one that was read.
     ///
-    /// La comparacion es contra la generacion del GRAFO, la unica fuente
-    /// que se puede comprobar aqui. Y una base que no ha registrado
-    /// generacion no dice que el mundo se movio: no dice nada, que no es
-    /// lo mismo.
+    /// The comparison is against the GRAPH generation, the only source
+    /// that can be checked here. And a base that has not recorded a
+    /// generation does not say the world moved: it says nothing, which is not
+    /// the same.
     pub fn is_the_generation_stale(&self, generation: u64) -> bool {
         self.read_set
             .generations
@@ -170,33 +170,33 @@ impl SimulationBase {
             .unwrap_or(false)
     }
 
-    /// Si el CONTENIDO leido ya no es el que se leyo.
+    /// Whether the CONTENT read is no longer the one that was read.
     ///
-    /// El sello compara el digest de lo leido con el digest de lo que se
-    /// acaba de leer, y no el numero de relaciones: un numero no es una
+    /// The seal compares the digest of what was read with the digest of what was
+    /// just read, and not the number of relations: a number is not a
     /// version.
     pub fn is_the_content_stale(&self, seal: &str) -> bool {
         self.seal != seal
     }
 
-    /// Si la EVIDENCIA que se leyo para decidir ya no es la misma.
+    /// Whether the EVIDENCE read to decide is no longer the same.
     ///
-    /// La evidencia no toca el grafo: entra en el almacen de evidencia y
-    /// no cambia ni el numero de relaciones ni la generacion. Por eso
-    /// necesita su propia comprobacion, o una evidencia que entra
-    /// mientras se evalua pasaria desapercibida -- y el cambio de
-    /// decision se atribuiria al hecho hipotetico cuando la causa fue la
-    /// evidencia que entro.
+    /// The evidence does not touch the graph: it enters the evidence store and
+    /// changes neither the number of relations nor the generation. That is why it
+    /// needs its own check, or evidence that enters
+    /// while evaluating would go unnoticed -- and the change of
+    /// decision would be attributed to the hypothetical fact when the cause was the
+    /// evidence that came in.
     pub fn is_the_evidence_stale(&self, reads: &ReadSet) -> bool {
         the_evidence_of(&self.read_set) != the_evidence_of(reads)
     }
 }
 
-/// Los sellos de la evidencia de un manifiesto, en orden canonico.
+/// The seals of the evidence of a manifest, in canonical order.
 ///
-/// Se comparan como CONJUNTOS: la evidencia que se leyo y la que se
-/// acaba de leer son las mismas si sus sellos son los mismos, sin
-/// importar el orden en que se leyeron.
+/// They are compared as SETS: the evidence that was read and the one just
+/// read are the same if their seals are the same, regardless
+/// of the order in which they were read.
 fn the_evidence_of(read_set: &ReadSet) -> Vec<ReadStamp> {
     let mut stamps: Vec<ReadStamp> = read_set
         .stamps
@@ -208,20 +208,20 @@ fn the_evidence_of(read_set: &ReadSet) -> Vec<ReadStamp> {
     stamps
 }
 
-/// La huella de la evidencia leida: el digest de sus sellos.
+/// The fingerprint of the evidence read: the digest of its seals.
 ///
-/// Es lo que dice un `StaleBase` de evidencia: que evidencia se leyo y
-/// que evidencia se ha encontrado, sin volcar los contenidos.
+/// It is what an evidence `StaleBase` says: which evidence was read and
+/// which evidence was found, without dumping the contents.
 pub fn the_evidence_fingerprint(read_set: &ReadSet) -> String {
     ContentDigest::of_bytes(format!("{:?}", the_evidence_of(read_set)).as_bytes()).to_string()
 }
 
-/// El sello del contenido leido: el digest de las relaciones, con su
-/// evidencia.
+/// The seal of the content read: the digest of the relations, with their
+/// evidence.
 ///
-/// El digest se calcula sobre la lista ORDENADA de las relaciones, y no
-/// sobre el orden en que las dio el grafo: dos lecturas del mismo
-/// grafo dan el mismo sello, se lean en el orden en que se lean.
+/// The digest is computed over the SORTED list of relations, and not
+/// over the order in which the graph gave them: two reads of the same
+/// graph give the same seal, whatever order they are read in.
 pub fn the_seal_of(relations: &[RelationFact]) -> String {
     let mut read_set = ReadSet::empty();
     for relation in relations {
@@ -233,18 +233,18 @@ pub fn the_seal_of(relations: &[RelationFact]) -> String {
     the_seal_of_the_read_set(&read_set)
 }
 
-/// El sello de las relaciones de un manifiesto.
+/// The seal of the relations of a manifest.
 ///
-/// Se sellan SOLO las relaciones: la politica y las generaciones son
-/// otras fuentes, con su propia verificacion, y meterlas en el mismo
-/// digest haria que un cambio de politica pareciese un cambio de
-/// contenido.
+/// ONLY the relations are sealed: the policy and the generations are
+/// other sources, with their own verification, and putting them in the same
+/// digest would make a policy change look like a change of
+/// content.
 ///
-/// Cada linea lleva la LONGITUD de sus dos partes. Sin longitudes, dos
-///lecturas distintas podrian dar el mismo texto --una relacion cuya
-/// evidencia lleva un salto de linea dentro-- y el digest de dos
-/// mundos distintos seria el mismo. Un sello que no distingue no
-/// comprueba nada.
+/// Each line carries the LENGTH of its two parts. Without lengths, two
+/// different reads could give the same text --a relation whose
+/// evidence carries a newline inside-- and the digest of two
+/// different worlds would be the same. A seal that does not distinguish
+/// checks nothing.
 fn the_seal_of_the_read_set(read_set: &ReadSet) -> String {
     let mut lines: Vec<String> = read_set
         .stamps
@@ -270,18 +270,18 @@ mod tests {
     use hodei_evidence::domain::graph::RelationType;
     use kernel::Hrn;
 
-    /// El sujeto de la prueba.
+    /// The subject of the test.
     fn subject() -> Hrn {
         Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
     }
 
-    /// El componente del que depende.
+    /// The component it depends on.
     fn component() -> Hrn {
         Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
     }
 
-    /// El sello no depende del ORDEN en que se leen las relaciones: dos
-    /// lecturas del mismo grafo dan el mismo sello.
+    /// The seal does not depend on the ORDER in which the relations are read: two
+    /// reads of the same graph give the same seal.
     #[test]
     fn the_seal_does_not_depend_on_the_order_of_the_reads() {
         let first = RelationFact::new(RelationType::DependsOn, subject(), component())
@@ -294,9 +294,9 @@ mod tests {
         assert_eq!(one, other);
     }
 
-    /// Y el sello SI cambia cuando lo leido cambia: una relacion
-    /// sustituida por otra deja un sello distinto, aunque el numero de
-    /// relaciones siga siendo el mismo.
+    /// And the seal DOES change when what was read changes: a relation
+    /// replaced by another leaves a different seal, even if the number of
+    /// relations stays the same.
     #[test]
     fn the_seal_changes_when_a_relation_is_replaced() {
         let before = RelationFact::new(RelationType::DependsOn, subject(), component())
@@ -311,7 +311,7 @@ mod tests {
         );
     }
 
-    /// Y tambien cuando lo que cambia es la relacion misma.
+    /// And also when what changes is the relation itself.
     #[test]
     fn the_seal_changes_when_the_relation_changes() {
         let other = Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2")
@@ -322,16 +322,16 @@ mod tests {
         assert_ne!(the_seal_of(&[before]), the_seal_of(&[after]));
     }
 
-    /// Dos lecturas DISTINTAS no pueden dar el mismo sello: el sello
-    /// codifica con longitudes, y sin longitudes una evidencia con un
-    /// salto de linea dentro podria disfrazarse de dos relaciones.
+    /// Two DIFFERENT reads cannot give the same seal: the seal
+    /// encodes with lengths, and without lengths an evidence with a
+    /// newline inside could pass for two relations.
     #[test]
     fn the_seal_tells_two_different_reads_apart() {
         let relation = RelationFact::new(RelationType::DependsOn, subject(), component())
             .with_evidence("evd-1");
 
-        // Una relacion con la evidencia "x\n<otra>|y" y dos relaciones
-        // con "x" e "y": sin longitudes, el texto es el mismo.
+        // A relation with the evidence "x\n<other>|y" and two relations
+        // with "x" and "y": without lengths, the text is the same.
         let disguised = RelationFact::new(RelationType::DependsOn, subject(), component())
             .with_evidence(format!("x\n{}|y", relation.identity()));
 
@@ -343,8 +343,8 @@ mod tests {
         );
     }
 
-    /// La base esta obsoleta cuando la generacion se movio o cuando el
-    /// contenido leido cambio.
+    /// The base is stale when the generation moved or when the
+    /// content read changed.
     #[test]
     fn a_base_is_stale_when_the_generation_or_the_content_moved() {
         let relation = RelationFact::new(RelationType::DependsOn, subject(), component())
@@ -372,9 +372,9 @@ mod tests {
         );
     }
 
-    /// El sello cubre TODO lo que la base ha leido, aunque se lea en
-    /// varias tandas: una base que sellara solo la ultima tanda dejaria
-    /// sin vigilar lo leido antes, y el sello mentiria sobre su alcance.
+    /// The seal covers EVERYTHING the base has read, even if it is read in
+    /// several batches: a base that sealed only the last batch would leave
+    /// what was read before unwatched, and the seal would lie about its scope.
     #[test]
     fn the_seal_covers_everything_the_base_read() {
         let first = RelationFact::new(RelationType::DependsOn, subject(), component())
@@ -397,9 +397,9 @@ mod tests {
         );
     }
 
-    /// La base guarda lo que se leyo para DECIDIR: la evidencia que
-    /// consume el nucleo de decision es parte de la base, porque sin
-    /// ella la base no dice sobre que mundo se calculo la respuesta.
+    /// The base keeps what was read to DECIDE: the evidence that
+    /// the decision core consumes is part of the base, because without
+    /// it the base does not say over which world the answer was computed.
     #[test]
     fn the_base_keeps_what_the_decision_read() {
         let mut reads = ReadSet::empty();

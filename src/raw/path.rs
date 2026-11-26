@@ -1,54 +1,54 @@
-//! Las reglas de la ruta de un contenido crudo.
+//! The rules for the path of a raw content.
 //!
-//! Una ruta es lo que dice el cliente, y lo que dice el cliente es lo
-//! que va a acabar en el disco. Por eso las reglas son **estrictas** y
-//! se aplican antes de tocar nada:
+//! A path is what the client says, and what the client says is what
+//! will end up on disk. That is why the rules are **strict** and
+//! are applied before touching anything:
 //!
-//! - La ruta tiene que estar bajo `/repository/`.
-//! - La clave del repositorio tiene que ser un nombre, no una ruta.
-//! - Cada segmento tiene que ser un `pchar` de RFC 3986: ni barras, ni
-//!   barras invertidas, ni los delimitadores que le cambian el sentido a
-//!   la referencia, ni el espacio, y sin los segmentos `.` y `..`.
-//! - Un segmento se decodifica **una** vez, y la forma decodificada tiene
-//!   que ser un segmento válido: como el símbolo `%` no es un `pchar`, un
-//!   doble codificado es una forma que todavía lleva codificación, y una
-//!   forma que todavía lleva codificación no es un nombre.
+//! - The path has to be under `/repository/`.
+//! - The repository key has to be a name, not a path.
+//! - Each segment has to be an RFC 3986 `pchar`: no slashes, no
+//!   backslashes, no delimiters that change the meaning of
+//!   the reference, no space, and no `.` and `..` segments.
+//! - A segment is decoded **once**, and the decoded form has
+//!   to be a valid segment: since the `%` symbol is not a `pchar`, a
+//!   double-encoded one is a form that still carries encoding, and a
+//!   form that still carries encoding is not a name.
 //!
-//! Lo que se acepta es exactamente lo que se puede nombrar sin
-//! ambigüedad. Una ruta que dos sistemas interpretan de manera distinta
-//! es una ruta que un día Bytes y otro día Es un fichero distinto, y un
-//! registro de artefactos que guarda una ruta que no puede comparar es un
-//! registro con diferencias silenciosas.
+//! What is accepted is exactly what can be named without
+//! ambiguity. A path that two systems interpret differently
+//! is a path that one day is one file and another day a different one, and an
+//! artifact registry that stores a path it cannot compare is a
+//! registry with silent discrepancies.
 
-/// Lo que se rechaza de una ruta, y por que.
+/// What is rejected about a path, and why.
 ///
-/// Los errores son **distintos** a propósito: quién recibe un 400 sabe
-/// si la ruta no era de un repositorio crudo, si el nombre del
-/// repositorio no era válido, o si el problema estaba en un segmento.
-/// Un error que no dice nada es un error que hay que adivinar.
+/// The errors are **distinct** on purpose: whoever receives a 400 knows
+/// whether the path was not for a raw repository, whether the repository
+/// name was not valid, or whether the problem was in a segment.
+/// An error that says nothing is an error that has to be guessed at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RawPathError {
-    /// La ruta no está bajo `/repository/`.
+    /// The path is not under `/repository/`.
     NotRaw,
-    /// El nombre del repositorio no es un nombre.
+    /// The repository name is not a name.
     InvalidRepository,
-    /// No hay ruta de contenido dentro del repositorio.
+    /// There is no content path inside the repository.
     EmptyPath,
-    /// La ruta es más larga de lo que se admite.
+    /// The path is longer than what is admitted.
     TooLong,
-    /// Un segmento no es un segmento válido.
+    /// A segment is not a valid segment.
     InvalidSegment,
-    /// La ruta no está bien codificada.
+    /// The path is not properly encoded.
     BadEncoding,
 }
 
 impl RawPathError {
-    /// Lo que se le dice al cliente.
+    /// What is told to the client.
     ///
-    /// No dice **dónde** está el problema en la ruta: un cliente que
-    /// recibe el error sabe que su ruta no es válida, y no recibe una
-    /// description de cómo está escrita su ruta para que la pruebe con
-    /// otras variantes.
+    /// It does not say **where** the problem is in the path: a client that
+    /// receives the error knows its path is not valid, and does not receive a
+    /// description of how its path is written so it can try
+    /// other variants.
     pub fn message(&self) -> &'static str {
         match self {
             Self::NotRaw => "the path is not a raw repository path",
@@ -61,32 +61,32 @@ impl RawPathError {
     }
 }
 
-/// Donde vive un contenido: el repositorio y la ruta dentro de el.
+/// Where a content lives: the repository and the path within it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawTarget {
-    /// La clave del repositorio.
+    /// The repository key.
     pub repository: String,
-    /// La ruta dentro del repositorio.
+    /// The path within the repository.
     pub asset_path: String,
 }
 
-/// El prefijo de la superficie de contenido crudo.
+/// The prefix of the raw content surface.
 const RAW_PREFIX: &str = "/repository/";
 
-/// Cuántos segmentos como máximo tiene una ruta.
+/// How many segments a path has at most.
 const MAX_SEGMENTS: usize = 64;
 
-/// Cuántos bytes como máximo tiene un segmento.
+/// How many bytes a segment has at most.
 const MAX_SEGMENT_BYTES: usize = 255;
 
-/// Cuántos bytes como máximo tiene la ruta entera.
+/// How many bytes the whole path has at most.
 const MAX_PATH_BYTES: usize = 1024;
 
-/// La ruta pedida, leída del URI crudo.
+/// The requested path, read from the raw URI.
 ///
-/// El URI **crudo** es el que llegó, sin decodificar: si se usará el
-/// decodificado, un `%2e%2e` ya habría pasado a ser `..` y no se podría
-/// ni ver ni refutar.
+/// The **raw** URI is the one that arrived, undecoded: if the decoded
+/// one were used, a `%2e%2e` would already have become `..` and could be
+/// neither seen nor refuted.
 pub fn the_target(raw_path: &str) -> Result<RawTarget, RawPathError> {
     let rest = raw_path
         .strip_prefix(RAW_PREFIX)
@@ -98,16 +98,16 @@ pub fn the_target(raw_path: &str) -> Result<RawTarget, RawPathError> {
     let raw_segments: Vec<&str> = rest.split('/').collect();
     let (raw_repository, raw_asset) = raw_segments.split_first().ok_or(RawPathError::EmptyPath)?;
 
-    // El nombre del repositorio es un **nombre**: no lleva barra, ni
-    // escapado, ni nada que lo convierta en otra cosa. Un nombre no
-    // admite `%`, así que no hay nada que decodificar: se comprueba tal
-    // como llega.
+    // The repository name is a **name**: it carries no slash, no
+    // escaping, nothing that turns it into something else. A name does not
+    // admit `%`, so there is nothing to decode: it is checked as
+    // it arrives.
     if !valid_repository_name(raw_repository) {
         return Err(RawPathError::InvalidRepository);
     }
     let repository = raw_repository.to_string();
 
-    // Una barra final no es un segmento: es una ruta sin contenido.
+    // A trailing slash is not a segment: it is a path with no content.
     if raw_asset.len() == 1 && raw_asset[0].is_empty() {
         return Err(RawPathError::EmptyPath);
     }
@@ -132,20 +132,20 @@ pub fn the_target(raw_path: &str) -> Result<RawTarget, RawPathError> {
     })
 }
 
-/// Un segmento de la ruta: un `pchar` de RFC 3986.
+/// A path segment: an RFC 3986 `pchar`.
 ///
-/// Son los caracteres que pueden ir en un segmento de una URI sin
-/// codificar: los no reservados, los sub-delimitadores, y `:` y `@`.
+/// These are the characters that can go in a URI segment without
+/// encoding: unreserved ones, sub-delimiters, and `:` and `@`.
 ///
-/// Ni barra ni barra invertida: las dos son separadores en algun
-/// sistema, y un nombre que es un separador en un sistema es un
-/// traversal en ese sistema. Ni `#` ni `?`: son los delimitadores que
-/// le cambian el sentido a la referencia, y un `Location` que apunta a
-/// otro recurso es peor que un `Location` que no existe. Ni el espacio:
-/// el mismo nombre escrito de dos maneras es dos nombres.
+/// Neither slash nor backslash: both are separators in some
+/// system, and a name that is a separator in one system is a
+/// traversal in that system. Neither `#` nor `?`: they are the delimiters that
+/// change the meaning of the reference, and a `Location` that points to
+/// another resource is worse than a `Location` that does not exist. Nor the space:
+/// the same name written in two ways is two names.
 ///
-/// La lista no es arbitraria: es exactamente la que hace que la ruta sea
-/// una **referencia URI** sin ambigüedad.
+/// The list is not arbitrary: it is exactly the one that makes the path
+/// an unambiguous **URI reference**.
 fn valid_segment(segment: &str) -> bool {
     if segment.is_empty() || segment.len() > MAX_SEGMENT_BYTES {
         return false;
@@ -156,11 +156,11 @@ fn valid_segment(segment: &str) -> bool {
     segment.chars().all(is_a_pchar)
 }
 
-/// Un `pchar` de RFC 3986.
+/// An RFC 3986 `pchar`.
 ///
-/// Un `pchar` es un carácter no reservado, un sub-delimitador, `:` o
-/// `@`. Los no reservados son alfanuméricos y `-._~`, y los
-/// sub-delimitadores son `!$&'()*+,;=`.
+/// A `pchar` is an unreserved character, a sub-delimiter, `:` or
+/// `@`. Unreserved ones are alphanumerics and `-._~`, and the
+/// sub-delimiters are `!$&'()*+,;=`.
 fn is_a_pchar(character: char) -> bool {
     character.is_ascii_alphanumeric()
         || matches!(
@@ -184,10 +184,10 @@ fn is_a_pchar(character: char) -> bool {
         )
 }
 
-/// Un nombre de repositorio.
+/// A repository name.
 ///
-/// El mismo criterio que usa la superficie administrativa: un nombre es
-/// un nombre, y un nombre con barras es una ruta disfrazada.
+/// The same criterion used by the administrative surface: a name is
+/// a name, and a name with slashes is a disguised path.
 pub fn valid_repository_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
@@ -198,21 +198,21 @@ pub fn valid_repository_name(name: &str) -> bool {
         })
 }
 
-/// Decodifica un segmento, y comprueba que no esconde nada.
+/// Decodes a segment, and checks that it hides nothing.
 ///
-/// Un segmento llega **codificado**: `%2f` es una barra, `%20` es un
-/// espacio y `%25` es un símbolo. El nombre que se guarda es el
-/// **decodificado**, y ese nombre tiene que ser un `pchar` entero: ni
-/// una barra, ni un espacio, ni un símbolo que otro sistema pueda
-/// descodificar otra vez.
+/// A segment arrives **encoded**: `%2f` is a slash, `%20` is a
+/// space and `%25` is a percent symbol. The name that is stored is the
+/// **decoded** one, and that name has to be an entire `pchar`: no
+/// slash, no space, no symbol that another system could
+/// decode again.
 ///
-/// Se decodifica **una** vez, y solo una. Como el símbolo `%` no es un
-/// `pchar`, una forma que todavía lleva codificación —un doble
-/// codificado— es una forma que **no** es un nombre, y se rechaza:
-/// `%252e%252e%252f` se decodifica a `%2e%2e%2f`, y ahí se para.
+/// It is decoded **once**, and only once. Since the `%` symbol is not a
+/// `pchar`, a form that still carries encoding --a double-encoded
+/// one-- is a form that is **not** a name, and it is rejected:
+/// `%252e%252e%252f` decodes to `%2e%2e%2f`, and it stops there.
 ///
-/// Esa es la regla: lo que se guarda es siempre un nombre literal, y un
-/// nombre literal no se puede leer de dos maneras.
+/// That is the rule: what is stored is always a literal name, and a
+/// literal name cannot be read in two ways.
 fn decode_segment(raw: &str, valid: fn(&str) -> bool) -> Result<String, RawPathError> {
     let decoded = decode_once(raw)?;
     if !valid(&decoded) {
@@ -221,11 +221,11 @@ fn decode_segment(raw: &str, valid: fn(&str) -> bool) -> Result<String, RawPathE
     Ok(decoded)
 }
 
-/// Una pasada de decodificación percent.
+/// A percent-decoding pass.
 ///
-/// Solo se acepta `%XX` con dos dígitos hexadecimales. El `+` de una
-/// cadena de consulta **no** es un espacio aquí: en una ruta es un
-/// carácter más.
+/// Only `%XX` with two hexadecimal digits is accepted. The `+` of a
+/// query string is **not** a space here: in a path it is just another
+/// character.
 fn decode_once(text: &str) -> Result<String, RawPathError> {
     let bytes = text.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -246,7 +246,7 @@ fn decode_once(text: &str) -> Result<String, RawPathError> {
     String::from_utf8(out).map_err(|_| RawPathError::BadEncoding)
 }
 
-/// El valor de un dígito hexadecimal.
+/// The value of a hexadecimal digit.
 fn hex_value(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
@@ -260,7 +260,7 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
-    /// Atajo para leer el resultado como texto de error.
+    /// Shortcut to read the result as error text.
     fn the_error(path: &str) -> RawPathError {
         the_target(path).expect_err("the path is refused")
     }
@@ -296,21 +296,21 @@ mod tests {
 
     #[test]
     fn the_double_decoding_is_refused() {
-        // `%252e%252e%252f` es `../` con una capa de más.
+        // `%252e%252e%252f` is `../` with an extra layer.
         assert_eq!(
             the_error("/repository/releases/%252e%252e%252fetc"),
             RawPathError::InvalidSegment
         );
-        // Y la barra codificada también: un segmento que al decodificar
-        // trae una barra es dos segmentos, y el cliente no pidió eso.
+        // And the encoded slash too: a segment that when decoded
+        // brings a slash is two segments, and the client did not ask for that.
         assert_eq!(
             the_error("/repository/releases/a%2fb"),
             RawPathError::InvalidSegment
         );
-        // Y la barra codificada dos veces: `a%252fb` es `a/b` con una
-        // capa de más. La forma intermedia (`a%2fb`) es un segmento
-        // válido, y por eso el Segmento tiene que comprobar **cada**
-        // forma, no solo la última.
+        // And the slash encoded twice: `a%252fb` is `a/b` with an
+        // extra layer. The intermediate form (`a%2fb`) is a valid
+        // segment, and that is why the segment has to check **each**
+        // form, not just the last one.
         assert_eq!(
             the_error("/repository/releases/a%252fb"),
             RawPathError::InvalidSegment
@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn the_ambiguous_unicode_is_refused() {
-        // Una ruta con caracteres fuera de ASCII se puede escribir de
-        // varias maneras, y no todas dicen lo mismo.
+        // A path with non-ASCII characters can be written in
+        // several ways, and not all of them say the same thing.
         assert_eq!(
             the_error("/repository/releases/caf%C3%A9"),
             RawPathError::InvalidSegment
@@ -392,9 +392,9 @@ mod tests {
 
     #[test]
     fn the_encoded_space_is_refused() {
-        // El espacio no es un carácter imprimible ASCII válido en una
-        // ruta de contenido: el mismo nombre escrito de dos maneras es
-        // dos nombres.
+        // The space is not a valid printable ASCII character in a
+        // content path: the same name written in two ways is
+        // two names.
         assert_eq!(
             the_error("/repository/releases/a%20b"),
             RawPathError::InvalidSegment
@@ -403,10 +403,10 @@ mod tests {
 
     #[test]
     fn the_delimiters_that_change_the_meaning_are_refused() {
-        // Un `#` o un `?` en un segmento hacen que la ruta sea otra cosa
-        // cuando se lee como una referencia: `/repository/repos/a?b` es
-        // `/repository/repos/a` con una consulta. Y un `Location` que
-        // apunta a otro recurso es peor que un `Location` que no existe.
+        // A `#` or a `?` in a segment makes the path something else
+        // when read as a reference: `/repository/repos/a?b` is
+        // `/repository/repos/a` with a query. And a `Location` that
+        // points to another resource is worse than a `Location` that does not exist.
         assert_eq!(
             the_error("/repository/releases/a%23b"),
             RawPathError::InvalidSegment
@@ -415,7 +415,7 @@ mod tests {
             the_error("/repository/releases/a%3fb"),
             RawPathError::InvalidSegment
         );
-        // Los corchetes solo valen en el anfitrión de una URI.
+        // Brackets are only valid in a URI's host.
         assert_eq!(
             the_error("/repository/releases/a%5Bb"),
             RawPathError::InvalidSegment
@@ -424,7 +424,7 @@ mod tests {
             the_error("/repository/releases/a%5Db"),
             RawPathError::InvalidSegment
         );
-        // Y las comillas no son un `pchar`.
+        // And quotes are not a `pchar`.
         assert_eq!(
             the_error("/repository/releases/a%22b"),
             RawPathError::InvalidSegment
@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn the_characters_of_a_uri_segment_are_accepted() {
-        // Los `pchar` de RFC 3986: los que un cliente escribe de verdad.
+        // RFC 3986 `pchar`s: the ones a client really writes.
         let target = the_target("/repository/releases/informe+final_v2.1@2024.tar.gz")
             .expect("la ruta se lee");
         assert_eq!(target.asset_path, "informe+final_v2.1@2024.tar.gz");
@@ -441,13 +441,13 @@ mod tests {
 
     #[test]
     fn an_encoded_character_is_the_character_it_encodes() {
-        // `%41` es `A`: lo que se guarda es el nombre literal, y no hay
-        // dos nombres para lo mismo. Un cliente que codifica lo que no
-        // hace falta codificar no está pidiendo otra cosa.
+        // `%41` is `A`: what is stored is the literal name, and there are not
+        // two names for the same thing. A client that encodes what does not
+        // need encoding is not asking for something else.
         let target = the_target("/repository/releases/a%41b").expect("la ruta se lee");
         assert_eq!(target.asset_path, "aAb");
-        // Y un doble codificado no es un nombre: `%2541` se decodifica a
-        // `%41`, que todavía lleva la codificación dentro.
+        // And a double-encoded one is not a name: `%2541` decodes to
+        // `%41`, which still carries the encoding inside.
         assert_eq!(
             the_error("/repository/releases/a%2541b"),
             RawPathError::InvalidSegment

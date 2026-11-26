@@ -1,26 +1,26 @@
-//! La parte pura del formato Maven 2: rutas, versiones, POM y metadatos.
+//! The pure part of the Maven 2 format: paths, versions, POM and metadata.
 //!
-//! Nada aqui toca disco, red ni catalogo: son funciones sobre cadenas y
-//! bytes, y por eso se prueban sin infraestructura. El servicio las usa
-//! para decidir si una ruta es Maven, si una version es release o
-//! snapshot, si un POM dice lo mismo que la ruta donde se sube, y para
-//! **derivar** `maven-metadata.xml` de lo que el catalogo ya sabe.
+//! Nothing here touches disk, network or catalog: these are functions over strings and
+//! bytes, and for that reason they are tested without infrastructure. The service uses them
+//! to decide whether a path is Maven, whether a version is a release or a
+//! snapshot, whether a POM says the same as the path it is uploaded to, and to
+//! **derive** `maven-metadata.xml` from what the catalog already knows.
 //!
-//! # Por que los metadatos se derivan y no se guardan
+//! # Why metadata is derived and not stored
 //!
-//! `maven-metadata.xml` es una vista de lo que hay en el repositorio. Si
-//! se guardara, habria dos fuentes de verdad (los ficheros y el XML) y
-//! dos despliegues concurrentes se pisarian al reescribirlo. Derivandolo
-//! en cada lectura, el XML siempre dice lo que hay, un fallo a mitad de
-//! un despliegue no deja un XML inconsistente, y no hay nada que reparar.
+//! `maven-metadata.xml` is a view of what is in the repository. If it
+//! were stored, there would be two sources of truth (the files and the XML) and
+//! two concurrent deployments would overwrite each other when rewriting it. By deriving it
+//! on every read, the XML always says what is there, a failure halfway through
+//! a deployment does not leave an inconsistent XML, and there is nothing to repair.
 //!
 //! # Layout
 //!
 //! ```text
-//! {grupo/con/barras}/{artifactId}/{version}/{artifactId}-{version}[-{clasificador}].{ext}
-//! {grupo/con/barras}/{artifactId}/maven-metadata.xml
-//! {grupo/con/barras}/{artifactId}/{version}-SNAPSHOT/maven-metadata.xml
-//! cualquiera de los anteriores + .md5 | .sha1 | .sha256 | .sha512
+//! {group/with/slashes}/{artifactId}/{version}/{artifactId}-{version}[-{classifier}].{ext}
+//! {group/with/slashes}/{artifactId}/maven-metadata.xml
+//! {group/with/slashes}/{artifactId}/{version}-SNAPSHOT/maven-metadata.xml
+//! any of the above + .md5 | .sha1 | .sha256 | .sha512
 //! ```
 
 use std::cmp::Ordering;
@@ -30,53 +30,53 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::Value;
 
-/// El nombre del fichero de metadatos.
+/// The name of the metadata file.
 pub const METADATA_FILE: &str = "maven-metadata.xml";
 
-/// El sufijo de una version snapshot.
+/// The suffix of a snapshot version.
 pub const SNAPSHOT_SUFFIX: &str = "-SNAPSHOT";
 
-/// Los bytes maximos de un POM o de unos metadatos que el servicio lee en
-/// memoria.
+/// The maximum bytes of a POM or of a metadata document that the service reads into
+/// memory.
 pub const MAX_XML_BYTES: usize = 1024 * 1024;
 
-/// Los bytes maximos de un fichero de checksum.
+/// The maximum bytes of a checksum file.
 pub const MAX_CHECKSUM_BYTES: usize = 1024;
 
-/// La longitud maxima de una version.
+/// The maximum length of a version.
 const MAX_VERSION_LEN: usize = 128;
 
-/// La profundidad maxima de elementos XML que se acepta.
+/// The maximum depth of XML elements that is accepted.
 const MAX_XML_DEPTH: usize = 32;
 
-/// Los elementos XML maximos de un documento.
+/// The maximum XML elements of a document.
 const MAX_XML_ELEMENTS: usize = 20_000;
 
-/// Longitud maxima del nombre de un elemento XML.
+/// Maximum length of the name of an XML element.
 const MAX_XML_NAME: usize = 64;
 
-/// Bytes maximos de rutas materializadas al leer un XML.
+/// Maximum bytes of materialized paths when reading an XML.
 const MAX_XML_PATH_BYTES: usize = 4 * 1024 * 1024;
 
 // ---------------------------------------------------------------------------
-// Rutas
+// Paths
 // ---------------------------------------------------------------------------
 
-/// Por que una ruta no es una ruta Maven valida.
+/// Why a path is not a valid Maven path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathError {
-    /// No tiene la forma `grupo/artefacto/version/fichero`.
+    /// It does not have the form `group/artifact/version/file`.
     Layout,
-    /// Un identificador de grupo o artefacto no es valido.
+    /// A group or artifact identifier is not valid.
     Identifier,
-    /// La version no es una version valida.
+    /// The version is not a valid version.
     Version,
-    /// El nombre del fichero no corresponde a su artefacto y version.
+    /// The file name does not correspond to its artifact and version.
     FileName,
 }
 
 impl PathError {
-    /// Lo que se le dice al cliente.
+    /// What is told to the client.
     pub fn message(&self) -> &'static str {
         match self {
             Self::Layout => "the path is not a Maven 2 repository path",
@@ -87,76 +87,76 @@ impl PathError {
     }
 }
 
-/// Como se escribe la version de un fichero respecto a su directorio.
+/// How the version of a file is written relative to its directory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VersionKind {
-    /// Una version fija (`1.2.3`).
+    /// A fixed version (`1.2.3`).
     Release,
-    /// El nombre flotante de un snapshot (`1.0-SNAPSHOT`).
+    /// The floating name of a snapshot (`1.0-SNAPSHOT`).
     Snapshot,
-    /// Un snapshot con marca de tiempo (`1.0-20240101.120000-3`).
+    /// A timestamped snapshot (`1.0-20240101.120000-3`).
     Timestamped {
         /// `yyyyMMdd.HHmmss`.
         stamp: String,
-        /// El numero de construccion.
+        /// The build number.
         build: u32,
     },
 }
 
-/// Un fichero de un artefacto.
+/// A file of an artifact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MavenFile {
-    /// El `groupId` (con puntos).
+    /// The `groupId` (with dots).
     pub group_id: String,
-    /// El `artifactId`.
+    /// The `artifactId`.
     pub artifact_id: String,
-    /// La version del **directorio** (`1.0-SNAPSHOT`, nunca la marca).
+    /// The version of the **directory** (`1.0-SNAPSHOT`, never the timestamp).
     pub version: String,
-    /// Como se escribe la version dentro del nombre del fichero.
+    /// How the version is written inside the file name.
     pub kind: VersionKind,
-    /// El clasificador, si lo hay.
+    /// The classifier, if any.
     pub classifier: Option<String>,
-    /// La extension (`jar`, `pom`, `tar.gz`...).
+    /// The extension (`jar`, `pom`, `tar.gz`...).
     pub extension: String,
 }
 
 impl MavenFile {
-    /// Si es el POM del artefacto (sin clasificador).
+    /// Whether it is the POM of the artifact (without classifier).
     pub fn is_pom(&self) -> bool {
         self.extension == "pom" && self.classifier.is_none()
     }
 
-    /// Si la version del directorio es un snapshot.
+    /// Whether the directory version is a snapshot.
     pub fn is_snapshot(&self) -> bool {
         self.version.ends_with(SNAPSHOT_SUFFIX)
     }
 }
 
-/// Que unos metadatos describen.
+/// What a metadata document describes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetadataLevel {
-    /// Las versiones de un artefacto.
+    /// The versions of an artifact.
     Artifact {
-        /// El `groupId`.
+        /// The `groupId`.
         group_id: String,
-        /// El `artifactId`.
+        /// The `artifactId`.
         artifact_id: String,
     },
-    /// Las construcciones de un snapshot.
+    /// The builds of a snapshot.
     Version {
-        /// El `groupId`.
+        /// The `groupId`.
         group_id: String,
-        /// El `artifactId`.
+        /// The `artifactId`.
         artifact_id: String,
-        /// La version snapshot.
+        /// The snapshot version.
         version: String,
     },
 }
 
-/// El algoritmo de un checksum.
+/// The algorithm of a checksum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Algorithm {
-    /// MD5, 32 caracteres hexadecimales.
+    /// MD5, 32 hexadecimal characters.
     Md5,
     /// SHA-1, 40.
     Sha1,
@@ -174,7 +174,7 @@ impl Algorithm {
         (".sha512", Self::Sha512),
     ];
 
-    /// Los caracteres hexadecimales del resumen.
+    /// The hexadecimal characters of the digest.
     pub fn hex_len(self) -> usize {
         match self {
             Self::Md5 => 32,
@@ -185,37 +185,37 @@ impl Algorithm {
     }
 }
 
-/// De que es el checksum.
+/// What the checksum is of.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {
-    /// De un fichero del artefacto.
+    /// Of an artifact file.
     File(MavenFile),
-    /// De unos metadatos.
+    /// Of a metadata document.
     Metadata(MetadataLevel),
 }
 
-/// Lo que nombra una ruta de un repositorio Maven 2.
+/// What a path of a Maven 2 repository names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Target {
-    /// Un fichero del artefacto (POM, JAR, fuentes, modulo...).
+    /// An artifact file (POM, JAR, sources, module...).
     File(MavenFile),
     /// `maven-metadata.xml`.
     Metadata(MetadataLevel),
-    /// El checksum de un fichero o de unos metadatos.
+    /// The checksum of a file or of a metadata document.
     Checksum {
-        /// El algoritmo.
+        /// The algorithm.
         algorithm: Algorithm,
-        /// De que es.
+        /// What it is of.
         subject: Subject,
-        /// La ruta de aquello de lo que es checksum.
+        /// The path of the thing it is the checksum of.
         subject_path: String,
     },
 }
 
-/// Si una version es valida.
+/// Whether a version is valid.
 ///
-/// Una version se escribe en rutas y en ficheros: solo letras, cifras y
-/// `. _ - +`, sin empezar ni acabar por separador, y sin ser `.` o `..`.
+/// A version is written in paths and in files: only letters, digits and
+/// `. _ - +`, not starting or ending with a separator, and not being `.` or `..`.
 pub fn is_valid_version(version: &str) -> bool {
     !version.is_empty()
         && version.len() <= MAX_VERSION_LEN
@@ -232,9 +232,9 @@ pub fn is_valid_version(version: &str) -> bool {
             .is_some_and(|b| b.is_ascii_alphanumeric())
 }
 
-/// Un segmento de grupo: un identificador sin puntos, porque el grupo
-/// `com.acme` es el directorio `com/acme` y no puede haber dos formas de
-/// escribir las mismas coordenadas.
+/// A group segment: an identifier without dots, because the group
+/// `com.acme` is the directory `com/acme` and there cannot be two ways of
+/// writing the same coordinates.
 fn is_valid_group(segments: &[&str]) -> bool {
     segments
         .iter()
@@ -250,11 +250,11 @@ fn is_valid_identifier(segment: &str) -> bool {
         && !segment.starts_with('.')
 }
 
-/// Analiza una ruta de un repositorio Maven 2.
+/// Parses a path of a Maven 2 repository.
 pub fn parse_path(path: &str) -> Result<Target, PathError> {
     for (suffix, algorithm) in Algorithm::ALL {
         if let Some(subject_path) = path.strip_suffix(suffix) {
-            // Un checksum de un checksum no existe.
+            // A checksum of a checksum does not exist.
             if Algorithm::ALL
                 .iter()
                 .any(|(other, _)| subject_path.ends_with(other))
@@ -285,7 +285,7 @@ fn parse_subject(path: &str) -> Result<Target, PathError> {
     if name == METADATA_FILE {
         return parse_metadata_path(&segments[..segments.len() - 1]);
     }
-    // grupo (>=1) + artefacto + version + fichero
+    // group (>=1) + artifact + version + file
     if segments.len() < 4 {
         return Err(PathError::Layout);
     }
@@ -311,8 +311,8 @@ fn parse_subject(path: &str) -> Result<Target, PathError> {
     } else {
         return Err(PathError::FileName);
     };
-    // La extension empieza por letra: `a-1.0.1.jar` en el directorio `1.0`
-    // no es el fichero de la version `1.0`.
+    // The extension starts with a letter: `a-1.0.1.jar` in the `1.0`
+    // directory is not the file of version `1.0`.
     if !extension
         .bytes()
         .next()
@@ -348,7 +348,7 @@ fn parse_metadata_path(directories: &[&str]) -> Result<Target, PathError> {
         return Err(PathError::Identifier);
     }
     if last.ends_with(SNAPSHOT_SUFFIX) {
-        // grupo (>=1) + artefacto + version snapshot
+        // group (>=1) + artifact + snapshot version
         if directories.len() < 3 {
             return Err(PathError::Layout);
         }
@@ -367,7 +367,7 @@ fn parse_metadata_path(directories: &[&str]) -> Result<Target, PathError> {
     }))
 }
 
-/// Separa de un nombre de fichero la version y lo que queda detras.
+/// Splits from a file name the version and what remains after it.
 fn split_version<'a>(
     name: &'a str,
     artifact_id: &str,
@@ -425,7 +425,7 @@ fn is_stamp(value: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Versiones
+// Versions
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -465,7 +465,7 @@ fn items(version: &str) -> Vec<Item> {
     out
 }
 
-/// El orden de un calificador respecto a la version publicada (`5`).
+/// The order of a qualifier relative to the published version (`5`).
 fn rank(qualifier: &str) -> (u8, &str) {
     match qualifier {
         "alpha" | "a" => (0, ""),
@@ -493,8 +493,8 @@ fn compare_items(left: Option<&Item>, right: Option<&Item>) -> Ordering {
     }
 }
 
-/// El relleno de una version mas corta: `0` frente a un numero, la version
-/// publicada frente a un calificador.
+/// The padding of a shorter version: `0` against a number, the published
+/// version against a qualifier.
 fn non_number<'a>(other: &Item, zero: &'a Item, release: &'a Item) -> &'a Item {
     match other {
         Item::Number(_) => zero,
@@ -502,8 +502,8 @@ fn non_number<'a>(other: &Item, zero: &'a Item, release: &'a Item) -> &'a Item {
     }
 }
 
-/// Compara dos versiones con el orden de Maven: `1.0-SNAPSHOT < 1.0 < 1.0.1`
-/// y `1.9 < 1.10`.
+/// Compares two versions with Maven's ordering: `1.0-SNAPSHOT < 1.0 < 1.0.1`
+/// and `1.9 < 1.10`.
 pub fn compare_versions(left: &str, right: &str) -> Ordering {
     let (a, b) = (items(left), items(right));
     for index in 0..a.len().max(b.len()) {
@@ -512,30 +512,30 @@ pub fn compare_versions(left: &str, right: &str) -> Ordering {
             return ordering;
         }
     }
-    // Iguales para Maven, distintas como texto: el desempate es estable.
+    // Equal for Maven, different as text: the tie-break is stable.
     left.cmp(right)
 }
 
 // ---------------------------------------------------------------------------
-// Configuracion
+// Configuration
 // ---------------------------------------------------------------------------
 
-/// Que versiones admite un repositorio.
+/// Which versions a repository admits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum VersionPolicy {
-    /// Releases y snapshots.
+    /// Releases and snapshots.
     #[default]
     Mixed,
-    /// Solo versiones fijas.
+    /// Only fixed versions.
     Release,
-    /// Solo snapshots.
+    /// Only snapshots.
     Snapshot,
 }
 
-/// La configuracion de un repositorio Maven 2.
+/// The configuration of a Maven 2 repository.
 ///
-/// Vive bajo la clave `maven` de los ajustes del repositorio:
+/// It lives under the `maven` key of the repository settings:
 ///
 /// ```json
 /// { "maven": { "version_policy": "release", "release_redeploy": false } }
@@ -543,19 +543,19 @@ pub enum VersionPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MavenConfig {
-    /// Que versiones admite. Por defecto, todas.
+    /// Which versions it admits. By default, all.
     #[serde(default)]
     pub version_policy: VersionPolicy,
-    /// Si una release puede cambiar de contenido. Por defecto, no.
+    /// Whether a release can change content. By default, no.
     #[serde(default)]
     pub release_redeploy: bool,
 }
 
 impl MavenConfig {
-    /// La configuracion de unos ajustes de repositorio.
+    /// The configuration from a repository settings object.
     ///
-    /// Sin clave `maven`, la de por defecto; una clave que no se entiende
-    /// es un error, nunca la de por defecto.
+    /// Without a `maven` key, the default one; a key that is not understood
+    /// is an error, never the default.
     pub fn of_settings(settings: &Value) -> Result<Self, String> {
         match settings.get("maven") {
             None => Ok(Self::default()),
@@ -564,7 +564,7 @@ impl MavenConfig {
         }
     }
 
-    /// Si el repositorio admite versiones de ese tipo.
+    /// Whether the repository admits versions of that kind.
     pub fn admits(&self, snapshot: bool) -> bool {
         match self.version_policy {
             VersionPolicy::Mixed => true,
@@ -578,24 +578,24 @@ impl MavenConfig {
 // XML
 // ---------------------------------------------------------------------------
 
-/// Por que un XML no se puede leer.
+/// Why an XML cannot be read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XmlError {
-    /// No esta bien formado.
+    /// It is not well formed.
     Malformed,
-    /// Lleva una declaracion `DOCTYPE`, que no se acepta.
+    /// It carries a `DOCTYPE` declaration, which is not accepted.
     Doctype,
-    /// Es demasiado profundo o demasiado grande.
+    /// It is too deep or too large.
     TooComplex,
 }
 
-/// Un elemento con texto: su ruta (`project/parent/groupId`) y su texto.
+/// An element with text: its path (`project/parent/groupId`) and its text.
 type Leaf = (String, String);
 
-/// Lee un XML y devuelve el texto de cada elemento, por ruta.
+/// Reads an XML and returns the text of each element, by path.
 ///
-/// No expande entidades externas ni acepta `DOCTYPE`: un POM es un dato que
-/// llega de fuera.
+/// It does not expand external entities or accept `DOCTYPE`: a POM is data that
+/// comes from outside.
 fn leaves(xml: &str) -> Result<Vec<Leaf>, XmlError> {
     let bytes = xml.as_bytes();
     let mut stack: Vec<(String, String)> = Vec::new();
@@ -701,7 +701,7 @@ fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':')
 }
 
-/// Donde acaba una etiqueta de apertura, respetando las comillas.
+/// Where an opening tag ends, respecting quotes.
 fn tag_end(rest: &str) -> Option<usize> {
     let mut quote: Option<u8> = None;
     for (index, byte) in rest.bytes().enumerate().skip(1) {
@@ -746,30 +746,30 @@ fn first<'a>(leaves: &'a [Leaf], path: &str) -> Option<&'a str> {
 // POM
 // ---------------------------------------------------------------------------
 
-/// Las coordenadas que declara un POM, con la herencia del padre aplicada.
+/// The coordinates declared by a POM, with the parent's inheritance applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PomCoordinates {
-    /// El `groupId`.
+    /// The `groupId`.
     pub group_id: String,
-    /// El `artifactId`.
+    /// The `artifactId`.
     pub artifact_id: String,
-    /// La `version`.
+    /// The `version`.
     pub version: String,
 }
 
-/// Por que un POM no sirve.
+/// Why a POM is not usable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PomError {
-    /// No es XML valido, o es demasiado grande.
+    /// It is not valid XML, or it is too large.
     Xml(XmlError),
-    /// No es un `project`.
+    /// It is not a `project`.
     NotAProject,
-    /// Faltan coordenadas.
+    /// Coordinates are missing.
     Incomplete,
 }
 
 impl PomError {
-    /// Lo que se le dice al cliente.
+    /// What is told to the client.
     pub fn message(&self) -> &'static str {
         match self {
             Self::Xml(_) => "the POM is not a valid XML document",
@@ -779,10 +779,10 @@ impl PomError {
     }
 }
 
-/// Las coordenadas de un POM.
+/// The coordinates of a POM.
 ///
-/// El `groupId` y la `version` se heredan del padre cuando el proyecto no
-/// los declara, como hace Maven.
+/// The `groupId` and the `version` are inherited from the parent when the project does not
+/// declare them, as Maven does.
 pub fn parse_pom(bytes: &[u8]) -> Result<PomCoordinates, PomError> {
     let text = std::str::from_utf8(bytes).map_err(|_| PomError::Xml(XmlError::Malformed))?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -809,21 +809,21 @@ pub fn parse_pom(bytes: &[u8]) -> Result<PomCoordinates, PomError> {
 }
 
 // ---------------------------------------------------------------------------
-// Metadatos
+// Metadata
 // ---------------------------------------------------------------------------
 
-/// Los metadatos que un cliente sube, leidos para comprobarlos.
+/// The metadata that a client uploads, read in order to check it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredMetadata {
-    /// El `groupId`, si lo declara.
+    /// The `groupId`, if declared.
     pub group_id: Option<String>,
-    /// El `artifactId`, si lo declara.
+    /// The `artifactId`, if declared.
     pub artifact_id: Option<String>,
-    /// La `version`, si la declara.
+    /// The `version`, if declared.
     pub version: Option<String>,
 }
 
-/// Lee unos metadatos subidos por un cliente.
+/// Reads metadata uploaded by a client.
 pub fn parse_metadata(bytes: &[u8]) -> Result<DeclaredMetadata, XmlError> {
     let text = std::str::from_utf8(bytes).map_err(|_| XmlError::Malformed)?;
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -841,7 +841,7 @@ pub fn parse_metadata(bytes: &[u8]) -> Result<DeclaredMetadata, XmlError> {
     })
 }
 
-/// Si lo que declara un cliente en sus metadatos cuadra con su ruta.
+/// Whether what a client declares in its metadata matches its path.
 pub fn metadata_matches(level: &MetadataLevel, declared: &DeclaredMetadata) -> bool {
     let (group, artifact, version) = match level {
         MetadataLevel::Artifact {
@@ -863,12 +863,12 @@ pub fn metadata_matches(level: &MetadataLevel, declared: &DeclaredMetadata) -> b
         && same(&declared.version, version)
 }
 
-/// Un fichero conocido del catalogo: la ruta y cuando se publico.
+/// A known file of the catalog: the path and when it was published.
 #[derive(Debug, Clone)]
 pub struct Known {
-    /// La ruta dentro del repositorio.
+    /// The path within the repository.
     pub path: String,
-    /// Cuando se publico.
+    /// When it was published.
     pub updated_at: DateTime<Utc>,
 }
 
@@ -876,24 +876,24 @@ fn stamp(moment: DateTime<Utc>) -> String {
     moment.format("%Y%m%d%H%M%S").to_string()
 }
 
-/// Las versiones que un repositorio aporta a los metadatos de un artefacto.
+/// The versions that a repository contributes to the metadata of an artifact.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Contribution {
-    /// Las versiones que lista.
+    /// The versions it lists.
     pub versions: Vec<String>,
-    /// Su `lastUpdated` (`yyyyMMddHHmmss`), si lo conoce.
+    /// Its `lastUpdated` (`yyyyMMddHHmmss`), if known.
     pub last_updated: Option<String>,
 }
 
-/// Cuantas versiones se aceptan de los metadatos de un upstream: el XML ya
-/// esta acotado en bytes, esto acota lo que se acumula al fusionar.
+/// How many versions are accepted from an upstream's metadata: the XML is already
+/// bounded in bytes, this bounds what accumulates when merging.
 pub const MAX_MERGED_VERSIONS: usize = 20_000;
 
-/// Lo que aportan al artefacto los ficheros de un repositorio hosted.
+/// What the files of a hosted repository contribute to the artifact.
 ///
-/// Una version cuenta cuando existe su **POM**: es lo ultimo que un
-/// despliegue completo deja, y una version con jar y sin POM no se puede
-/// resolver.
+/// A version counts when its **POM** exists: it is the last thing a complete
+/// deployment leaves, and a version with a jar and no POM cannot be
+/// resolved.
 pub fn hosted_contribution(group_id: &str, artifact_id: &str, files: &[Known]) -> Contribution {
     let mut versions: BTreeMap<String, DateTime<Utc>> = BTreeMap::new();
     for known in files {
@@ -913,12 +913,12 @@ pub fn hosted_contribution(group_id: &str, artifact_id: &str, files: &[Known]) -
     }
 }
 
-/// Lo que aportan al artefacto unos metadatos que sirve un upstream.
+/// What metadata served by an upstream contributes to the artifact.
 ///
-/// Los metadatos tienen que ser del artefacto que se pide: unos de otro
-/// `groupId` o `artifactId` no aportan nada. Las versiones con una forma
-/// que Maven no admite se descartan en vez de colarse en los metadatos
-/// fusionados.
+/// The metadata must be of the requested artifact: metadata of another
+/// `groupId` or `artifactId` contributes nothing. Versions with a shape
+/// that Maven does not admit are discarded instead of slipping into the
+/// merged metadata.
 pub fn declared_contribution(
     bytes: &[u8],
     group_id: &str,
@@ -949,12 +949,12 @@ pub fn declared_contribution(
     })
 }
 
-/// Si unos metadatos son de estas coordenadas y no listan **ninguna**
-/// version (ni siquiera una invalida): es el caso de los metadatos de un
-/// grupo de plugins, que un grupo sirve tal cual.
+/// Whether metadata is of these coordinates and lists **no**
+/// version (not even an invalid one): this is the case of the metadata of a
+/// plugin group, which a group serves as is.
 ///
-/// Unos metadatos de otro artefacto, o con versiones que se descartaron,
-/// no cumplen: no se sirven verbatim.
+/// Metadata of another artifact, or with versions that were discarded,
+/// does not qualify: it is not served verbatim.
 pub fn lists_no_versions(bytes: &[u8], group_id: &str, artifact_id: &str) -> bool {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return false;
@@ -970,14 +970,14 @@ pub fn lists_no_versions(bytes: &[u8], group_id: &str, artifact_id: &str) -> boo
             .any(|(path, _)| path == "metadata/versioning/versions/version")
 }
 
-/// Los metadatos de un artefacto a partir de lo que aportan uno o varios
-/// repositorios. Devuelve `None` si ninguno aporta una version.
+/// The metadata of an artifact from what one or several
+/// repositories contribute. Returns `None` if none contributes a version.
 ///
-/// El resultado es el mismo para el mismo conjunto de versiones, sin
-/// importar quien las aporta ni en que orden: `latest` y `release` salen
-/// del orden de versiones de Maven y `lastUpdated` es el mayor que se
-/// conozca. Si hay mas de `MAX_MERGED_VERSIONS`, se conservan las mas
-/// nuevas.
+/// The result is the same for the same set of versions, regardless of
+/// who contributes them or in what order: `latest` and `release` come
+/// from Maven's version ordering and `lastUpdated` is the greatest known.
+/// If there are more than `MAX_MERGED_VERSIONS`, the newest ones are
+/// kept.
 pub fn merged_metadata(
     group_id: &str,
     artifact_id: &str,
@@ -992,8 +992,8 @@ pub fn merged_metadata(
     }
     let mut ordered: Vec<&String> = seen.into_iter().collect();
     sort_versions(&mut ordered);
-    // El tope se aplica sobre el resultado ordenado y se conservan las mas
-    // nuevas: asi no depende de que miembro llega primero.
+    // The cap is applied on the sorted result and the newest ones are kept:
+    // this way it does not depend on which member arrives first.
     if ordered.len() > MAX_MERGED_VERSIONS {
         ordered.drain(..ordered.len() - MAX_MERGED_VERSIONS);
     }
@@ -1030,9 +1030,9 @@ pub fn merged_metadata(
     Some(xml)
 }
 
-/// Los metadatos de un artefacto, derivados de sus ficheros.
+/// The metadata of an artifact, derived from its files.
 ///
-/// Devuelve `None` si no hay ninguna version con POM.
+/// Returns `None` if there is no version with a POM.
 pub fn artifact_metadata(group_id: &str, artifact_id: &str, files: &[Known]) -> Option<String> {
     merged_metadata(
         group_id,
@@ -1041,13 +1041,13 @@ pub fn artifact_metadata(group_id: &str, artifact_id: &str, files: &[Known]) -> 
     )
 }
 
-/// Ordena versiones sin entrar nunca en panico.
+/// Sorts versions without ever panicking.
 ///
-/// La comparacion de Maven no es transitiva en todos los casos
-/// (`1.0-alpha < 1 < 1-sp < 1.0-alpha`) y `sort_by` de la libreria estandar
-/// puede abortar ante un orden que no es total. La insercion binaria acepta
-/// cualquier comparador y es estable; el coste lineal de los desplazamientos
-/// es despreciable frente a los miles de versiones que cabe en un artefacto.
+/// Maven's comparison is not transitive in all cases
+/// (`1.0-alpha < 1 < 1-sp < 1.0-alpha`) and the standard library's `sort_by`
+/// can abort on an ordering that is not total. Binary insertion accepts
+/// any comparator and is stable; the linear cost of the shifts
+/// is negligible compared to the thousands of versions that fit in an artifact.
 fn sort_versions(versions: &mut Vec<&String>) {
     let mut sorted: Vec<&String> = Vec::with_capacity(versions.len());
     for version in versions.drain(..) {
@@ -1058,18 +1058,18 @@ fn sort_versions(versions: &mut Vec<&String>) {
     *versions = sorted;
 }
 
-/// La clave de una construccion: clasificador y extension.
+/// The key of a build: classifier and extension.
 type LatestKey = (Option<String>, String);
 
-/// Lo que se sabe de la construccion mas reciente: timestamp, numero y fecha.
+/// What is known about the most recent build: timestamp, number and date.
 type LatestBuild = (String, u32, DateTime<Utc>);
 
-/// Los metadatos de un snapshot, derivados de sus ficheros con marca.
+/// The metadata of a snapshot, derived from its timestamped files.
 ///
-/// Una construccion cuenta cuando tiene su POM; el `snapshot` es la mas
-/// reciente de las que cuentan y `snapshotVersions` lleva, por cada par
-/// clasificador y extension, su construccion mas reciente. Devuelve `None`
-/// si no hay ninguna construccion con marca.
+/// A build counts when it has its POM; the `snapshot` is the most
+/// recent of those that count and `snapshotVersions` carries, for each
+/// classifier and extension pair, its most recent build. Returns `None`
+/// if there is no timestamped build.
 pub fn snapshot_metadata(
     group_id: &str,
     artifact_id: &str,
@@ -1108,8 +1108,8 @@ pub fn snapshot_metadata(
             .max()?,
     };
 
-    // Por cada (clasificador, extension), la construccion mas reciente que
-    // tiene POM.
+    // For each (classifier, extension), the most recent build that
+    // has a POM.
     let mut latest: BTreeMap<LatestKey, LatestBuild> = BTreeMap::new();
     for (file, stamp, build, at) in &parsed {
         if !with_pom.contains(&(stamp.as_str(), *build)) {
@@ -1167,10 +1167,10 @@ pub fn snapshot_metadata(
     Some(xml)
 }
 
-/// El checksum que se sirve o se compara: hexadecimal en minusculas.
+/// The checksum that is served or compared: lowercase hexadecimal.
 ///
-/// Un cliente puede escribir el resumen seguido del nombre del fichero o
-/// con salto de linea; solo cuenta la primera palabra.
+/// A client may write the digest followed by the file name or
+/// with a line break; only the first word counts.
 pub fn declared_checksum(bytes: &[u8], algorithm: Algorithm) -> Option<String> {
     let text = std::str::from_utf8(bytes).ok()?;
     let word = text.split_whitespace().next()?.to_ascii_lowercase();
@@ -1261,7 +1261,7 @@ mod tests {
                 ..
             })
         ));
-        // Un checksum de un checksum no existe.
+        // A checksum of a checksum does not exist.
         assert!(parse_path("org/acme/widget/1.0/widget-1.0.jar.sha1.sha1").is_err());
     }
 
@@ -1410,9 +1410,9 @@ mod tests {
             known("org/acme/widget/1.10/widget-1.10.pom", 2),
             known("org/acme/widget/1.9/widget-1.9.pom", 3),
             known("org/acme/widget/2.0-SNAPSHOT/widget-2.0-SNAPSHOT.pom", 4),
-            // Una version a medias: el jar llego y el POM no.
+            // A half-done version: the jar arrived and the POM did not.
             known("org/acme/widget/3.0/widget-3.0.jar", 5),
-            // Otro artefacto con un prefijo parecido.
+            // Another artifact with a similar prefix.
             known("org/acme/widget-extra/9.0/widget-extra-9.0.pom", 6),
         ];
         let xml = artifact_metadata("org.acme", "widget", &files).expect("metadata");
@@ -1428,7 +1428,7 @@ mod tests {
             xml.contains("<lastUpdated>20231114221324</lastUpdated>"),
             "{xml}"
         );
-        // Y el resultado es un XML que el propio servicio sabe leer.
+        // And the result is an XML that the service itself knows how to read.
         let declared = parse_metadata(xml.as_bytes()).expect("well formed");
         assert_eq!(declared.artifact_id.as_deref(), Some("widget"));
         assert!(artifact_metadata("org.acme", "ghost", &files).is_none());
@@ -1443,7 +1443,7 @@ mod tests {
             known(&format!("{base}-20240102.080000-2.pom"), 2),
             known(&format!("{base}-20240102.080000-2.jar"), 3),
             known(&format!("{base}-20240102.080000-2-sources.jar"), 4),
-            // Una construccion a medias: sin POM no cuenta.
+            // A half-done build: without a POM it does not count.
             known(&format!("{base}-20240103.090000-3.jar"), 5),
             known(&format!("{base}-20240102.080000-2.jar.sha1"), 6),
         ];
@@ -1516,8 +1516,8 @@ mod tests {
 
     #[test]
     fn an_xml_with_huge_element_names_is_refused_before_it_is_materialized() {
-        // Cadena de nombres largos y miles de hojas: sin tope, cada hoja
-        // llevaria su ruta completa y la memoria se multiplicaria.
+        // Chain of long names and thousands of leaves: without a cap, each leaf
+        // would carry its full path and memory would multiply.
         let name = "n".repeat(10_000);
         let mut xml = String::new();
         for _ in 0..30 {
@@ -1535,7 +1535,7 @@ mod tests {
 
     #[test]
     fn many_leaves_with_long_paths_hit_the_materialization_budget() {
-        // Nombres validos (64 bytes) a 30 niveles: ~2 KB por ruta.
+        // Valid names (64 bytes) at 30 levels: ~2 KB per path.
         let name = "n".repeat(MAX_XML_NAME);
         let mut xml = String::new();
         for _ in 0..30 {
@@ -1557,14 +1557,14 @@ mod tests {
         assert!(parse_path("com/acme/lib/1.0/lib-1.0.pom").is_ok());
         assert!(parse_path("com.acme/lib/maven-metadata.xml").is_err());
         assert!(parse_path("com.acme/lib/1.0-SNAPSHOT/maven-metadata.xml").is_err());
-        // El artefacto si puede llevar puntos.
+        // The artifact can indeed contain dots.
         assert!(parse_path("com/acme/my.lib/1.0/my.lib-1.0.pom").is_ok());
     }
 
     #[test]
     fn sorting_versions_never_panics_with_a_non_transitive_order() {
-        // `1.0-alpha < 1 < 1-sp < 1.0-alpha`: con mas de veinte elementos el
-        // `sort_by` estandar puede abortar ante un orden que no es total.
+        // `1.0-alpha < 1 < 1-sp < 1.0-alpha`: with more than twenty elements the
+        // standard `sort_by` can abort on an ordering that is not total.
         let mut owned: Vec<String> = vec!["1.0-alpha".into(), "1".into(), "1-sp".into()];
         for n in 0..60 {
             owned.push(format!("{n}.0-alpha"));
@@ -1620,7 +1620,7 @@ mod tests {
     fn only_metadata_of_these_coordinates_without_versions_is_served_verbatim() {
         let plugins = "<metadata><plugins><plugin><prefix>x</prefix></plugin></plugins></metadata>";
         assert!(lists_no_versions(plugins.as_bytes(), "org.acme", "widget"));
-        // Con versiones (aunque se descarten) o de otro artefacto: no.
+        // With versions (even if discarded) or of another artifact: no.
         let hostile = upstream_metadata("org.acme", "widget", &["../evil"], "20240101000000");
         assert!(!lists_no_versions(hostile.as_bytes(), "org.acme", "widget"));
         let foreign = upstream_metadata("org.evil", "other", &[], "20240101000000");

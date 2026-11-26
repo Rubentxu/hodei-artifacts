@@ -12,7 +12,7 @@
 pub mod features;
 pub(crate) mod internal;
 
-// API pública
+// Public API
 pub mod api;
 pub use api::*;
 

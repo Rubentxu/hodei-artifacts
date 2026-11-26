@@ -33,8 +33,8 @@ use crate::events::{Event, Subscription};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadScope {
     /// The tenant the plan serves. It is the adapter's own, and it is
-    /// NOT the tenant a caller claims: una reclamacion no es una
-    /// identidad.
+    /// NOT the tenant a caller claims: a claim is not an
+    /// identity.
     pub tenant: String,
     /// The event the plan is for, and its causation chain.
     pub origin: EventOrigin,
@@ -185,9 +185,9 @@ pub struct Plan {
 pub trait IntentExecutor: Send + Sync {
     /// Applies one intent. The once-only guarantee lives in the key: the
     /// runtime asks before calling, and the executor says what became of
-    /// the effect with a receipt, NOT with a bare error: un fallo que se
-    /// puede reintentar, uno que no, y lo que nadie sabe son tres cosas
-    /// distintas.
+    /// the effect with a receipt, NOT with a bare error: a failure that
+    /// can be retried, one that cannot, and what nobody knows are three
+    /// different things.
     async fn apply(&self, intent: &Intent) -> Receipt;
 }
 
@@ -195,10 +195,10 @@ pub trait IntentExecutor: Send + Sync {
 ///
 /// The `Unknown` receipt is the honest one: the executor sent the effect
 /// and does not know whether it landed. An unknown receipt is NOT a
-/// failure to retry -- re-ejecutar sobre un resultado incierto es como
-/// repetir el efecto, y repetirlo es lo que la clave de idempotencia
-/// prohibia. Lo incierto se reconcilia, y solo entonces vuelve a
-/// intentarse.
+/// failure to retry -- re-executing on an uncertain result is the same as
+/// repeating the effect, and repeating it is what the idempotency key
+/// forbade. The uncertain is reconciled, and only then is it
+/// tried again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Receipt {
     /// The effect landed, and the receipt says so.
@@ -255,7 +255,7 @@ pub trait IntentOutbox: Send + Sync {
 
     /// The intents that are waiting: `pending`, and the claimed ones
     /// whose lease expired. The ones with an `unknown` receipt are NOT
-    /// here: lo incierto no se reejecuta, se reconcilia.
+    /// here: the uncertain is not re-executed, it is reconciled.
     async fn recover_pending(&self, now: DateTime<Utc>) -> Result<Vec<Intent>, String>;
 
     /// Returns an `unknown` intent to `pending`, explicitly: the
@@ -268,8 +268,8 @@ pub trait IntentOutbox: Send + Sync {
 ///
 /// The reference material of the port, for the tests and the processes
 /// that do not outlive their own memory: the same states, the same
-/// compare-and-set, the same receipts. Lo que el store durable guarda en
-/// SurrealDB, este lo guarda en el proceso, y las MISMAS reglas.
+/// compare-and-set, the same receipts. What the durable store keeps in
+/// SurrealDB, this one keeps in the process, with the SAME rules.
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryIntentOutbox {
     inner: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, OutboxRow>>>,

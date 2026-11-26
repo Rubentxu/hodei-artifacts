@@ -666,7 +666,7 @@ impl DgraphImpactView {
     /// What a delta invalidates: the advisories whose routes used the
     /// relation the delta talks about, the evidence it moved, or the
     /// endpoints it joins — ONE indexed round trip, four root blocks,
-    /// the account as the filter on each. SOLO las claves afectadas.
+    /// the account as the filter on each. ONLY the affected keys.
     pub async fn invalidated_by(&self, delta: &RelationDelta) -> Result<Vec<Hrn>, String> {
         let tenant = dql_string(&delta.tenant.to_string());
         let relation = dql_string(&delta.identity());
@@ -877,9 +877,9 @@ impl DgraphImpactView {
         if rows.is_empty() {
             return Ok(false);
         }
-        // El MINIMO, no el maximo: un advisory al dia no enmascara el
-        // lag de otro. La vista de la cuenta esta al dia cuando TODAS
-        // sus claves alcanzan la version del registro.
+        // The MINIMUM, not the maximum: an up-to-date advisory does not mask the
+        // lag of another. The account's view is up to date when ALL
+        // its keys reach the version of the ledger.
         let watermark = rows
             .iter()
             .filter_map(|row| {

@@ -1,20 +1,20 @@
-//! El contrato de la inteligencia de vulnerabilidades y las licencias
+//! The contract for vulnerability and license intelligence
 //! (HSP-155 / SEC-05).
 //!
-//! Cuatro cosas se prometen y cuatro cosas se comprueban con fixtures
-//! deterministas y un oráculo versionado en el repositorio:
+//! Four things are promised and four things are checked with deterministic
+//! fixtures and an oracle versioned in the repository:
 //!
-//! - AC1: el ciclo de vida del advisory (alta, actualización, retirada,
-//!   alias) y los rangos límite por Maven/npm/PyPI producen el conjunto
-//!   afectado y la justificación que dice el oráculo.
-//! - AC2: un feed caído o atrasado marca frescura y cobertura, no borra
-//!   CVEs; la sincronización es idempotente y el import air-gap es
-//!   verificable por digest.
-//! - AC3: una declaración VEX se valida antes de aplicarse —autor,
-//!   sujeto, alcance, justificación— y una declaración no válida no
-//!   oculta el CVE. La licencia desconocida se mantiene desconocida.
-//! - AC4: la reevaluación es incremental por defecto y lo medido son
-//!   números, no adjetivos.
+//! - AC1: the advisory lifecycle (creation, update, withdrawal,
+//!   alias) and the boundary ranges per Maven/npm/PyPI produce the affected
+//!   set and the justification the oracle states.
+//! - AC2: a downed or lagging feed marks freshness and coverage, it does not delete
+//!   CVEs; synchronization is idempotent and the air-gap import is
+//!   verifiable by digest.
+//! - AC3: a VEX statement is validated before being applied —author,
+//!   subject, scope, justification— and an invalid statement does not
+//!   hide the CVE. An unknown license stays unknown.
+//! - AC4: re-evaluation is incremental by default and what is measured is
+//!   numbers, not adjectives.
 
 use hodei_risk::OsvAffected;
 use hodei_risk::affected::{AffectedState, DependencyKind, Finding, apply_valid_vex};
@@ -29,8 +29,8 @@ const UPDATED: &str = include_str!("fixtures/intelligence-updated.json");
 const WITHDRAWN: &str = include_str!("fixtures/intelligence-withdrawn.json");
 const PYPI: &str = include_str!("fixtures/intelligence-pypi.json");
 
-/// El oráculo versionado junto al código: el conjunto afectado y el
-/// motivo que debe dar cada versión límite.
+/// The oracle versioned alongside the code: the affected set and the
+/// reason each boundary version must give.
 const ORACLE: &str = include_str!("fixtures/intelligence-oracle.json");
 
 fn clock() -> chrono::DateTime<chrono::Utc> {
@@ -69,13 +69,13 @@ fn page(documents: Vec<String>) -> FeedPage {
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// Alta, actualización, retirada y alias coinciden con el oráculo, y
-/// cada decisión lleva la justificación que el oráculo promete.
+/// Creation, update, withdrawal and alias match the oracle, and
+/// each decision carries the justification the oracle promises.
 #[test]
 fn the_lifecycle_and_the_limit_ranges_match_the_oracle() {
     let oracle: serde_json::Value = serde_json::from_str(ORACLE).expect("the oracle is read");
 
-    // El ciclo de vida del advisory.
+    // The advisory lifecycle.
     let created = read_osv(CREATED).expect("the creation is read");
     assert_eq!(
         created.cve(),
@@ -102,7 +102,7 @@ fn the_lifecycle_and_the_limit_ranges_match_the_oracle() {
         "y no borra lo que el advisory decía: sigue nombrando el paquete"
     );
 
-    // Los rangos límite por ecosistema, contra el oráculo.
+    // The boundary ranges per ecosystem, against the oracle.
     for set in oracle["limit_ranges"]
         .as_array()
         .expect("the oracle has ranges")
@@ -142,14 +142,14 @@ fn the_lifecycle_and_the_limit_ranges_match_the_oracle() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// El ciclo de vida pasa por el feed: actualización, retirada, páginas
-/// fuera de orden; el feed caído marca frescura y no borra CVEs; la
-/// sincronización es idempotente.
+/// The lifecycle goes through the feed: update, withdrawal, out-of-order
+/// pages; the downed feed marks freshness and does not delete CVEs; the
+/// synchronization is idempotent.
 #[test]
 fn the_feed_keeps_the_cves_through_its_lifecycle_and_its_failures() {
     let mut feed = RiskFeed::new(chrono::Duration::hours(6));
 
-    // Alta de dos advisories con alias distintos.
+    // Creation of two advisories with different aliases.
     let first = feed.apply_page(
         Ok(page(vec![CREATED.to_string(), PYPI.to_string()])),
         clock(),
@@ -158,7 +158,7 @@ fn the_feed_keeps_the_cves_through_its_lifecycle_and_its_failures() {
     assert_eq!(first.changed_ids.len(), 2, "lo que hay que reevaluar");
     assert_eq!(feed.coverage().canonical_vulnerabilities, 2);
 
-    // La misma página otra vez no cambia nada.
+    // The same page again changes nothing.
     let second = feed.apply_page(
         Ok(page(vec![CREATED.to_string(), PYPI.to_string()])),
         clock(),
@@ -167,11 +167,11 @@ fn the_feed_keeps_the_cves_through_its_lifecycle_and_its_failures() {
     assert_eq!(second.unchanged, 2, "idempotente");
     assert!(second.changed_ids.is_empty(), "nada que reevaluar");
 
-    // La actualización del mismo advisory es un update y no una alta.
+    // The update of the same advisory is an update and not a creation.
     let update = feed.apply_page(Ok(page(vec![UPDATED.to_string()])), clock());
     assert_eq!((update.updated, update.inserted), (1, 0));
 
-    // Una página atrasada que trae la versión vieja NO deshace lo visto.
+    // A lagging page that brings the old version does NOT undo what was seen.
     let late = feed.apply_page(Ok(page(vec![CREATED.to_string()])), clock());
     assert_eq!((late.rejected, late.updated, late.inserted), (1, 0, 0));
     assert_eq!(
@@ -183,7 +183,7 @@ fn the_feed_keeps_the_cves_through_its_lifecycle_and_its_failures() {
         "la versión buena del registro es la actualizada"
     );
 
-    // La retirada actualiza el registro y lo MANTIENE.
+    // The withdrawal updates the record and KEEPS it.
     let withdrawal = feed.apply_page(Ok(page(vec![WITHDRAWN.to_string()])), clock());
     assert_eq!((withdrawal.updated, withdrawal.withdrawn_kept), (1, 1));
     let coverage = feed.coverage();
@@ -194,7 +194,7 @@ fn the_feed_keeps_the_cves_through_its_lifecycle_and_its_failures() {
     assert_eq!(coverage.withdrawn, 1, "y se dice que uno se retiró");
     assert!(coverage.by_ecosystem.contains_key("PyPI"));
 
-    // El feed caído marca frescura y NO borra CVEs.
+    // The downed feed marks freshness and does NOT delete CVEs.
     let down = feed.apply_page(
         Err(FeedFailure::Unavailable("connection refused".to_string())),
         clock() + chrono::Duration::minutes(60),
@@ -222,8 +222,8 @@ fn the_feed_keeps_the_cves_through_its_lifecycle_and_its_failures() {
     );
 }
 
-/// El import air-gap es verificable: el digest manda, y repetir no
-/// duplica.
+/// The air-gap import is verifiable: the digest rules, and repeating does not
+/// duplicate.
 #[test]
 fn the_air_gap_import_is_verified_and_idempotent() {
     let mut source = RiskFeed::new(chrono::Duration::hours(6));
@@ -259,14 +259,14 @@ fn the_air_gap_import_is_verified_and_idempotent() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// Una declaración VEX se valida contra autor, sujeto, alcance y
-/// justificación antes de aplicarse; una no válida no oculta el CVE.
+/// A VEX statement is validated against author, subject, scope and
+/// justification before being applied; an invalid one does not hide the CVE.
 #[test]
 fn an_invalid_vex_statement_never_hides_the_cve() {
     let trusted = ["https://example.test/security"];
 
-    // La declaración válida: autor reconocido, sujeto, alcance y
-    // justificación.
+    // The valid statement: recognized author, subject, scope and
+    // justification.
     let mut statement = read_vex(
         include_str!("fixtures/vex-not-affected.json"),
         "CVE-2024-99999",
@@ -289,8 +289,8 @@ fn an_invalid_vex_statement_never_hides_the_cve() {
         "CVE-2024-99999"
     );
 
-    // Un autor que la plataforma no reconoce: la declaración NO se
-    // aplica y el hallazgo sigue ahí.
+    // An author the platform does not recognize: the statement is NOT
+    // applied and the finding stays there.
     let mut finding = a_finding("org.example:lib-b");
     let reasons = apply_valid_vex(
         &mut finding,
@@ -311,7 +311,7 @@ fn an_invalid_vex_statement_never_hides_the_cve() {
     );
     assert!(finding.vex.is_none(), "and it is not recorded");
 
-    // Sin justificación para un status que la pide.
+    // Without justification for a status that requires it.
     let mut bare = statement.clone();
     bare.justification = None;
     let mut finding = a_finding("org.example:lib-b");
@@ -324,7 +324,7 @@ fn an_invalid_vex_statement_never_hides_the_cve() {
     );
     assert_eq!(finding.state, AffectedState::Affected);
 
-    // Alcance que no cubre el componente del hallazgo.
+    // Scope that does not cover the finding's component.
     let mut finding = a_finding("org.example:lib-maven");
     let reasons = apply_valid_vex(&mut finding, &statement, "CVE-2024-99999", Some(&trusted))
         .expect_err("it covers something else");
@@ -335,15 +335,15 @@ fn an_invalid_vex_statement_never_hides_the_cve() {
     );
     assert_eq!(finding.state, AffectedState::Affected);
 
-    // Sujeto que no es el del CVE preguntado.
+    // Subject that is not that of the queried CVE.
     let mut finding = a_finding("org.example:lib-b");
     let reasons = apply_valid_vex(&mut finding, &statement, "CVE-2020-00000", Some(&trusted))
         .expect_err("it is about another vulnerability");
     assert!(reasons.iter().any(|reason| reason.contains("is about")));
     assert_eq!(finding.state, AffectedState::Affected);
 
-    // El fixture de una declaración "fixed" no verificada sigue sin
-    // silenciar nada: la vigencia no cambia esa regla.
+    // The fixture of an unverified "fixed" statement still does not
+    // silence anything: validity does not change that rule.
     let unverified = read_vex(
         include_str!("fixtures/vex-unverified-fixed.json"),
         "CVE-2024-99999",
@@ -361,12 +361,12 @@ fn an_invalid_vex_statement_never_hides_the_cve() {
     );
 }
 
-/// La licencia desconocida se mantiene desconocida: no se inventa.
+/// An unknown license stays unknown: it is not invented.
 #[test]
 fn an_unknown_license_stays_unknown() {
     let list = SpdxList::snapshot();
 
-    // Lo que la expresión dice, se registra como lo dice.
+    // What the expression says is recorded as it says it.
     let combined = list.fact_of("app", "MIT OR Apache-2.0 AND BSD-3-Clause");
     assert_eq!(
         combined.identifiers,
@@ -378,7 +378,7 @@ fn an_unknown_license_stays_unknown() {
         "la expresión viaja entera"
     );
 
-    // Lo que el documento no dice, se queda como no dicho.
+    // What the document does not say stays unsaid.
     let mut ledger = LicenseLedger::new();
     ledger.record(&list, "org.example:silent", None);
     ledger.record(&list, "org.example:noassertion", Some("NOASSERTION"));
@@ -391,30 +391,30 @@ fn an_unknown_license_stays_unknown() {
     }
     assert_eq!(ledger.unknown_components().len(), 2);
 
-    // Una licencia fuera de la snapshot sigue siendo nombrada, y se
-    // dice que la snapshot no la conocía (no se borra ni se adivina).
+    // A license outside the snapshot is still named, and it is
+    // said that the snapshot did not know it (it is neither deleted nor guessed).
     let odd = list.fact_of("lib", "Zed-Available");
     assert_eq!(odd.origin, LicenseOrigin::Expression);
     assert_eq!(odd.identifiers, vec!["Zed-Available"]);
     assert_eq!(odd.listed, vec![false]);
 
-    // La deprecated se nombra y se avisa; no se re-decide.
+    // The deprecated one is named and flagged; it is not re-decided.
     let old = list.fact_of("lib", "GPL-2.0");
     assert_eq!(old.deprecated, vec![true]);
 
-    // Las palabras que no son identificadores no se leen como licencias.
+    // Words that are not identifiers are not read as licenses.
     assert!(parse_expression("unknown").is_empty());
 }
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// La reevaluación es incremental: el número de advisories y componentes
-/// que toca es el de lo que cambió. Lo medido son números, no adjetivos.
+/// Re-evaluation is incremental: the number of advisories and components
+/// it touches is that of what changed. What is measured is numbers, not adjectives.
 #[test]
 fn the_reassessment_is_incremental_and_measured() {
     let mut feed = RiskFeed::new(chrono::Duration::hours(6));
 
-    // El feed lleno: cien advisories de paquetes distintos.
+    // The full feed: one hundred advisories of different packages.
     let documents: Vec<String> = (0..100)
         .map(|index| {
             format!(
@@ -436,7 +436,7 @@ fn the_reassessment_is_incremental_and_measured() {
         "la carga inicial sí lo toca todo"
     );
 
-    // El inventario: 200 componentes que apuntan a los cien paquetes.
+    // The inventory: 200 components pointing at the hundred packages.
     let components: Vec<WatchedComponent> = (0..200)
         .map(|index| WatchedComponent {
             package: format!("org.example:p-{}", index % 100),
@@ -445,7 +445,7 @@ fn the_reassessment_is_incremental_and_measured() {
         })
         .collect();
 
-    // Un advisory nuevo llega; SOLO ese se reevalúa.
+    // A new advisory arrives; ONLY that one is re-evaluated.
     let one = r#"{
       "id": "GHSA-hodei-new.0",
       "modified": "2026-11-01T00:00:00Z",
@@ -471,7 +471,7 @@ fn the_reassessment_is_incremental_and_measured() {
     let round = reassess(&feed, &report.changed_ids, &components);
     let reassess_time = started.elapsed();
 
-    // Medido: 1 advisory de 101 y 2 componentes de 200.
+    // Measured: 1 advisory of 101 and 2 components of 200.
     assert_eq!(round.advisories_matched, 1);
     assert_eq!(round.advisories_held, 101);
     assert_eq!(round.components_matched, 2);

@@ -1,22 +1,22 @@
-//! El paquete de resolucion: lo que un proxy trae consigo a un sitio sin red.
+//! The resolution bundle: what a proxy carries with it to a site with no network.
 //!
-//! Un paquete es un **directorio** con un manifiesto y los blobs que
-//! resuelve, igual que una copia de recuperacion. No es una copia del
-//! sistema: es el resultado de resolver un repositorio contra su upstream,
-//! con la procedencia y las decisiones que lo respaldaban en el momento de
-//! exportarlo, para que otro registro lo importe y sirva ese contenido sin
-//! salir a la red.
+//! A bundle is a **directory** with a manifest and the blobs it
+//! resolves, just like a recovery backup. It is not a copy of the
+//! system: it is the result of resolving a repository against its upstream,
+//! with the provenance and the decisions that backed it at the moment of
+//! export, so that another registry can import it and serve that content without
+//! going out to the network.
 //!
-//! Las garantias se deciden aqui y se verifican alla:
+//! The guarantees are decided here and verified there:
 //!
-//! - Un paquete se **verifica entero antes de hacer visible nada**: ningun
-//!   path queda publicable si falta o miente un solo blob.
-//! - El upstream del origen es **procedencia, no autoridad**: al importar,
-//!   los recibos quedan a nombre de la configuracion del destino, que es
-//!   la que puede confirmarse, y la URL original se conserva solo como
-//!   evidencia.
-//! - Un paquete nunca lleva credenciales: el manifiesto no guarda URLs de
-//!   configuracion, y los recibos ya nacen sin secretos.
+//! - A bundle is **verified in full before anything becomes visible**: no
+//!   path becomes publishable if a single blob is missing or lies.
+//! - The origin's upstream is **provenance, not authority**: on import,
+//!   receipts are recorded under the destination's configuration, which is
+//!   the one that can be confirmed, and the original URL is kept only as
+//!   evidence.
+//! - A bundle never carries credentials: the manifest does not store
+//!   configuration URLs, and receipts are born without secrets.
 
 pub mod capsule;
 pub mod capsule_dgraph;
@@ -34,22 +34,22 @@ pub use manifest::{
 
 use thiserror::Error;
 
-/// Como termino una operacion de paquete.
+/// How a bundle operation ended.
 #[derive(Debug, Error)]
 pub enum BundleError {
-    /// El paquete, o lo que se le pide, no es consistente.
+    /// The bundle, or what is asked of it, is not consistent.
     #[error("the bundle is not sound: {0}")]
     Unsound(String),
-    /// La configuracion del destino no permite importar este paquete.
+    /// The destination's configuration does not allow importing this bundle.
     #[error("the import is refused: {0}")]
     Refused(String),
-    /// El disco o el almacen fallaron.
+    /// The disk or the store failed.
     #[error("storage failed: {0}")]
     Io(String),
-    /// El catalogo o el libro de procedencia fallaron.
+    /// The catalog or the provenance ledger failed.
     #[error("the catalog failed: {0}")]
     Catalog(String),
-    /// Un manifiesto o un recibo no se entiende.
+    /// A manifest or a receipt is not understood.
     #[error("the bundle cannot be read: {0}")]
     Read(String),
 }
@@ -72,18 +72,18 @@ impl From<hodei_catalog::CatalogError> for BundleError {
     }
 }
 
-/// El comando de operador reporta el paquete con el error de recuperacion:
-/// exportar e importar son operaciones del mismo binario.
+/// The operator command reports the bundle with the recovery error:
+/// export and import are operations of the same binary.
 impl From<BundleError> for crate::recovery::RecoveryError {
     fn from(error: BundleError) -> Self {
         Self::Bundle(error.to_string())
     }
 }
 
-/// El digest de un texto de manifiesto ya comprobado.
+/// The digest of an already-checked manifest text.
 ///
-/// `check_importable` exige la forma `sha256:<hex>` antes de que nadie
-/// llame a esto; fuera de ese camino devuelve `None` en vez de improvisar.
+/// `check_importable` requires the `sha256:<hex>` form before anyone
+/// calls this; outside that path it returns `None` instead of improvising.
 pub fn content_digest(text: &str) -> Option<hodei_evidence::ContentDigest> {
     let hex = crate::recovery::manifest::hex_of(text)?;
     Some(hodei_evidence::ContentDigest::sha256(hex))

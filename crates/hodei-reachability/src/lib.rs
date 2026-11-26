@@ -20,7 +20,7 @@
 //! always comes with the name of the analyser that produced it, the
 //! version of that analyser, and what it could not resolve.
 //!
-//! # El contrato no presupone ningun analizador
+//! # The contract presupposes no analyser
 //!
 //! The contract does not mention any analyser. It says what an evidence
 //! has to carry so that a reader can judge it, and the port is what lets

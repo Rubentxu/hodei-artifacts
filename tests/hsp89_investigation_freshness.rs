@@ -1,19 +1,19 @@
-//! HSP-89: la frescura de una investigación entregada.
+//! HSP-89: the freshness of a delivered investigation.
 //!
-//! Un informe es una afirmación con fecha: dice qué leyó y en qué versión
-//! del mundo. Esta comprobación responde si ese informe sigue apoyándose
-//! en el mundo, y es de tres: **vigente**, **obsoleto** (diciendo qué
-//! referencia se movió) o **no se sabe**.
+//! A report is a dated assertion: it says what it read and in which version
+//! of the world. This check answers whether that report still rests
+//! on the world, and it has three outcomes: **current**, **stale** (saying which
+//! reference moved) or **unknown**.
 //!
-//! Lo que se comprueba aquí:
+//! What is checked here:
 //!
-//! - la consulta autorizada dice si el informe sigue vigente;
-//! - un apoyo que se retiró deja el informe obsoleto, y dice cuál;
-//! - un cambio ajeno al informe no lo invalida;
-//! - lo que no está autenticado, es de otra cuenta o no tiene permiso
-//!   **no lee nada**;
-//! - un informe que no dice de qué mundo habló **no dice que sigue
-//!   vigente**: dice que no se sabe.
+//! - the authorized query says whether the report is still current;
+//! - a support that was withdrawn leaves the report stale, and says which;
+//! - a change unrelated to the report does not invalidate it;
+//! - what is not authenticated, belongs to another account or lacks permission
+//!   **reads nothing**;
+//! - a report that does not say which world it spoke of **does not say it is still
+//!   current**: it says it is unknown.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -57,10 +57,10 @@ use tower::ServiceExt;
 mod graph_profile;
 use graph_profile::Workdir;
 
-/// La cuenta de la prueba.
+/// The test's account.
 const ACCOUNT: &str = "acme";
 
-/// El sujeto de la investigación: el HRN canónico de un artefacto.
+/// The subject of the investigation: an artifact's canonical HRN.
 fn subject() -> Hrn {
     Hrn::with_region(
         "hodei".to_string(),
@@ -72,7 +72,7 @@ fn subject() -> Hrn {
     )
 }
 
-/// El tenant del grafo: el que dice la plantilla del despliegue.
+/// The graph's tenant: the one the deployment template states.
 fn tenant() -> Hrn {
     Hrn::with_region(
         "hodei".to_string(),
@@ -84,7 +84,7 @@ fn tenant() -> Hrn {
     )
 }
 
-/// El otro extremo de la relación.
+/// The other end of the relation.
 fn component() -> Hrn {
     Hrn::with_region(
         "hodei".to_string(),
@@ -96,7 +96,7 @@ fn component() -> Hrn {
     )
 }
 
-/// El contenido de la evidencia: texto de un tercero, y por tanto dato.
+/// The evidence content: third-party text, and therefore data.
 const EVIDENCE_TEXT: &str = "the sbom of the artefact declares the component lib-vuln";
 
 struct TestAuthenticator;
@@ -123,7 +123,7 @@ impl PrincipalAuthenticator for TestAuthenticator {
     }
 }
 
-/// El autorizador que concede la investigación.
+/// The authorizer that grants the investigation.
 fn cedar() -> Arc<dyn AuthorizerPort> {
     let policy = r#"permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
@@ -140,7 +140,7 @@ fn cedar() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// El autorizador que concede otra cosa: el permiso de investigar no está.
+/// The authorizer that grants something else: the permission to investigate is not there.
 fn cedar_without_investigation() -> Arc<dyn AuthorizerPort> {
     let policy = r#"permit(
         principal == Iam::User::"hrn:hodei:iam::acme:User/alice",
@@ -157,10 +157,10 @@ fn cedar_without_investigation() -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// La investigación que cuenta las veces que la llaman.
+/// The investigation that counts how many times it is called.
 ///
-/// Sirve para probar lo que la puerta hace ANTES de leer: una peticion
-/// rechazada no llega aqui, y eso se ve en el contador.
+/// It serves to test what the gate does BEFORE reading: a rejected
+/// request does not get here, and that is seen in the counter.
 struct CountingInvestigation {
     calls: Arc<AtomicUsize>,
     freshness: Arc<std::sync::Mutex<Option<Freshness>>>,
@@ -238,7 +238,7 @@ impl hodei_artifacts_api::investigation::InvestigationPort for CountingInvestiga
     }
 }
 
-/// La aplicación con la superficie de investigación montada.
+/// The application with the investigation surface mounted.
 async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
     investigation: Option<Arc<dyn hodei_artifacts_api::investigation::InvestigationPort>>,
@@ -271,8 +271,8 @@ async fn app_with(
     (build_router(state, &config), tmp)
 }
 
-/// El cuerpo de la petición de frescura: el sujeto y el manifiesto que el
-/// cliente tiene.
+/// The freshness request body: the subject and the manifest the
+/// client has.
 fn the_body(subject: &str, read_set: &ReadSet) -> String {
     serde_json::json!({
         "subject": subject,
@@ -281,7 +281,7 @@ fn the_body(subject: &str, read_set: &ReadSet) -> String {
     .to_string()
 }
 
-/// La petición de frescura.
+/// The freshness request.
 fn request(token: Option<&str>, payload: &str) -> Request<Body> {
     let mut builder = Request::builder()
         .method("POST")
@@ -295,7 +295,7 @@ fn request(token: Option<&str>, payload: &str) -> Request<Body> {
         .expect("a request")
 }
 
-/// El cuerpo de la respuesta, como JSON.
+/// The response body, as JSON.
 async fn the_json(response: axum::response::Response) -> serde_json::Value {
     serde_json::from_slice(
         &axum::body::to_bytes(response.into_body(), 1024 * 1024)
@@ -305,7 +305,7 @@ async fn the_json(response: axum::response::Response) -> serde_json::Value {
     .expect("the body is JSON")
 }
 
-/// El mundo de la prueba: su base, su grafo, su evidencia y su registro.
+/// The test's world: its database, its graph, its evidence and its registry.
 struct TheWorld {
     _tmp: Workdir,
     app: axum::Router,
@@ -336,7 +336,7 @@ impl TheWorld {
     }
 }
 
-/// El mundo de la prueba, montado con la superficie.
+/// The test's world, mounted with the surface.
 async fn the_world() -> TheWorld {
     let tmp = Workdir::new();
     let mut config = AppConfig::default();
@@ -381,7 +381,7 @@ async fn the_world() -> TheWorld {
     ));
     let blobs = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the store of content"));
 
-    // La evidencia: su contenido en el CAS, con el digest que lo nombra.
+    // The evidence: its content in the CAS, with the digest that names it.
     let content = EVIDENCE_TEXT.as_bytes().to_vec();
     let digest = blobs.put(&content).await.expect("the content is stored");
     let record = EvidenceRecord::builder(EvidenceId::new("ev-hsp89-1"), tenant())
@@ -397,8 +397,8 @@ async fn the_world() -> TheWorld {
         .build();
     evidence.put(record).await.expect("the evidence is stored");
 
-    // El grafo: la relacion que la evidencia sostiene, con la causa que
-    // hace que el registro diga lo que cambio.
+    // The graph: the relation the evidence supports, with the cause that
+    // makes the registry say what changed.
     let relation = GraphRelation::new(
         RelationType::Contains,
         subject(),
@@ -455,7 +455,7 @@ async fn the_world() -> TheWorld {
     world
 }
 
-/// El manifiesto de una lectura: lo que el informe diria haber leido.
+/// A read's manifest: what the report would say it read.
 async fn the_report(world: &TheWorld) -> ReadSet {
     let version = world
         .ledger
@@ -472,7 +472,7 @@ async fn the_report(world: &TheWorld) -> ReadSet {
     read_set
 }
 
-/// Un informe cuyo mundo no se movio SIGUE VIGENTE.
+/// A report whose world did not move REMAINS CURRENT.
 #[tokio::test]
 async fn a_report_whose_world_did_not_move_is_still_current() {
     let world = the_world().await;
@@ -496,14 +496,14 @@ async fn a_report_whose_world_did_not_move_is_still_current() {
     );
 }
 
-/// El apoyo que el informe leyo ya no esta: el informe OBSOLETO, y dice
-/// que referencia fue la que se movio.
+/// The support the report read is gone: the report is STALE, and says
+/// which reference was the one that moved.
 #[tokio::test]
 async fn the_support_that_is_gone_makes_the_report_stale() {
     let world = the_world().await;
     let report = the_report(&world).await;
 
-    // La evidencia retira su apoyo.
+    // The evidence withdraws its support.
     let withdrawal = GraphChangeSet::empty()
         .with_withdrawal(GraphRelationWithdrawal::new(
             RelationType::Contains,
@@ -534,14 +534,14 @@ async fn the_support_that_is_gone_makes_the_report_stale() {
     assert_eq!(changed[0]["evidence"], "ev-hsp89-1");
 }
 
-/// Un cambio AJENO al informe no lo invalida: lo que no se leyo no puede
-/// caducar lo que se leyo.
+/// A change UNRELATED to the report does not invalidate it: what was not read cannot
+/// expire what was read.
 #[tokio::test]
 async fn a_change_away_from_the_report_does_not_invalidate_it() {
     let world = the_world().await;
     let report = the_report(&world).await;
 
-    // Otra relacion, de otro par de nodos.
+    // Another relation, of another pair of nodes.
     let other = GraphRelation::new(
         RelationType::Contains,
         subject(),
@@ -591,8 +591,8 @@ async fn a_change_away_from_the_report_does_not_invalidate_it() {
     assert_eq!(body["status"], "current");
 }
 
-/// Un informe que no dice de que mundo hablo NO dice que sigue vigente:
-/// dice que no se sabe.
+/// A report that does not say which world it spoke of does NOT say it is still current:
+/// it says it is unknown.
 #[tokio::test]
 async fn a_report_without_a_version_does_not_say_that_it_is_current() {
     let world = the_world().await;
@@ -619,7 +619,7 @@ async fn a_report_without_a_version_does_not_say_that_it_is_current() {
     );
 }
 
-/// Lo que no esta autenticado no llega a leer nada.
+/// What is not authenticated does not get to read anything.
 #[tokio::test]
 async fn sin_credencial_no_se_consulta_nada() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -645,7 +645,7 @@ async fn sin_credencial_no_se_consulta_nada() {
     );
 }
 
-/// El sujeto de otra cuenta no esta, y no se evalua.
+/// The subject of another account is not there, and is not evaluated.
 #[tokio::test]
 async fn el_sujeto_de_otra_cuenta_no_esta() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -677,7 +677,7 @@ async fn el_sujeto_de_otra_cuenta_no_esta() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// Sin permiso no se comprueba.
+/// Without permission there is no check.
 #[tokio::test]
 async fn sin_permiso_no_se_comprueba() {
     let investigation = Arc::new(CountingInvestigation::new());
@@ -701,7 +701,7 @@ async fn sin_permiso_no_se_comprueba() {
     assert_eq!(investigation.calls(), 0);
 }
 
-/// Un despliegue que no declara la superficie no la monta.
+/// A deployment that does not declare the surface does not mount it.
 #[tokio::test]
 async fn un_despliegue_que_no_declara_la_superficie_no_la_monta() {
     let (app, _tmp) = app_with(cedar(), None, false).await;

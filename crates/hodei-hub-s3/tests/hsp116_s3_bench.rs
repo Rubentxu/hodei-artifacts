@@ -1,10 +1,10 @@
-//! El presupuesto de memoria declarado y los numeros del benchmark
-//! (HSP-116, aceptacion 4): same contract, same content, dos backends.
+//! The declared memory budget and the benchmark numbers
+//! (HSP-116, acceptance 4): same contract, same content, two backends.
 //!
-//! La medida que importa es que la sesion de S3 **no acumula el blob en
-//! memoria**: con el servidor en otro proceso, la memoria residente del
-//! proceso de pruebas solo puede crecer lo que vale el presupuesto de la
-//! sesion, no lo que vale el contenido.
+//! What matters in the measurement is that the S3 session **does not accumulate the blob in
+//! memory**: with the server in another process, the resident memory of the
+//! test process can only grow by what the session budget is worth,
+//! not by what the content is worth.
 
 mod common;
 
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use hodei_hub::blob::{BlobStore, CommitExpectation};
 use hodei_hub_s3::{S3BlobConfig, S3BlobStore};
 
-/// La memoria residente del proceso, en bytes (VmRSS de /proc).
+/// The process resident memory, in bytes (VmRSS from /proc).
 fn the_rss() -> u64 {
     let statm = std::fs::read_to_string("/proc/self/status").expect("/proc existe en linux");
     for line in statm.lines() {
@@ -43,8 +43,8 @@ async fn a_streaming_session_never_holds_the_whole_blob() {
     common::localstack::a_bucket(&client, &bucket).await;
     let store = S3BlobStore::new(client, config).expect("el almacen abre");
 
-    // Seis veces el presupuesto: si la sesion acumulara, esto serian
-    // 48 MiB de heap del cliente; streaming de verdad son ~16 MiB.
+    // Six times the budget: if the session accumulated, this would be
+    // 48 MiB of client heap; real streaming is ~16 MiB.
     let blob_size: usize = 6 * budget;
     let pattern: Vec<u8> = (0u8..=255).cycle().take(blob_size).collect();
 
@@ -65,25 +65,25 @@ async fn a_streaming_session_never_holds_the_whole_blob() {
         .expect("el commit cuadra");
     let after = the_rss();
 
-    // El patron vive en `pattern` durante toda la prueba: el delta del
-    // proceso NO incluye el blob de origen (ya estaba contabilizado) y
-    // solo puede deberse a la maquinaria de la sesion. El techo, holgado:
-    // dos presupuestos. Acumular el blob entero costaria seis.
+    // The pattern lives in `pattern` throughout the test: the process
+    // delta does NOT include the source blob (it was already accounted for) and
+    // can only be due to the session machinery. The ceiling, generous:
+    // two budgets. Accumulating the whole blob would cost six.
     let growth = after.saturating_sub(before);
     assert!(
         growth < 2 * budget as u64,
         "la sesion de {blob_size} bytes crecio el proceso {growth} bytes, y el presupuesto declarado es {budget}"
     );
 
-    // Y lo publicado es legible por su digest: el streaming no rompio nada.
+    // And what was published is readable by its digest: streaming broke nothing.
     assert_eq!(
         store.length(&digest).await.expect("el blob mide"),
         blob_size as u64
     );
 }
 
-/// Los numeros comparativos de la aceptacion 4: publicacion entera,
-/// publicacion por sesion y lecturas de tramo, en los dos backends.
+/// The comparative numbers of acceptance 4: whole publication,
+/// publication by session and range reads, on both backends.
 #[tokio::test]
 async fn the_benchmarks_say_what_each_backend_costs() {
     let size: usize = 16 * 1024 * 1024;
@@ -147,8 +147,8 @@ async fn the_benchmarks_say_what_each_backend_costs() {
         println!("{case}: {millis} ms");
     }
 
-    // Los techos de sensatez, no de competitividad: si algo se sale de
-    // aqui es que el backend hace algo mal, no de que la maquina va lenta.
+    // Sanity ceilings, not competitiveness ones: if something goes beyond
+    // them the backend is doing something wrong, not the machine running slowly.
     let ceiling = Duration::from_secs(120);
     for (case, millis) in &rows {
         assert!(

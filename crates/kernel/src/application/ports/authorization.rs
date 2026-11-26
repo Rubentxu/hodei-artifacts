@@ -3,12 +3,12 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Request para evaluación de políticas
+/// Request for policy evaluation
 ///
-/// Request para evaluación de políticas
+/// Request for policy evaluation
 ///
-/// Contiene referencias a HRN para evitar clonaciones excesivas en el hot path
-/// de autorización, donde se evalúan múltiples políticas por request.
+/// Holds references to HRNs to avoid excessive cloning in the hot path
+/// of authorization, where multiple policies are evaluated per request.
 #[derive(Debug, Clone)]
 pub struct EvaluationRequest {
     pub principal_hrn: Hrn,

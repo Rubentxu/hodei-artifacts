@@ -9,22 +9,22 @@ use super::error::GetPolicyError;
 use super::ports::{GetPolicyUseCasePort, PolicyReader};
 use kernel::Hrn;
 
-/// Caso de uso: Obtener una política IAM por su HRN
+/// Use case: Get an IAM policy by its HRN
 pub struct GetPolicyUseCase {
     reader: Arc<dyn PolicyReader>,
 }
 
 impl GetPolicyUseCase {
-    /// Crea una nueva instancia del caso de uso
+    /// Creates a new instance of the use case
     pub fn new(reader: Arc<dyn PolicyReader>) -> Self {
         Self { reader }
     }
 
-    /// Ejecuta el caso de uso
+    /// Executes the use case
     pub async fn execute(&self, query: GetPolicyQuery) -> Result<PolicyView, GetPolicyError> {
         info!("Getting policy: {}", query.policy_hrn);
 
-        // Validar que el HRN sea de tipo Policy
+        // Validate that the HRN is of type Policy
         if query.policy_hrn.resource_type() != "Policy" {
             return Err(GetPolicyError::InvalidHrn(format!(
                 "Expected Policy HRN, got: {}",
@@ -32,7 +32,7 @@ impl GetPolicyUseCase {
             )));
         }
 
-        // Obtener la política usando el reader
+        // Get the policy using the reader
         let policy = self.reader.get_by_hrn(&query.policy_hrn).await?;
 
         debug!("Policy retrieved successfully: {}", policy.hrn);

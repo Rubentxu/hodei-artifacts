@@ -1,28 +1,28 @@
-//! El outbox: dónde espera el evento entre que se dice y que se entrega.
+//! The outbox: where the event waits between being stated and being delivered.
 //!
-//! El outbox es la pieza que hace que el evento y la mutación que lo
-//! provoca compartan **una sola frontera de commit**. Quien publica escribe
-//! la fila del outbox dentro de la misma transacción que publica; quien
-//! entrega la toma después.
+//! The outbox is the piece that makes the event and the mutation that causes it
+//! share **a single commit boundary**. The publisher writes
+//! the outbox row inside the same transaction that publishes; the one that
+//! delivers takes it afterwards.
 //!
-//! # Los estados son explícitos, porque un estado adivinado es un estado
-//! que miente
+//! # States are explicit, because a guessed state is a state
+//! that lies
 //!
-//! - `pending`: dicho, esperando a que alguien lo lleve.
-//! - `claimed`: un worker lo tiene, con un **lease**. Cuando el lease
-//!   expira, el evento vuelve a ser reclamable: es lo que hace que la
-//!   muerte de un worker no pierda el evento.
-//! - `delivered`: el sink dijo que la entrega ocurrió.
+//! - `pending`: stated, waiting for someone to carry it.
+//! - `claimed`: a worker holds it, with a **lease**. When the lease
+//!   expires, the event becomes claimable again: that is what ensures that a
+//!   worker's death does not lose the event.
+//! - `delivered`: the sink said that the delivery happened.
 //!
-//! No hay un estado "entregado" para lo que no se entregó. Un evento cuyo
-//! sink falló vuelve a `pending` con su contador de intentos y su último
-//! error: **observable**, que es lo que permite reconciliarlo.
+//! There is no "delivered" state for what was not delivered. An event whose
+//! sink failed goes back to `pending` with its attempt counter and its last
+//! error: **observable**, which is what makes it possible to reconcile it.
 //!
-//! # El claim es un compare-and-set
+//! # The claim is a compare-and-set
 //!
-//! Dos workers piden el mismo evento y **uno** gana. El que llega
-//! segundo ve que ya no hay nada que reclamar, y no entrega: una
-//! reentrega concurrente no son dos entregas.
+//! Two workers ask for the same event and **one** wins. The one that arrives
+//! second sees that there is nothing left to claim, and does not deliver: a
+//! concurrent redelivery is not two deliveries.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -33,19 +33,19 @@ use chrono::{DateTime, Utc};
 use crate::event::AuditEvent;
 use crate::sink::AuditError;
 
-/// En qué estado está un evento en el outbox.
+/// The state an event is in within the outbox.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryState {
-    /// Dicho, esperando.
+    /// Stated, waiting.
     Pending,
-    /// Reclamado por un worker, con un lease.
+    /// Claimed by a worker, with a lease.
     Claimed,
-    /// Entregado: el sink lo dijo.
+    /// Delivered: the sink said so.
     Delivered,
 }
 
 impl EntryState {
-    /// El nombre del estado, para el texto y para la base.
+    /// The name of the state, for the text and for the database.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
@@ -55,27 +55,27 @@ impl EntryState {
     }
 }
 
-/// Un evento en el outbox, con su estado.
+/// An event in the outbox, with its state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AuditEntry {
-    /// El evento.
+    /// The event.
     pub event: AuditEvent,
-    /// En qué estado está.
+    /// The state it is in.
     pub state: EntryState,
-    /// Cuántos intentos de entrega lleva.
+    /// How many delivery attempts it has had.
     pub attempts: u32,
-    /// El worker que lo tiene, mientras el lease dure.
+    /// The worker that holds it, while the lease lasts.
     pub lease_owner: Option<String>,
-    /// Cuándo expira el lease.
+    /// When the lease expires.
     pub lease_until: Option<DateTime<Utc>>,
-    /// Por qué no se entregó, la última vez.
+    /// Why it was not delivered, the last time.
     pub last_error: Option<String>,
-    /// Cuándo se entregó.
+    /// When it was delivered.
     pub delivered_at: Option<DateTime<Utc>>,
 }
 
 impl AuditEntry {
-    /// Una entrada pendiente, recién dicha.
+    /// A pending entry, just stated.
     pub fn pending(event: AuditEvent) -> Self {
         Self {
             event,
@@ -89,59 +89,59 @@ impl AuditEntry {
     }
 }
 
-/// El outbox de auditoría.
+/// The audit outbox.
 ///
-/// El puerto no dice "guarda el evento": dice **qué le pasa**. Quien lo
-/// implementa decide dónde se guarda; lo que no puede cambiar es lo que
-/// el puerto promete:
+/// The port does not say "store the event": it says **what happens to it**. Whoever
+/// implements it decides where it is stored; what cannot change is what
+/// the port promises:
 ///
-/// - `put_pending` dice un evento, y decirlo dos veces es decirlo una.
-/// - `claim` es un compare-and-set: dos workers, uno gana.
-/// - `mark_delivered` marca lo que el sink dijo que entregó.
-/// - `mark_undelivered` devuelve el evento al mercado con su error y su
-///   intento contado.
-/// - `pending` deja **ver** lo que está esperando.
+/// - `put_pending` states an event, and stating it twice is stating it once.
+/// - `claim` is a compare-and-set: two workers, one wins.
+/// - `mark_delivered` marks what the sink said it delivered.
+/// - `mark_undelivered` returns the event to the market with its error and its
+///   attempt counted.
+/// - `pending` lets you **see** what is waiting.
 ///
-/// # Lo que el puerto promete, y lo que no
+/// # What the port promises, and what it does not
 ///
-/// La exclusividad la da el `claim`: dos workers piden el mismo evento y
-/// uno gana. Pero el outbox entrega **al menos una vez**, no exactamente
-/// una vez. Entre que el sink recibe el evento y que la marca se escribe
-/// hay una ventana en la que el evento **ya fue entregado** y todavía
-/// parece pendiente: si ahí se cae el proceso, se entrega otra vez.
+/// Exclusivity is given by `claim`: two workers ask for the same event and
+/// one wins. But the outbox delivers **at least once**, not exactly
+/// once. Between the sink receiving the event and the mark being written
+/// there is a window in which the event **was already delivered** and still
+/// looks pending: if the process dies there, it is delivered again.
 ///
-/// Por eso el `event_id` es la clave de idempotencia y el `AuditSink` tiene
-/// que tratarlo como tal. **Un efecto lógico es cosa del sink**: lo que el
-/// outbox garantiza es que la reentrega lleva **el mismo** `event_id`, de
-/// modo que un sink conforme la reconoce y no la cuenta dos veces.
+/// For that reason `event_id` is the idempotency key and the `AuditSink` has
+/// to treat it as such. **A logical effect is the sink's business**: what the
+/// outbox guarantees is that redelivery carries **the same** `event_id`, so
+/// that a conforming sink recognizes it and does not count it twice.
 ///
-/// # Las marcas son del worker que tiene el reclamo
+/// # Marks belong to the worker that holds the claim
 ///
-/// La condición de las marcas es `lease_owner`, no `lease_until`. Es decir:
-/// quien marca es **el dueño del reclamo**, no el dueño de un lease
-/// vivo. Un worker cuyo lease expiró y al que nadie ha reclaimed todavía
-/// todavía puede marcar, y debe poder: el sink le dijo que la entrega
-/// ocurrió, y mentir sobre un hecho que ocurrió es peor que una
-/// redundancia. En cuanto **otro** worker reclama el evento, el primero
-/// ya no puede escribir: el evento dejó de ser suyo.
+/// The condition of the marks is `lease_owner`, not `lease_until`. That is:
+/// whoever marks is **the owner of the claim**, not the owner of a live
+/// lease. A worker whose lease expired and whom nobody has reclaimed yet
+/// can still mark, and must be able to: the sink told it the delivery
+/// happened, and lying about a fact that happened is worse than a
+/// redundancy. As soon as **another** worker claims the event, the first one
+/// can no longer write: the event is no longer its own.
 #[async_trait]
 pub trait AuditOutbox: Send + Sync {
-    /// Dice el evento: entra como `pending`.
+    /// States the event: it enters as `pending`.
     ///
-    /// Decirlo dos veces es decirlo una: una entrada que ya está entregada
-    /// no vuelve a pendiente, porque el hecho de que la entrega ocurriera
-    /// no se deshace por volver a decir el evento.
+    /// Stating it twice is stating it once: an entry that is already delivered
+    /// does not go back to pending, because the fact that the delivery happened
+    /// is not undone by stating the event again.
     ///
-    /// Pero si el identificador ya está usado por un evento **distinto**,
-    /// eso no es el mismo hecho dicho dos veces: es una contradicción, y
-    /// una contradicción que se calla es un hecho que se pierde. El puerto
-    /// la devuelve como error, para que se vea.
+    /// But if the identifier is already used by a **different** event,
+    /// that is not the same fact stated twice: it is a contradiction, and
+    /// a contradiction that is silenced is a fact that is lost. The port
+    /// returns it as an error, so that it is visible.
     async fn put_pending(&self, event: &AuditEvent) -> Result<(), AuditError>;
 
-    /// Reclama el evento: de `pending`, o de un lease que expiró.
+    /// Claims the event: from `pending`, or from a lease that expired.
     ///
-    /// Devuelve `None` cuando otro worker se lo llevó antes, o cuando el
-    /// evento no está en el outbox.
+    /// Returns `None` when another worker took it first, or when the
+    /// event is not in the outbox.
     async fn claim(
         &self,
         event_id: &str,
@@ -150,12 +150,12 @@ pub trait AuditOutbox: Send + Sync {
         now: DateTime<Utc>,
     ) -> Result<Option<AuditEntry>, AuditError>;
 
-    /// Marca el evento como entregado.
+    /// Marks the event as delivered.
     ///
-    /// Solo desde `claimed` **y solo por el worker que tiene el reclamo**:
-    /// una marca de una entrada que nadie reclamó es una marca que nadie
-    /// puede explicar, y una marca de un worker al que otro le reclamó el
-    /// evento es una marca sobre un evento que ya no es suyo.
+    /// Only from `claimed` **and only by the worker that holds the claim**:
+    /// a mark on an entry that nobody claimed is a mark that nobody
+    /// can explain, and a mark from a worker whose event was claimed by another
+    /// is a mark on an event that is no longer its own.
     async fn mark_delivered(
         &self,
         event_id: &str,
@@ -163,12 +163,12 @@ pub trait AuditOutbox: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<(), AuditError>;
 
-    /// Devuelve el evento al mercado: la entrega no ocurrió.
+    /// Returns the event to the market: the delivery did not happen.
     ///
-    /// El intento queda contado y el error queda escrito: un evento que no
-    /// se entrega tiene que **poder mirarse**. Solo el worker que lo tiene
-    /// puede devolverlo: si su lease expiró y otro worker lo reclamó, el
-    /// evento ya no es suyo.
+    /// The attempt is counted and the error is written: an event that is not
+    /// delivered has to be **inspectable**. Only the worker that holds it
+    /// can return it: if its lease expired and another worker claimed it, the
+    /// event is no longer its own.
     async fn mark_undelivered(
         &self,
         event_id: &str,
@@ -176,41 +176,41 @@ pub trait AuditOutbox: Send + Sync {
         detail: &str,
     ) -> Result<(), AuditError>;
 
-    /// Los eventos que están esperando: los `pending` y los `claimed` cuyo
-    /// lease expiró.
+    /// The events that are waiting: the `pending` ones and the `claimed` ones whose
+    /// lease expired.
     ///
-    /// **El censo es sin acotar**: trae cada entrada con su `AuditEvent`
-    /// completo. En un servidor compartido que no drena, la respuesta
-    /// crece hasta desbordar el límite de mensaje del transporte (4 MiB
-    /// en Dgraph; HSP-194 lo probó). Un consumidor de producción
-    /// (`AuditDispatcher::dispatch_pending`) que lo llame contra ese
-    /// servidor necesita paginación o drenaje periódico (HSP-220 dejó el
-    /// drenaje del laboratorio y el censo por tenant para las ITs; la
-    /// paginación del censo global queda como decisión de seguimiento del
+    /// **The census is unbounded**: it brings every entry with its full `AuditEvent`.
+    /// On a shared server that does not drain, the response
+    /// grows until it overflows the transport's message limit (4 MiB
+    /// in Dgraph; HSP-194 proved it). A production consumer
+    /// (`AuditDispatcher::dispatch_pending`) that calls it against that
+    /// server needs pagination or periodic draining (HSP-220 left the
+    /// laboratory drain and the per-tenant census for the ITs; the
+    /// pagination of the global census remains as a follow-up decision of the
     /// supervisor).
     async fn pending(&self, now: DateTime<Utc>) -> Result<Vec<AuditEntry>, AuditError>;
 
-    /// La entrada de un evento, para el que pregunta qué fue de él.
+    /// The entry of an event, for whoever asks what became of it.
     async fn entry(&self, event_id: &str) -> Result<Option<AuditEntry>, AuditError>;
 }
 
-/// El outbox en memoria: el material de referencia del puerto.
+/// The in-memory outbox: the reference material of the port.
 ///
-/// Lo que el almacén durable guarda en SurrealDB, esto lo guarda en el
-/// proceso, con las **mismas** reglas: el mismo compare-and-set, el mismo
-/// lease, el mismo "decirlo dos veces es decirlo una".
+/// What the durable store keeps in SurrealDB, this keeps in the
+/// process, with the **same** rules: the same compare-and-set, the same
+/// lease, the same "stating it twice is stating it once".
 #[derive(Debug, Clone, Default)]
 pub struct InMemoryAuditOutbox {
     inner: Arc<Mutex<HashMap<String, AuditEntry>>>,
 }
 
 impl InMemoryAuditOutbox {
-    /// Un outbox sin nada en él.
+    /// An outbox with nothing in it.
     pub fn empty() -> Self {
         Self::default()
     }
 
-    /// Los estados de todas las entradas, ordenados por identificador.
+    /// The states of all entries, ordered by identifier.
     pub fn states(&self) -> Vec<(String, String)> {
         let mut states: Vec<(String, String)> = self
             .inner
@@ -228,9 +228,9 @@ impl InMemoryAuditOutbox {
 impl AuditOutbox for InMemoryAuditOutbox {
     async fn put_pending(&self, event: &AuditEvent) -> Result<(), AuditError> {
         let mut inner = self.inner.lock().expect("the audit outbox is not poisoned");
-        // Decirlo dos veces es decirlo una: si ya está y dice lo mismo, no
-        // se toca. Si ya está y dice otra cosa, no es el mismo hecho: es
-        // una contradicción, y callarla sería perder un hecho.
+        // Stating it twice is stating it once: if it is already there and says the same, it is
+        // left untouched. If it is already there and says something else, it is not the same fact:
+        // it is a contradiction, and silencing it would lose a fact.
         match inner.get(&event.event_id) {
             Some(entry) if entry.event.same_fact(event) => Ok(()),
             Some(_) => Err(AuditError::StoreUnavailable {
@@ -257,7 +257,7 @@ impl AuditOutbox for InMemoryAuditOutbox {
         let Some(entry) = inner.get_mut(event_id) else {
             return Ok(None);
         };
-        // El compare-and-set: pendiente, o un lease que murió.
+        // The compare-and-set: pending, or a lease that died.
         let claimable = entry.state == EntryState::Pending
             || (entry.state == EntryState::Claimed
                 && entry.lease_until.is_some_and(|until| until <= now));
@@ -282,8 +282,8 @@ impl AuditOutbox for InMemoryAuditOutbox {
                 detail: format!("the event {event_id} is not in the outbox"),
             });
         };
-        // Lo que ya es verdad no se cambia: la entrega que ocurrió no se
-        // deshace por marcarla otra vez.
+        // What is already true is not changed: a delivery that happened is not
+        // undone by marking it again.
         if entry.state == EntryState::Delivered {
             return Ok(());
         }
@@ -292,8 +292,8 @@ impl AuditOutbox for InMemoryAuditOutbox {
                 detail: format!("the event {event_id} is not claimed, so nobody delivered it"),
             });
         }
-        // Y solo el dueño del reclamo: en cuanto otro worker reclamó el
-        // evento, este ya no es suyo.
+        // And only the owner of the claim: as soon as another worker claimed the
+        // event, this one is no longer its own.
         if entry.lease_owner.as_deref() != Some(worker) {
             return Err(AuditError::StoreUnavailable {
                 detail: format!(
@@ -320,8 +320,8 @@ impl AuditOutbox for InMemoryAuditOutbox {
                 detail: format!("the event {event_id} is not in the outbox"),
             });
         };
-        // Una entrega que ya ocurrió no se puede desmentir: marcarla como
-        // no entregada sería mentir sobre un hecho.
+        // A delivery that already happened cannot be contradicted: marking it as
+        // not delivered would be lying about a fact.
         if entry.state == EntryState::Delivered {
             return Ok(());
         }
@@ -332,9 +332,9 @@ impl AuditOutbox for InMemoryAuditOutbox {
                 ),
             });
         }
-        // Y solo el dueño del reclamo: si su lease expiró y otro worker
-        // reclamó el evento, devolverlo al mercado sería sacarlo de debajo
-        // del worker que lo tiene.
+        // And only the owner of the claim: if its lease expired and another worker
+        // claimed the event, returning it to the market would be pulling it out from under
+        // the worker that holds it.
         if entry.lease_owner.as_deref() != Some(worker) {
             return Err(AuditError::StoreUnavailable {
                 detail: format!(
@@ -472,8 +472,8 @@ mod tests {
             .await
             .expect("claim");
 
-        // El lease muere y otro worker lo toma: el primero ya no puede
-        // decir nada de él.
+        // The lease dies and another worker takes it: the first one can no longer
+        // say anything about it.
         let later = the_moment() + chrono::Duration::minutes(2);
         outbox
             .claim(

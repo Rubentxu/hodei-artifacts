@@ -1,31 +1,31 @@
-//! La admision al canal trusted: que digest puede servirse.
+//! Admission to the trusted channel: which digest may be served.
 //!
-//! Cedar decide **quien** puede leer un repositorio; esto decide **que
-//! software** se le sirve. Son dos obligaciones separadas y se piden las
-//! dos: un permiso de Cedar no sirve un digest sin concesion, y una
-//! concesion no sirve a quien Cedar no deja leer.
+//! Cedar decides **who** can read a repository; this decides **which
+//! software** is served to them. They are two separate obligations and both are
+//! required: a Cedar permit does not serve a digest without a grant, and a
+//! grant does not serve someone Cedar does not let read.
 //!
-//! La admision es un unico punto, usado por todas las rutas de lectura
-//! (raw y OCI). Que cada ruta tenga su propia comprobacion es como se
-//! acaba teniendo una ruta que se olvida: aqui no hay otra forma de servir
-//! un digest de un repositorio con canal trusted.
+//! Admission is a single point, used by all read paths
+//! (raw and OCI). Having each path carry its own check is how you
+//! end up with a path that gets forgotten: here there is no other way to serve
+//! a digest from a repository with a trusted channel.
 //!
-//! # Reglas
+//! # Rules
 //!
-//! - El canal es del repositorio ([`ServeChannel`]); el `open` es el de
-//!   cuarentena y sirve lo publicado.
-//! - En el canal `trusted` solo se sirve un **digest** con una concesion
-//!   activa. El nombre no cuenta: una etiqueta que se mueve apunta a otro
-//!   digest, y ese no hereda nada.
-//! - Lo que no se admite responde como **inexistente**, no como
-//!   prohibido: un 403 diria que el contenido existe.
-//! - No hay cache de negativos: cada `NoGranted`, cada fallo y cada
-//!   ausencia de libro se vuelven a preguntar en la peticion siguiente.
-//!   Las concesiones activas si se cachean —con expiracion e
-//!   invalidacion por revocacion— en [`cache::CachedTrustLedger`], que
-//!   envuelve al libro en el arranque del servicio.
-//! - Un libro que falla, o que no esta, **no** es un permiso: el canal
-//!   trusted sin libro responde "no disponible".
+//! - The channel belongs to the repository ([`ServeChannel`]); `open` is the
+//!   quarantine one and serves what is published.
+//! - On the `trusted` channel only a **digest** with an active grant is
+//!   served. The name does not count: a tag that moves points to another
+//!   digest, and that one inherits nothing.
+//! - What is not admitted answers as **nonexistent**, not as
+//!   forbidden: a 403 would say the content exists.
+//! - There is no negative cache: each `NoGranted`, each failure and each
+//!   missing ledger is asked again on the next request.
+//!   Active grants are cached --with expiration and
+//!   invalidation on revocation-- in [`cache::CachedTrustLedger`], which
+//!   wraps the ledger at service startup.
+//! - A ledger that fails, or that is absent, is **not** a permit: the trusted
+//!   channel without a ledger answers "unavailable".
 
 pub mod cache;
 pub mod hrn;
@@ -40,32 +40,32 @@ use hodei_evidence::ContentDigest;
 
 use crate::app_state::AppState;
 
-/// Por que no se sirve algo del canal trusted.
+/// Why something from the trusted channel is not served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Admission {
-    /// El digest no tiene concesion activa: para quien lee, no existe.
+    /// The digest has no active grant: for whoever reads, it does not exist.
     Hidden,
-    /// No se pudo saber: el libro falla o no esta. Nunca se sirve.
+    /// It could not be known: the ledger fails or is absent. It is never served.
     Unavailable,
 }
 
-/// Lo que dijo el libro, sin interpretar.
+/// What the ledger said, uninterpreted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lookup {
-    /// Hay una concesion activa.
+    /// There is an active grant.
     Granted,
-    /// No la hay.
+    /// There is none.
     NotGranted,
-    /// El libro fallo.
+    /// The ledger failed.
     Failed,
-    /// La instancia no tiene libro.
+    /// The instance has no ledger.
     NoLedger,
 }
 
-/// El veredicto: funcion pura de canal y respuesta del libro.
+/// The verdict: a pure function of channel and ledger response.
 ///
-/// Todo lo que no es un `Granted` explicito en el canal trusted es una
-/// negativa.
+/// Everything that is not an explicit `Granted` on the trusted channel is a
+/// denial.
 pub fn verdict(channel: ServeChannel, lookup: Lookup) -> Result<(), Admission> {
     match (channel, lookup) {
         (ServeChannel::Open, _) => Ok(()),
@@ -75,7 +75,7 @@ pub fn verdict(channel: ServeChannel, lookup: Lookup) -> Result<(), Admission> {
     }
 }
 
-/// Si ese digest del repositorio puede servirse.
+/// Whether that digest of the repository may be served.
 pub async fn admit(
     state: &AppState,
     account: &str,
@@ -103,10 +103,10 @@ pub async fn admit(
     verdict(channel, lookup)
 }
 
-/// Los digests servibles de un repositorio, para filtrar listados.
+/// The servable digests of a repository, to filter listings.
 ///
-/// `Ok(None)` es el canal abierto: no hay nada que filtrar. `Ok(Some(..))`
-/// es el conjunto de digests con concesion activa, en hexadecimal.
+/// `Ok(None)` is the open channel: there is nothing to filter. `Ok(Some(..))`
+/// is the set of digests with an active grant, in hexadecimal.
 pub async fn servable(
     state: &AppState,
     account: &str,

@@ -1,17 +1,17 @@
-//! El contrato de la investigacion contrafactual (HSP-93).
+//! The contract of the counterfactual investigation (HSP-93).
 //!
-//! Cuatro cosas se prometen y se comprueban aqui:
+//! Four things are promised and checked here:
 //!
-//! - Una dependencia vulnerable muestra su causa original, la hipotesis
-//!   de sustitucion y la diferencia calculada de decisiones, con
-//!   referencias.
-//! - La respuesta distingue lo verificado, lo observado, lo hipotetico,
-//!   la inferencia y lo desconocido, con un sello coherente, y ninguna
-//!   recomendacion se atribuye al motor de politicas.
-//! - Una hipotesis de otra cuenta, caducada o inconsistente se rechaza
-//!   sin filtrar datos y sin gastar lecturas.
-//! - Nada se escribe: el grafo y la posicion declarada del ledger
-//!   quedan iguales antes y despues.
+//! - A vulnerable dependency shows its original cause, the substitution
+//!   hypothesis and the computed difference of decisions, with
+//!   references.
+//! - The answer distinguishes what is verified, observed, hypothetical,
+//!   inferred and unknown, with a coherent seal, and no
+//!   recommendation is attributed to the policy engine.
+//! - A hypothesis from another account, expired or inconsistent is rejected
+//!   without leaking data and without spending reads.
+//! - Nothing is written: the graph and the declared position of the ledger
+//!   remain the same before and after.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,50 +37,50 @@ use hodei_simulation::{Checkpoint, SimulationFork, SimulationTag};
 use hodei_trust_policy::{Requirement, RequirementKind, TrustPolicy};
 use kernel::Hrn;
 
-/// El instante de las pruebas: uno solo, para las dos mitades.
+/// The instant of the tests: a single one, for both halves.
 fn the_now() -> DateTime<Utc> {
     DateTime::parse_from_rfc3339("2026-01-01T12:00:00Z")
         .expect("un instante fijo")
         .with_timezone(&Utc)
 }
 
-/// El sujeto: la release bloqueada.
+/// The subject: the blocked release.
 fn subject() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Artifact/app-1.0.0").expect("un HRN")
 }
 
-/// El componente vulnerable del que depende.
+/// The vulnerable component it depends on.
 fn lib_v1() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v1").expect("un HRN")
 }
 
-/// El componente de la sustitucion hipotetica.
+/// The component of the hypothetical substitution.
 fn lib_v2() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Component/lib-v2").expect("un HRN")
 }
 
-/// La vulnerabilidad declarada por la evidencia.
+/// The vulnerability declared by the evidence.
 fn vulnerability() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:Vulnerability/GHSA-hsp93-0001")
         .expect("un HRN")
 }
 
-/// Quien pregunta, verificado.
+/// Whoever asks, verified.
 fn actor() -> Hrn {
     Hrn::from_string("hrn:hodei:artifacts:eu-west-1:acme:User/alice").expect("un HRN")
 }
 
-/// El alcance de la investigacion.
+/// The scope of the investigation.
 fn the_scope() -> RetrievalScope {
     RetrievalScope::new(actor(), subject())
 }
 
-/// La politica de ahora: la que no prohibe nada.
+/// The policy of now: the one that forbids nothing.
 fn the_permissive_policy() -> TrustPolicy {
     TrustPolicy::new("production", "1.0.0", Vec::new())
 }
 
-/// La politica hipotetica: la que prohibe el riesgo establecido.
+/// The hypothetical policy: the one that forbids the established risk.
 fn the_strict_policy() -> TrustPolicy {
     TrustPolicy::new(
         "production",
@@ -89,33 +89,33 @@ fn the_strict_policy() -> TrustPolicy {
     )
 }
 
-/// La relacion observada: el sujeto depende de lib-v1.
+/// The observed relation: the subject depends on lib-v1.
 fn the_dependency() -> RelationFact {
     RelationFact::new(RelationType::DependsOn, subject(), lib_v1()).with_evidence("evd-1")
 }
 
-/// La relacion observada: lib-v1 esta afectada por la vulnerabilidad.
+/// The observed relation: lib-v1 is affected by the vulnerability.
 fn the_advisory() -> RelationFact {
     RelationFact::new(RelationType::AffectedBy, lib_v1(), vulnerability()).with_evidence("evd-2")
 }
 
-/// El mundo: dos relaciones y la generacion 7.
+/// The world: two relations and generation 7.
 fn the_world() -> Arc<InMemoryGraph> {
     let graph = InMemoryGraph::new("acme");
     graph.set_the_world(vec![the_dependency(), the_advisory()], 7);
     graph
 }
 
-/// El servicio de la simulacion sobre el mundo.
+/// The simulation service over the world.
 fn the_simulation(graph: Arc<InMemoryGraph>) -> Arc<SimulationService> {
     Arc::new(SimulationService::new(graph, Arc::new(InMemoryDecisions)))
 }
 
-/// El recuperador del mundo conocido, con su manifiesto y su contador
-/// de llamadas: un rechazo no tiene que gastar lecturas.
+/// The retriever of the known world, with its manifest and its call counter:
+/// a rejection must not spend reads.
 struct TheRetriever {
     pub calls: AtomicUsize,
-    /// La version del grafo que el manifiesto declara haber leido.
+    /// The version of the graph that the manifest declares to have read.
     pub read_at: u64,
 }
 
@@ -148,8 +148,8 @@ impl EvidenceRetriever for TheRetriever {
     }
 }
 
-/// La respuesta del modelo: causa, sustitucion, recomendacion,
-/// incertidumbre y una afirmacion observada sin relacion verificable.
+/// The model's answer: cause, substitution, recommendation,
+/// uncertainty and an observed claim without a verifiable relation.
 fn the_answer() -> String {
     serde_json::json!([
         {
@@ -186,7 +186,7 @@ fn the_answer() -> String {
     .to_string()
 }
 
-/// El investigador del mundo conocido.
+/// The investigator of the known world.
 fn the_investigator(read_at: u64) -> (Arc<Investigator>, Arc<TheRetriever>) {
     let retriever = Arc::new(TheRetriever {
         calls: AtomicUsize::new(0),
@@ -200,8 +200,8 @@ fn the_investigator(read_at: u64) -> (Arc<Investigator>, Arc<TheRetriever>) {
     (investigator, retriever)
 }
 
-/// El fork de la contrahistoria: se sustituye la dependencia y la
-/// politica estricta entra en vigor con el riesgo establecido.
+/// The counter-history fork: the dependency is substituted and the
+/// strict policy comes into force with the established risk.
 fn the_fork() -> SimulationFork {
     let tag = SimulationTag::new("sim-93", the_now());
     SimulationFork::new(
@@ -231,7 +231,7 @@ fn the_fork() -> SimulationFork {
     .with_policy(the_strict_policy())
 }
 
-/// El servicio contrafactual del mundo estandar.
+/// The counterfactual service of the standard world.
 async fn the_answer_of_the_standard_world() -> (CounterfactualReport, Arc<InMemoryGraph>) {
     let graph = the_world();
     let (investigator, _retriever) = the_investigator(7);
@@ -262,14 +262,14 @@ fn statements_with(
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// La respuesta muestra la causa, la hipotesis de sustitucion y la
-/// diferencia de decisiones, todo con referencias.
+/// The answer shows the cause, the substitution hypothesis and the
+/// difference of decisions, all with references.
 #[tokio::test]
 async fn the_report_shows_the_cause_the_hypothesis_and_the_decision_difference() {
     let (report, _graph) = the_answer_of_the_standard_world().await;
 
-    // La causa original: los hechos que el verificador verifico,
-    // con sus citas de evidencia.
+    // The original cause: the facts that the verifier verified,
+    // with their evidence citations.
     let causes = statements_with(&report, EpistemicLabel::Verified);
     assert_eq!(causes.len(), 2, "la dependencia y el advisory: {causes:?}");
     assert!(
@@ -283,7 +283,7 @@ async fn the_report_shows_the_cause_the_hypothesis_and_the_decision_difference()
             .any(|cause| cause.references.contains(&"evd-2".to_string()))
     );
 
-    // La hipotesis de sustitucion, declarada como hipotesis.
+    // The substitution hypothesis, declared as a hypothesis.
     let replaced = report
         .statements
         .iter()
@@ -292,8 +292,8 @@ async fn the_report_shows_the_cause_the_hypothesis_and_the_decision_difference()
     assert_eq!(replaced.label, EpistemicLabel::Hypothetical);
     assert!(replaced.references.contains(&"sim-93".to_string()));
 
-    // La diferencia calculada de decisiones, con las versiones de la
-    // politica que la produjeron.
+    // The computed difference of decisions, with the versions of the
+    // policy that produced it.
     let changed = report
         .statements
         .iter()
@@ -310,8 +310,8 @@ async fn the_report_shows_the_cause_the_hypothesis_and_the_decision_difference()
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// La respuesta distingue las clases epistemicas y el sello es
-/// coherente.
+/// The answer distinguishes the epistemic classes and the seal is
+/// coherent.
 #[tokio::test]
 async fn the_answer_labels_every_epistemic_class_with_a_coherent_seal() {
     let (report, _graph) = the_answer_of_the_standard_world().await;
@@ -329,8 +329,8 @@ async fn the_answer_labels_every_epistemic_class_with_a_coherent_seal() {
         );
     }
 
-    // El sello compartido: la misma fuente, la misma version en las
-    // dos mitades.
+    // The shared seal: the same source, the same version in the
+    // two halves.
     assert!(
         report.seal.coherent,
         "los manifiestos coinciden: {:?}",
@@ -338,13 +338,13 @@ async fn the_answer_labels_every_epistemic_class_with_a_coherent_seal() {
     );
     assert!(report.seal.shared.contains(&("graph".to_string(), 7)));
 
-    // Y el contrato viaja con las dos mitades intactas y su version.
+    // And the contract travels with both halves intact and its version.
     assert_eq!(report.version, COUNTERFACTUAL_REPORT_VERSION);
     assert_eq!(report.simulation.version, "1.0.0");
     assert_eq!(report.investigation.schema_version, "1");
 }
 
-/// Una recomendacion no se atribuye al motor de politicas.
+/// A recommendation is not attributed to the policy engine.
 #[tokio::test]
 async fn a_recommendation_is_not_attributed_to_the_policy_engine() {
     let (report, _graph) = the_answer_of_the_standard_world().await;
@@ -371,8 +371,8 @@ async fn a_recommendation_is_not_attributed_to_the_policy_engine() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// Una hipotesis de otra cuenta se rechaza sin filtrar datos y sin
-/// gastar lecturas.
+/// A hypothesis from another account is rejected without leaking data and without
+/// spending reads.
 #[tokio::test]
 async fn a_hypothesis_of_another_account_is_rejected_without_leaking() {
     let graph = the_world();
@@ -418,7 +418,7 @@ async fn a_hypothesis_of_another_account_is_rejected_without_leaking() {
     );
 }
 
-/// Una hipotesis caducada se rechaza.
+/// A hypothesis that expired is rejected.
 #[tokio::test]
 async fn an_expired_hypothesis_is_rejected() {
     let graph = the_world();
@@ -453,7 +453,7 @@ async fn an_expired_hypothesis_is_rejected() {
     );
 }
 
-/// Un base contra un mundo que ya no existe se rechaza.
+/// A base against a world that no longer exists is rejected.
 #[tokio::test]
 async fn a_stale_base_is_rejected() {
     let graph = the_world();
@@ -482,13 +482,13 @@ async fn a_stale_base_is_rejected() {
     );
 }
 
-/// Una investigacion y una simulacion que no coinciden en la version
-/// de una fuente compartida se rechazan como sello incoherente.
+/// An investigation and a simulation that do not agree on the version
+/// of a shared source are rejected as an incoherent seal.
 #[tokio::test]
 async fn an_incoherent_seal_is_rejected() {
     let graph = the_world();
-    // El manifiesto del investigador dice haber leido la generacion 6;
-    // la simulacion calcula sobre la 7.
+    // The investigator's manifest says it read generation 6;
+    // the simulation computes on 7.
     let (investigator, _retriever) = the_investigator(6);
     let service = CounterfactualService::new(investigator, the_simulation(graph));
 
@@ -519,8 +519,8 @@ async fn an_incoherent_seal_is_rejected() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// La contrahistoria no escribe: el grafo y la posicion declarada del
-/// ledger quedan iguales.
+/// The counter-history does not write: the graph and the declared position of the
+/// ledger remain the same.
 #[tokio::test]
 async fn the_counterfactual_leaves_the_world_untouched() {
     let graph = the_world();
@@ -554,7 +554,7 @@ async fn the_counterfactual_leaves_the_world_untouched() {
         Some(42),
         "la posicion declarada del ledger sigue siendo la declarada"
     );
-    // Y lo hipotetico no contamina lo observado.
+    // And the hypothetical does not contaminate the observed.
     assert!(
         !report
             .simulation
@@ -566,8 +566,8 @@ async fn the_counterfactual_leaves_the_world_untouched() {
     );
 }
 
-/// El informe es serializable y dice su version: un consumidor sabe
-/// con que contrato esta leyendo.
+/// The report is serializable and states its version: a consumer knows
+/// which contract it is reading.
 #[tokio::test]
 async fn the_report_travels_as_json_with_its_version() {
     let (report, _graph) = the_answer_of_the_standard_world().await;

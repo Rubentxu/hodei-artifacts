@@ -24,30 +24,30 @@ fn identity(module: &str, file: &str, symbol: &str) -> CodeIdentity {
     CodeIdentity::new(module, file, symbol)
 }
 
-/// El punto de entrada de la aplicacion.
+/// The application's entry point.
 fn entry() -> CodeIdentity {
     identity("app", "src/main.rs", "main")
 }
 
-/// La funcion de la aplicacion que llama.
+/// The application function that calls.
 fn caller() -> CodeIdentity {
     identity("app", "src/app.rs", "run")
 }
 
-/// El simbolo vulnerable de la libreria.
+/// The library's vulnerable symbol.
 fn vulnerable() -> CodeIdentity {
     identity("lib", "src/vuln.rs", "vuln_fn")
 }
 
-/// Un simbolo que no existe en el camino.
+/// A symbol that does not exist on the path.
 fn absent() -> CodeIdentity {
     identity("lib", "src/vuln.rs", "other_fn")
 }
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// Existe un contrato `ReachabilityEvidence` con su cobertura y sus
-/// limites, y no presupone ningun analizador concreto.
+/// There is a `ReachabilityEvidence` contract with its coverage and its
+/// limits, and it does not presuppose any concrete analyser.
 #[test]
 fn the_contract_carries_its_coverage_and_its_limits() {
     let evidence = ReachabilityEvidence::new(
@@ -63,21 +63,21 @@ fn the_contract_carries_its_coverage_and_its_limits() {
     )
     .with_limitation(Limitation::DynamicDispatch);
 
-    // La cobertura dice QUE se cubrio.
+    // The coverage says WHAT was covered.
     assert_eq!(evidence.coverage.source_revision, "rev-1");
     assert!(evidence.coverage.complete);
     assert_eq!(evidence.coverage.modules.len(), 2);
 
-    // Y los limites dicen QUE NO se pudo resolver.
+    // And the limits say WHAT could NOT be resolved.
     assert_eq!(evidence.limitations.len(), 1);
     assert_eq!(evidence.limitations[0].as_str(), "dynamic_dispatch");
 
-    // Y el contrato NO presupone ningun analizador: el analizador es un
-    // dato de la evidencia, no una parte del contrato.
+    // And the contract does NOT presuppose any analyser: the analyser is a
+    // piece of data of the evidence, not a part of the contract.
     assert_eq!(evidence.analyzer.name, "hodei-local");
     assert_eq!(evidence.analyzer.version, "1.0.0");
 
-    // Y el texto del contrato lo dice, donde el codigo esta.
+    // And the contract text says so, where the code is.
     let source = include_str!("../src/lib.rs");
     assert!(
         source.contains("no presupone ningun analizador"),
@@ -87,8 +87,8 @@ fn the_contract_carries_its_coverage_and_its_limits() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// La identidad del codigo distingue modulo, fichero y simbolo, y se puede
-/// emparejar con un simbolo vulnerable.
+/// The identity of the code tells module, file and symbol apart, and can be
+/// matched with a vulnerable symbol.
 #[test]
 fn the_code_identity_tells_module_file_and_symbol_apart() {
     let one = identity("app", "src/main.rs", "parse");
@@ -100,7 +100,7 @@ fn the_code_identity_tells_module_file_and_symbol_apart() {
     assert_ne!(one, other_file);
     assert_ne!(one, other_symbol);
 
-    // Y se puede emparejar con un simbolo vulnerable.
+    // And it can be matched with a vulnerable symbol.
     let symbol = VulnerableSymbol::new(
         "org.example:lib",
         Some("2.0.0".to_string()),
@@ -113,8 +113,8 @@ fn the_code_identity_tells_module_file_and_symbol_apart() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// La evidencia de alcanzabilidad se ingiere con sus aristas de llamada y
-/// se puede consultar por simbolo.
+/// The evidence of reachability is ingested with its call edges and
+/// can be consulted by symbol.
 #[tokio::test]
 async fn the_evidence_is_ingested_with_its_call_edges_and_consulted_by_symbol() {
     let store = InMemoryReachabilityStore::empty();
@@ -140,7 +140,7 @@ async fn the_evidence_is_ingested_with_its_call_edges_and_consulted_by_symbol() 
     store.put(&evidence).await.expect("the evidence is written");
     assert_eq!(store.len(), 1, "and it is there with its call edges");
 
-    // Y se consulta por simbolo.
+    // And it is consulted by symbol.
     let found = store
         .evidence_of("rev-1", &vulnerable())
         .await
@@ -148,7 +148,7 @@ async fn the_evidence_is_ingested_with_its_call_edges_and_consulted_by_symbol() 
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].call_edges.len(), 2, "with its call edges");
 
-    // Y el estado se deriva de lo que hay.
+    // And the state is derived from what is there.
     let reachability = store
         .reachability_of(
             "rev-1",
@@ -163,8 +163,8 @@ async fn the_evidence_is_ingested_with_its_call_edges_and_consulted_by_symbol() 
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// El estado de alcanzabilidad distingue alcanzable, no alcanzable y
-/// desconocido, y `unknown` no se confunde con `no alcanzable`.
+/// The state of reachability tells reachable, unreachable and
+/// unknown apart, and `unknown` is not confused with `unreachable`.
 #[test]
 fn the_state_tells_the_three_apart_and_unknown_is_not_unreachable() {
     let complete = ReachabilityEvidence::new(
@@ -179,17 +179,17 @@ fn the_state_tells_the_three_apart_and_unknown_is_not_unreachable() {
         Utc::now(),
     );
 
-    // Alcanzable: hay un camino.
+    // Reachable: there is a path.
     let reachability = derive(&complete, &vulnerable());
     assert_eq!(reachability.state, ReachabilityState::Reachable);
     assert!(reachability.is_reachable());
 
-    // No alcanzable: el analisis fue completo y no hay camino.
+    // Unreachable: the analysis was complete and there is no path.
     let reachability = derive(&complete, &absent());
     assert_eq!(reachability.state, ReachabilityState::Unreachable);
     assert!(reachability.state.is_proof_of_absence());
 
-    // Desconocido: el analisis NO fue completo.
+    // Unknown: the analysis was NOT complete.
     let mut partial = complete.clone();
     partial.coverage = Coverage::partial("rev-1", vec!["app".to_string()]);
     let reachability = derive(&partial, &absent());
@@ -200,21 +200,21 @@ fn the_state_tells_the_three_apart_and_unknown_is_not_unreachable() {
     );
     assert!(reachability.reason.contains("not a proof"));
 
-    // Y desconocido tambien cuando el analizador no pudo resolver algo.
+    // And unknown also when the analyser could not resolve something.
     let limited = complete.with_limitation(Limitation::DynamicDispatch);
     let reachability = derive(&limited, &absent());
     assert_eq!(reachability.state, ReachabilityState::Unknown);
     assert!(reachability.reason.contains("not a proof"));
 
-    // Y el camino gana sobre la limitacion: el simbolo se alcanza.
+    // And the path wins over the limitation: the symbol is reached.
     let reachability = derive(&limited, &vulnerable());
     assert_eq!(reachability.state, ReachabilityState::Reachable);
 }
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// Un proveedor local acotado demuestra el recorrido completo, y el
-/// SPIKE-007 deja escrita su conclusion.
+/// A local, bounded provider demonstrates the whole chain, and
+/// SPIKE-007 leaves its conclusion written down.
 #[test]
 fn a_local_bounded_provider_demonstrates_the_whole_chain() {
     let provider = LocalProvider::new(
@@ -244,13 +244,13 @@ fn a_local_bounded_provider_demonstrates_the_whole_chain() {
     assert_eq!(evidence.coverage.symbols.len(), 1);
     assert_eq!(evidence.analyzer.name, "hodei-local");
 
-    // Y el recorrido completo: de la peticion a la respuesta.
+    // And the whole chain: from the request to the response.
     let reachability = derive(&evidence, &vulnerable());
     assert_eq!(reachability.state, ReachabilityState::Reachable);
     assert_eq!(reachability.call_path.len(), 3);
     assert_eq!(reachability.evidence_id, "ev-2");
 
-    // Y la conclusion del SPIKE-007 esta escrita, con su regla.
+    // And the conclusion of SPIKE-007 is written down, with its rule.
     let source = include_str!("../src/lib.rs");
     assert!(
         source.contains("UNKNOWN"),
@@ -258,8 +258,8 @@ fn a_local_bounded_provider_demonstrates_the_whole_chain() {
     );
 }
 
-/// Y dos versiones del analizador dan dos evidencias, y las dos se
-/// conservan.
+/// And two versions of the analyser give two pieces of evidence, and both
+/// are kept.
 #[tokio::test]
 async fn two_analyser_versions_are_both_preserved() {
     let store = InMemoryReachabilityStore::empty();
@@ -294,8 +294,8 @@ async fn two_analyser_versions_are_both_preserved() {
         "both revisions are preserved: a new analyser does not erase the old answer"
     );
 
-    // Y la derivacion dice QUE analizador y QUE version produjo el
-    // estado.
+    // And the derivation says WHICH analyser and WHICH version produced the
+    // state.
     let reachability = store
         .reachability_of(
             "rev-1",

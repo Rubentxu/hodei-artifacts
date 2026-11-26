@@ -1,33 +1,33 @@
-//! HSP-193: npm sobre el motor Dgraph real, sin scan global.
+//! HSP-193: npm over the real Dgraph engine, without a global scan.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como los IT del stack (TLS + ACL,
-//! el servidor vivo h186). La espina del catálogo (HSP-187/190/191:
-//! guardas por clave, outbox atómico, cursor estable) es la que sirve el
-//! contrato npm de HSP-111 (`crates/hodei-catalog/src/npm.rs` +
-//! `src/handlers/npm.rs`), y este slice lo demuestra CONTRA EL MOTOR:
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like the stack's ITs (TLS + ACL,
+//! the live h186 server). The catalog spine (HSP-187/190/191:
+//! per-key guards, atomic outbox, stable cursor) is what serves the
+//! npm contract of HSP-111 (`crates/hodei-catalog/src/npm.rs` +
+//! `src/handlers/npm.rs`), and this slice demonstrates it AGAINST THE ENGINE:
 //!
-//! - **AC1** el cliente `npm` real publica e instala sobre el vertical con
-//!   el catálogo Dgraph: el packument y la metadata por versión llevan los
-//!   DIGESTS estables del tarball (shasum e integrity calculados por el
-//!   servicio), el packument leído dos veces dice lo mismo (instantánea
-//!   direccionada por digest), el tarball sale del CAS y el grafo solo
-//!   guarda coordenadas y referencias, y los dist-tags son consistentes:
-//!   la lista se lee POR CLAVE (el packument de ese paquete) y la mutación
-//!   es una instantánea nueva arbitrada por la guarda de la clave del
-//!   asset — dos escritores concurrentes no la rompen.
-//! - **AC2** la republicación inmutable (una versión no se reescribe), el
-//!   outbox atómico que acompaña a cada commit, el cursor estable en los
-//!   listados, el scoping por cuenta y las lecturas del estado npm según
-//!   el contrato.
-//! - los DISTRACTORES (muchos paquetes de otras cuentas con las mismas
-//!   claves de repositorio y los mismos nombres) no causan scan global:
-//!   la raíz de cada consulta es eq(account/repository) por índice, y el
-//!   probe de plan confirma el índice exacto en los predicados filtrados
-//!   (patrón hsp191).
+//! - **AC1** the real `npm` client publishes and installs over the vertical with
+//!   the Dgraph catalog: the packument and the per-version metadata carry the
+//!   stable DIGESTS of the tarball (shasum and integrity computed by the
+//!   service), the packument read twice says the same (snapshot
+//!   addressed by digest), the tarball comes from the CAS and the graph only
+//!   stores coordinates and references, and dist-tags are consistent:
+//!   the list is read BY KEY (that package's packument) and the mutation
+//!   is a new snapshot arbitrated by the asset key's guard
+//!   -- two concurrent writers do not break it.
+//! - **AC2** immutable republication (a version is not rewritten), the
+//!   atomic outbox that accompanies each commit, the stable cursor in
+//!   listings, per-account scoping and reads of the npm state according to
+//!   the contract.
+//! - the DISTRACTORS (many packages from other accounts with the same
+//!   repository keys and the same names) do not cause a global scan:
+//!   each query's root is eq(account/repository) by index, and the
+//!   plan probe confirms the exact index on the filtered predicates
+//!   (hsp191 pattern).
 //!
-//! La suite es SERIALIZADA (`--test-threads=1`): la apertura de la guarda
-//! bajo carga es el flake conocido del stack (HSP-219) y `open_store` lo
-//! absorbe con tres intentos, como hsp191.
+//! The suite is SERIALIZED (`--test-threads=1`): opening the guard
+//! under load is the stack's known flake (HSP-219) and `open_store` absorbs
+//! it with three attempts, like hsp191.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -67,8 +67,8 @@ use sha2::Sha512;
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// La ejecución: una por corrida, para que ninguna prueba se encuentre
-/// con lo que otra dejó.
+/// The run: one per run, so that no test runs into
+/// what another left behind.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -77,13 +77,13 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Una cuenta por prueba y por ejecución.
+/// One account per test and per run.
 fn account(tag: &str) -> String {
     format!("it193{}{}", tag, &nonce()[8..])
 }
 
-/// El pid: nombres de paquete únicos por corrida (el recurso de auditoría
-/// no lleva la cuenta, y el censo del outbox cuenta por camino).
+/// The pid: package names unique per run (the audit resource
+/// does not carry the account, and the outbox census counts by path).
 fn the_pid() -> u32 {
     std::process::id()
 }
@@ -119,7 +119,7 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     Some(Arc::new(client))
 }
 
-/// El directorio de la evidencia: `target/uat/hsp193/`.
+/// The evidence directory: `target/uat/hsp193/`.
 fn the_evidence_dir() -> PathBuf {
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
@@ -128,7 +128,7 @@ fn the_evidence_dir() -> PathBuf {
     dir
 }
 
-/// Una línea de evidencia, con el momento.
+/// An evidence line, with the timestamp.
 fn record_evidence(test: &str, line: &str) {
     let file = the_evidence_dir().join("evidencia.md");
     let entry = format!("- [{test}] {line}\n");
@@ -142,9 +142,9 @@ fn record_evidence(test: &str, line: &str) {
     }
 }
 
-/// El almacén Dgraph del catálogo, con la apertura acotada: bajo carga,
-/// la apertura de la guarda es el flake preexistente del stack (lecciones
-/// HSP-190/HSP-219); la suite lo absorbe con tres intentos y un respiro.
+/// The catalog's Dgraph store, with bounded opening: under load,
+/// opening the guard is the stack's pre-existing flake (lessons
+/// HSP-190/HSP-219); the suite absorbs it with three attempts and a breather.
 async fn open_store(client: Arc<GraphClient>) -> DgraphCatalogStore {
     let mut last = String::new();
     for _attempt in 0..3 {
@@ -167,7 +167,7 @@ fn correlation_of(account: &str) -> String {
     format!("corr-hsp193-{account}")
 }
 
-/// Un descriptor de repositorio hosted, del formato y los ajustes pedidos.
+/// A hosted repository descriptor, with the requested format and settings.
 fn a_descriptor(
     account: &str,
     repo_key: &str,
@@ -189,13 +189,13 @@ fn a_descriptor(
 }
 
 // ---------------------------------------------------------------------------
-// Las publicaciones npm al nivel del almacén: la misma forma que escribe
-// la superficie (`src/handlers/npm.rs`), para sembrar estados completos
-// sin pasar por el cliente npm.
+// The npm publications at the store level: the same shape the surface
+// writes (`src/handlers/npm.rs`), to seed complete states
+// without going through the npm client.
 // ---------------------------------------------------------------------------
 
-/// Los digests que el servicio calcula sobre un tarball: el `shasum`
-/// histórico, el `integrity` de npm y el sha256 que dice el catálogo.
+/// The digests the service computes over a tarball: the historical
+/// `shasum`, npm's `integrity` and the sha256 the catalog states.
 struct TarballDigests {
     shasum: String,
     integrity: String,
@@ -220,8 +220,8 @@ fn the_tarball_digests(bytes: &[u8]) -> TarballDigests {
     }
 }
 
-/// Un packument con las versiones pedidas, construido con las MISMAS
-/// funciones puras que usa la superficie (el oráculo del contrato).
+/// A packument with the requested versions, built with the SAME
+/// pure functions the surface uses (the contract's oracle).
 fn a_packument(
     name: &PackageName,
     versions: &[(&str, &[u8])],
@@ -276,8 +276,8 @@ fn a_packument(
     Value::Object(packument)
 }
 
-/// Publica el tarball de una versión npm, con las coordenadas de la
-/// superficie: el camino `{nombre}/-/{fichero}.tgz` y `{nombre}@{version}`.
+/// Publishes an npm version's tarball, with the surface's
+/// coordinates: the path `{nombre}/-/{fichero}.tgz` and `{nombre}@{version}`.
 async fn publish_a_tarball<Store>(
     store: &Store,
     account: &str,
@@ -312,11 +312,11 @@ async fn publish_a_tarball<Store>(
         .expect("the tarball publication settles");
 }
 
-/// Publica una instantánea del packument, como la superficie: cada estado
-/// es una versión nueva de contenido y el puntero de la ruta se mueve con
-/// la precondición del digest anterior. La guarda de la CLAVE del asset
-/// (`hodei.catalog.asset.key`, `@upsert`) es la que arbitra dos escritores
-/// de la misma ruta — el mismo arbitraje por clave que las etiquetas OCI
+/// Publishes a packument snapshot, like the surface: each state
+/// is a new content version and the path pointer moves with
+/// the previous digest's precondition. The ASSET KEY's guard
+/// (`hodei.catalog.asset.key`, `@upsert`) is what arbitrates two writers
+/// of the same path -- the same per-key arbitration as OCI tags
 /// (HSP-190).
 async fn publish_a_packument_snapshot<Store>(
     store: &Store,
@@ -359,13 +359,13 @@ where
     digest
 }
 
-/// El contenido determinista del tarball sembrado de una versión.
+/// The deterministic content of a version's seeded tarball.
 fn seeded_tarball(name: &PackageName, version: &str) -> Vec<u8> {
     format!("seeded tarball of {}@{version}", name.full()).into_bytes()
 }
 
-/// Siembra un paquete npm completo: su tarball y la instantánea del
-/// packument que lo nombra. Devuelve el digest de la instantánea.
+/// Seeds a complete npm package: its tarball and the packument
+/// snapshot that names it. Returns the snapshot's digest.
 async fn seed_a_package(
     store: &DgraphCatalogStore,
     account: &str,
@@ -382,7 +382,7 @@ async fn seed_a_package(
 }
 
 // ---------------------------------------------------------------------------
-// El vertical HTTP: el router del hub sobre el catálogo Dgraph.
+// The HTTP vertical: the hub router over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
 struct ContractAuthenticator {
@@ -405,7 +405,7 @@ impl PrincipalAuthenticator for ContractAuthenticator {
     }
 }
 
-/// La Cedar bundle: solo `alice` de esta cuenta publica y descarga.
+/// The Cedar bundle: only `alice` of this account publishes and downloads.
 fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     let policy = format!(
         r#"permit(
@@ -432,9 +432,9 @@ fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
 struct Vertical {
     app: Router,
     store: Arc<DgraphCatalogStore>,
-    /// El CAS del vertical: la siembra al nivel del almacén tiene que
-    /// dejar AHI los bytes que el catálogo referencia, o las lecturas del
-    /// contrato no encuentran el contenido.
+    /// The vertical's CAS: seeding at the store level has to
+    /// leave THERE the bytes the catalog references, or the contract
+    /// reads do not find the content.
     content: Arc<dyn hodei_hub::blob::BlobStore>,
     #[allow(dead_code)]
     tmp: TempDir,
@@ -502,7 +502,7 @@ impl Vertical {
     }
 }
 
-/// El mismo servicio, en un puerto de verdad: el cliente npm habla TCP.
+/// The same service, on a real port: the npm client speaks TCP.
 async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -517,7 +517,7 @@ async fn serve_over_tcp(vertical: &Vertical) -> std::net::SocketAddr {
     address
 }
 
-/// La respuesta de una petición del contrato HTTP.
+/// The response to an HTTP contract request.
 struct Answer {
     status: StatusCode,
     etag: Option<String>,
@@ -532,8 +532,8 @@ async fn send(
     body: Option<Vec<u8>>,
 ) -> Answer {
     let mut builder = Request::builder().method(method).uri(uri);
-    // El Host que un cliente de verdad manda: la superficie npm construye
-    // las URLs absolutas del packument con él.
+    // The Host a real client sends: the npm surface builds
+    // the packument's absolute URLs with it.
     builder = builder.header(header::HOST, "127.0.0.1");
     if let Some(token) = token {
         builder = builder.header(header::AUTHORIZATION, format!("Bearer {token}"));
@@ -566,7 +566,7 @@ async fn send(
 }
 
 // ---------------------------------------------------------------------------
-// El cliente npm real, como hsp111: su HOME, su cache y su .npmrc.
+// The real npm client, like hsp111: its HOME, its cache and its .npmrc.
 // ---------------------------------------------------------------------------
 
 fn require_npm() {
@@ -581,12 +581,12 @@ fn require_npm() {
     );
 }
 
-/// El `npm` para los clientes de la suite. El `npm` del PATH es el shim de
-/// builds de la maquina, que mete cada llamada en su slice (`bld`): el
-/// cliente de ESTA suite no compila nada y no tiene que pasar por el
-/// reparto de recursos de los builds, asi que resuelve el BINARIO REAL —
-/// el escape documentado del propio shim — por el instalador asdf, o el
-/// que diga `HODEI_IT_NPM_BIN`, y solo si no lo hay vuelve al PATH.
+/// The `npm` for the suite's clients. The `npm` on the PATH is the machine's
+/// build shim, which puts each call in its slice (`bld`): the
+/// client of THIS suite compiles nothing and does not have to go through the
+/// builds' resource allocation, so it resolves the REAL BINARY --
+/// the shim's own documented escape -- through the asdf installer, or the one
+/// given by `HODEI_IT_NPM_BIN`, and only if there is none does it fall back to the PATH.
 fn npm_command() -> Command {
     static REAL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     let real = REAL.get_or_init(|| {
@@ -663,13 +663,13 @@ impl NpmClient {
         }
     }
 
-    /// Una cache vacia: lo siguiente que se instale sale del servicio.
+    /// An empty cache: whatever is installed next comes from the service.
     fn forget_the_cache(&self) {
         let _ = std::fs::remove_dir_all(self.root.join("cache"));
     }
 }
 
-/// Un paquete en `dir` listo para publicar.
+/// A package in `dir` ready to publish.
 fn package(dir: &Path, name: &str, version: &str, body: &str) {
     std::fs::create_dir_all(dir).expect("the package directory");
     std::fs::write(
@@ -683,7 +683,7 @@ fn package(dir: &Path, name: &str, version: &str, body: &str) {
     std::fs::write(dir.join("index.js"), body).expect("index.js");
 }
 
-/// Un proyecto consumidor vacio.
+/// An empty consumer project.
 fn consumer(dir: &Path) {
     std::fs::create_dir_all(dir).expect("the consumer directory");
     std::fs::write(
@@ -693,16 +693,16 @@ fn consumer(dir: &Path) {
     .expect("package.json");
 }
 
-/// Cuántos eventos del outbox de ESTA cuenta nombra el recurso pedido.
+/// How many outbox events of THIS account name the requested resource.
 ///
-/// El censo va POR TENANT (índice exacto), no por el `pending()` global:
-/// el outbox del servidor compartido acumula los hechos de TODAS las
-/// corridas —ninguna prueba los marca entregados— y su respuesta llegó a
-/// desbordar el límite de mensaje gRPC (4 MiB; hallazgo de HSP-194,
-/// drenado y documentado por HSP-220). La cuenta es única por corrida,
-/// así que la raíz `eq(tenant)` trae por índice solo los hechos de ESTA
-/// prueba, y el filtro del recurso va en el adaptador (el nombre del
-/// paquete lleva el pid, así que el camino es único por corrida).
+/// The census goes PER TENANT (exact index), not through the global `pending()`:
+/// the shared server's outbox accumulates the facts of ALL
+/// runs -- no test marks them delivered -- and its response came to
+/// overflow the gRPC message limit (4 MiB; finding of HSP-194,
+/// drained and documented by HSP-220). The account is unique per run,
+/// so the `eq(tenant)` root brings through the index only the facts of THIS
+/// test, and the resource filter goes in the adapter (the package
+/// name carries the pid, so the path is unique per run).
 async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str) -> usize {
     let escaped = tenant.replace('\\', "\\\\").replace('"', "\\\"");
     let response = client
@@ -729,8 +729,8 @@ async fn the_events_of(client: &GraphClient, tenant: &str, resource_needle: &str
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el cliente npm real publica e instala sobre el catálogo Dgraph,
-// con digests estables, tarball desde el CAS y dist-tags consistentes.
+// AC1: the real npm client publishes and installs over the Dgraph catalog,
+// with stable digests, tarball from the CAS and consistent dist-tags.
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -751,8 +751,8 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
     let widget_name = format!("uat{pid}-widget");
     let client = NpmClient::new(&root, "client", address.port(), repo, "alice");
 
-    // La publicación real: el cliente npm empaqueta y manda el documento
-    // con el tarball en base64. El catálogo Dgraph lo asienta.
+    // The real publication: the npm client packages and sends the document
+    // with the tarball in base64. The Dgraph catalog records it.
     let widget = root.join(&widget_name);
     package(
         &widget,
@@ -771,8 +771,8 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         &format!("npm publish {widget_name}@1.0.0 sobre {repo} (catálogo Dgraph): OK"),
     );
 
-    // Una versión publicada NO se reescribe: el cliente recibe la negativa
-    // del registro (403, `cannot publish over`).
+    // A published version is NOT rewritten: the client receives the registry's
+    // refusal (403, `cannot publish over`).
     let again = client.run(&widget, &["publish", "--access", "public"]);
     assert!(!again.ok, "npm republished an existing version");
     assert!(
@@ -789,9 +789,9 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         "re-publicación de la misma versión: el registro la rehúsa (403 cannot publish over), nada se reescribe",
     );
 
-    // El packument servido POR EL PORT Dgraph, leído dos veces: la
-    // instantánea es contenido direccionado por digest, y el mismo body y
-    // ETag es lo que el cliente ve.
+    // The packument served THROUGH THE Dgraph PORT, read twice: the
+    // snapshot is digest-addressed content, and the same body and
+    // ETag is what the client sees.
     let packument_url = format!("/npm/{repo}/{widget_name}");
     let first = send(
         &vertical.app,
@@ -826,10 +826,10 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
     let first_doc: Value = serde_json::from_slice(&first.body).expect("the packument parses");
     let entry = &first_doc["versions"]["1.0.0"];
 
-    // El tarball sale del CAS: los bytes servidos son los que el servicio
-    // digeró al publicar, y la metadata POR VERSIÓN del packument nombra
-    // el shasum y el integrity de ESOS bytes. El grafo dice lo mismo: la
-    // versión del catálogo lleva el sha256 de los bytes servidos.
+    // The tarball comes from the CAS: the served bytes are the ones the service
+    // digested on publish, and the packument's PER-VERSION metadata names
+    // the shasum and the integrity of THOSE bytes. The graph says the same: the
+    // catalog's version carries the sha256 of the served bytes.
     let served_tarball = send(
         &vertical.app,
         Method::GET,
@@ -871,8 +871,8 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         ),
     );
 
-    // El cliente real RESUELVE desde una cache vacía: instala lo publicado
-    // y el lock dice el integrity del tarball que el servicio sirvió.
+    // The real client RESOLVES from an empty cache: it installs what was published
+    // and the lock states the integrity of the tarball the service served.
     let project = root.join("consumer");
     consumer(&project);
     client.forget_the_cache();
@@ -902,8 +902,8 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         "npm install desde cache vacía: los bytes instalados y su lock integrity son los del tarball servido por el CAS",
     );
 
-    // Los dist-tags son consistentes: una versión nueva con su tag, la
-    // lista POR CLAVE dice los dos, y `latest` sigue donde estaba.
+    // The dist-tags are consistent: a new version with its tag, the
+    // list BY KEY states both, and `latest` stays where it was.
     package(
         &widget,
         &widget_name,
@@ -947,9 +947,9 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         "dist-tags consistentes: lista por clave con latest 1.0.0 y next 1.1.0, cliente npm y contrato HTTP de acuerdo; la versión nueva es una instantánea nueva (ETag distinto)",
     );
 
-    // La metadata muta SIN reescribir el contenido: deprecar crea una
-    // instantánea nueva (otro ETag) y el integrity de cada versión es el
-    // MISMO que antes de la mutación.
+    // The metadata mutates WITHOUT rewriting the content: deprecating creates a
+    // new snapshot (another ETag) and each version's integrity is the
+    // SAME as before the mutation.
     let deprecated = client.run(
         &widget,
         &[
@@ -996,8 +996,8 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         "npm deprecate: instantánea nueva (ETag distinto), deprecated escrito y los digests de ambas versiones intactos",
     );
 
-    // El outbox atómico: cada commit de publicación lleva SU evento, y los
-    // hechos nombran ESTA corrida (el nombre del paquete lleva el pid).
+    // The atomic outbox: each publication commit carries ITS event, and the
+    // facts name THIS run (the package name carries the pid).
     let client = fresh_client().await.expect("client");
     let said = the_events_of(&client, &account, &format!("{repo}/{widget_name}")).await;
     assert!(said > 0, "the publish commits carried their audit events");
@@ -1006,11 +1006,11 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
         &format!("eventos de auditoría de esta ejecución en el outbox: {said}"),
     );
 
-    // El puntero del packument en el GRAFO es la última instantánea: la
-    // ETag servida es el digest de la fila del asset, y su versión
-    // `#packument` guarda el mismo contenido. El tarball y sus coordenadas
-    // ya se comprobaron: el grafo solo guarda coordenadas y referencias,
-    // nunca bytes.
+    // The packument pointer in the GRAPH is the latest snapshot: the
+    // served ETag is the digest of the asset row, and its `#packument`
+    // version holds the same content. The tarball and its coordinates
+    // were already checked: the graph only stores coordinates and references,
+    // never bytes.
     let pointer = vertical
         .store
         .asset(&account, repo, &widget_name)
@@ -1041,8 +1041,8 @@ async fn the_real_npm_client_publishes_and_reads_over_dgraph() {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: los dist-tags bajo DOS ESCRITORES concurrentes: la guarda por clave
-// del packument arbitra, y el estado final es consistente.
+// AC1: dist-tags under TWO concurrent WRITERS: the packument's per-key
+// guard arbitrates, and the final state is consistent.
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1054,11 +1054,11 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
     let repo = "npm-hosted";
     let vertical = Vertical::mount_npm(&account, repo).await;
 
-    // Un paquete con dos versiones y `latest` en la segunda: el estado con
-    // el que los dos escritores van a pelearse por el tag `beta`. La
-    // primera instantánea la siembra el helper; la segunda, el propio
-    // test, con la precondición del digest anterior — la misma forma que
-    // usa la superficie.
+    // A package with two versions and `latest` on the second: the state
+    // the two writers are going to fight over the `beta` tag with. The
+    // first snapshot is seeded by the helper; the second, the test
+    // itself, with the previous digest's precondition -- the same shape
+    // the surface uses.
     let name_text = format!("uat{}-race", the_pid());
     let name = PackageName::parse(&name_text, true).expect("a valid name");
     let now = "2026-01-01T00:00:00Z";
@@ -1117,9 +1117,9 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
     )
     .await;
 
-    // El puntero del packument está donde la siembra lo dejó, antes de
-    // la carrera: si no, el 404 de los escritores no dice nada de la
-    // guarda.
+    // The packument pointer is where the seeding left it, before
+    // the race: otherwise the writers' 404 says nothing about the
+    // guard.
     let before = vertical
         .store
         .asset(&account, repo, &name_text)
@@ -1131,7 +1131,7 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
         "the pointer names the latest seeded snapshot"
     );
 
-    // DOS escritores mueven el MISMO tag a versiones distintas, a la vez.
+    // TWO writers move the SAME tag to different versions, at once.
     let app = vertical.app.clone();
     let tag_url = format!("/npm/{repo}/-/package/{name_text}/dist-tags/beta");
     let left_body = json!("1.0.0").to_string().into_bytes();
@@ -1140,9 +1140,9 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
         send(&app, Method::PUT, &tag_url, Some("alice"), Some(left_body),),
         send(&app, Method::PUT, &tag_url, Some("alice"), Some(right_body),),
     );
-    // Los dos terminan bien: el que pierde la carrera relee y reintenta
-    // con la instantánea nueva (el handler lo absorbe; la guarda por clave
-    // del grafo es la que arbitra).
+    // Both finish fine: the one that loses the race rereads and retries
+    // with the new snapshot (the handler absorbs it; the graph's per-key
+    // guard is what arbitrates).
     assert!(
         left.status.is_success(),
         "the first writer failed with {:?}: {}",
@@ -1156,9 +1156,9 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
         String::from_utf8_lossy(&right.body)
     );
 
-    // El estado final: el tag apunta a UNA de las dos, el packument por
-    // clave lo dice igual que el endpoint de un solo tag, y `latest` no se
-    // movió.
+    // The final state: the tag points to ONE of the two, the per-key
+    // packument states it the same as the single-tag endpoint, and `latest` did not
+    // move.
     let listed = send(
         &vertical.app,
         Method::GET,
@@ -1192,7 +1192,7 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
         Value::String(beta.clone()),
         "the list and the single tag agree"
     );
-    // Y las DOS versiones siguen servibles: mover un tag no toca contenido.
+    // And BOTH versions are still servable: moving a tag does not touch content.
     for version in ["1.0.0", "2.0.0"] {
         let tarball = send(
             &vertical.app,
@@ -1217,8 +1217,8 @@ async fn the_dist_tag_pointer_is_guarded_for_two_writers() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: cursor estable, scoping por cuenta y distractores que NO causan
-// scan global (el probe confirma el índice en los predicados).
+// AC2: stable cursor, per-account scoping and distractors that do NOT cause
+// a global scan (the probe confirms the index on the predicates).
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1252,8 +1252,8 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         )
         .await
         .expect("the noise repository is created");
-    // La cuenta distractora: la MISMA clave de repositorio y los MISMOS
-    // nombres de paquete. Lo que ella guarda no existe aquí.
+    // The distractor account: the SAME repository key and the SAME
+    // package names. What it stores does not exist here.
     store
         .create_repository(
             &other,
@@ -1267,7 +1267,7 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         .await
         .expect("the other repository is created");
 
-    // Los paquetes de la cuenta: seis en npm-hosted.
+    // The account's packages: six in npm-hosted.
     for index in 1..=6u32 {
         let name = PackageName::parse(&format!("pkg-{index:02}"), true).expect("a name");
         seed_a_package(
@@ -1281,9 +1281,9 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         )
         .await;
     }
-    // Distractores de la MISMA cuenta (otro repositorio npm) y de la OTRA
-    // cuenta (el mismo repositorio, los mismos paquetes, diez veces cada
-    // uno). Suficientes para que un scan global destaque.
+    // Distractors from the SAME account (another npm repository) and from the OTHER
+    // account (the same repository, the same packages, ten times each
+    // one). Enough for a global scan to stand out.
     for index in 0..60u32 {
         let name = PackageName::parse(&format!("noise-{index:02}"), true).expect("a name");
         seed_a_package(
@@ -1297,16 +1297,16 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         )
         .await;
     }
-    // Los mismos nombres, un paquete entero por nombre (el distractor
-    // mas fuerte para el scoping), y diez versiones por paquete para el
-    // volumen: sesenta filas de tarball en la otra cuenta. La
-    // instantánea del packument es UNA por nombre — sembrar la misma
-    // instantánea dos veces sería una precondición `Absent` sobre una
-    // ruta ya ocupada, que el contrato rehúsa.
-    // El instante distinto: el MISMO paquete con la MISMA semilla diría
-    // el MISMO digest, y el aislamiento se comprobaría con contenidos
-    // iguales. Con el instante distinto, la instantánea de la otra cuenta
-    // es OTRO contenido en el MISMO camino.
+    // The same names, a whole package per name (the strongest
+    // distractor for scoping), and ten versions per package for
+    // volume: sixty tarball rows in the other account. The
+    // packument snapshot is ONE per name -- seeding the same
+    // snapshot twice would be an `Absent` precondition on an
+    // already occupied path, which the contract refuses.
+    // The different instant: the SAME package with the SAME seed would state
+    // the SAME digest, and isolation would be checked with equal
+    // contents. With the different instant, the other account's snapshot
+    // is OTHER content on the SAME path.
     for index in 1..=6u32 {
         let name = PackageName::parse(&format!("pkg-{index:02}"), true).expect("a name");
         seed_a_package(
@@ -1336,7 +1336,7 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         }
     }
 
-    // El listado de repositorios es DE LA CUENTA.
+    // The repository listing is THE ACCOUNT'S.
     let repositories = store.repositories(&account).await.expect("the listing");
     let keys: Vec<String> = repositories
         .iter()
@@ -1355,10 +1355,10 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         vec!["npm-hosted".to_string()],
     );
 
-    // Búsqueda exacta por paquete: solo el tarball de ESTA cuenta. Ni los
-    // sesenta de la otra cuenta con los mismos nombres, ni los sesenta de
-    // ruido de la propia cuenta. Los packuments no son el paquete por
-    // coordenadas: su coordenada lleva el sufijo #packument.
+    // Exact search by package: only THIS account's tarball. Neither the
+    // sixty of the other account with the same names, nor the sixty of
+    // noise from its own account. Packuments are not the package by
+    // coordinates: their coordinate carries the #packument suffix.
     let started = std::time::Instant::now();
     let page = store
         .search(
@@ -1386,8 +1386,8 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         ),
     );
 
-    // La metadata POR VERSIÓN: las coordenadas completas dicen la fila de
-    // la versión del tarball, por índice y sin scan.
+    // PER-VERSION metadata: the full coordinates state the row of the
+    // tarball's version, by index and without a scan.
     let version = store
         .version(
             &account,
@@ -1408,8 +1408,8 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         .sha256
     );
 
-    // El scoping: el MISMO camino en la OTRA cuenta es OTRO contenido, y
-    // el total de la caminata de ESTA cuenta no cuenta lo de la otra.
+    // Scoping: the SAME path in the OTHER account is OTHER content, and
+    // the total of THIS account's walk does not count the other's.
     let ours = store
         .asset(&account, "npm-hosted", "pkg-01")
         .await
@@ -1429,8 +1429,8 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         "the whole account: 12 in npm-hosted + 120 in npm-noise, without the other account's 60"
     );
 
-    // El cursor estable: la caminata por clave no salta ni duplica aunque
-    // llegue una inserción ANTES de la clave ya vista, como hsp191.
+    // The stable cursor: the key walk neither skips nor duplicates even if
+    // an insertion arrives BEFORE the already seen key, like hsp191.
     let first = store
         .search(
             &account,
@@ -1508,9 +1508,9 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
         "cursor estable en el listado npm tras insertar pkg-00 antes de la clave ya vista: la caminata no salta ni duplica y el tardío queda fuera; el total por cuenta no cuenta los 60 de la otra",
     );
 
-    // El probe del PLAN: los predicados que las consultas npm filtran
-    // llevan índice exacto, y las claves llevan `@upsert` — el servidor es
-    // el que arbitra dos escritores de la misma clave.
+    // The PLAN probe: the predicates the npm queries filter on
+    // carry an exact index, and the keys carry `@upsert` -- the server is
+    // what arbitrates two writers of the same key.
     let probed = [
         ("hodei.catalog.asset.key", true),
         ("hodei.catalog.version.key", true),
@@ -1545,15 +1545,15 @@ async fn the_npm_queries_are_scoped_keyed_and_indexed() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: las lecturas del estado npm dicen lo que el contrato dice.
+// AC2: reads of the npm state say what the contract says.
 // ---------------------------------------------------------------------------
 
-/// El estado npm publicado responde lo que el contrato dice: el puntero del
-/// packument es la última instantánea (su digest y su tamaño), el tarball y
-/// la instantánea vigente se leen por coordenadas, y la caminata de páginas
-/// por cursor de clave recorre cada ruta publicada una vez y en orden.
-/// HSP-314 F4: antes se comparaba con un segundo motor; ahora los
-/// valores esperados salen de lo que la prueba publicó.
+/// The published npm state answers what the contract says: the packument
+/// pointer is the latest snapshot (its digest and its size), the tarball and
+/// the current snapshot are read by coordinates, and the page walk
+/// by key cursor traverses each published path once and in order.
+/// HSP-314 F4: it used to be compared against a second engine; now the
+/// expected values come from what the test published.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_npm_reads_match_the_contract_for_the_published_state() {
     let Some(client) = fresh_client().await else {
@@ -1570,9 +1570,9 @@ async fn the_npm_reads_match_the_contract_for_the_published_state() {
         .await
         .expect("the dgraph repository");
 
-    // El estado: el tarball de cada versión y una instantánea del packument
-    // por estado; la del widget lleva una segunda instantánea (el tag
-    // `beta` movido) que deja la primera en la historia.
+    // The state: each version's tarball and one packument snapshot
+    // per state; the widget's carries a second snapshot (the `beta`
+    // tag moved) that leaves the first in the history.
     let name = PackageName::parse("parity-widget", true).expect("a name");
     let other = PackageName::parse("parity-other", true).expect("a name");
     let now = "2026-01-01T00:00:00Z";
@@ -1586,8 +1586,8 @@ async fn the_npm_reads_match_the_contract_for_the_published_state() {
         let tarball = format!("parity tarball of {}@{version}", package.full()).into_bytes();
         publish_a_tarball(&*dgraph, &account, repo, package, version, &tarball).await;
         let document = a_packument(package, &[(version, tarball.as_slice())], &tags, now);
-        // La segunda instantánea del widget se publica CON la precondición
-        // del digest vigente, como hace la superficie al mutar metadatos.
+        // The widget's second snapshot is published WITH the current
+        // digest's precondition, as the surface does when mutating metadata.
         let previous = if version == "1.1.0" {
             Some(
                 dgraph
@@ -1616,7 +1616,7 @@ async fn the_npm_reads_match_the_contract_for_the_published_state() {
     }
     let (current_digest, current_size) = widget_current.expect("the widget has a snapshot");
 
-    // Por puntero de ruta: la instantánea vigente es la última publicada.
+    // By path pointer: the current snapshot is the latest published.
     let dgraph_pointer = dgraph
         .asset(&account, repo, "parity-widget")
         .await
@@ -1624,8 +1624,8 @@ async fn the_npm_reads_match_the_contract_for_the_published_state() {
     assert_eq!(dgraph_pointer.digest, current_digest);
     assert_eq!(dgraph_pointer.size_bytes, current_size);
 
-    // Por coordenadas: el tarball y la instantánea vigente dicen lo
-    // publicado.
+    // By coordinates: the tarball and the current snapshot state what was
+    // published.
     for (coordinates, digest, size) in [
         (
             PackageCoordinates {
@@ -1652,9 +1652,9 @@ async fn the_npm_reads_match_the_contract_for_the_published_state() {
         assert_eq!(dgraph_version.size_bytes, size);
     }
 
-    // La secuencia de páginas por cursores de clave: cada ruta publicada
-    // (tres tarballs y dos punteros de packument) una vez, en orden, y el
-    // total es el de las rutas.
+    // The sequence of pages by key cursors: each published path
+    // (three tarballs and two packument pointers) once, in order, and the
+    // total is that of the paths.
     let repositories = dgraph.repositories(&account).await.expect("the repos");
     let mut dgraph_page = dgraph
         .search(

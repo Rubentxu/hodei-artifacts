@@ -1,24 +1,24 @@
-//! HSP-228: OCI proxy: pull remoto por digest y etiqueta.
+//! HSP-228: OCI proxy: remote pull by digest and tag.
 //!
-//! Lo que se demuestra aqui, contra el **service de verdad**:
+//! What is demonstrated here, against the **real service**:
 //!
-//! - un manifiesto y sus blobs se sacan de un upstream de distribucion a
-//!   traves de Hodei, **byte a byte**, y el `Docker-Content-Digest` que
-//!   dice la respuesta es el del contenido servido;
-//! - un indice (un manifest-list) conserva sus bytes y las referencias
-//!   entre objetos que declara;
-//! - una etiqueta que se mueve upstream se revalida y se mueve; un digest
-//!   **jamás** cambia: lo que no sea el digest pedido no se sirve;
-//! - un reto que apunta a un realm que no es el declarado, y una
-//!   redireccion a otro origen, **no** llevan la credencial a ningun sitio;
-//! - sin red solo se sirve lo integro y con recibo, y las puertas --Cedar y
-//!   la confianza-- se ejecutan tambien cuando el contenido sale de la
+//! - a manifest and its blobs are pulled from a distribution upstream
+//!   through Hodei, **byte for byte**, and the `Docker-Content-Digest` that
+//!   the response states is that of the served content;
+//! - an index (a manifest-list) preserves its bytes and the references
+//!   between objects that it declares;
+//! - a tag that moves upstream is revalidated and moves; a digest
+//!   **never** changes: anything that is not the requested digest is not served;
+//! - a challenge that points to a realm that is not the declared one, and a
+//!   redirect to another origin, **do not** carry the credential anywhere;
+//! - without network only what is intact and has a receipt is served, and the gates --Cedar and
+//!   trust-- also run when the content comes out of the
 //!   cache.
 //!
-//! El upstream es un registro de distribucion del laboratorio: pide un
-//! token, lo emite en su realm, y sabe hacer las dos cosas hostiles. Por
-//! defecto el camino **no usa la red**: el upstream es local y el contenido
-//! es un fixture.
+//! The upstream is a distribution registry of the lab: it asks for a
+//! token, issues it in its realm, and can do both hostile things. By
+//! default the path **does not use the network**: the upstream is local and the content
+//! is a fixture.
 
 mod support;
 
@@ -36,82 +36,82 @@ use sha2::{Digest, Sha256};
 use support::lab::{Expectation, LabCase, Scope, describe_registry_lab, run_registry_lab_case};
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// La clave del repositorio OCI proxy del despliegue.
+/// The key of the deployment's OCI proxy repository.
 const REPOSITORY: &str = "oci-proxy";
 
-/// El nombre con el que se pide al upstream.
+/// The name with which the upstream is requested.
 const NAME: &str = "oci-proxy";
 
-/// La etiqueta que se pide.
+/// The tag that is requested.
 const TAG: &str = "latest";
 
-/// La cabecera que dice el digest del contenido servido.
+/// The header that states the digest of the served content.
 const DOCKER_CONTENT_DIGEST: HeaderName = HeaderName::from_static("docker-content-digest");
 
-/// La credencial que el upstream exige en su realm.
+/// The credential that the upstream requires in its realm.
 const CREDENTIAL: &str = "secreto-del-laboratorio";
 
-/// El token que el upstream emite.
+/// The token that the upstream issues.
 const TOKEN: &str = "token-del-laboratorio";
 
-/// El nombre de la variable de entorno que lleva la credencial.
+/// The name of the environment variable that carries the credential.
 const CREDENTIAL_VARIABLE: &str = "LAB_OCI_CREDENTIAL";
 
-/// El seeder del catálogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El registro de distribucion del laboratorio.
+// The lab's distribution registry.
 // ---------------------------------------------------------------------------
 
-/// Como se comporta el registro.
+/// How the registry behaves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TheBehaviour {
-    /// Pide token, sirve manifiestos y blobs.
+    /// Asks for a token, serves manifests and blobs.
     Normal,
-    /// Su reto apunta a un realm que **no** es el declarado.
+    /// Its challenge points to a realm that is **not** the declared one.
     HostileRealm,
-    /// El manifiesto responde con una redireccion a otro origen.
+    /// The manifest answers with a redirect to another origin.
     Redirect,
 }
 
-/// Lo que el registro ha recibido.
+/// What the registry has received.
 #[derive(Debug, Clone)]
 struct Seen {
-    /// El camino pedido.
+    /// The requested path.
     path: String,
-    /// La cabecera `Authorization`, si la hubo.
+    /// The `Authorization` header, if there was one.
     authorization: Option<String>,
 }
 
-/// El estado del registro.
+/// The state of the registry.
 struct TheWorld {
-    /// Los manifiestos, por referencia (`latest`, `sha256:...`).
+    /// The manifests, by reference (`latest`, `sha256:...`).
     manifests: Mutex<HashMap<String, Vec<u8>>>,
-    /// Los blobs, por digest.
+    /// The blobs, by digest.
     blobs: Mutex<HashMap<String, Vec<u8>>>,
-    /// Lo que el registro ha recibido.
+    /// What the registry has received.
     seen: Mutex<Vec<Seen>>,
-    /// Como se comporta.
+    /// How it behaves.
     behaviour: Mutex<TheBehaviour>,
-    /// El origen al que apunta el reto hostil, o al que manda la
-    /// redireccion.
+    /// The origin that the hostile challenge points to, or that the
+    /// redirect sends to.
     elsewhere: Mutex<String>,
-    /// El origen de este registro, para el reto.
+    /// The origin of this registry, for the challenge.
     origin: Mutex<String>,
 }
 
-/// El registro de distribucion del laboratorio.
+/// The lab's distribution registry.
 struct TheRegistry {
     port: u16,
     world: Arc<TheWorld>,
 }
 
 impl TheRegistry {
-    /// Arranca un registro vacio.
+    /// Starts an empty registry.
     fn start() -> Self {
         let world = Arc::new(TheWorld {
             manifests: Mutex::new(HashMap::new()),
@@ -127,22 +127,22 @@ impl TheRegistry {
         registry
     }
 
-    /// El puerto donde escucha.
+    /// The port it listens on.
     fn port(&self) -> u16 {
         self.port
     }
 
-    /// El origen del registro.
+    /// The origin of the registry.
     fn origin(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// La base del registro, con barra final.
+    /// The base of the registry, with a trailing slash.
     fn base(&self) -> String {
         format!("{}/", self.origin())
     }
 
-    /// Publica un manifiesto, bajo una referencia.
+    /// Publishes a manifest, under a reference.
     fn publish(&self, reference: &str, bytes: Vec<u8>) {
         self.world
             .manifests
@@ -151,7 +151,7 @@ impl TheRegistry {
             .insert(reference.to_string(), bytes);
     }
 
-    /// Publica un blob.
+    /// Publishes a blob.
     fn publish_blob(&self, digest: &str, bytes: Vec<u8>) {
         self.world
             .blobs
@@ -160,28 +160,28 @@ impl TheRegistry {
             .insert(digest.to_string(), bytes);
     }
 
-    /// Cambia el comportamiento del registro.
+    /// Changes the registry's behaviour.
     fn behave(&self, behaviour: TheBehaviour) {
         *self.world.behaviour.lock().expect("the behaviour") = behaviour;
     }
 
-    /// A donde apunta el reto hostil, o a donde manda la redireccion.
+    /// Where the hostile challenge points, or where the redirect sends.
     fn elsewhere(&self, origin: &str) {
         *self.world.elsewhere.lock().expect("the elsewhere") = origin.to_string();
     }
 
-    /// Lo que el registro ha recibido.
+    /// What the registry has received.
     fn seen(&self) -> Vec<Seen> {
         self.world.seen.lock().expect("the log").clone()
     }
 
-    /// Cuantas veces le han pedido un camino.
+    /// How many times a path has been requested.
     fn hits(&self, path: &str) -> usize {
         self.seen().iter().filter(|one| one.path == path).count()
     }
 }
 
-/// Arranca un servidor con el router del registro y devuelve el puerto.
+/// Starts a server with the registry's router and returns the port.
 fn serve(world: Arc<TheWorld>) -> u16 {
     let app = Router::new()
         .route("/token", get(the_token_endpoint))
@@ -205,10 +205,10 @@ fn serve(world: Arc<TheWorld>) -> u16 {
     port
 }
 
-/// El endpoint de token del registro.
+/// The registry's token endpoint.
 ///
-/// Solo entrega el token a quien presenta la credencial, y dice quien es:
-/// un realm abierto es un realm por el que pasa cualquiera.
+/// It only hands the token to whoever presents the credential, and says who it is:
+/// an open realm is a realm that anyone passes through.
 async fn the_token_endpoint(State(_world): State<Arc<TheWorld>>, headers: HeaderMap) -> Response {
     let expected = format!("Basic {}", base64_of(&format!("lab:{CREDENTIAL}")));
     match headers
@@ -230,7 +230,7 @@ async fn the_token_endpoint(State(_world): State<Arc<TheWorld>>, headers: Header
     }
 }
 
-/// La superficie de la distribucion: manifiestos y blobs.
+/// The distribution surface: manifests and blobs.
 async fn the_distribution(
     State(world): State<Arc<TheWorld>>,
     Path(path): Path<String>,
@@ -249,16 +249,16 @@ async fn the_distribution(
     let origin = world.origin.lock().expect("the origin").clone();
     let elsewhere = world.elsewhere.lock().expect("the elsewhere").clone();
 
-    // El reto: el registro pide un token en su realm. El registro hostil
-    // lo pide en el realm de **otro**, que es lo que un upstream puede
-    // hacer.
+    // The challenge: the registry asks for a token in its realm. The hostile
+    // registry asks for it in the realm of **another**, which is what an upstream can
+    // do.
     let realm = match behaviour {
         TheBehaviour::HostileRealm => format!("{elsewhere}/token"),
         _ => format!("{origin}/token"),
     };
     let challenge = format!("Bearer realm=\"{realm}\",service=\"lab\"");
 
-    // Sin el token, el registro responde con el reto.
+    // Without the token, the registry answers with the challenge.
     let authorized = authorization.as_deref() == Some(&format!("Bearer {TOKEN}"));
     if !authorized {
         return (
@@ -269,7 +269,7 @@ async fn the_distribution(
             .into_response();
     }
 
-    // La redireccion: el manifiesto se ofrece en otro origen.
+    // The redirect: the manifest is offered at another origin.
     if behaviour == TheBehaviour::Redirect {
         return (
             StatusCode::FOUND,
@@ -279,7 +279,7 @@ async fn the_distribution(
             .into_response();
     }
 
-    // `v2/<nombre>/manifests/<referencia>` y `v2/<nombre>/blobs/<digest>`.
+    // `v2/<name>/manifests/<reference>` and `v2/<name>/blobs/<digest>`.
     if let Some((_name, reference)) = path.split_once("/manifests/") {
         let manifest = world
             .manifests
@@ -309,8 +309,8 @@ async fn the_distribution(
     }
 
     if let Some((_name, reference)) = path.split_once("/blobs/") {
-        // El blob se busca por su hexadecimal: la ruta lo nombra con su
-        // algoritmo, y el almacen lo guarda sin el.
+        // The blob is looked up by its hexadecimal: the path names it with its
+        // algorithm, and the store keeps it without it.
         let digest = reference.strip_prefix("sha256:").unwrap_or(reference);
         let blob = world.blobs.lock().expect("the blobs").get(digest).cloned();
         let Some(bytes) = blob else {
@@ -334,17 +334,17 @@ async fn the_distribution(
 }
 
 // ---------------------------------------------------------------------------
-// El origen hostil.
+// The hostile origin.
 // ---------------------------------------------------------------------------
 
-/// El origen hostil: solo registra lo que le llega.
+/// The hostile origin: it only records what reaches it.
 struct TheHostile {
     port: u16,
     seen: Arc<Mutex<Vec<Seen>>>,
 }
 
 impl TheHostile {
-    /// Arranca un origen que solo registra lo que le llega.
+    /// Starts an origin that only records what reaches it.
     fn start() -> Self {
         let seen: Arc<Mutex<Vec<Seen>>> = Arc::new(Mutex::new(Vec::new()));
         let app = Router::new()
@@ -381,22 +381,22 @@ impl TheHostile {
         Self { port, seen }
     }
 
-    /// El origen del hostil.
+    /// The hostile one's origin.
     fn origin(&self) -> String {
         format!("http://127.0.0.1:{}", self.port)
     }
 
-    /// Lo que el hostil ha recibido.
+    /// What the hostile one has received.
     fn seen(&self) -> Vec<Seen> {
         self.seen.lock().expect("the log").clone()
     }
 }
 
 // ---------------------------------------------------------------------------
-// El despliegue.
+// The deployment.
 // ---------------------------------------------------------------------------
 
-/// El despliegue con el registro de distribucion delante.
+/// The deployment with the distribution registry in front.
 struct TheLab {
     deployment: Deployment,
     registry: TheRegistry,
@@ -404,7 +404,7 @@ struct TheLab {
 }
 
 impl TheLab {
-    /// Un despliegue con el registro sembrado y el servicio parado.
+    /// A deployment with the registry seeded and the service stopped.
     fn new() -> Self {
         let deployment = Deployment::new();
         let registry = TheRegistry::start();
@@ -418,10 +418,10 @@ impl TheLab {
         lab
     }
 
-    /// Siembra el repositorio OCI proxy.
+    /// Seeds the OCI proxy repository.
     ///
-    /// El cache no tiene TTL: todo se revalida, que es lo que hace falta
-    /// para ver la revalidacion por `ETag` y el movimiento de una etiqueta.
+    /// The cache has no TTL: everything is revalidated, which is what is needed
+    /// to see the `ETag` revalidation and the movement of a tag.
     fn seed(&self) {
         self.deployment.seed_repositories(&[json!({
             "key": REPOSITORY,
@@ -447,7 +447,7 @@ impl TheLab {
         })]);
     }
 
-    /// El entorno del servicio: la salida permitida y la credencial.
+    /// The service's environment: the allowed egress and the credential.
     fn the_environment(&self) -> Vec<(String, String)> {
         let allowed = format!(
             "127.0.0.1:{};private;http,127.0.0.1:{};private;http",
@@ -464,7 +464,7 @@ impl TheLab {
         ]
     }
 
-    /// Arranca el servicio con la salida permitida.
+    /// Starts the service with the allowed egress.
     fn start(&self) -> support::Service {
         let environment = self.the_environment();
         let borrowed: Vec<(&str, &str)> = environment
@@ -474,7 +474,7 @@ impl TheLab {
         self.deployment.start(&borrowed)
     }
 
-    /// Arranca el servicio en el puerto dado, con lo que se le anade.
+    /// Starts the service on the given port, with what is added to it.
     fn start_on(&self, port: u16, extra: &[(&str, &str)]) -> support::Service {
         let mut environment = self.the_environment();
         environment.extend(
@@ -489,9 +489,9 @@ impl TheLab {
         self.deployment.start_on(port, &borrowed)
     }
 
-    /// Un laboratorio **sin** el repositorio proxy sembrado: el catalogo
-    /// solo tiene las cuentas, y la politica deja a la primera persona
-    /// crear repositorios. Lo que haya de existir lo crea la API publica.
+    /// A lab **without** the proxy repository seeded: the catalog
+    /// only has the accounts, and the policy lets the first person
+    /// create repositories. Whatever has to exist is created by the public API.
     fn unseeded() -> Self {
         let deployment = Deployment::new();
         let registry = TheRegistry::start();
@@ -508,7 +508,7 @@ impl TheLab {
         }
     }
 
-    /// El cuerpo publico que crea el repositorio OCI proxy del laboratorio.
+    /// The public body that creates the lab's OCI proxy repository.
     fn the_creation(&self, upstream_url: &str) -> serde_json::Value {
         json!({
             "name": REPOSITORY,
@@ -537,7 +537,7 @@ impl TheLab {
         })
     }
 
-    /// Crea un repositorio por `POST /api/v1/catalog/repositories`.
+    /// Creates a repository through `POST /api/v1/catalog/repositories`.
     fn create(&self, port: u16, body: &serde_json::Value) -> support::Answer {
         let file = self.a_file("creation.json");
         std::fs::write(&file, body.to_string()).expect("the body is written");
@@ -554,35 +554,35 @@ impl TheLab {
         .run()
     }
 
-    /// Un fichero del despliegue donde dejar el cuerpo de una respuesta.
+    /// A deployment file where to leave the body of a response.
     fn a_file(&self, name: &str) -> PathBuf {
         self.deployment.directory.path().join(name)
     }
 }
 
 // ---------------------------------------------------------------------------
-// Las utilidades.
+// The utilities.
 // ---------------------------------------------------------------------------
 
-/// El digest de unos bytes.
+/// The digest of some bytes.
 fn sha256_of(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
 }
 
-/// Un texto en base64.
+/// A text in base64.
 fn base64_of(text: &str) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(text)
 }
 
-/// El token de la persona que descarga.
+/// The token of the person who downloads.
 fn the_client_token() -> String {
     support::token(FIRST_ACCOUNT, "alice")
 }
 
-/// Un manifiesto de imagen con sus blobs.
+/// An image manifest with its blobs.
 fn the_manifest() -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
     let config = b"{\"architecture\":\"amd64\"}".to_vec();
     let layer = b"contenido-de-la-capa".to_vec();
@@ -610,7 +610,7 @@ fn the_manifest() -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
     )
 }
 
-/// Un indice de imagenes: un manifiesto que apunta a otros.
+/// An image index: a manifest that points to others.
 fn the_index(first: &str, second: &str) -> Vec<u8> {
     json!({
         "schemaVersion": 2,
@@ -634,10 +634,10 @@ fn the_index(first: &str, second: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Siembra el contenido del registro.
+/// Seeds the registry's content.
 ///
-/// Devuelve el manifiesto y el indice, para poder compararlos con lo que
-/// sirve el registro.
+/// Returns the manifest and the index, so they can be compared with what
+/// the registry serves.
 fn the_content(registry: &TheRegistry) -> (Vec<u8>, Vec<u8>) {
     let (manifest, blobs) = the_manifest();
     for (digest, bytes) in &blobs {
@@ -656,10 +656,10 @@ fn the_content(registry: &TheRegistry) -> (Vec<u8>, Vec<u8>) {
 }
 
 // ---------------------------------------------------------------------------
-// Los casos.
+// The cases.
 // ---------------------------------------------------------------------------
 
-/// Los casos que una ejecucion completa tiene que hacer.
+/// The cases that a complete run has to execute.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1_manifest",
@@ -715,7 +715,7 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El titulo y el descargo del informe.
+/// The title and the disclaimer of the report.
 fn the_report() {
     describe_registry_lab(
         "Laboratorio de OCI proxy — informe",
@@ -728,12 +728,12 @@ fn the_report() {
     );
 }
 
-/// El camino del manifiesto.
+/// The manifest's path.
 fn the_manifest_path(reference: &str) -> String {
     format!("/v2/{NAME}/manifests/{reference}")
 }
 
-/// El camino del blob.
+/// The blob's path.
 fn the_blob_path(digest: &str) -> String {
     format!("/v2/{NAME}/blobs/{digest}")
 }
@@ -789,7 +789,7 @@ fn ac1_manifest() {
                     tail.join(" | ")
                 ));
             }
-            // Los bytes son los del upstream, no una reescritura.
+            // The bytes are the upstream's, not a rewrite.
             if answer.body != manifest {
                 return case().failed("los bytes servidos no son los del upstream");
             }
@@ -805,8 +805,8 @@ fn ac1_manifest() {
             if content_type.as_deref() != Some("application/vnd.oci.image.manifest.v1+json") {
                 return case().failed(format!("el tipo de medio fue {content_type:?}"));
             }
-            // El upstream recibio la peticion.
-            // El registro ve el camino sin el prefijo de la superficie.
+            // The upstream received the request.
+            // The registry sees the path without the surface prefix.
             if lab.registry.hits(&format!("{NAME}/manifests/{TAG}")) == 0 {
                 return case().failed("el upstream no recibio la peticion del manifiesto");
             }
@@ -858,8 +858,8 @@ fn ac1_index() {
             if content_type.as_deref() != Some("application/vnd.oci.image.index.v1+json") {
                 return case().failed(format!("el tipo de medio fue {content_type:?}"));
             }
-            // Las referencias entre objetos siguen ahi: un indice que
-            // pierde sus digest no es el mismo indice.
+            // The references between objects are still there: an index that
+            // loses its digests is not the same index.
             let served: serde_json::Value =
                 serde_json::from_slice(&answer.body).unwrap_or(serde_json::Value::Null);
             if served["manifests"].as_array().map(|list| list.len()) != Some(2) {
@@ -998,8 +998,8 @@ fn ac2_tag_moves() {
                 Some(&into),
             )
             .run();
-            // El upstream mueve la etiqueta: el mismo nombre, otro
-            // contenido.
+            // The upstream moves the tag: the same name, other
+            // content.
             let moved =
                 b"{\"schemaVersion\":2,\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"layers\":[]}"
                     .to_vec();
@@ -1062,7 +1062,7 @@ fn ac2_digest_never_changes() {
             let digest = sha256_of(&manifest);
             let into = lab.a_file("la-mentira");
             let mut service = lab.start();
-            // El upstream miente: ofrece otros bytes para ese digest.
+            // The upstream lies: it offers other bytes for that digest.
             let lie = b"contenido-que-no-es-el-que-se-pidio".to_vec();
             lab.registry
                 .publish(&format!("sha256:{digest}"), lie.clone());
@@ -1130,7 +1130,7 @@ fn ac2_hostile_realm() {
             if answer.status == 200 {
                 return case().failed("el pull funciono con un realm que no es el declarado");
             }
-            // El origen hostil no recibio la credencial.
+            // The hostile origin did not receive the credential.
             for seen in lab.hostile.seen() {
                 if seen.authorization.is_some() {
                     return case().failed("la credencial llego al realm que no es el declarado");
@@ -1178,16 +1178,16 @@ fn ac2_redirect() {
                     "Una redireccion a otro origen no lleva la credencial",
                 )
             };
-            // El contenido de un digest **fijado** no se sustituye: lo que
-            // llega de otro origen no es lo que se pidio, y no se sirve.
+            // The content of a **pinned** digest is not replaced: what
+            // arrives from another origin is not what was requested, and is not served.
             if answer.status == 200 {
                 return case().failed("el pull funciono con una redireccion a otro origen");
             }
             if answer.body == b"robado".to_vec() {
                 return case().failed("el contenido del otro origen llego al cliente");
             }
-            // El origen hostil recibio la peticion, pero **sin** la
-            // credencial: la credencial solo viaja a su origen.
+            // The hostile origin received the request, but **without** the
+            // credential: the credential only travels to its own origin.
             for seen in lab.hostile.seen() {
                 if seen.authorization.is_some() {
                     return case().failed("la credencial llego al origen de la redireccion");
@@ -1355,7 +1355,7 @@ fn ac3_offline() {
                 .failed("el primer pull no funciono");
             }
 
-            // El servicio vuelve **sin red**, en el mismo puerto.
+            // The service comes back **without network**, on the same port.
             let mut offline = lab.start_on(port, &[("HODEI_PROXY__OFFLINE", "true")]);
             let answer = Curl::call(
                 offline.port,
@@ -1440,8 +1440,8 @@ fn ac3_gate_on_hit() {
                 .failed("el primer pull no funciono");
             }
 
-            // La politica cambia: la persona ya no puede descargar. El
-            // contenido esta en la cache, y aun asi no se sirve.
+            // The policy changes: the person can no longer download. The
+            // content is in the cache, and even so it is not served.
             lab.deployment.write_policy("");
             let mut service = lab.start_on(port, &[]);
             let answer = Curl::call(
@@ -1663,7 +1663,7 @@ fn ac4_public_creation_refused() {
 }
 
 // ---------------------------------------------------------------------------
-// AC5: un cliente nativo contra el proxy directo.
+// AC5: a native client against the direct proxy.
 // ---------------------------------------------------------------------------
 
 /// The content of the native-client cases: two images, the list that names

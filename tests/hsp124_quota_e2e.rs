@@ -1,21 +1,21 @@
-//! Las cuotas por cuenta de HSP-124, de **caja negra**, sobre el hub real.
+//! HSP-124's per-account quotas, **black box**, over the real hub.
 //!
-//! Lo que se mira aquí no es el ledger (eso ya lo dice el test puro),
-//! sino lo que ve un cliente de verdad:
+//! What is looked at here is not the ledger (the pure test already covers that),
+//! but what a real client sees:
 //!
-//! - Que el `413` llega **antes** de que el contenido rechazado exista:
-//!   la ruta rechazada devuelve `404`, y el contenido que sí entró se
-//!   descarga intacto.
-//! - Que dos subidas simultáneas que no caben las dos **nunca caben las
-//!   dos**: una `201` y un `413`, y la reserva de la rechazada se
-//!   libera — después cabe contenido nuevo.
-//! - Que la saturación responde `429` con `Retry-After`, y que cancelar
-//!   la sesión que satura **libera** el puesto.
-//! - Que `GET /api/v1/account/usage` dice la cuenta propia con números
-//!   propios: el de la otra cuenta son ceros, y sin credencial no hay
-//!   respuesta.
-//! - Que el contenido que la cuenta ya tenía no se cobra dos veces: el
-//!   `usage` lo dice con el mismo número antes y después.
+//! - That the `413` arrives **before** the rejected content exists:
+//!   the rejected path returns `404`, and the content that did get in is
+//!   downloaded intact.
+//! - That two simultaneous uploads that do not both fit **never both
+//!   fit**: one `201` and one `413`, and the rejected one's reservation is
+//!   released -- afterwards new content fits.
+//! - That saturation answers `429` with `Retry-After`, and that cancelling
+//!   the saturating session **releases** the slot.
+//! - That `GET /api/v1/account/usage` reports the own account with its own
+//!   numbers: the other account's are zeros, and without a credential there is no
+//!   response.
+//! - That content the account already had is not charged twice: `usage`
+//!   reports it with the same number before and after.
 
 mod support;
 
@@ -28,46 +28,46 @@ fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Una ruta de la superficie raw del repositorio sembrado.
+/// A path of the seeded repository's raw surface.
 fn the_raw_path(target: &str) -> String {
     format!("/repository/{FIRST_REPOSITORY}/{target}")
 }
 
-/// Un despliegue con el catálogo sembrado.
+/// A deployment with the catalog seeded.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed();
     deployment
 }
 
-/// Un contenido del tamaño pedido, distinto por semilla.
+/// Content of the requested size, different per seed.
 fn the_content(size: usize, seed: u8) -> Vec<u8> {
     (0..size)
         .map(|index| (index as u8).wrapping_add(seed))
         .collect()
 }
 
-/// Escribe un fichero de subida y devuelve su ruta.
+/// Writes an upload file and returns its path.
 fn the_file_in(dir: &Path, name: &str, bytes: &[u8]) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, bytes).expect("the body is written");
     path
 }
 
-/// Un `PUT` raw del fichero dado, con el ritmo que se pida.
+/// A raw `PUT` of the given file, at the requested rate.
 fn publish(port: u16, target: &str, token: &str, file: &Path, limit_rate: Option<&str>) -> Answer {
     let path = the_raw_path(target);
     support::Curl::upload(port, &path, token, file, limit_rate).run()
 }
 
-/// Un `GET` raw.
+/// A raw `GET`.
 fn download(port: u16, target: &str, token: &str) -> Answer {
     let path = the_raw_path(target);
     let into = Path::new(env!("CARGO_TARGET_TMPDIR")).join("downloaded.bin");
     support::Curl::download(port, &path, token, Some(&into)).run()
 }
 
-/// El `usage` de un token, como JSON.
+/// A token's `usage`, as JSON.
 fn usage(port: u16, token: &str) -> serde_json::Value {
     let into = Path::new(env!("CARGO_TARGET_TMPDIR")).join("usage.json");
     let answer = support::Curl::call(
@@ -85,13 +85,13 @@ fn usage(port: u16, token: &str) -> serde_json::Value {
 }
 
 // ---------------------------------------------------------------------------
-// El cupo de almacenamiento: antes de guardar, y sin engañar al borrar.
+// The storage quota: before saving, and without cheating on delete.
 // ---------------------------------------------------------------------------
 
-/// El `413` dice no **antes** de que lo rechazado exista.
+/// The `413` says no **before** the rejected content exists.
 ///
-/// Es la diferencia entre una cuota y un despilfarro con disculpa: si
-/// el contenido rechazado quedara publicado, el `no` sería cosmético.
+/// That is the difference between a quota and waste with an apology: if
+/// the rejected content were left published, the `no` would be cosmetic.
 #[test]
 fn the_stored_quota_refuses_before_anything_lands() {
     let deployment = a_deployment();
@@ -122,7 +122,7 @@ fn the_stored_quota_refuses_before_anything_lands() {
         "a stored quota does not come back: sending later changes nothing"
     );
 
-    // Lo rechazado no existe. Si existiera, la cuota sería un aviso.
+    // What was rejected does not exist. If it existed, the quota would be a warning.
     assert_eq!(
         download(port, "two/second.bin", &token).status,
         404,
@@ -134,7 +134,7 @@ fn the_stored_quota_refuses_before_anything_lands() {
         "the content that fit must still be served"
     );
 
-    // Y queda margen para lo que sí cabe: el rechazo no castiga a nada.
+    // And there is room left for what does fit: the rejection punishes nothing.
     let small = the_file_in(dir, "small.bin", &the_content(50, 3));
     assert_eq!(
         publish(port, "three/small.bin", &token, &small, None).status,
@@ -151,15 +151,15 @@ fn the_stored_quota_refuses_before_anything_lands() {
 }
 
 // ---------------------------------------------------------------------------
-// La carrera: dos subidas que no caben las dos.
+// The race: two uploads that do not both fit.
 // ---------------------------------------------------------------------------
 
-/// Dos subidas simultáneas que no caben las dos **nunca** caben las dos.
+/// Two simultaneous uploads that do not both fit **never** both fit.
 ///
-/// El cuerpo va lento a propósito (`--limit-rate`) para que las dos
-/// corran de verdad solapadas: lo que se prueba es el check-and-reserve
-/// bajo una sola llave, y con cuerpos de cuatro kilobytes no habría
-/// solapamiento que probar.
+/// The body is deliberately slow (`--limit-rate`) so that the two
+/// really run overlapped: what is tested is check-and-reserve
+/// under a single lock, and with four-kilobyte bodies there would be no
+/// overlap to test.
 #[test]
 fn two_concurrent_uploads_that_do_not_both_fit_never_both_land() {
     let deployment = a_deployment();
@@ -196,8 +196,8 @@ fn two_concurrent_uploads_that_do_not_both_fit_never_both_land() {
         deployment.the_log()
     );
 
-    // La reserva de la rechazada se liberó al abortar: el margen que
-    // queda es el del contenido que aterrizó, no el de las dos.
+    // The rejected one's reservation was released on abort: the margin that
+    // remains is that of the content that landed, not of both.
     let room = the_file_in(dir, "room.bin", &the_content(100, 30));
     assert_eq!(
         publish(port, "after/room.bin", &token, &room, None).status,
@@ -214,15 +214,15 @@ fn two_concurrent_uploads_that_do_not_both_fit_never_both_land() {
 }
 
 // ---------------------------------------------------------------------------
-// La saturación:Advice honesto y liberación al cancelar.
+// Saturation: honest advice and release on cancel.
 // ---------------------------------------------------------------------------
 
-/// La tercera subida concurrente recibe `429` con `Retry-After`, y el
-/// puesto se libera al **cancelar** la sesión que satura.
+/// The third concurrent upload receives `429` with `Retry-After`, and the
+/// slot is released on **cancelling** the saturating session.
 ///
-/// La sesión OCI vive entre peticiones — es el caso real de saturación
-/// sostenida — y su ticket viaja dentro de la sesión: cancelarla es
-/// soltar la reserva.
+/// The OCI session lives between requests -- it is the real case of sustained
+/// saturation -- and its ticket travels inside the session: cancelling it is
+/// releasing the reservation.
 #[test]
 fn the_saturation_advises_when_to_come_back_and_cancelling_releases() {
     let deployment = a_deployment();
@@ -271,7 +271,7 @@ fn the_saturation_advises_when_to_come_back_and_cancelling_releases() {
         "the refusal must say when to come back"
     );
 
-    // Cancelar es soltar: la reserva viaja con la sesión.
+    // Cancelling is releasing: the reservation travels with the session.
     let cancelled = support::Curl::call(port, "DELETE", &location, &token, None, None, None).run();
     assert!(
         (200..300).contains(&cancelled.status),
@@ -291,15 +291,15 @@ fn the_saturation_advises_when_to_come_back_and_cancelling_releases() {
 }
 
 // ---------------------------------------------------------------------------
-// La observabilidad: la cuenta propia, y solo la cuenta propia.
+// Observability: the own account, and only the own account.
 // ---------------------------------------------------------------------------
 
-/// El `usage` dice lo que dice la cuota, para el dueño del ledger.
+/// `usage` says what the quota says, for the ledger's owner.
 ///
-/// Los números de la cuenta ajena no se ven por ningún agujero: sin
-/// parámetro de cuenta y con ceros donde la otra tiene bytes. Y el
-/// contenido que ya estaba no se cobra dos veces — eso es lo que el
-/// `usage` puede demostrar y un `201` no.
+/// The other account's numbers are not visible through any hole: no
+/// account parameter and with zeros where the other has bytes. And
+/// content that was already there is not charged twice -- that is what
+/// `usage` can demonstrate and a `201` cannot.
 #[test]
 fn the_usage_says_the_own_account_and_nobody_elses() {
     let deployment = a_deployment();
@@ -337,8 +337,8 @@ fn the_usage_says_the_own_account_and_nobody_elses() {
     assert_eq!(mine["limits"]["max_stored_bytes_per_account"], 2000);
     assert_eq!(mine["limits"]["max_concurrent_uploads_per_account"], 3);
 
-    // La misma suma, en otra ruta: el `CAS` ya la tenía y el ledger lo
-    // sabe decir. Un `usage` que subiera sería una mentira contable.
+    // The same sum, on another path: the `CAS` already had it and the ledger can
+    // say so. A `usage` that went up would be an accounting lie.
     let again = the_file_in(deployment.directory.path(), "seven-again.bin", &content);
     assert_eq!(
         publish(port, "usage/seven-again.bin", &alice, &again, None).status,
@@ -347,7 +347,7 @@ fn the_usage_says_the_own_account_and_nobody_elses() {
     );
     assert_eq!(usage(port, &alice)["stored_bytes"], 600);
 
-    // Bob no ve los números de nadie: los suyos son ceros.
+    // Bob does not see anyone's numbers: his are zeros.
     let theirs = usage(port, &bob);
     assert_eq!(theirs["account"], SECOND_ACCOUNT);
     assert_eq!(theirs["stored_bytes"], 0);

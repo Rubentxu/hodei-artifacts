@@ -1,38 +1,38 @@
-//! HSP-209: el humo del perfil productivo sobre la autoridad única.
+//! HSP-209: the smoke test of the production profile over the single authority.
 //!
-//! AC#1 de HSP-209, probado con el **binario real** y el proceso real:
-//! un despliegue con `RUN_MODE=dgraph` (el fichero `config/dgraph.toml`
-//! de la distribución) arranca contra el alpha vivo y el object store
-//! vivo, y sirve Raw, OCI y confianza **juntos** — el catálogo, la
-//! sesión de push, la decisión de promoción y los bytes viven en las dos
-//! autoridades declaradas, no en una tercera. Lo que esta suite fija:
+//! AC#1 of HSP-209, tested with the **real binary** and the real process:
+//! a deployment with `RUN_MODE=dgraph` (the distribution's `config/dgraph.toml`
+//! file) starts against the live alpha and the live object store,
+//! and serves Raw, OCI and trust **together** -- the catalog, the
+//! push session, the promotion decision and the bytes live in the two
+//! declared authorities, not in a third one. What this suite pins:
 //!
-//! 1. **El arranque no tiene otro motor.** El log anuncia el perfil del
-//!    grafo y ninguna apertura de un almacén local. Un backend que no es el
-//!    grafo está rechazado con nombre: la misma config con
-//!    `db_type = "rocksdb"` muere en el arranque citando el rechazo, sin
-//!    abrir puerto.
-//! 2. **La superficie vertical funciona end-to-end sobre el grafo**:
-//!    crear el repositorio (catálogo Dgraph), publicar por raw y
-//!    descargar el mismo digest (bytes en S3, metadato en el grafo),
-//!    abrir una sesión OCI (journal Dgraph) y promover (decisión durable
-//!    en el grafo). Cada paso se relee **en el servidor** por su clave
-//!    propia — nunca por censos globales: el alpha es compartido con las
-//!    suites de HSP-154/155.
-//! 3. **La evidencia queda escrita.** El log del servicio, las consultas
-//!    DQL y las respuestas HTTP se archivan bajo `target/uat/hsp209/`
-//!    junto a esta sentencia: un PASS sin ficheros en ese directorio no
-//!    es un PASS.
+//! 1. **The startup has no other engine.** The log announces the graph profile
+//!    and no opening of a local store. A backend that is not the
+//!    graph is rejected by name: the same config with
+//!    `db_type = "rocksdb"` dies at startup citing the rejection, without
+//!    opening a port.
+//! 2. **The vertical surface works end-to-end over the graph**:
+//!    create the repository (Dgraph catalog), publish through raw and
+//!    download the same digest (bytes in S3, metadata in the graph),
+//!    open an OCI session (Dgraph journal) and promote (durable decision
+//!    in the graph). Each step is re-read **on the server** by its own
+//!    key -- never by global censuses: the alpha is shared with the
+//!    HSP-154/155 suites.
+//! 3. **The evidence is written.** The service log, the DQL queries
+//!    and the HTTP responses are archived under `target/uat/hsp209/`
+//!    next to this statement: a PASS without files in that directory is not
+//!    a PASS.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como todas las suites del stack:
-//! sin el alpha declarado, la suite se salta a sí misma (exit 0). El
-//! object store es el contenedor compartido de la serie HSP-116 con un
-//! cubo único por proceso: si el proveedor S3 real exigiera credenciales
-//! humanas, su precondición queda documentada en `evidencia.md` — el
-//! humo usa localstack como prueba funcional, igual que HSP-138.
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like all the stack suites:
+//! without the alpha declared, the suite skips itself (exit 0). The
+//! object store is the shared container of the HSP-116 series with a
+//! single bucket per process: if the real S3 provider required human
+//! credentials, its precondition is documented in `evidencia.md` -- the
+//! smoke test uses localstack as a functional proof, like HSP-138.
 //!
-//! **Carril**: `--test-threads=1` (el alpha compartido y la guarda
-//! `@upsert` de las claves; lección HSP-190/219).
+//! **Lane**: `--test-threads=1` (the shared alpha and the `@upsert` guard
+//! of the keys; lesson HSP-190/219).
 
 mod support;
 
@@ -47,18 +47,18 @@ use hodei_graph_client::{GraphClient, GraphClientConfig};
 use serde_json::{Value, json};
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// El marcador con el que la contraseña del alpha se retira del log
-/// archivado y de cualquier TOML de evidencia.
+/// The marker with which the alpha's password is removed from the archived
+/// log and from any evidence TOML.
 const PASSWORD_SENTINEL: &str = "__HSP209_PASSWORD_IN_ENVIRONMENT_ONLY__";
 
-/// El directorio de evidencia de esta tarea, en la raíz del crate.
+/// The evidence directory of this task, at the crate root.
 fn evidence_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/uat/hsp209")
 }
 
-/// La config del alpha desde el entorno de IT (la forma que `connect`
-/// exige, igual que hsp187): endpoint con puerto, TLS con su CA y su
-/// server name declarados, credenciales completas.
+/// The alpha config from the IT environment (the shape `connect`
+/// requires, like hsp187): endpoint with port, TLS with its CA and its
+/// server name declared, complete credentials.
 fn config_from_env() -> Option<GraphClientConfig> {
     let endpoint = std::env::var("HODEI_GRAPH_IT_ENDPOINT").ok()?;
     let ca = std::env::var("HODEI_GRAPH_IT_CA").unwrap_or_default();
@@ -75,8 +75,8 @@ fn config_from_env() -> Option<GraphClientConfig> {
     text.push_str(&format!(
         "\n[credentials]\nuserid = \"{user}\"\npassword = \"{PASSWORD_SENTINEL}\"\n"
     ));
-    // La contraseña real solo vive en el struct del proceso hijo; el TOML
-    // con el centinela es lo que la evidencia puede mostrar.
+    // The real password only lives in the child process's struct; the TOML
+    // with the sentinel is what the evidence may show.
     let mut config =
         GraphClientConfig::from_toml_str(&text).expect("the IT configuration validates");
     if let Some(credentials) = config.credentials.as_mut() {
@@ -85,7 +85,7 @@ fn config_from_env() -> Option<GraphClientConfig> {
     Some(config)
 }
 
-/// Una conexión nueva al alpha, para la lectura de verificación.
+/// A new connection to the alpha, for the verification read.
 async fn fresh_client() -> GraphClient {
     let config = config_from_env().expect("the suite is gated");
     let mut client = GraphClient::connect(config).await.expect("Dgraph connects");
@@ -93,8 +93,8 @@ async fn fresh_client() -> GraphClient {
     client
 }
 
-/// Un nonce por ejecución: ninguna prueba se encuentra con lo que otra dejó
-/// sobre el alpha compartido.
+/// A nonce per execution: no test runs into what another left
+/// on the shared alpha.
 fn nonce() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -103,7 +103,7 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// El repositorio de esta ejecución.
+/// The repository of this execution.
 fn repository_name() -> String {
     format!("repo{}", &nonce()[10..])
 }
@@ -126,8 +126,8 @@ fn container_name() -> String {
     std::env::var("HSP116_S3_CONTAINER").unwrap_or_else(|_| "hodei-hsp116-localstack".to_string())
 }
 
-/// El endpoint S3 del contenedor compartido, levantándolo si hace falta
-/// (la política de reutilización es la de HSP-116/138).
+/// The S3 endpoint of the shared container, raising it if needed
+/// (the reuse policy is that of HSP-116/138).
 fn the_endpoint() -> String {
     let name = container_name();
     let running = docker(&["inspect", "-f", "{{.State.Running}}", &name])
@@ -188,15 +188,15 @@ fn s3_is_alive(address: &str) -> bool {
     body.contains(r#""s3":"available""#) || body.contains(r#""s3":"running""#)
 }
 
-/// El cubo de esta ejecución: dos ejecuciones paralelas no se pisan.
+/// The bucket of this execution: two parallel executions do not step on each other.
 fn the_bucket() -> String {
     format!("hsp209-smoke-{}", std::process::id())
 }
 
-/// Las credenciales del SDK del proceso hijo. No son un secreto —es
-/// LocalStack— pero su valor se busca en el log archivado como se
-/// buscaría el de un bucket policy: si el servicio repite en el log lo
-/// que el SDK le dio, el log es una fuga.
+/// The SDK credentials of the child process. They are not a secret -- it is
+/// LocalStack -- but their value is searched for in the archived log as one
+/// would search for that of a bucket policy: if the service repeats in the log what
+/// the SDK gave it, the log is a leak.
 const S3_ACCESS_KEY: &str = "test";
 const S3_SECRET_KEY: &str = "hsp209-sentinel-secret-not-for-logs";
 
@@ -233,23 +233,23 @@ async fn head_object(client: &Client, bucket: &str, key: &str) -> bool {
         .is_ok()
 }
 
-/// La clave S3 de un digest, la convención del CAS: `blobs/aa/bb/hex`.
+/// The S3 key of a digest, the CAS convention: `blobs/aa/bb/hex`.
 fn blob_key(digest: &str) -> String {
     let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
     format!("blobs/{}/{}/{}", &hex[0..2], &hex[2..4], hex)
 }
 
-/// El digest hex de un contenido.
+/// The hex digest of a content.
 fn the_digest(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-// ————————————————————————————————————————————————————— El arranque real
+// ————————————————————————————————————————————————————— The real startup
 
-/// El puerto que el log dice que el servicio ocupó. El perfil del grafo
-/// loguea en JSON, así que la dirección va seguida de la comilla que
-/// cierra el mensaje: se corta en el primer carácter que no es de
-/// dirección.
+/// The port that the log says the service occupied. The graph profile
+/// logs in JSON, so the address is followed by the quote that
+/// closes the message: it is cut at the first character that is not part of an
+/// address.
 fn the_bound_port(log: &Path) -> Option<u16> {
     let content = std::fs::read_to_string(log).ok()?;
     let line = content
@@ -263,8 +263,8 @@ fn the_bound_port(log: &Path) -> Option<u16> {
     address.rsplit(':').next()?.trim().parse().ok()
 }
 
-/// Quita las secuencias de escape del log (la del arnés embebido es la
-/// misma regla: un puerto con un ANSI pegado no se lee como número).
+/// Strips the escape sequences from the log (the embedded harness's is the
+/// same rule: a port with an ANSI glued to it is not read as a number).
 fn without_the_colors(text: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars();
@@ -284,10 +284,10 @@ fn without_the_colors(text: &str) -> String {
     out
 }
 
-/// El proceso del perfil productivo, con la config **emitida**
-/// (`config/dgraph.toml` vía `RUN_MODE=dgraph`) y el entorno del
-/// operador. Abre su bundle de seguridad con los ficheros que `Deployment`
-/// ya escribió.
+/// The production profile process, with the **emitted** config
+/// (`config/dgraph.toml` via `RUN_MODE=dgraph`) and the operator's
+/// environment. It opens its security bundle with the files that `Deployment`
+/// already wrote.
 struct GraphBoot {
     port: u16,
     child: std::process::Child,
@@ -323,8 +323,8 @@ impl GraphBoot {
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(file));
         if let Some(config) = config_from_env() {
-            // El operador de IT apunta el perfil al alpha real por el
-            // entorno — la misma cadena que HODEI_* permite en producción.
+            // The IT operator points the profile at the real alpha through the
+            // environment -- the same chain that HODEI_* allows in production.
             command
                 .env("HODEI_GRAPH__ENDPOINT", &config.endpoint)
                 .env("HODEI_GRAPH__NAMESPACE", config.namespace.to_string());
@@ -370,8 +370,8 @@ impl GraphBoot {
         std::fs::read_to_string(&self.log).unwrap_or_default()
     }
 
-    /// El log con los centinelas rojos, listo para archivar: ni la
-    /// contraseña del alpha ni el secret del SDK viajan al fichero.
+    /// The log with the red sentinels, ready to archive: neither the
+    /// alpha's password nor the SDK secret travel to the file.
     fn redacted_log(&self) -> String {
         let password = std::env::var("HODEI_GRAPH_IT_PASSWORD").unwrap_or_default();
         let mut log = self
@@ -391,8 +391,8 @@ impl Drop for GraphBoot {
     }
 }
 
-/// Escribe la evidencia de una pasada: cabecera con lo observable (sin
-/// secretos) y el log del servicio saneado.
+/// Writes the evidence of a pass: header with the observable (without
+/// secrets) and the sanitized service log.
 fn archive(evidence: &Path, name: &str, sections: &[(&str, Value)], log: Option<&str>) {
     let mut text = format!(
         "# evidencia HSP-209 — {name}\n\nfecha UTC: {}\n\n",
@@ -414,9 +414,9 @@ fn archive(evidence: &Path, name: &str, sections: &[(&str, Value)], log: Option<
     std::fs::write(evidence.join(name), text).expect("the evidence is writable");
 }
 
-/// La lectura propia en el grafo: DQL por clave exacta sobre un
-/// predicado con índice `@index(exact)`. Devuelve la consulta y si la
-/// clave existe. **Nunca censos globales**: el alpha es compartido.
+/// The own read in the graph: DQL by exact key over a
+/// predicate with an `@index(exact)` index. Returns the query and whether the
+/// key exists. **Never global censuses**: the alpha is shared.
 async fn readback(client: &GraphClient, predicate: &str, key: &str) -> (String, bool) {
     let query = format!(
         "{{ q(func: eq({predicate}, \"{key}\")) {{ uid }} }}",
@@ -440,9 +440,9 @@ async fn readback(client: &GraphClient, predicate: &str, key: &str) -> (String, 
     (query, found)
 }
 
-/// La política del humo: la del arnés (publicar, descargar, promover)
-/// más la creación y lectura de repositorios para alice, que el perfil
-/// del grafo sí sirve (el catálogo Dgraph es la autoridad del metadato).
+/// The smoke test policy: the harness's (publish, download, promote)
+/// plus the creation and reading of repositories for alice, which the graph
+/// profile does serve (the Dgraph catalog is the authority of the metadata).
 fn the_policy() -> String {
     let mut policy = support::the_policy();
     for action in ["CreateRepository", "ReadRepository"] {
@@ -453,10 +453,10 @@ fn the_policy() -> String {
     policy
 }
 
-/// El fichero de política de confianza del humo: `default` sin
-/// requisitos — lo que todo software cumple (el registro vacío del
-/// perfil niega con `PolicyUnavailable`, y el humo necesita la decisión
-/// concedida para leer la clave durable en el grafo).
+/// The smoke test's trust policy file: `default` without
+/// requirements -- what all software satisfies (the profile's empty
+/// registry denies with `PolicyUnavailable`, and the smoke test needs the
+/// decision granted to read the durable key in the graph).
 fn trust_policy_file(evidence: &Path) -> String {
     let policy = hodei_trust_policy::TrustPolicy::new("default", "1", Vec::new());
     let path = evidence.join("trust-policy.json");
@@ -468,8 +468,8 @@ fn trust_policy_file(evidence: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Escribe un cuerpo JSON en el directorio del despliegue y devuelve su
-/// ruta: el arnés manda los cuerpos por fichero (`--data-binary @file`).
+/// Writes a JSON body in the deployment directory and returns its
+/// path: the harness sends bodies by file (`--data-binary @file`).
 fn write_json(deployment: &Deployment, name: &str, body: &Value) -> PathBuf {
     let path = deployment.directory.path().join(name);
     std::fs::write(&path, body.to_string()).expect("the JSON body is written");
@@ -478,8 +478,8 @@ fn write_json(deployment: &Deployment, name: &str, body: &Value) -> PathBuf {
 
 // ——————————————————————————————————————————————————————————————————— tests
 
-/// S0: la puerta de la suite. Sin alpha declarado, todo lo demás se salta
-/// (exit 0), igual que el resto de suites gated del stack.
+/// S0: the suite gate. Without a declared alpha, everything else is skipped
+/// (exit 0), like the rest of the stack's gated suites.
 #[test]
 fn the_suite_is_gated_on_a_real_graph() {
     match config_from_env() {
@@ -488,19 +488,19 @@ fn the_suite_is_gated_on_a_real_graph() {
     }
 }
 
-/// AC#1: el arranque productivo completo. El binario real, con la config
-/// emitida y el alpha + localstack vivos:
+/// AC#1: the complete production startup. The real binary, with the emitted
+/// config and the alpha + localstack alive:
 ///
-/// - el proceso arranca y anuncia el perfil del grafo en el log,
-/// - el log no abre ningún motor local,
-/// - el bundle de seguridad del perfil (ficheros Cedar del arnés,
-///   esquema desde fichero — el persistido sobre grafo es el bloqueador
-///   registrado) permite la superficie completa.
+/// - the process starts and announces the graph profile in the log,
+/// - the log opens no local engine,
+/// - the profile's security bundle (the harness's Cedar files,
+///   schema from file -- the one persisted on the graph is the registered
+///   blocker) allows the complete surface.
 ///
-/// y la superficie vertical **junta** sobre la autoridad única:
-/// crear repositorio → publicar raw → descargar el mismo digest →
-/// objeto en S3 por su clave de CAS → sesión OCI → promoción → decisión
-/// durable. Cada hecho, releído en el servidor por su clave propia.
+/// and the vertical surface **together** over the single authority:
+/// create repository → publish raw → download the same digest →
+/// object in S3 by its CAS key → OCI session → promotion → durable
+/// decision. Each fact, re-read on the server by its own key.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_productive_profile_boots_and_serves_every_vertical_together() {
     if config_from_env().is_none() {
@@ -515,10 +515,10 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
 
     let deployment = Deployment::new();
     deployment.write_policy(&the_policy());
-    // El bundle de seguridad del perfil: los ficheros Cedar del arnés y
-    // el esquema **desde fichero** — la persistencia del esquema sobre el
-    // grafo es el bloqueador registrado, y el gate (los cinco campos
-    // juntos o el arranque muere) se abre aquí igual que en producción.
+    // The profile's security bundle: the harness's Cedar files and
+    // the schema **from file** -- the persistence of the schema on the
+    // graph is the registered blocker, and the gate (the five fields
+    // together or the startup dies) is opened here just as in production.
     let cas = evidence.join("cas-superficie");
     let policy_path = deployment
         .directory
@@ -551,14 +551,14 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
     let port = boot.port;
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // La prueba de arranque: el log anuncia el perfil del grafo.
+    // The startup proof: the log announces the graph profile.
     let log = boot.redacted_log();
     assert!(
         log.contains("Bootstrap completed successfully on the graph profile"),
         "the boot must announce the graph profile:\n{log}"
     );
 
-    // 1. El repositorio: creado por la API, persistido en el grafo.
+    // 1. The repository: created by the API, persisted in the graph.
     let repository = repository_name();
     let create_body = write_json(
         &deployment,
@@ -582,7 +582,7 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
         boot.log_text()
     );
 
-    // 2. Raw: publicar un fichero por la superficie cruda.
+    // 2. Raw: publish a file through the raw surface.
     let content = format!("hsp209-smoke-{}", nonce()).into_bytes();
     let digest = the_digest(&content);
     let file = deployment.directory.path().join("hsp209.bin");
@@ -615,12 +615,12 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
         "the served bytes are the published bytes"
     );
 
-    // 3. El byte está en S3 por su clave de CAS — la autoridad de los
-    // bytes es el cubo, no el disco local.
+    // 3. The byte is in S3 by its CAS key -- the authority of the
+    // bytes is the bucket, not the local disk.
     let in_s3 = head_object(&s3, &bucket, &blob_key(&digest)).await;
     assert!(in_s3, "the blob must live in the S3 CAS");
 
-    // 4. OCI: la sesión de push abre y su journal vive en el grafo.
+    // 4. OCI: the push session opens and its journal lives in the graph.
     let session = Curl::call(
         port,
         "POST",
@@ -642,7 +642,7 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
         .expect("the session answers with its location");
     let id = location.rsplit('/').next().unwrap_or("").to_string();
 
-    // 5. Confianza: promover el digest publicado.
+    // 5. Trust: promote the published digest.
     let promote_body = write_json(
         &deployment,
         "promote.json",
@@ -675,8 +675,8 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
         .expect("the decision names itself")
         .to_string();
 
-    // 6. La lectura en el servidor, por clave propia y solo por clave
-    // propia (membresía; jamás censos sobre el alpha compartido).
+    // 6. The read on the server, by own key and only by own
+    // key (membership; never censuses over the shared alpha).
     let client = fresh_client().await;
     let namespace = std::env::var("HODEI_GRAPH_IT_NAMESPACE").unwrap_or_else(|_| "0".to_string());
     let (q_repository, repository_present) = readback(
@@ -754,10 +754,10 @@ async fn the_productive_profile_boots_and_serves_every_vertical_together() {
     drop(boot);
 }
 
-/// AC#1 (la mitad explícita del rechazo): el **mismo** arranque real que
-/// arriba, declarando el motor embebido retirado
-/// (`HODEI_DATABASE__DB_TYPE=rocksdb`) sobre el perfil del grafo, debe morir
-/// citando el rechazo y sin abrir puerto.
+/// AC#1 (the explicit half of the rejection): the **same** real startup as
+/// above, declaring the retired embedded engine
+/// (`HODEI_DATABASE__DB_TYPE=rocksdb`) over the graph profile, must die
+/// citing the rejection and without opening a port.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_real_boot_refuses_the_rocksdb_fallback_by_name() {
     if config_from_env().is_none() {

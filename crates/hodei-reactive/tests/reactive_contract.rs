@@ -29,7 +29,7 @@ use hodei_reactive::runtime::{
     DispatchReport, ExecutionStore, InMemoryExecutionStore, ReactiveRuntime,
 };
 
-/// Un behaviour de prueba que cuenta lo que hizo.
+/// A test behaviour that counts what it did.
 struct CountingBehavior {
     name: String,
     subscription: Subscription,
@@ -108,7 +108,7 @@ impl Behavior for CountingBehavior {
     }
 }
 
-/// La cuenta de las decisiones pedidas.
+/// The count of the decisions requested.
 struct RecordingDecisions {
     asked: Arc<Mutex<Vec<(String, ReasonCode)>>>,
 }
@@ -132,7 +132,7 @@ impl DecisionRequester for RecordingDecisions {
     }
 }
 
-/// El radio de impacto de prueba.
+/// The test blast radius.
 struct StubRadius {
     impacted: Vec<ImpactedSubject>,
 }
@@ -148,7 +148,7 @@ impl BlastRadiusSource for StubRadius {
     }
 }
 
-/// El caso de prueba.
+/// The test case.
 #[derive(Clone)]
 struct StubCases {
     opened: Arc<Mutex<Vec<String>>>,
@@ -172,8 +172,8 @@ impl SecurityCaseSink for StubCases {
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// Un behavior se registra, se suscribe a un evento y se ejecuta cuando el
-/// evento encaja.
+/// A behaviour registers, subscribes to an event and runs when the
+/// event matches.
 #[tokio::test]
 async fn a_behaviour_runs_when_the_event_matches() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -185,7 +185,7 @@ async fn a_behaviour_runs_when_the_event_matches() {
     );
     runtime.register(behaviour.clone());
 
-    // Un evento que no encaja: el comportamiento no corre.
+    // An event that does not match: the behaviour does not run.
     let other = Event::new(
         "ev-other",
         EventKind::ExceptionExpired,
@@ -195,7 +195,7 @@ async fn a_behaviour_runs_when_the_event_matches() {
     runtime.dispatch(other, Utc::now()).await.expect("dispatch");
     assert_eq!(behaviour.calls(), 0, "the behaviour is not interested");
 
-    // Y uno que si.
+    // And one that does.
     let event = Event::new(
         "ev-1",
         EventKind::VulnerabilityAccepted,
@@ -213,8 +213,8 @@ async fn a_behaviour_runs_when_the_event_matches() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// La traza de ejecucion es durable, y un fallo reintenta con la
-/// semantica declarada.
+/// The execution trace is durable, and a failure retries with the
+/// declared semantics.
 #[tokio::test]
 async fn the_trace_is_durable_and_a_failure_retries() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -233,7 +233,7 @@ async fn the_trace_is_durable_and_a_failure_retries() {
         Utc::now(),
     );
 
-    // La primera vez falla, y el fallo queda escrito con su motivo.
+    // The first time it fails, and the failure is written with its reason.
     let report = runtime
         .dispatch(event.clone(), Utc::now())
         .await
@@ -248,7 +248,7 @@ async fn the_trace_is_durable_and_a_failure_retries() {
     );
     assert_eq!(execution.attempts, 1);
 
-    // Y el registro es durable: esta en el almacen, no solo en el informe.
+    // And the record is durable: it is in the store, not just in the report.
     let stored = store
         .execution_of("failing:ev-1")
         .await
@@ -262,7 +262,7 @@ async fn the_trace_is_durable_and_a_failure_retries() {
         "and the trace says why it failed"
     );
 
-    // La segunda vez reintenta, y el numero de intentos sube.
+    // The second time it retries, and the attempt count goes up.
     let report = runtime.dispatch(event, Utc::now()).await.expect("dispatch");
     let execution = report
         .execution_of("failing")
@@ -272,8 +272,8 @@ async fn the_trace_is_durable_and_a_failure_retries() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// La guarda de presupuesto corta la cadena cuando se excede, y el corte
-/// queda en la traza.
+/// The budget guard cuts the chain when it is exceeded, and the cut
+/// is in the trace.
 #[tokio::test]
 async fn the_budget_cuts_the_chain_and_the_cut_is_in_the_trace() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -286,7 +286,7 @@ async fn the_budget_cuts_the_chain_and_the_cut_is_in_the_trace() {
         },
     );
 
-    // Un comportamiento que causa otro, que causa otro: un ciclo.
+    // A behaviour that causes another, which causes another: a cycle.
     let caused = Event::new(
         "ev-caused",
         EventKind::DecisionTaken,
@@ -315,7 +315,7 @@ async fn the_budget_cuts_the_chain_and_the_cut_is_in_the_trace() {
     let cut = report.cut.expect("the cut");
     assert!(cut.contains("budget"), "and it says why: {cut}");
 
-    // Y el corte queda en la traza, con su registro.
+    // And the cut is in the trace, with its record.
     let records = store.executions().await;
     assert!(
         records
@@ -327,8 +327,8 @@ async fn the_budget_cuts_the_chain_and_the_cut_is_in_the_trace() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// Los efectos secundarios son idempotentes, y repetir la reaccion no
-/// duplica el efecto.
+/// The side effects are idempotent, and repeating the reaction does not
+/// duplicate the effect.
 #[tokio::test]
 async fn the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -354,7 +354,7 @@ async fn the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them()
     assert_eq!(first.applied.len(), 1);
     assert_eq!(first.suppressed.len(), 0);
 
-    // El mismo evento, otra vez.
+    // The same event, again.
     let second = runtime.dispatch(event, Utc::now()).await.expect("dispatch");
     assert_eq!(second.applied.len(), 0, "the effect is not applied twice");
     assert_eq!(second.duplicates.len(), 1, "and the repetition is reported");
@@ -369,11 +369,11 @@ async fn the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them()
         "and the behaviour did not run the second time"
     );
 
-    // Y en el almacen hay un solo efecto.
+    // And in the store there is a single effect.
     assert_eq!(store.applied_effects().await.len(), 1);
 
-    // Y un evento DISTINTO que produce el mismo efecto lo suprime, en vez
-    // de aplicarlo dos veces: la clave es la del efecto, no la del evento.
+    // And a DIFFERENT event that produces the same effect suppresses it, instead
+    // of applying it twice: the key is that of the effect, not that of the event.
     let other = Event::new(
         "ev-2",
         EventKind::VulnerabilityAccepted,
@@ -392,8 +392,8 @@ async fn the_effects_are_idempotent_and_the_repetition_does_not_duplicate_them()
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// Un CVE nuevo sobre un artefacto desplegado dispara la reevaluacion y, si
-/// procede, el caso.
+/// A new CVE over a deployed artifact triggers the reevaluation and, if
+/// it applies, the case.
 #[tokio::test]
 async fn a_new_vulnerability_triggers_the_reevaluation_and_the_case() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -427,7 +427,7 @@ async fn a_new_vulnerability_triggers_the_reevaluation_and_the_case() {
     );
     let report = runtime.dispatch(event, Utc::now()).await.expect("dispatch");
 
-    // La reevaluacion se pidio para lo que la vulnerabilidad alcanza.
+    // The reevaluation was requested for what the vulnerability reaches.
     let asked = decisions
         .asked
         .lock()
@@ -439,16 +439,16 @@ async fn a_new_vulnerability_triggers_the_reevaluation_and_the_case() {
             .all(|(_, reason)| *reason == ReasonCode::VulnerabilityImpacted)
     );
 
-    // Y el caso se abrio.
+    // And the case was opened.
     let opened = cases.opened.lock().expect("the recorder is not poisoned");
     assert_eq!(opened.len(), 1);
     assert_eq!(opened[0], "GHSA-1");
 
-    // Y los efectos son uno por sujeto.
+    // And the effects are one per subject.
     assert_eq!(report.applied.len(), 2);
 }
 
-/// Y una vulnerabilidad que no toca nada no reevalua nada.
+/// And a vulnerability that touches nothing reevaluates nothing.
 #[tokio::test]
 async fn a_vulnerability_that_touches_nothing_reevaluates_nothing() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -486,7 +486,7 @@ async fn a_vulnerability_that_touches_nothing_reevaluates_nothing() {
 
 // ───────────────────────────── AC7 ─────────────────────────────
 
-/// La reconstruccion no repite los efectos externos.
+/// The reconstruction does not repeat the external effects.
 #[tokio::test]
 async fn the_replay_does_not_repeat_the_external_effect() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -505,7 +505,7 @@ async fn the_replay_does_not_repeat_the_external_effect() {
         Utc::now(),
     );
 
-    // La primera vez, el efecto pasa.
+    // The first time, the effect goes through.
     let first = runtime
         .dispatch(event.clone(), Utc::now())
         .await
@@ -513,7 +513,7 @@ async fn the_replay_does_not_repeat_the_external_effect() {
     assert_eq!(first.applied.len(), 1);
     assert_eq!(behaviour.calls(), 1);
 
-    // La reconstruccion lee lo que paso y NO lo repite.
+    // The reconstruction reads what happened and does NOT repeat it.
     let replayed = runtime.replay(event, Utc::now()).await.expect("replay");
     assert_eq!(
         replayed.applied.len(),
@@ -531,7 +531,7 @@ async fn the_replay_does_not_repeat_the_external_effect() {
 
 // ───────────────────────────── AC6 ─────────────────────────────
 
-/// La caducidad de una excepcion dispara su reaccion.
+/// The expiry of an exception triggers its reaction.
 #[tokio::test]
 async fn the_expiry_of_an_exception_triggers_its_reaction() {
     let store = Arc::new(InMemoryExecutionStore::empty());
@@ -557,7 +557,7 @@ async fn the_expiry_of_an_exception_triggers_its_reaction() {
     assert_eq!(report.applied.len(), 1);
 }
 
-/// Y la conclusion del SPIKE-006 esta escrita, con su razon.
+/// And the conclusion of SPIKE-006 is written, with its reason.
 #[test]
 fn the_conclusion_of_spike_006_is_written_down() {
     let source = include_str!("../src/lib.rs");
@@ -571,7 +571,7 @@ fn the_conclusion_of_spike_006_is_written_down() {
     );
 }
 
-/// Y el informe de un despacho cuenta lo que paso, para el que lo lee.
+/// And the report of a dispatch tells what happened, for whoever reads it.
 #[tokio::test]
 async fn the_report_says_what_happened() {
     let store = Arc::new(InMemoryExecutionStore::empty());

@@ -1,7 +1,7 @@
-//! La UAT de M9: el hub de artefactos de confianza.
+//! The M9 UAT: the trusted artifact hub.
 //!
-//! La UAT corre sobre Hodei Artifacts y fixtures locales, sin integraciones
-//! obligatorias con otros productos.
+//! The UAT runs on Hodei Artifacts and local fixtures, without mandatory
+//! integrations with other products.
 
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ use hodei_hub::blob::{FileBlobStore, InMemoryBlobStore};
 use hodei_hub::hub::{ArtifactHub, Availability, PromotionError, TrustVerdict};
 use hodei_hub::oci::{MANIFEST_MEDIA_TYPE, OciManifest};
 
-/// El resultado de un escenario, tal como queda registrado.
+/// A scenario's result, as it is recorded.
 fn record(scenario: &str, outcome: Result<(), String>) {
     match outcome {
         Ok(()) => println!("{scenario}: PASSED"),
@@ -19,12 +19,12 @@ fn record(scenario: &str, outcome: Result<(), String>) {
     }
 }
 
-/// El hub de la UAT.
+/// The UAT's hub.
 fn the_hub() -> ArtifactHub {
     ArtifactHub::new(Arc::new(InMemoryBlobStore::empty()))
 }
 
-/// El manifiesto de una imagen de ejemplo.
+/// An example image's manifest.
 fn a_manifest() -> Vec<u8> {
     serde_json::json!({
         "schemaVersion": 2,
@@ -44,7 +44,7 @@ fn a_manifest() -> Vec<u8> {
 
 // ───────────────────────────── M9-UAT-01 ─────────────────────────────
 
-/// M9-UAT-01 La admision direccionada por contenido.
+/// M9-UAT-01 Content-addressed admission.
 ///
 /// Given OCI artifact bytes B, when ingested, then storage identity is
 /// immutable digest D and retrieving D returns byte-identical content
@@ -59,11 +59,11 @@ async fn m9_uat_01_the_ingest_is_content_addressed() {
         let bytes = b"the bytes of the image layer".to_vec();
         let ingested = hub.ingest(&bytes).await.map_err(|e| e.to_string())?;
 
-        // La identidad es el digest, y es inmutable.
+        // The identity is the digest, and it is immutable.
         let digest = ingested.digest.clone();
         assert_eq!(digest, ContentDigest::of_bytes(&bytes));
 
-        // Y lo que sale por el digest es IDENTICO y verificado por el digest.
+        // And what comes out by the digest is IDENTICAL and verified by the digest.
         let read = hub.bytes_of(&digest).await.map_err(|e| e.to_string())?;
         assert_eq!(read, bytes, "los bytes son los mismos, byte a byte");
         assert_eq!(
@@ -72,8 +72,8 @@ async fn m9_uat_01_the_ingest_is_content_addressed() {
             "y el digest de lo leido es el pedido"
         );
 
-        // Y la identidad no cambia por el canal: el artefacto sigue siendo
-        // el mismo digest antes y despues de la promocion.
+        // And the identity does not change by channel: the artifact remains
+        // the same digest before and after promotion.
         let allowing = TrustVerdict::allowing("dec-1", "1.0.0");
         let promoted = hub
             .promote(&digest, Some(&allowing), "alice", Utc::now())
@@ -89,7 +89,7 @@ async fn m9_uat_01_the_ingest_is_content_addressed() {
 
 // ───────────────────────────── M9-UAT-02 ─────────────────────────────
 
-/// M9-UAT-02 La cuarentena por defecto.
+/// M9-UAT-02 Quarantine by default.
 ///
 /// Given newly ingested artifact lacks TrustDecision, then it is not
 /// visible in trusted/promotion channel.
@@ -102,7 +102,7 @@ async fn m9_uat_02_the_quarantine_is_the_default() {
             .await
             .map_err(|e| e.to_string())?;
 
-        // No hay decision, luego no esta en el canal de confianza.
+        // There is no decision, so it is not in the trust channel.
         assert_eq!(ingested.availability, Availability::Quarantined);
         assert!(
             hub.trusted().is_empty(),
@@ -118,7 +118,7 @@ async fn m9_uat_02_the_quarantine_is_the_default() {
 
 // ───────────────────────────── M9-UAT-03 ─────────────────────────────
 
-/// M9-UAT-03 La promocion con decision.
+/// M9-UAT-03 Promotion with a decision.
 ///
 /// Given artifact has ALLOW decision for trusted publication, when
 /// authorized promotion occurs, then bytes are not modified/copied under a
@@ -136,14 +136,14 @@ async fn m9_uat_03_the_trust_promotion_keeps_the_digest() {
             .await
             .map_err(|e| e.to_string())?;
 
-        // El canal de confianza referencia el digest EXACTO.
+        // The trust channel references the EXACT digest.
         assert_eq!(promoted.digest, ingested.digest);
         let trusted = hub.trusted();
         assert_eq!(trusted.len(), 1);
         assert_eq!(trusted[0].digest, ingested.digest);
 
-        // Y los bytes no se han modificado ni se han copiado bajo otra
-        // identidad: son los mismos bytes con el mismo digest.
+        // And the bytes have not been modified or copied under another
+        // identity: they are the same bytes with the same digest.
         let read = hub
             .bytes_of(&trusted[0].digest)
             .await
@@ -151,7 +151,7 @@ async fn m9_uat_03_the_trust_promotion_keeps_the_digest() {
         assert_eq!(read, bytes);
         assert_eq!(ContentDigest::of_bytes(&read), ingested.digest);
 
-        // Y sale de la cuarentena.
+        // And it leaves quarantine.
         assert!(hub.quarantine().is_empty());
         Ok(())
     }
@@ -162,7 +162,7 @@ async fn m9_uat_03_the_trust_promotion_keeps_the_digest() {
 
 // ───────────────────────────── M9-UAT-04 ─────────────────────────────
 
-/// M9-UAT-04 La promocion denegada.
+/// M9-UAT-04 Denied promotion.
 ///
 /// Given DENY TrustDecision, when promotion is attempted, then operation
 /// is rejected and audit trace references decision/reasons.
@@ -188,7 +188,7 @@ async fn m9_uat_04_the_denied_promotion_is_rejected_and_traced() {
             .await
             .expect_err("una decision que deniega no promociona");
 
-        // Y el error dice cual fue la decision y sus motivos.
+        // And the error says which decision it was and its reasons.
         match &error {
             PromotionError::Denied {
                 decision_id,
@@ -201,7 +201,7 @@ async fn m9_uat_04_the_denied_promotion_is_rejected_and_traced() {
             other => panic!("el error deberia ser el de la decision: {other:?}"),
         }
 
-        // Y la traza los referencia.
+        // And the trace references them.
         let audits = hub.audits();
         assert_eq!(audits.len(), 1);
         assert_eq!(audits[0].decision_id, "dec-9");
@@ -209,7 +209,7 @@ async fn m9_uat_04_the_denied_promotion_is_rejected_and_traced() {
         assert_eq!(audits[0].by, "alice");
         assert_eq!(audits[0].reasons.len(), 2);
 
-        // Y el canal de confianza sigue vacio.
+        // And the trust channel remains empty.
         assert!(hub.trusted().is_empty());
         Ok(())
     }
@@ -220,7 +220,7 @@ async fn m9_uat_04_the_denied_promotion_is_rejected_and_traced() {
 
 // ───────────────────────────── M9-UAT-05 ─────────────────────────────
 
-/// M9-UAT-05 La coexistencia con el registro externo.
+/// M9-UAT-05 Coexistence with the external registry.
 ///
 /// Given the catalog contains an artifact with a fixture external OCI
 /// reference, then Hodei can ingest evidence/reference it without requiring
@@ -230,7 +230,7 @@ async fn m9_uat_05_the_external_registry_coexists() {
     let result: Result<(), String> = async {
         let hub = the_hub();
 
-        // El artefacto vive en el registro externo: Hodei lo referencia.
+        // The artifact lives in the external registry: Hodei references it.
         let external = ContentDigest::of_bytes(b"the bytes in the external registry");
         let referenced = hub.reference(external.clone(), "registry.example.com/app:1.0.0");
 
@@ -240,10 +240,10 @@ async fn m9_uat_05_the_external_registry_coexists() {
             Some("registry.example.com/app:1.0.0")
         );
 
-        // Hodei lo CITA (lo tiene en el catalogo) sin haberlo migrado.
+        // Hodei CITES it (it has it in the catalog) without having migrated it.
         assert!(hub.artifact(&external).is_some(), "lo tiene en el catalogo");
 
-        // Y NO tiene sus bytes, y no dice que los tenga.
+        // And it does NOT have its bytes, and does not claim to.
         assert!(
             hub.bytes_of(&external).await.is_err(),
             "no hay migracion, y no se inventa"
@@ -261,14 +261,14 @@ async fn m9_uat_05_the_external_registry_coexists() {
 
 // ───────────────────────────── M9-UAT-06 ─────────────────────────────
 
-/// M9-UAT-06 La compatibilidad de OCI.
+/// M9-UAT-06 OCI compatibility.
 ///
 /// Selected OCI client push/pull flows pass documented compatibility suite
 /// for supported subset. Unsupported semantics are explicit.
 #[tokio::test]
 async fn m9_uat_06_the_oci_subset_is_compatible_and_its_limits_are_explicit() {
     let result: Result<(), String> = async {
-        // El push: el manifiesto y las capas entran por su digest.
+        // The push: the manifest and layers enter by their digest.
         let hub = the_hub();
         let manifest = a_manifest();
         let read = OciManifest::read(&manifest).map_err(|e| e.to_string())?;
@@ -276,7 +276,7 @@ async fn m9_uat_06_the_oci_subset_is_compatible_and_its_limits_are_explicit() {
         assert_eq!(digests.len(), 2, "la configuracion y la capa");
 
         for digest in &digests {
-            // El pull: lo que sale por el digest es lo que entro.
+            // The pull: what comes out by the digest is what went in.
             let blob = format!("the bytes of the blob {}", digest.value).into_bytes();
             let ingested = hub.ingest(&blob).await.map_err(|e| e.to_string())?;
             assert_eq!(
@@ -291,7 +291,7 @@ async fn m9_uat_06_the_oci_subset_is_compatible_and_its_limits_are_explicit() {
             assert_eq!(read_back, blob, "y el pull devuelve los mismos bytes");
         }
 
-        // Y lo que NO se soporta es explicito, con su error.
+        // And what is NOT supported is explicit, with its error.
         let index = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.image.index.v1+json",
@@ -308,9 +308,9 @@ async fn m9_uat_06_the_oci_subset_is_compatible_and_its_limits_are_explicit() {
             "y lo dice con su limitacion: {error}"
         );
 
-        // Y SE DECLARA QUE NO HAY SERVIDOR OCI: la compatibilidad probada
-        // es del subconjunto, no del protocolo. Esta afirmacion es la que
-        // evita que la UAT prometa mas de lo que demuestra.
+        // And IT IS DECLARED THAT THERE IS NO OCI SERVER: the proven compatibility
+        // is of the subset, not of the protocol. This statement is what
+        // keeps the UAT from promising more than it demonstrates.
         let source = include_str!("../src/lib.rs");
         assert!(
             source.contains("no compite como almacen"),
@@ -325,7 +325,7 @@ async fn m9_uat_06_the_oci_subset_is_compatible_and_its_limits_are_explicit() {
 
 // ───────────────────────────── M9-UAT-07 ─────────────────────────────
 
-/// M9-UAT-07 La regla de admision de las funciones antiguas.
+/// M9-UAT-07 The admission rule for old features.
 ///
 /// Before enabling Maven/npm or legacy batch/chunk features, then product
 /// need, protocol spike and new UAT must exist; old code presence alone is
@@ -333,7 +333,7 @@ async fn m9_uat_06_the_oci_subset_is_compatible_and_its_limits_are_explicit() {
 #[test]
 fn m9_uat_07_the_legacy_features_are_not_admitted_without_cause() {
     let result: Result<(), String> = {
-        // La regla esta escrita.
+        // The rule is written down.
         let adr = include_str!(
             "../../../docs/roadmaps/hodei-artifacts-graph-first/ADR/015-the-trusted-hub-is-an-enforcement-point-not-a-store.md"
         );
@@ -346,13 +346,13 @@ fn m9_uat_07_the_legacy_features_are_not_admitted_without_cause() {
             "y dice lo que hace falta: spike de protocolo y UAT nueva"
         );
 
-        // Y no hay codigo de maven ni de npm: la presencia del codigo viejo
-        // no es un argumento, y de hecho no hay.
+        // And there is no maven or npm code: the presence of the old code
+        // is not an argument, and in fact there is none.
         let cargo = include_str!("../Cargo.toml");
         assert!(!cargo.contains("maven"), "no hay maven");
         assert!(!cargo.contains("npm"), "no hay npm");
 
-        // Y el subconjunto de OCI no incluye lo no soportado.
+        // And the OCI subset does not include what is unsupported.
         let source = include_str!("../src/oci.rs");
         assert!(
             source.contains("UNSUPPORTED"),

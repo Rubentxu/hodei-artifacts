@@ -1,13 +1,13 @@
-//! Cargo hosted de HSP-119 contra el cliente real (`cargo`).
+//! Cargo hosted of HSP-119 against the real client (`cargo`).
 //!
-//! El `cargo` publica un crate contra un servicio de verdad, lo anade a
-//! un proyecto consumidor con `cargo add` y lo compila con `cargo build`:
-//! el indice sparse, la descarga y la comprobacion del `cksum` las hace
-//! el propio cliente, no este test. Hace falta `cargo` en el PATH: sin
-//! el, la suite **falla** diciendo que falta. La credencial va en el
-//! entorno (`CARGO_REGISTRIES_HODEI_TOKEN`), nunca en argv, y cada
-//! ejecucion usa su propio `CARGO_HOME`: nada se lee ni se escribe fuera
-//! del directorio del despliegue.
+//! `cargo` publishes a crate against a real service, adds it to
+//! a consumer project with `cargo add` and compiles it with `cargo build`:
+//! the sparse index, the download and the `cksum` check are done by
+//! the client itself, not this test. `cargo` is required in the PATH: without
+//! it, the suite **fails** saying it is missing. The credential goes in the
+//! environment (`CARGO_REGISTRIES_HODEI_TOKEN`), never in argv, and each
+//! run uses its own `CARGO_HOME`: nothing is read or written outside
+//! the deployment directory.
 
 mod support;
 
@@ -16,13 +16,13 @@ use std::process::Command;
 
 use support::{Deployment, FIRST_ACCOUNT};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Exige el `cargo` de linea de ordenes.
+/// Requires the command-line `cargo`.
 fn require_cargo() {
     let found = Command::new("cargo")
         .arg("--version")
@@ -35,29 +35,29 @@ fn require_cargo() {
     );
 }
 
-/// El resultado de una ejecucion del cliente.
+/// The result of a client run.
 struct Run {
-    /// Si el cliente termino bien.
+    /// Whether the client finished successfully.
     ok: bool,
-    /// Lo que dijo, por stdout y por stderr.
+    /// What it said, on stdout and stderr.
     output: String,
 }
 
-/// Un `cargo` aislado: su `CARGO_HOME`, su registro y su credencial.
+/// An isolated `cargo`: its `CARGO_HOME`, its registry and its credential.
 struct Client {
-    /// El directorio del despliegue, donde vive el `CARGO_HOME`.
+    /// The deployment directory, where the `CARGO_HOME` lives.
     root: PathBuf,
-    /// El `CARGO_HOME` del cliente, con la config del registro.
+    /// The client's `CARGO_HOME`, with the registry config.
     cargo_home: PathBuf,
-    /// La credencial.
+    /// The credential.
     token: String,
 }
 
 impl Client {
-    /// Un cliente cuyo registro `hodei` apunta al indice sparse del servicio.
+    /// A client whose `hodei` registry points to the service's sparse index.
     ///
-    /// Cada cliente tiene su `CARGO_HOME`: dos clientes con credenciales
-    /// distintas no pueden pisarse, y nada toca el registro del usuario real.
+    /// Each client has its own `CARGO_HOME`: two clients with different
+    /// credentials cannot step on each other, and nothing touches the real user's registry.
     fn new(root: &Path, name: &str, port: u16, repository: &str, token: &str) -> Self {
         let cargo_home = root.join(format!("cargo-home-{name}"));
         std::fs::create_dir_all(&cargo_home).expect("the cargo home");
@@ -68,10 +68,10 @@ impl Client {
             ),
         )
         .expect("the registry config is written");
-        // La credencial vive donde la pone `cargo login`: el indice sparse
-        // tambien se pide con ella, y el proveedor `cargo:token` es lo que
-        // la lee (los registros alternativos autenticados no la buscan sin
-        // proveedor configurado).
+        // The credential lives where `cargo login` puts it: the sparse index
+        // is also requested with it, and the `cargo:token` provider is what
+        // reads it (authenticated alternative registries do not look for it without a
+        // configured provider).
         std::fs::write(
             cargo_home.join("credentials.toml"),
             format!("[registry.hodei]\ntoken = \"{token}\"\n"),
@@ -93,15 +93,15 @@ impl Client {
         }
     }
 
-    /// Ejecuta el `cargo` con su home y su credencial en el entorno.
+    /// Runs `cargo` with its home and its credential in the environment.
     fn run(&self, directory: &Path, args: &[&str]) -> Run {
         let output = Command::new("cargo")
             .args(args)
             .current_dir(directory)
             .env("CARGO_HOME", &self.cargo_home)
             .env("HOME", &self.root)
-            // El proveedor `cargo:token` acepta la credencial por entorno:
-            // nada de tokens en argv.
+            // The `cargo:token` provider accepts the credential through the environment:
+            // no tokens in argv.
             .env("CARGO_REGISTRIES_HODEI_TOKEN", &self.token)
             .env("CARGO_NET_OFFLINE", "false")
             .output()
@@ -115,7 +115,7 @@ impl Client {
     }
 }
 
-/// El proyecto de un crate publicable, escrito en disco.
+/// The project of a publishable crate, written to disk.
 fn a_crate(root: &Path, name: &str, body: &str) -> PathBuf {
     let directory = root.join(name);
     std::fs::create_dir_all(directory.join("src")).expect("the crate skeleton");
@@ -130,7 +130,7 @@ fn a_crate(root: &Path, name: &str, body: &str) -> PathBuf {
     directory
 }
 
-/// El proyecto consumidor, con un main que usa la dependencia.
+/// The consumer project, with a main that uses the dependency.
 fn a_consumer(root: &Path) -> PathBuf {
     let directory = root.join("consumer");
     std::fs::create_dir_all(directory.join("src")).expect("the consumer skeleton");
@@ -157,7 +157,7 @@ fn cargo_publishes_adds_and_builds_against_the_registry() {
     let root = deployment.directory.path();
     let client = Client::new(root, "client", service.port, "cargo-hosted", &token);
 
-    // El `cargo` publica: empaqueta, sube y el servicio acepta la version.
+    // `cargo` publishes: packages, uploads and the service accepts the version.
     let producer = a_crate(
         root,
         "hodei-cli-pkg",
@@ -166,7 +166,7 @@ fn cargo_publishes_adds_and_builds_against_the_registry() {
     let published = client.run(&producer, &["publish", "--registry", "hodei"]);
     assert!(published.ok, "cargo publish failed:\n{}", published.output);
 
-    // El `cargo add` lo encuentra por su nombre en el indice sparse.
+    // `cargo add` finds it by name in the sparse index.
     let consumer = a_consumer(root);
     let added = client.run(&consumer, &["add", "hodei-cli-pkg", "--registry", "hodei"]);
     assert!(added.ok, "cargo add failed:\n{}", added.output);
@@ -176,9 +176,9 @@ fn cargo_publishes_adds_and_builds_against_the_registry() {
         "cargo add did not write the dependency:\n{manifest}"
     );
 
-    // El `cargo build` descarga el .crate y el cliente **verifica el
-    // cksum contra el indice**: si el digest no cuadrase, la descarga
-    // se rechaza antes de construir. La marca en el output es la descarga real.
+    // `cargo build` downloads the .crate and the client **verifies the
+    // cksum against the index**: if the digest did not match, the download
+    // is rejected before building. The marker in the output is the real download.
     let built = client.run(&consumer, &["build"]);
     assert!(built.ok, "cargo build failed:\n{}", built.output);
     assert!(
@@ -187,7 +187,7 @@ fn cargo_publishes_adds_and_builds_against_the_registry() {
         built.output
     );
 
-    // Y el codigo que compila es el publicado: `cargo run` ejecuta el 42.
+    // And the code that compiles is the published one: `cargo run` executes the 42.
     let ran = client.run(&consumer, &["run", "--quiet"]);
     assert!(ran.ok, "cargo run failed:\n{}", ran.output);
     assert!(
@@ -196,7 +196,7 @@ fn cargo_publishes_adds_and_builds_against_the_registry() {
         ran.output
     );
 
-    // Una segunda version: el indice la anade sin borrar la primera.
+    // A second version: the index adds it without removing the first.
     std::fs::write(
         producer.join("Cargo.toml"),
         "[package]\nname = \"hodei-cli-pkg\"\nversion = \"1.1.0\"\nedition = \"2021\"\ndescription = \"a crate published through the real cargo client\"\nlicense = \"MIT\"\n",
@@ -216,8 +216,8 @@ fn cargo_publishes_adds_and_builds_against_the_registry() {
         "the index does not offer the new version:\n{lock}"
     );
 
-    // Una credencial que no vale no publica: el servicio contesta 401 y
-    // el cliente lo dice.
+    // A credential that is not valid does not publish: the service answers 401 and
+    // the client says so.
     let wrong = Client::new(
         root,
         "wrong",

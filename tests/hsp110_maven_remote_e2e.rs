@@ -1,12 +1,12 @@
-//! Maven 2 proxy y group de HSP-110 / HAR-16, contra el wire.
+//! Maven 2 proxy and group of HSP-110 / HAR-16, against the wire.
 //!
-//! El servicio es un proceso de verdad con catalogo, almacen de bytes y
-//! Cedar reales; los upstreams son servidores locales que este fichero
-//! controla. Lo que se mide es lo que ve un cliente Maven: que lo bajado de
-//! un "Central" de laboratorio queda en cache y se resuelve despues sin red
-//! a traves de un group, que los metadatos de snapshot se revalidan y los
-//! ficheros inmutables no se sobrescriben, y que el group nunca mezcla un
-//! fichero de un miembro con el checksum de otro.
+//! The service is a real process with a real catalog, byte store and
+//! Cedar; the upstreams are local servers that this file
+//! controls. What is measured is what a Maven client sees: that what is downloaded from
+//! a laboratory "Central" is cached and later resolved without network
+//! through a group, that snapshot metadata is revalidated and
+//! immutable files are not overwritten, and that the group never mixes a
+//! file from one member with the checksum of another.
 
 mod support;
 
@@ -23,7 +23,7 @@ const METADATA_PATH: &str = "org/up/lib/maven-metadata.xml";
 const JAR: &[u8] = b"jar bytes served by the upstream";
 const OTHER_JAR: &[u8] = b"jar bytes that the other member has for the same coordinates";
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -55,10 +55,10 @@ fn sha1_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Un repositorio proxy del laboratorio.
+/// A laboratory proxy repository.
 struct Proxy {
     key: &'static str,
-    /// Que upstream usa: 0 es el primero, 1 el segundo.
+    /// Which upstream it uses: 0 is the first, 1 the second.
     upstream: usize,
     cache: serde_json::Value,
     maven: serde_json::Value,
@@ -153,7 +153,7 @@ impl Lab {
         path
     }
 
-    /// Publica en el hosted y exige un 2xx.
+    /// Publishes to the hosted and requires a 2xx.
     fn publish(&self, port: u16, path: &str, body: &[u8]) {
         let alice = support::token(FIRST_ACCOUNT, "alice");
         let file = self.file("upload.bin", body);
@@ -172,7 +172,7 @@ impl Lab {
     }
 }
 
-/// Una respuesta: codigo, cuerpo y las cabeceras que dicen quien sirvio.
+/// A response: code, body and the headers that say who served it.
 struct Reply {
     status: u16,
     body: Vec<u8>,
@@ -208,7 +208,7 @@ fn get(lab: &Lab, port: u16, repository: &str, path: &str) -> Reply {
     }
 }
 
-/// El codigo que responde un metodo de escritura (sin cuerpo).
+/// The code a write method answers with (no body).
 fn status_of(lab: &Lab, port: u16, method: &str, repository: &str, path: &str) -> u16 {
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let file = lab.file("upload.bin", b"payload");
@@ -226,13 +226,13 @@ fn status_of(lab: &Lab, port: u16, method: &str, repository: &str, path: &str) -
 }
 
 // ---------------------------------------------------------------------------
-// AC1: Central se cachea por el proxy y despues se resuelve sin red.
+// AC1: Central is cached by the proxy and later resolved without network.
 // ---------------------------------------------------------------------------
 
 #[test]
 fn central_is_cached_by_the_proxy_and_then_resolved_offline_from_the_group() {
-    // TTL 0: sin el modo offline, cada lectura preguntaria al upstream. Que
-    // no lo haga es merito del modo offline, no de que la copia siga fresca.
+    // TTL 0: without offline mode, every read would ask the upstream. That it
+    // does not is the merit of offline mode, not of the copy still being fresh.
     let cache = serde_json::json!({ "ttl": { "metadata_secs": 0, "content_secs": 0 } });
     let lab = Lab::new(
         vec![Proxy::new("central", 0).cache(cache)],
@@ -245,7 +245,7 @@ fn central_is_cached_by_the_proxy_and_then_resolved_offline_from_the_group() {
 
     let mut service = lab.start();
     let port = service.port;
-    // Lo propio del equipo convive con lo de Central en el mismo group.
+    // The team's own content coexists with Central's in the same group.
     lab.publish(
         port,
         "org/up/lib/1.2/lib-1.2.pom",
@@ -263,15 +263,15 @@ fn central_is_cached_by_the_proxy_and_then_resolved_offline_from_the_group() {
     for reply in &online {
         assert_eq!(reply.status, 200, "{}", reply.text());
     }
-    // El POM llega byte a byte como lo escribio Central: ni se reescribe ni
-    // se normaliza.
+    // The POM arrives byte for byte as Central wrote it: neither rewritten nor
+    // normalized.
     assert_eq!(online[0].body, up_pom);
     assert_eq!(online[0].resolved_from.as_deref(), Some("central"));
     assert_eq!(online[1].body, JAR);
-    // El checksum es el del fichero servido, aunque Central no tenga sidecar.
+    // The checksum is that of the served file, even if Central has no sidecar.
     assert_eq!(online[2].text(), sha1_hex(JAR));
     assert_eq!(lab.upstreams[0].hits(&format!("{JAR_PATH}.sha1")), 0);
-    // Los metadatos unen lo de Central y lo publicado en el hosted.
+    // The metadata joins what comes from Central and what was published to the hosted.
     let merged = online[3].text();
     for version in ["1.0", "1.1", "1.2"] {
         assert!(
@@ -281,18 +281,18 @@ fn central_is_cached_by_the_proxy_and_then_resolved_offline_from_the_group() {
     }
     assert!(merged.contains("<latest>1.2</latest>"), "{merged}");
     assert_eq!(online[4].text(), sha1_hex(&online[3].body));
-    // Los metadatos unidos dicen que miembros aportaron y la version del
-    // group con la que se calcularon.
+    // The joined metadata say which members contributed and the group version
+    // with which they were computed.
     let from = online[3].resolved_from.clone().unwrap_or_default();
     assert!(from.contains(HOSTED) && from.contains("central"), "{from}");
     assert!(online[3].group_version.is_some());
-    // Un group es de lectura: escribir en el o en un proxy es un 405.
+    // A group is read-only: writing to it or to a proxy is a 405.
     assert_eq!(status_of(&lab, port, "PUT", "mvn-all", JAR_PATH), 405);
     assert_eq!(status_of(&lab, port, "PUT", "central", JAR_PATH), 405);
     support::stop(&mut service);
 
-    // Sin red: el upstream no recibe ni una peticion mas y el group resuelve
-    // lo mismo desde lo cacheado.
+    // Offline: the upstream receives not one more request and the group resolves
+    // the same from what was cached.
     let before = lab.upstreams[0].total();
     lab.upstreams[0].fail(true);
     let mut offline = lab.start_with(&[("HODEI_PROXY__OFFLINE", "true")]);
@@ -314,7 +314,7 @@ fn central_is_cached_by_the_proxy_and_then_resolved_offline_from_the_group() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: snapshots se revalidan por TTL; las releases no se sobrescriben.
+// AC2: snapshots are revalidated by TTL; releases are not overwritten.
 // ---------------------------------------------------------------------------
 
 const SNAPSHOT_DIR: &str = "org/up/lib/1.0-SNAPSHOT";
@@ -337,8 +337,8 @@ fn a_floating_snapshot_and_its_metadata_are_revalidated_when_the_ttl_expires() {
         b"<metadata>one</metadata>"
     );
 
-    // El upstream publica otro snapshot con el mismo nombre: el proxy lo
-    // revalida y sirve lo nuevo en vez de retenerlo como "otros bytes".
+    // The upstream publishes another snapshot with the same name: the proxy
+    // revalidates it and serves the new one instead of retaining it as "other bytes".
     lab.upstreams[0].put(FLOATING, b"snapshot build two", Some("\"s2\""));
     lab.upstreams[0].put(&metadata_path, b"<metadata>two</metadata>", Some("\"m2\""));
     let floating = get(&lab, port, "pxy", FLOATING);
@@ -369,7 +369,7 @@ fn an_expired_snapshot_is_revalidated_with_its_etag_and_a_304_keeps_the_copy() {
         assert_eq!(meta.status, 200, "{}", meta.text());
         assert_eq!(meta.body, b"<metadata>same</metadata>");
     }
-    // La segunda vez se pregunto (TTL vencido) y con el validador.
+    // The second time it asked (TTL expired) and with the validator.
     for (path, etag) in [(FLOATING, "\"s1\""), (metadata_path.as_str(), "\"m1\"")] {
         assert_eq!(lab.upstreams[0].hits(path), 2, "{path}");
         let asked: Vec<_> = lab.upstreams[0]
@@ -412,21 +412,21 @@ fn a_release_and_a_timestamped_snapshot_are_never_silently_overwritten() {
     assert_eq!(get(&lab, port, "pxy", JAR_PATH).body, b"release one");
     assert_eq!(get(&lab, port, "pxy", TIMESTAMPED).body, b"timestamped one");
 
-    // El upstream cambia los bytes de lo que es inmutable: se retiene.
+    // The upstream changes the bytes of something immutable: it is retained.
     lab.upstreams[0].put(JAR_PATH, b"release two", Some("\"r2\""));
     lab.upstreams[0].put(TIMESTAMPED, b"timestamped two", Some("\"t2\""));
     for path in [JAR_PATH, TIMESTAMPED] {
         let held = get(&lab, port, "pxy", path);
         assert_eq!(held.status, 502, "{path}: {}", held.text());
         assert!(held.text().contains("withheld"), "{}", held.text());
-        // Y sigue retenido: no basta con volver a pedirlo.
+        // And it stays retained: asking again is not enough.
         assert_eq!(get(&lab, port, "pxy", path).status, 502, "{path}");
     }
     support::stop(&mut service);
 }
 
 // ---------------------------------------------------------------------------
-// AC3: prioridad, 404/5xx, conflicto de coordenadas, credenciales, politica.
+// AC3: priority, 404/5xx, coordinate conflict, credentials, policy.
 // ---------------------------------------------------------------------------
 
 fn two_proxies_and_groups() -> Lab {
@@ -457,13 +457,13 @@ fn the_first_member_that_has_the_file_wins_and_a_miss_does_not_stop_the_search()
     assert_eq!(b_first.body, b"from b");
     assert_eq!(b_first.resolved_from.as_deref(), Some("pxy-b"));
 
-    // El primero no lo tiene (404): se sigue con el segundo.
+    // The first one does not have it (404): it goes on to the second.
     let only = get(&lab, port, "g-ab", "org/up/lib/1.0/only-b.jar");
     assert_eq!(only.status, 200);
     assert_eq!(only.resolved_from.as_deref(), Some("pxy-b"));
     assert_eq!(lab.upstreams[0].hits("org/up/lib/1.0/only-b.jar"), 1);
 
-    // Si nadie lo tiene, un 404 limpio.
+    // If nobody has it, a clean 404.
     assert_eq!(
         get(&lab, port, "g-ab", "org/up/lib/1.0/none.jar").status,
         404
@@ -488,12 +488,12 @@ fn an_upstream_failure_is_an_error_and_the_group_does_not_jump_to_the_next_membe
         0,
         "the group jumped over a failing member"
     );
-    // Los metadatos tampoco se sirven a medias: sin un miembro, no se
-    // fabrica una lista de versiones incompleta.
+    // Metadata is not served halfway either: without a member, an
+    // incomplete version list is not fabricated.
     let partial = get(&lab, port, "g-ab", METADATA_PATH);
     assert_eq!(partial.status, 502, "{}", partial.text());
 
-    // Cuando el miembro se recupera, todo vuelve a resolverse.
+    // When the member recovers, everything resolves again.
     lab.upstreams[0].fail(false);
     assert_eq!(
         get(&lab, port, "g-ab", "org/up/lib/1.0/fresh.jar").status,
@@ -509,16 +509,16 @@ fn an_upstream_failure_is_an_error_and_the_group_does_not_jump_to_the_next_membe
 fn the_checksum_is_always_the_one_of_the_file_that_the_group_serves() {
     let lab = two_proxies_and_groups();
     lab.upstreams[1].put(JAR_PATH, OTHER_JAR, None);
-    // El upstream ofrece un sidecar que no corresponde a su fichero: el
-    // group nunca lo usa.
+    // The upstream offers a sidecar that does not correspond to its file: the
+    // group never uses it.
     lab.upstreams[1].put(&format!("{JAR_PATH}.sha1"), b"deadbeef", None);
     let mut service = lab.start();
     let port = service.port;
     lab.publish(port, POM_PATH, &pom("org.up", "lib", "1.0"));
     lab.publish(port, JAR_PATH, JAR);
 
-    // Mismas coordenadas en el hosted y en el proxy: gana el primero y su
-    // checksum es el suyo, en los dos ordenes.
+    // Same coordinates in the hosted and in the proxy: the first wins and its
+    // checksum is its own, in both orders.
     let hosted_first = get(&lab, port, "g-hb", JAR_PATH);
     assert_eq!(hosted_first.body, JAR);
     assert_eq!(hosted_first.resolved_from.as_deref(), Some(HOSTED));
@@ -567,7 +567,7 @@ fn each_proxy_sends_only_its_own_credential_and_never_the_one_of_the_caller() {
     for seen in &seen_b {
         assert_eq!(seen.authorization.as_deref(), Some("Bearer secret-of-b"));
     }
-    // Ni los secretos ni la credencial de quien pregunta salen por el log.
+    // Neither the secrets nor the credential of the asker leave through the log.
     let log = lab.deployment.the_log();
     for secret in ["secret-of-a", "secret-of-b", alice.as_str()] {
         assert!(!log.contains(secret), "a credential reached the log");
@@ -640,14 +640,14 @@ fn a_group_skips_a_release_only_proxy_for_snapshots_and_does_not_offer_its_snaps
     let mut service = lab.start();
     let port = service.port;
 
-    // El proxy de releases es un MISS para un snapshot: gana el siguiente.
+    // The releases proxy is a MISS for a snapshot: the next one wins.
     let snapshot = get(&lab, port, "g-rb", FLOATING);
     assert_eq!(snapshot.body, b"from b");
     assert_eq!(snapshot.resolved_from.as_deref(), Some("pxy-b"));
     assert_eq!(lab.upstreams[0].hits(FLOATING), 0);
 
-    // Y no anuncia una version que luego no serviria: el cliente que pide
-    // `latest` recibiria un 404.
+    // And it does not announce a version it would later not serve: a client that asks for
+    // `latest` would receive a 404.
     let merged = get(&lab, port, "g-rb", METADATA_PATH).text();
     assert!(merged.contains("<version>1.0</version>"), "{merged}");
     assert!(!merged.contains("SNAPSHOT"), "{merged}");
@@ -665,7 +665,7 @@ fn metadata_of_another_artifact_is_never_served_as_if_it_were_ours() {
     lab.upstreams[1].put(METADATA_PATH, &metadata(&["../evil"]), None);
     let mut service = lab.start();
     let port = service.port;
-    // Directo, el proxy lo sirve como esta; el group no.
+    // Directly, the proxy serves it as it is; the group does not.
     assert_eq!(get(&lab, port, "pxy-a", METADATA_PATH).status, 200);
     let grouped = get(&lab, port, "g-ab", METADATA_PATH);
     assert_eq!(grouped.status, 404, "{}", grouped.text());
@@ -688,7 +688,7 @@ fn plugin_metadata_without_versions_and_the_version_metadata_come_from_the_first
     assert_eq!(served.status, 200, "{}", served.text());
     assert_eq!(served.body, plugins);
 
-    // Los de version no se fusionan: gana el primero que los tiene.
+    // Version ones are not merged: the first that has them wins.
     let first = get(&lab, port, "g-ab", &snapshot_metadata);
     assert_eq!(first.body, b"<metadata>from a</metadata>");
     assert_eq!(first.resolved_from.as_deref(), Some("pxy-a"));
@@ -730,7 +730,7 @@ fn offline_a_group_with_several_proxies_serves_from_the_one_that_has_a_copy() {
     lab.upstreams[1].put(METADATA_PATH, &metadata(&["2.0"]), None);
     let mut service = lab.start();
     let port = service.port;
-    // En linea: pxy-a no la tiene (404, que no se cachea) y pxy-b si.
+    // Online: pxy-a does not have it (404, which is not cached) and pxy-b does.
     for path in ["org/up/lib/1.0/only-b.jar", METADATA_PATH] {
         assert_eq!(get(&lab, port, "g-ab", path).status, 200, "{path}");
     }
@@ -739,8 +739,8 @@ fn offline_a_group_with_several_proxies_serves_from_the_one_that_has_a_copy() {
     let before = (lab.upstreams[0].total(), lab.upstreams[1].total());
     let mut offline = lab.start_with(&[("HODEI_PROXY__OFFLINE", "true")]);
     let port = offline.port;
-    // pxy-a no tiene copia ni red: no es un error del group, es un miembro
-    // que no aporta. Sirve el que si la tiene.
+    // pxy-a has neither copy nor network: it is not a group error, it is a member
+    // that does not contribute. The one that has it serves.
     let jar = get(&lab, port, "g-ab", "org/up/lib/1.0/only-b.jar");
     assert_eq!(jar.status, 200, "{}", jar.text());
     assert_eq!(jar.body, b"only b");
@@ -748,7 +748,7 @@ fn offline_a_group_with_several_proxies_serves_from_the_one_that_has_a_copy() {
     let merged = get(&lab, port, "g-ab", METADATA_PATH);
     assert_eq!(merged.status, 200, "{}", merged.text());
     assert!(merged.text().contains("<version>2.0</version>"));
-    // Lo que nadie tiene sigue siendo "sin red", no un 404 que engane.
+    // What nobody has remains "no network", not a misleading 404.
     let unknown = get(&lab, port, "g-ab", "org/up/lib/1.0/never.jar");
     assert_eq!(unknown.status, 503, "{}", unknown.text());
     assert_eq!(

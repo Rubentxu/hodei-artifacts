@@ -1,41 +1,41 @@
-//! La gramatica del **network mirror protocol** de Terraform/OpenTofu.
+//! The grammar of the Terraform/OpenTofu **network mirror protocol**.
 //!
-//! Un mirror de providers habla cuatro documentos, todos colgando de la
-//! base que la configuracion del cliente declara:
+//! A provider mirror speaks four documents, all hanging from the
+//! base that the client configuration declares:
 //!
-//! 1. `index.json`: el indice raiz, con los providers que el mirror
-//!    ofrece y sus versiones.
-//! 2. `{hostname}/{namespace}/{type}/index.json`: el indice de un
-//!    provider, con sus versiones, plataformas y versiones de protocolo.
-//! 3. `{hostname}/{namespace}/{type}/{version}.json`: el documento de
-//!    version, con el nombre del zip de cada plataforma.
-//! 4. `{hostname}/{namespace}/{type}/{filename}`: el zip del provider.
+//! 1. `index.json`: the root index, with the providers the mirror
+//!    offers and their versions.
+//! 2. `{hostname}/{namespace}/{type}/index.json`: a provider's
+//!    index, with its versions, platforms and protocol versions.
+//! 3. `{hostname}/{namespace}/{type}/{version}.json`: the version
+//!    document, with the zip name for each platform.
+//! 4. `{hostname}/{namespace}/{type}/{filename}`: the provider zip.
 //!
-//! Aqui vive solo la gramatica: que rutas existen y que segmentos son
-//! legitimamente un hostname, un namespace, un provider, una version o un
-//! nombre de fichero. La lectura del `terraform` escapa las rutas el solo
-//! y no hay documento que este cliente reescriba, asi que cada segmento se
-//! valida estricto: un `..`, un separador de Windows, un escape por
-//! porcentaje o un segmento vacio no son una ruta, son un intento de
-//! traversal, y se rechazan antes de tocar el catalogo o el upstream.
+//! Only the grammar lives here: which paths exist and which segments are
+//! legitimately a hostname, a namespace, a provider, a version or a
+//! file name. `terraform` escapes the paths itself when reading
+//! and there is no document this client rewrites, so each segment is
+//! validated strictly: a `..`, a Windows separator, a percent
+//! escape or an empty segment is not a path, it is a traversal
+//! attempt, and is rejected before touching the catalog or the upstream.
 
-/// Lo que puede salir mal al leer una ruta del mirror.
+/// What can go wrong when reading a mirror path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerraformError {
-    /// La ruta no pertenece al protocolo del mirror.
+    /// The path does not belong to the mirror protocol.
     InvalidPath(String),
-    /// El hostname no es un nombre de registry legitimo.
+    /// The hostname is not a legitimate registry name.
     InvalidHostname(String),
-    /// El namespace o el tipo de provider no son validos.
+    /// The namespace or the provider type are not valid.
     InvalidProvider(String),
-    /// La version no es semver estricto.
+    /// The version is not strict semver.
     InvalidVersion(String),
-    /// El nombre del fichero no es un zip legitimo.
+    /// The file name is not a legitimate zip.
     InvalidFilename(String),
 }
 
 impl TerraformError {
-    /// El mensaje que explica el rechazo.
+    /// The message explaining the rejection.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidPath(path) => {
@@ -56,8 +56,8 @@ impl TerraformError {
         }
     }
 
-    /// Si el rechazo es de la ruta y no de quien la pide: una ruta que el
-    /// protocolo no conoce es un recurso que no existe.
+    /// Whether the rejection is about the path and not about who requests it: a path the
+    /// protocol does not know is a resource that does not exist.
     pub fn is_path_error(&self) -> bool {
         matches!(self, Self::InvalidPath(_))
     }
@@ -71,47 +71,47 @@ impl std::fmt::Display for TerraformError {
 
 impl std::error::Error for TerraformError {}
 
-/// Una ruta del mirror, ya validada.
+/// A mirror path, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// El indice raiz del mirror.
+    /// The mirror's root index.
     RootIndex,
-    /// El indice de un provider.
+    /// A provider's index.
     ProviderIndex {
-        /// El hostname del registry de origen.
+        /// The origin registry's hostname.
         hostname: String,
-        /// El namespace del provider.
+        /// The provider's namespace.
         namespace: String,
-        /// El tipo del provider.
+        /// The provider's type.
         provider: String,
     },
-    /// El documento de una version.
+    /// A version's document.
     VersionDoc {
-        /// El hostname del registry de origen.
+        /// The origin registry's hostname.
         hostname: String,
-        /// El namespace del provider.
+        /// The provider's namespace.
         namespace: String,
-        /// El tipo del provider.
+        /// The provider's type.
         provider: String,
-        /// La version, semver estricto.
+        /// The version, strict semver.
         version: String,
     },
-    /// El zip de una version para una plataforma.
+    /// A version's zip for a platform.
     ProviderFile {
-        /// El hostname del registry de origen.
+        /// The origin registry's hostname.
         hostname: String,
-        /// El namespace del provider.
+        /// The provider's namespace.
         namespace: String,
-        /// El tipo del provider.
+        /// The provider's type.
         provider: String,
-        /// El nombre del fichero, tal y como el upstream lo declara.
+        /// The file name, as the upstream declares it.
         filename: String,
     },
 }
 
 impl Route {
-    /// La ruta que dice su propio nombre: el camino de asset que este
-    /// mirror guarda y sirve, identico al que el protocolo usa.
+    /// The path that states its own name: the asset path this
+    /// mirror stores and serves, identical to the one the protocol uses.
     pub fn asset_path(&self) -> String {
         match self {
             Self::RootIndex => "index.json".to_string(),
@@ -135,7 +135,7 @@ impl Route {
         }
     }
 
-    /// Las coordenadas del provider de la ruta, si las tiene.
+    /// The path's provider coordinates, if it has any.
     pub fn provider_coordinates(&self) -> Option<(&str, &str, &str)> {
         match self {
             Self::RootIndex => None,
@@ -159,12 +159,12 @@ impl Route {
         }
     }
 
-    /// La ruta que dice su propio nombre.
+    /// The path that states its own name.
     ///
-    /// La ruta llega **sin decodificar**: las reglas del protocolo son las
-    /// unicas que interpretan un `%`, y ahi no hay nada que interpretar.
-    /// Un segmento vacio, un `..`, una barra invertida o un escape por
-    /// porcentaje son un traversal, no una ruta.
+    /// The path arrives **undecoded**: the protocol's rules are the
+    /// only ones that interpret a `%`, and there is nothing to interpret there.
+    /// An empty segment, a `..`, a backslash or a
+    /// percent escape is a traversal, not a path.
     pub fn parse(rest: &str) -> Result<Self, TerraformError> {
         if rest.contains('%') || rest.contains('\\') {
             return Err(TerraformError::InvalidPath(rest.to_string()));
@@ -208,9 +208,9 @@ impl Route {
     }
 }
 
-/// El hostname del registry: etiquetas minusculas separadas por puntos,
-/// cada una sin guiones en el borde y sin estar vacia. Un `..` no pasa:
-/// la etiqueta que lo contiene no cumple la forma.
+/// The registry hostname: lowercase labels separated by dots,
+/// each without hyphens at the edge and not empty. A `..` does not pass:
+/// the label that contains it does not fit the form.
 fn valid_hostname(hostname: &str) -> Result<(), TerraformError> {
     let ok = !hostname.is_empty()
         && hostname.len() <= 253
@@ -230,8 +230,8 @@ fn valid_hostname(hostname: &str) -> Result<(), TerraformError> {
     }
 }
 
-/// Un namespace o un tipo de provider: minusculas, digitos, guiones y
-/// guiones bajos, sin borde de guion.
+/// A namespace or a provider type: lowercase, digits, hyphens and
+/// underscores, without a hyphen at the edge.
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 100
@@ -252,9 +252,9 @@ fn the_provider(hostname: &str, namespace: &str, provider: &str) -> Result<(), T
     Ok(())
 }
 
-/// La version: semver estricto, sin `v` delante y sin espacios. El
-/// `terraform` pide versiones exactas, y una version que no es semver no
-/// es una version que el protocolo declare.
+/// The version: strict semver, without a leading `v` and without spaces.
+/// `terraform` asks for exact versions, and a version that is not semver is not
+/// a version the protocol declares.
 fn valid_version(version: &str) -> Result<(), TerraformError> {
     let core = |text: &str| {
         let numbers: Vec<&str> = text.split('.').collect();
@@ -290,9 +290,9 @@ fn valid_version(version: &str) -> Result<(), TerraformError> {
     }
 }
 
-/// El nombre del fichero: el que el documento de version declara para la
-/// plataforma. Un zip de provider es un nombre plano, sin separadores ni
-/// escapes, que termina en `.zip`.
+/// The file name: the one the version document declares for the
+/// platform. A provider zip is a flat name, without separators or
+/// escapes, that ends in `.zip`.
 fn valid_filename(filename: &str) -> Result<(), TerraformError> {
     let ok = filename.len() <= 255
         && filename.ends_with(".zip")

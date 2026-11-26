@@ -1,20 +1,20 @@
-//! Las dos preguntas de la superficie OCI que no son contenido: **que
-//! etiquetas hay** y **que cuelga de este manifiesto**.
+//! The two questions of the OCI surface that are not content: **which
+//! tags exist** and **what hangs off this manifest**.
 //!
-//! Las dos son lecturas del catalogo, y las dos hablan el dialecto que el
-//! protocolo dice: la lista de etiquetas con su paginacion, y los
-//! referrers como un indice de imagenes.
+//! Both are reads of the catalog, and both speak the dialect the
+//! protocol specifies: the tag list with its pagination, and the
+//! referrers as an image index.
 //!
-//! Y las dos tienen una regla que parece un detalle y no lo es: **no
-//! dicen 404**. Un `subject` que no tiene referrers es una lista vacia,
-//! y un repositorio sin etiquetas es una lista vacia. Un 404 en la API de
-//! referrers haria que un cliente que busca la firma de un manifiesto
-//! tuviera que distinguir entre "no hay firma" y "no hay manifiesto", y el
-//! protocolo dice que esa distincion no existe.
+//! And both have a rule that looks like a detail and is not: **they do not
+//! say 404**. A `subject` that has no referrers is an empty list,
+//! and a repository without tags is an empty list. A 404 on the
+//! referrers API would make a client looking for the signature of a manifest
+//! have to distinguish between "there is no signature" and "there is no manifest", and the
+//! protocol says that distinction does not exist.
 //!
-//! Lo que si se dice con 404 es lo que no existe: el **repositorio**. Un
-//! repositorio de otra cuenta no existe para esta, y se responde con el
-//! `NAME_UNKNOWN` de la distribucion.
+//! What is said with 404 is what does not exist: the **repository**. A
+//! repository of another account does not exist for this one, and is answered with the
+//! distribution's `NAME_UNKNOWN`.
 
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -26,39 +26,39 @@ use crate::oci::failure::OciFailure;
 use crate::oci::target::the_digest_of_reference;
 use crate::oci::{the_catalog, the_content_store, the_decision, the_repository};
 
-/// La cabecera que dice que se ha aplicado un filtro.
+/// The header that says a filter has been applied.
 ///
-/// El protocolo la exige cuando se pide un filtro: sin ella, un cliente
-/// no sabe si la lista esta filtrada o si el registro no ha entendido lo
-/// que se le pedia.
+/// The protocol requires it when a filter is requested: without it, a client
+/// does not know whether the list is filtered or whether the registry did not understand
+/// what was asked of it.
 const FILTERS_APPLIED_HEADER: &str = "OCI-Filters-Applied";
 
-/// Los parametros de la lista de etiquetas.
+/// The parameters of the tag list.
 ///
-/// `n` es cuantas etiquetas se piden, y `last` es la etiqueta por la que
-/// se empieza: el cursor del cliente, que no se incluye en el resultado.
+/// `n` is how many tags are requested, and `last` is the tag to start
+/// after: the client's cursor, which is not included in the result.
 #[derive(Debug, Default)]
 struct TheTagsQuery {
-    /// Cuantas etiquetas se piden. `None` es "todas".
+    /// How many tags are requested. `None` is "all".
     n: Option<usize>,
-    /// La etiqueta por la que se empieza, sin incluirla.
+    /// The tag to start after, not including it.
     last: Option<String>,
 }
 
-/// Los parametros de la consulta de referrers.
+/// The parameters of the referrers query.
 #[derive(Debug, Default)]
 struct TheReferrersQuery {
-    /// El tipo de artefacto por el que se filtra.
+    /// The artifact type to filter by.
     artifact_type: Option<String>,
 }
 
-/// La lista de etiquetas del repositorio.
+/// The tag list of the repository.
 ///
 /// `GET /v2/<name>/tags/list`
 ///
-/// Las etiquetas van en orden lexicografico, que el protocolo define como
-/// orden alfanumerico **sin distinguir mayusculas**, y la pagina se
-/// recorta con `n` y `last`.
+/// Tags go in lexicographic order, which the protocol defines as
+/// alphanumeric order **case-insensitive**, and the page is
+/// trimmed with `n` and `last`.
 pub async fn the_tags(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -77,11 +77,11 @@ pub async fn the_tags(
     let parsed = the_tags_query(query)?;
     let (reader, _) = the_catalog(state)?;
 
-    // Un grupo no guarda etiquetas: las compone con las de sus miembros.
-    // La lista es la **union** de las de sus miembros, una entrada por
-    // nombre, y **no se sirve parcial**: si la lista de un miembro no se
-    // puede obtener, el listado entero es un error, porque una lista a
-    // medias parece completa y no lo es.
+    // A group stores no tags: it composes them from those of its members.
+    // The list is the **union** of those of its members, one entry per
+    // name, and **is not served partially**: if a member's list cannot
+    // be obtained, the whole listing is an error, because a half list
+    // looks complete and is not.
     let tags: Vec<String> = if repository.mode == hodei_catalog::RepositoryMode::Group {
         crate::oci::group::the_tags(state, context, &repository, headers)
             .await?
@@ -89,33 +89,33 @@ pub async fn the_tags(
             .map(|(name, _member)| name)
             .collect()
     } else if repository.mode == hodei_catalog::RepositoryMode::Proxy {
-        // Un proxy **no** tiene filas de etiqueta en el catalogo: su
-        // etiqueta es un **puntero** que solo existe si alguien ya la
-        // pidio, y su lista vive en el **upstream**. Por eso la lista se
-        // pregunta ahi, con el nombre del repositorio proxy: el mismo
-        // nombre con el que se piden sus manifiestos y sus blobs.
+        // A proxy has **no** tag rows in the catalog: its
+        // tag is a **pointer** that only exists if someone already
+        // asked for it, and its list lives in the **upstream**. That is why the list is
+        // asked there, with the proxy repository's name: the same
+        // name with which its manifests and blobs are asked for.
         //
-        // Y el listado **no se sirve parcial**: si la lista no se puede
-        // obtener --un upstream caido, una credencial que no se puede
-        // usar-- el listado entero es un error, porque una lista vacia
-        // parece completa y no lo es. Es la misma regla que aplica el
-        // grupo a sus miembros.
+        // And the listing **is not served partially**: if the list cannot be
+        // obtained --a down upstream, a credential that cannot be
+        // used-- the whole listing is an error, because an empty list
+        // looks complete and is not. It is the same rule the group
+        // applies to its members.
         let listed =
             crate::oci::proxy::the_resolved_tags(state, &repository, name, headers).await?;
-        // El filtro de confianza **no** se puede aplicar por etiqueta: la
-        // lista del upstream son nombres, no digest, y no hay digest al que
-        // mirar. Es la misma decision que el grupo toma con sus miembros
-        // proxy: la compuerta se aplica al **contenido**, en la
-        // resolucion, que es donde se decide si los bytes se pueden
-        // servir. No se inventa un filtro que no se puede aplicar.
+        // The trust filter **cannot** be applied per tag: the
+        // upstream's list is names, not digests, and there is no digest to
+        // look at. It is the same decision the group takes with its proxy
+        // members: the gate is applied to the **content**, at
+        // resolution, which is where it is decided whether the bytes can be
+        // served. A filter that cannot be applied is not invented.
         match listed {
             crate::oci::proxy::TheUpstreamTags::Listed(tags) => tags,
-            // El ambito del upstream no cubre el listado: el repositorio
-            // **no puede enumerar**. En un grupo eso no tumba el listado
-            // --los demas miembros se listan igual--, pero en un proxy
-            // directo no hay "los demas": la lista vacia es la unica
-            // respuesta honesta, porque lo que el upstream no deja
-            // enumerar no existe para este repositorio.
+            // The upstream's scope does not cover the listing: the repository
+            // **cannot enumerate**. In a group that does not bring down the listing
+            // --the other members are listed anyway--, but in a direct
+            // proxy there are no "others": the empty list is the only
+            // honest answer, because what the upstream does not let
+            // be enumerated does not exist for this repository.
             crate::oci::proxy::TheUpstreamTags::NotInScope => Vec::new(),
         }
     } else {
@@ -124,9 +124,9 @@ pub async fn the_tags(
             .await
             .map_err(|error| crate::oci::the_catalog_error(&error))?;
 
-        // En el canal trusted solo se listan las etiquetas cuyo **destino**
-        // tiene concesion activa: una etiqueta hacia un digest no concedido
-        // delataria que existe.
+        // On the trusted channel only the tags whose **target**
+        // has an active grant are listed: a tag towards an ungranted digest
+        // would reveal that it exists.
         let servable = crate::trust::servable(state, context.account().as_str(), &repository)
             .await
             .map_err(the_admission_failure)?;
@@ -142,9 +142,9 @@ pub async fn the_tags(
     let mut names: Vec<String> = tags;
     names.sort_by(|left, right| the_order(left).cmp(&the_order(right)));
 
-    // El cursor: la lista empieza **despues** de `last`. El cursor se
-    // compara con el mismo orden que la lista, para que un cliente que
-    // pagina con una etiqueta que ya no existe no se quede a medias.
+    // The cursor: the list starts **after** `last`. The cursor is
+    // compared with the same order as the list, so that a client that
+    // paginates with a tag that no longer exists is not left halfway.
     let start = match &parsed.last {
         None => 0,
         Some(last) => names.partition_point(|name| the_order(name) <= the_order(last)),
@@ -170,8 +170,8 @@ pub async fn the_tags(
         HeaderValue::from_static("application/json"),
     );
 
-    // El `Link` dice si hay mas: el cliente que pagina lo sigue. Sin
-    // `n` no hay pagina, y con `n = 0` el protocolo dice que no hay
+    // The `Link` says whether there is more: the paginating client follows it. Without
+    // `n` there is no page, and with `n = 0` the protocol says there is no
     // `Link`.
     if let Some(n) = parsed.n
         && n > 0
@@ -186,22 +186,22 @@ pub async fn the_tags(
     Ok(response)
 }
 
-/// Lo que se responde cuando el libro de confianza no se puede leer.
+/// What is answered when the trust ledger cannot be read.
 ///
-/// Un listado que no puede saber que se admite no lista nada: lo
-/// desconocido no se sirve.
+/// A listing that cannot know what is admitted lists nothing: what is
+/// unknown is not served.
 fn the_admission_failure(_admission: crate::trust::Admission) -> OciFailure {
     OciFailure::unavailable("the trust ledger is not available")
 }
 
-/// Los referrers de un manifiesto.
+/// The referrers of a manifest.
 ///
 /// `GET /v2/<name>/referrers/<digest>`
 ///
-/// La respuesta es un indice de imagenes con un descriptor por referrer.
-/// El descriptor lleva el `artifactType` del manifiesto --o, si no lo
-/// tiene, el tipo de medio de su configuracion-- y las anotaciones del
-/// manifiesto.
+/// The response is an image index with one descriptor per referrer.
+/// The descriptor carries the manifest's `artifactType` --or, if it does not
+/// have one, the media type of its config-- and the manifest's
+/// annotations.
 pub async fn the_referrers(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -218,16 +218,16 @@ pub async fn the_referrers(
     )?;
 
     let parsed = the_referrers_query(query)?;
-    // El digest ya lo ha comprobado el reparto del path: aqui solo se
-    // convierte al digest del catalogo.
+    // The digest was already checked by the path split: here it is only
+    // converted to the catalog digest.
     let subject = ContentDigest::sha256(the_digest_of_reference(digest)?);
 
     let (reader, _) = the_catalog(state)?;
     let account = context.account().as_str();
-    // Los referrers de un grupo son los de sus **miembros**: un grupo no
-    // guarda nada, asi que los suyos propios no existen. Y el filtro de
-    // confianza es por miembro: un referrer hacia un digest no concedido
-    // delataria que existe.
+    // The referrers of a group are those of its **members**: a group
+    // stores nothing, so its own do not exist. And the trust filter
+    // is per member: a referrer towards an ungranted digest
+    // would reveal that it exists.
     let mut referrers: Vec<hodei_catalog::ReferrerRecord> = Vec::new();
     if repository.mode == hodei_catalog::RepositoryMode::Group {
         for member in crate::oci::group::the_leaves(state, context, &repository).await? {
@@ -252,7 +252,7 @@ pub async fn the_referrers(
             .referrers(account, name, &subject)
             .await
             .map_err(|error| crate::oci::the_catalog_error(&error))?;
-        // Un referrer es un manifiesto: solo se lista el que se podria servir.
+        // A referrer is a manifest: only the one that could be served is listed.
         let servable = crate::trust::servable(state, account, &repository)
             .await
             .map_err(the_admission_failure)?;
@@ -275,9 +275,9 @@ pub async fn the_referrers(
         let manifest: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|_| OciFailure::unavailable("the manifest of a referrer is not readable"))?;
         let descriptor = the_descriptor(&manifest, &referrer.digest.value, bytes.len());
-        // El filtro es sobre el `artifactType` del descriptor, que es el
-        // que el protocolo dice: el del manifiesto, o el de su
-        // configuracion cuando el manifiesto no lo trae.
+        // The filter is on the descriptor's `artifactType`, which is the
+        // one the protocol specifies: the manifest's, or that of its
+        // config when the manifest does not carry it.
         if let Some(filter) = &parsed.artifact_type
             && descriptor.artifact_type.as_deref() != Some(filter.as_str())
         {
@@ -297,8 +297,8 @@ pub async fn the_referrers(
         header::CONTENT_TYPE,
         HeaderValue::from_static(INDEX_MEDIA_TYPE),
     );
-    // El filtro se dice: sin esta cabecera, un cliente no sabe si la
-    // lista esta filtrada o si el registro no ha entendido el filtro.
+    // The filter is stated: without this header, a client does not know whether the
+    // list is filtered or whether the registry did not understand the filter.
     if parsed.artifact_type.is_some() {
         response.headers_mut().insert(
             FILTERS_APPLIED_HEADER,
@@ -308,13 +308,13 @@ pub async fn the_referrers(
     Ok(response)
 }
 
-/// El descriptor de un referrer.
+/// The descriptor of a referrer.
 ///
-/// El protocolo dice que el descriptor lleva el `artifactType` del
-/// manifiesto --o el tipo de medio de su configuracion, cuando el
-/// manifiesto es de imagen y no lo trae-- y las anotaciones del
-/// manifiesto. Un indice sin `artifactType` lo omite, porque un indice
-/// no tiene configuracion.
+/// The protocol says the descriptor carries the `artifactType` of the
+/// manifest --or the media type of its config, when the
+/// manifest is an image and does not carry it-- and the manifest's
+/// annotations. An index without `artifactType` omits it, because an index
+/// has no config.
 fn the_descriptor(manifest: &serde_json::Value, digest: &str, size: usize) -> TheDescriptor {
     let media_type = manifest
         .get("mediaType")
@@ -327,13 +327,13 @@ fn the_descriptor(manifest: &serde_json::Value, digest: &str, size: usize) -> Th
         .filter(|value| !value.is_empty());
     let artifact_type = match declared {
         Some(declared) => Some(declared.to_string()),
-        // Un indice sin `artifactType` lo omite: el protocolo lo dice.
+        // An index without `artifactType` omits it: the protocol says so.
         None if is_index => None,
-        // Sin `artifactType` declarado, el tipo es el de la
-        // configuracion. Y si no hay configuracion tampoco, el tipo es
-        // el del propio manifiesto: el descriptor tiene que **decir**
-        // que tipo de artefacto es, porque un descriptor sin tipo no lo
-        // puede filtrar un cliente.
+        // Without a declared `artifactType`, the type is that of the
+        // config. And if there is no config either, the type is
+        // that of the manifest itself: the descriptor has to **say**
+        // what kind of artifact it is, because a descriptor without a type cannot
+        // be filtered by a client.
         None => manifest
             .get("config")
             .and_then(|config| config.get("mediaType"))
@@ -361,44 +361,44 @@ fn the_descriptor(manifest: &serde_json::Value, digest: &str, size: usize) -> Th
     }
 }
 
-/// El descriptor de un referrer, y el `artifactType` por el que se
-/// filtra.
+/// The descriptor of a referrer, and the `artifactType` it is
+/// filtered by.
 ///
-/// El filtro va sobre el `artifactType` del descriptor, y no sobre el del
-/// manifiesto: son el mismo valor, pero el del descriptor es el que el
-/// protocolo dice, y el que el cliente ve.
+/// The filter goes on the descriptor's `artifactType`, and not on the
+/// manifest's: they are the same value, but the descriptor's is the one the
+/// protocol specifies, and the one the client sees.
 struct TheDescriptor {
-    /// El descriptor, tal y como va en la respuesta.
+    /// The descriptor, as it goes in the response.
     json: serde_json::Value,
-    /// El `artifactType` del descriptor.
+    /// The descriptor's `artifactType`.
     artifact_type: Option<String>,
 }
 
-/// El orden de las etiquetas.
+/// The order of the tags.
 ///
-/// El protocolo lo define como orden alfanumerico **sin distinguir
-/// mayusculas**, y el desempate es el orden exacto de los bytes: dos
-/// etiquetas que solo se distinguen por la mayuscula tienen que tener un
-/// orden, y un orden estable es el que permite paginar sin perder ni
-/// repetir.
+/// The protocol defines it as alphanumeric order **case-
+/// insensitive**, and the tie-break is the exact byte order: two
+/// tags that differ only by case have to have an
+/// order, and a stable order is what allows paginating without losing or
+/// repeating.
 fn the_order(tag: &str) -> (String, &str) {
     (tag.to_lowercase(), tag)
 }
 
-/// Los parametros de la lista de etiquetas.
+/// The parameters of the tag list.
 ///
-/// Un `n` que no es un numero es un error del cliente, y se dice con un
-/// 400: el parametro es un entero, y un entero que no lo es es una
-/// peticion mal escrita, no una peticion a una operacion que el registro
-/// no sepa atender.
+/// An `n` that is not a number is a client error, and is stated with a
+/// 400: the parameter is an integer, and an integer that is not one is a
+/// badly written request, not a request to an operation the registry
+/// cannot serve.
 fn the_tags_query(query: &str) -> Result<TheTagsQuery, OciFailure> {
     let mut parsed = TheTagsQuery::default();
     for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
         match key.as_ref() {
             "n" => {
-                // Un `n` vacio no es un `n`: el registro de referencia lo
-                // ignora y devuelve la lista entera, y un cliente que lo
-                // manda no esta pidiendo una pagina.
+                // An empty `n` is not an `n`: the reference registry
+                // ignores it and returns the whole list, and a client that
+                // sends it is not asking for a page.
                 if value.is_empty() {
                     continue;
                 }
@@ -419,7 +419,7 @@ fn the_tags_query(query: &str) -> Result<TheTagsQuery, OciFailure> {
     Ok(parsed)
 }
 
-/// Los parametros de la consulta de referrers.
+/// The parameters of the referrers query.
 fn the_referrers_query(query: &str) -> Result<TheReferrersQuery, OciFailure> {
     let mut parsed = TheReferrersQuery::default();
     for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
@@ -434,8 +434,8 @@ fn the_referrers_query(query: &str) -> Result<TheReferrersQuery, OciFailure> {
 mod tests {
     use super::*;
 
-    /// El orden de las etiquetas es el que dice el protocolo: sin
-    /// distinguir mayusculas, y con un desempate estable.
+    /// The tag order is the one the protocol specifies: case-
+    /// insensitive, and with a stable tie-break.
     #[test]
     fn the_order_of_the_tags_is_the_one_the_protocol_says() {
         let mut tags = vec!["beta".to_string(), "Alpha".to_string(), "alfa".to_string()];
@@ -443,8 +443,8 @@ mod tests {
         assert_eq!(tags, vec!["alfa", "Alpha", "beta"]);
     }
 
-    /// Un `n` que no es un numero no es una pagina, y es un error del
-    /// cliente: un 400, no un 405.
+    /// An `n` that is not a number is not a page, and is a client
+    /// error: a 400, not a 405.
     #[test]
     fn an_n_that_is_not_a_number_is_not_a_page() {
         let error = the_tags_query("n=many").expect_err("the n is not a number");
@@ -456,7 +456,7 @@ mod tests {
         assert_eq!(parsed.n, Some(0));
     }
 
-    /// El filtro de referrers se lee tal cual.
+    /// The referrers filter is read as is.
     #[test]
     fn the_filter_of_the_referrers_is_read() {
         let parsed = the_referrers_query("artifactType=application/vnd.example.sbom.v1")
@@ -469,8 +469,8 @@ mod tests {
         assert!(parsed.artifact_type.is_none());
     }
 
-    /// El descriptor lleva el `artifactType` del manifiesto, y las
-    /// anotaciones.
+    /// The descriptor carries the manifest's `artifactType`, and the
+    /// annotations.
     #[test]
     fn the_descriptor_carries_the_artifact_type_and_the_annotations() {
         let manifest = serde_json::json!({
@@ -493,8 +493,8 @@ mod tests {
         );
     }
 
-    /// Un manifiesto de imagen sin `artifactType` lo toma de su
-    /// configuracion, y un indice sin `artifactType` lo omite.
+    /// An image manifest without `artifactType` takes it from its
+    /// config, and an index without `artifactType` omits it.
     #[test]
     fn the_artifact_type_falls_back_to_the_config_of_the_image() {
         let manifest = serde_json::json!({
@@ -508,9 +508,9 @@ mod tests {
             Some("application/vnd.oci.image.config.v1+json")
         );
 
-        // Y un manifiesto que no dice ni que es ni que tiene: el
-        // descriptor dice el tipo del propio manifiesto, porque un
-        // descriptor sin tipo no lo puede filtrar un cliente.
+        // And a manifest that says neither what it is nor what it has: the
+        // descriptor states the manifest's own type, because a
+        // descriptor without a type cannot be filtered by a client.
         let artifact = serde_json::json!({
             "schemaVersion": 2,
             "mediaType": "application/vnd.oci.artifact.manifest.v1+json",

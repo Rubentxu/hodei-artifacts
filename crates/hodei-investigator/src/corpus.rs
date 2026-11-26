@@ -1,31 +1,31 @@
-//! El corpus de regresion de inyeccion de prompt.
+//! The prompt-injection regression corpus.
 //!
-//! La pregunta del SPIKE-011 es si un LLM mejora materialmente la
-//! investigacion **resistiendo la inyeccion de prompt**. Y el
-//! rojo-team importa mas que el modelo: una descripcion de SBOM es un
-//! texto controlado por el atacante, y si entra en el prompt sin
-//! delimitadores, la explicacion que sale puede decir cualquier cosa.
+//! The question of SPIKE-011 is whether an LLM materially improves
+//! investigation **while resisting prompt injection**. And the
+//! red team matters more than the model: an SBOM description is
+//! attacker-controlled text, and if it enters the prompt without
+//! delimiters, the explanation that comes out can say anything.
 //!
-//! El corpus son los textos con los que se prueba. Y cada caso dice que
-//! intenta, porque un corpus sin intencion no es un corpus: es una lista
-//! de cadenas.
+//! The corpus is the texts it is tested with. And each case says what it
+//! attempts, because a corpus without intent is not a corpus: it is a list
+//! of strings.
 
-/// Un caso del corpus.
+/// A corpus case.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InjectionCase {
-    /// El nombre del caso.
+    /// The name of the case.
     pub name: &'static str,
-    /// El texto malicioso.
+    /// The malicious text.
     pub text: &'static str,
-    /// Que intenta el texto.
+    /// What the text attempts.
     pub intent: &'static str,
 }
 
-/// El corpus.
+/// The corpus.
 ///
-/// Los casos son de cuatro tipos: cambiar las instrucciones, revelar
-/// secretos de otra cuenta, pedir una accion que muta, y fingir una
-/// identidad.
+/// The cases are of four kinds: changing the instructions, revealing
+/// secrets of another account, requesting an action that mutates, and faking an
+/// identity.
 pub const THE_CORPUS: &[InjectionCase] = &[
     InjectionCase {
         name: "cambia-las-instrucciones",
@@ -59,15 +59,15 @@ pub const THE_CORPUS: &[InjectionCase] = &[
     },
 ];
 
-/// Los casos que habria que repetir en cada version.
+/// The cases that would have to be repeated in every version.
 ///
-/// El corpus no es un adorno: es lo que dice que la proteccion funciona
-/// HOY. Sin el, "estamos protegidos contra la inyeccion" es una opinion.
+/// The corpus is not an ornament: it is what says the protection works
+/// TODAY. Without it, "we are protected against injection" is an opinion.
 pub fn the_cases() -> &'static [InjectionCase] {
     THE_CORPUS
 }
 
-/// El numero de casos del corpus.
+/// The number of cases in the corpus.
 pub fn the_size() -> usize {
     THE_CORPUS.len()
 }

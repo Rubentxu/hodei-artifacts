@@ -1,72 +1,72 @@
-//! La gramatica **hf** del dialecto de lectura del Hugging Face Hub.
+//! The **hf** grammar of the Hugging Face Hub read dialect.
 //!
-//! Aqui vive lo **puro**: la tabla de rutas que el CLI `hf`
-//! (`huggingface_hub` 1.x, que habla httpx) construye contra un hub, los
-//! documentos de revision JSON y las cabeceras de metadata del resolve.
-//! El dialecto lo fija el cliente y lo verifico el spike de HSP-169
-//! contra huggingface.co y contra un fixture local (FMT-07 de
+//! This holds the **pure** part: the route table that the `hf` CLI
+//! (`huggingface_hub` 1.x, which speaks httpx) builds against a hub, the
+//! JSON revision documents and the resolve metadata headers.
+//! The dialect is fixed by the client and was verified by the HSP-169 spike
+//! against huggingface.co and against a local fixture (FMT-07 of
 //! `uat/UAT-FORMATS.md`):
 //!
-//! 1. `GET /api/models/{repo_id}/revision/{rev}`: el documento de
-//!    revision, con `id`, `sha` y `siblings[]` (`rfilename`). El `sha`
-//!    es el commit que despues el cliente usa en los resolve.
-//! 2. `HEAD /{repo_id}/resolve/{rev}/{rfilename}`: una `302` cuya
-//!    metadata viaja en cabeceras: `X-Repo-Commit` (el commit),
-//!    `X-Linked-Etag` (el sha256 del fichero, entre comillas),
-//!    `X-Linked-Size` (su longitud) y `Location`, **relativa** (una ruta
-//!    sin scheme ni host, la forma del hub clasico) hacia el blob.
-//! 3. `HEAD`/`GET {Location}`: la metadata se lee de la respuesta final
-//!    del redirect y los bytes van en streaming; el `ETag` de la
-//!    respuesta es el sha256 del contenido.
+//! 1. `GET /api/models/{repo_id}/revision/{rev}`: the revision
+//!    document, with `id`, `sha` and `siblings[]` (`rfilename`). The `sha`
+//!    is the commit that the client later uses in resolves.
+//! 2. `HEAD /{repo_id}/resolve/{rev}/{rfilename}`: a `302` whose
+//!    metadata travels in headers: `X-Repo-Commit` (the commit),
+//!    `X-Linked-Etag` (the file's sha256, quoted),
+//!    `X-Linked-Size` (its length) and `Location`, **relative** (a path
+//!    without scheme or host, the classic hub form) towards the blob.
+//! 3. `HEAD`/`GET {Location}`: the metadata is read from the final response
+//!    of the redirect and the bytes are streamed; the response `ETag` is
+//!    the sha256 of the content.
 //!
-//! El cliente **no** emite `X-Xet-*` cuando el servidor no lo anuncia
-//! (decision del servidor): el dialecto cae a la ruta HTTP clasica. Y en
-//! esa ruta el cliente SOLO verifica el tamaño —el sha256 declarado no
-//! lo comprueba—: la integridad la garantiza el CAS del servidor
-//! (conexion con HSP-105), que se niega a servir bytes que no son su
+//! The client does **not** emit `X-Xet-*` when the server does not announce it
+//! (server decision): the dialect falls back to the classic HTTP route. And on
+//! that route the client ONLY verifies the size (it does not check the declared
+//! sha256): integrity is guaranteed by the server's CAS
+//! (connection with HSP-105), which refuses to serve bytes that are not its
 //! digest.
 //!
-//! Un modelo en el catalogo es el conjunto de assets
-//! `artifacts/{owner}/{name}/{rfilename}`; el commit de la revision es
-//! el digest del listado del snapshot (`rfilename sha256` ordenado): es
-//! determinista y solo cambia cuando cambia el contenido que declara.
+//! A model in the catalog is the set of assets
+//! `artifacts/{owner}/{name}/{rfilename}`; the revision commit is
+//! the digest of the snapshot listing (`rfilename sha256`, sorted): it is
+//! deterministic and only changes when the content it declares changes.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
-/// La identidad de un modelo: `owner/name`, el `repo_id` del cliente.
+/// The identity of a model: `owner/name`, the client's `repo_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRef {
-    /// El propietario del modelo.
+    /// The model owner.
     pub owner: String,
-    /// El nombre del modelo.
+    /// The model name.
     pub name: String,
 }
 
 impl ModelRef {
-    /// El `repo_id` tal y como el cliente lo nombra.
+    /// The `repo_id` as the client names it.
     pub fn repo_id(&self) -> String {
         format!("{}/{}", self.owner, self.name)
     }
 
-    /// El prefijo del catalogo de todos los ficheros del modelo:
+    /// The catalog prefix of all the model's files:
     /// `artifacts/{owner}/{name}/`.
     pub fn asset_prefix(&self) -> String {
         format!("artifacts/{}/{}", self.owner, self.name)
     }
 
-    /// El asset del catalogo de un fichero del modelo.
+    /// The catalog asset of a model file.
     pub fn asset_path(&self, filename: &str) -> String {
         format!("{}/{filename}", self.asset_prefix())
     }
 }
 
-/// Una parte del `repo_id` (`owner` o `name`).
+/// A part of the `repo_id` (`owner` or `name`).
 ///
-/// La gramatica del hub: letras, digitos, guion, punto y subrayado, y
-/// empieza por letra o digito. Un punto inicial es un repo oculto del
-/// hub real, y `.` y `..` esconden rutas: nada de eso es un repo.
+/// The hub grammar: letters, digits, hyphen, dot and underscore, and
+/// starts with a letter or digit. A leading dot is a hidden repo in the
+/// real hub, and `.` and `..` hide paths: none of that is a repo.
 pub fn valid_repo_part(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 96
@@ -81,13 +81,13 @@ pub fn valid_repo_part(text: &str) -> bool {
             .is_some_and(|byte| byte.is_ascii_alphanumeric())
 }
 
-/// Un `rfilename` de un sibling: la ruta del fichero dentro del modelo.
+/// A sibling's `rfilename`: the file path inside the model.
 ///
-/// Puede llevar subdirectorios (el hub guarda rutas, no nombres), así que
-/// cada segmento tiene que ser un segmento legitimo: ni vacio, ni `..`,
-/// ni separador de Windows, ni delimitadores de referencia URI. La lista
-/// es la que hace que la ruta sea una referencia sin ambigüedad, la
-/// misma que la del contenido crudo.
+/// It may contain subdirectories (the hub stores paths, not names), so
+/// each segment must be a legitimate segment: not empty, not `..`,
+/// not a Windows separator, and no URI reference delimiters. The list
+/// is the one that makes the path an unambiguous reference, the
+/// same as the one for raw content.
 pub fn valid_filename(text: &str) -> bool {
     if text.is_empty() || text.len() > 1024 {
         return false;
@@ -99,8 +99,8 @@ pub fn valid_filename(text: &str) -> bool {
     segments.iter().all(|segment| valid_segment(segment))
 }
 
-/// Un segmento de un `rfilename`: los `pchar` de RFC 3986, la misma lista
-/// que la del contenido crudo del hub.
+/// A segment of an `rfilename`: the RFC 3986 `pchar`s, the same list
+/// as the one for the hub's raw content.
 fn valid_segment(segment: &str) -> bool {
     if segment.is_empty() || segment == "." || segment == ".." {
         return false;
@@ -129,43 +129,43 @@ fn valid_segment(segment: &str) -> bool {
     })
 }
 
-/// Un sha256, como lo llevan el `X-Linked-Etag`, el `ETag` y la ruta del
-/// blob.
+/// A sha256, as carried by the `X-Linked-Etag`, the `ETag` and the blob
+/// path.
 pub fn valid_sha256(text: &str) -> bool {
     text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// Una revision que el dialecto de lectura nombra: la rama `main` o un
-/// commit de 40 hex. Otra rama no existe en la hosted de este release, y
-/// un commit que no sea el sha256 del snapshot es una revision que el
-/// hub no llego a servir.
+/// A revision that the read dialect names: the `main` branch or a
+/// 40-hex commit. Another branch does not exist in this release's hosted, and
+/// a commit that is not the snapshot's sha256 is a revision that the
+/// hub never served.
 pub fn valid_revision(text: &str) -> bool {
     text == "main" || valid_sha256(text)
 }
 
-/// Lo que puede pedir el CLI sobre la superficie de un repositorio hf.
+/// What the CLI can request on the surface of an hf repository.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// `GET /api/models/{owner}/{name}/revision/{rev}`: el documento de
-    /// revision del modelo.
+    /// `GET /api/models/{owner}/{name}/revision/{rev}`: the model's
+    /// revision document.
     ApiRevision(ModelRef, String),
-    /// `HEAD`/`GET /{owner}/{name}/resolve/{rev}/{rfilename}`: la
-    /// metadata del fichero (la `302` del resolve) y, en `GET`, los
-    /// bytes sin redirect.
+    /// `HEAD`/`GET /{owner}/{name}/resolve/{rev}/{rfilename}`: the
+    /// file metadata (the resolve's `302`) and, on `GET`, the
+    /// bytes without redirect.
     Resolve(ModelRef, String, String),
-    /// `HEAD`/`GET /cdn-lfs/{owner}/{name}/{sha256}/{rfilename}`: la
-    /// metadata final del blob y sus bytes en streaming. El digest de la
-    /// ruta nombra el contenido: la identidad del blob es su sha256, CAS
-    /// exacto.
+    /// `HEAD`/`GET /cdn-lfs/{owner}/{name}/{sha256}/{rfilename}`: the
+    /// final blob metadata and its streamed bytes. The path digest
+    /// names the content: the blob's identity is its sha256, exact
+    /// CAS.
     Blob(ModelRef, String, String),
 }
 
-/// La ruta pedida, ya interpretada.
+/// The requested route, already interpreted.
 ///
-/// La entrada es lo que queda de `/hf/{repository}/` en el URI, **sin**
-/// decodificar: la gramatica del protocolo es la unica que puede mirar
-/// un `%2f`. Una barra final no es gramatica del cliente; la consulta
-/// tampoco llega aqui.
+/// The input is what remains of `/hf/{repository}/` in the URI, **not**
+/// decoded: the protocol grammar is the only one that may look at
+/// a `%2f`. A trailing slash is not part of the client grammar; the query
+/// does not get here either.
 pub fn parse(rest: &str) -> Option<Route> {
     let rest = rest.trim_start_matches('/').trim_end_matches('/');
     if rest.is_empty() {
@@ -212,11 +212,11 @@ fn the_model(owner: &str, name: &str) -> Option<ModelRef> {
     })
 }
 
-/// El commit del snapshot de un modelo: el digest del listado que lo
-/// forma, `rfilename sha256` en orden. Dos snapshots con el mismo
-/// contenido son el mismo commit, y el commit solo cambia cuando cambia
-/// el contenido que declara: la revision es content-addressed como el
-/// CAS que la sirve.
+/// The commit of a model snapshot: the digest of the listing that
+/// forms it, `rfilename sha256` in order. Two snapshots with the same
+/// content are the same commit, and the commit only changes when
+/// the content it declares changes: the revision is content-addressed like the
+/// CAS that serves it.
 pub fn snapshot_commit(entries: &[(&str, &str)]) -> String {
     let mut listing: Vec<String> = entries
         .iter()
@@ -231,15 +231,15 @@ pub fn snapshot_commit(entries: &[(&str, &str)]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// La marca de tiempo que llevan los documentos, en el formato que el
-/// cliente lee sin mirar (`ISO 8601` con segundos).
+/// The timestamp carried by the documents, in the format the
+/// client reads without inspecting (`ISO 8601` with seconds).
 pub fn the_timestamp(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// El documento de revision del modelo. El cliente lee `sha` (el commit
-/// que usara en los resolve) y `siblings[]` (`rfilename`): lo demas es
-/// cortesia del documento real.
+/// The model revision document. The client reads `sha` (the commit
+/// it will use in resolves) and `siblings[]` (`rfilename`): the rest is
+/// courtesy of the real document.
 pub fn revision_document(
     model: &ModelRef,
     commit: &str,
@@ -257,24 +257,24 @@ pub fn revision_document(
     })
 }
 
-/// La metadata que llevan las cabeceras del resolve y del blob: el
-/// commit, el sha256 del fichero y su longitud. La identidad del blob es
-/// su sha256: es el etag que el cliente usa para nombrar su cache y el
-/// digest que el CAS garantiza.
+/// The metadata carried by the resolve and blob headers: the
+/// commit, the file's sha256 and its length. The blob's identity is
+/// its sha256: it is the etag the client uses to name its cache and the
+/// digest the CAS guarantees.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobMeta {
-    /// El commit del snapshot que declara el fichero.
+    /// The commit of the snapshot that declares the file.
     pub commit: String,
-    /// El sha256 del contenido, sin comillas.
+    /// The sha256 of the content, without quotes.
     pub sha256: String,
-    /// La longitud del contenido, en bytes.
+    /// The length of the content, in bytes.
     pub size: u64,
 }
 
 impl BlobMeta {
-    /// Las cabeceras del dialecto, en el orden del wire: `X-Repo-Commit`,
-    /// `X-Linked-Etag` (el sha256 entre comillas, como lo escribe el hub
-    /// real) y `X-Linked-Size`.
+    /// The dialect headers, in wire order: `X-Repo-Commit`,
+    /// `X-Linked-Etag` (the sha256 in quotes, as the real hub
+    /// writes it) and `X-Linked-Size`.
     pub fn the_linked_headers(&self) -> [(&'static str, String); 3] {
         [
             ("x-repo-commit", self.commit.clone()),
@@ -284,11 +284,11 @@ impl BlobMeta {
     }
 }
 
-/// La `Location` del resolve: una **ruta** desde la raiz del servidor,
-/// sin scheme ni host, la forma que el hub clasico entrega y la que el
-/// cliente resuelve contra el anfitrion de la URL que pidio. Lleva el
-/// modelo, el digest y el fichero porque la URL tiene que nombrar lo que
-/// sirve.
+/// The resolve `Location`: a **path** from the server root,
+/// without scheme or host, the form the classic hub delivers and the one the
+/// client resolves against the host of the URL it requested. It carries the
+/// model, the digest and the file because the URL has to name what it
+/// serves.
 pub fn the_download_location(
     base: &str,
     model: &ModelRef,
@@ -376,22 +376,22 @@ mod tests {
 
     #[test]
     fn a_filename_the_wire_cannot_carry_is_not_a_route() {
-        // El backslash es un separador en algun sistema, y un espacio el
-        // mismo nombre escrito de dos maneras: la gramatica del hub no
-        // los lleva.
+        // The backslash is a separator on some systems, and a space is the
+        // same name written two ways: the hub grammar does not
+        // carry them.
         assert_eq!(parse("hodei/demo-model/resolve/main/a\\b"), None);
         assert_eq!(parse("hodei/demo-model/resolve/main/a b"), None);
-        // Un `?` o un `#` le cambia el sentido a la referencia.
+        // A `?` or a `#` changes the meaning of the reference.
         assert_eq!(parse("hodei/demo-model/resolve/main/a%3fb"), None);
-        // Y un segmento codificado dos veces todavia lleva codificacion.
+        // And a segment encoded twice still carries encoding.
         assert_eq!(parse("hodei/demo-model/resolve/main/a%252fb"), None);
     }
 
     #[test]
     fn the_blob_route_carries_the_model_its_digest_and_the_file() {
-        // La ruta del blob lleva el modelo, el digest y el fichero: quien
-        // la sirve busca el asset, comprueba que su contenido es el que
-        // la ruta nombra y no sirve nada que no sea su digest.
+        // The blob path carries the model, the digest and the file: whoever
+        // serves it looks up the asset, checks that its content is the one
+        // the path names and serves nothing that is not its digest.
         let route = parse(
             "cdn-lfs/hodei/demo-model/9f215d1758e5893b6cb9cce25a044849dce7f0f0b80218f92b0a20ceec7a73c9/subdir/model.safetensors",
         );

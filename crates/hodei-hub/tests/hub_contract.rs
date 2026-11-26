@@ -1,19 +1,19 @@
-//! El contrato del hub de artefactos de confianza.
+//! The contract of the trusted artifact hub.
 //!
-//! Seis cosas se prometen y seis cosas se comprueban:
+//! Six things are promised and six things are checked:
 //!
-//! - El SPIKE-010 decide si Hodei habla OCI/Maven/npm o se integra con
-//!   registros externos, y su conclusion se aplica al diseño.
-//! - El almacen CAS guarda el contenido por su digest, y el mismo
-//!   contenido no se guarda dos veces.
-//! - La cuarentena separa lo no promovido del canal de confianza, y salir
-//!   de ella exige una decisión.
-//! - El subconjunto de OCI soportado esta declarado y probado, con su
-//!   limitacion escrita.
-//! - La promocion al hub queda forzada por la decision de confianza, y sin
-//!   decision no hay promocion.
-//! - La UAT de compatibilidad demuestra la interaccion con el registro que
-//!   se declare soportado.
+//! - SPIKE-010 decides whether Hodei speaks OCI/Maven/npm or integrates with
+//!   external registries, and its conclusion is applied to the design.
+//! - The CAS store keeps content by its digest, and the same
+//!   content is not stored twice.
+//! - Quarantine separates what is not promoted from the trust channel, and leaving
+//!   it requires a decision.
+//! - The supported OCI subset is declared and tested, with its
+//!   limitation written down.
+//! - Promotion to the hub is enforced by the trust decision, and without a
+//!   decision there is no promotion.
+//! - The compatibility UAT demonstrates the interaction with the registry
+//!   declared as supported.
 
 use std::sync::Arc;
 
@@ -29,23 +29,23 @@ use hodei_trust_policy::decision::Outcome;
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// El SPIKE-010 decide, y su conclusion se aplica al diseño.
+/// SPIKE-010 decides, and its conclusion is applied to the design.
 #[test]
 fn the_conclusion_of_spike_010_is_written_down_and_applied() {
     let source = include_str!("../src/lib.rs");
 
-    // La conclusion: la propiedad nativa da el punto de imposicion.
+    // The conclusion: native ownership gives the enforcement point.
     assert!(
         source.contains("Compite como punto de imposicion"),
         "the conclusion says where the native property wins"
     );
-    // Y los no-objetivos son explicitos.
+    // And the non-goals are explicit.
     assert!(
         source.contains("Maven y npm no"),
         "and the non-goals are explicit"
     );
 
-    // Y se APLICA: el codigo no tiene ningun Maven ni ningun npm.
+    // And it is APPLIED: the code has no Maven or npm at all.
     let cargo = include_str!("../Cargo.toml");
     assert!(!cargo.contains("maven"), "no hay maven en las dependencias");
     assert!(!cargo.contains("npm"), "no hay npm en las dependencias");
@@ -53,8 +53,8 @@ fn the_conclusion_of_spike_010_is_written_down_and_applied() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// El almacen CAS guarda el contenido por su digest, y el mismo contenido
-/// no se guarda dos veces.
+/// The CAS store keeps content by its digest, and the same content
+/// is not stored twice.
 #[tokio::test]
 async fn the_content_is_stored_by_its_digest_and_only_once() {
     let store = InMemoryBlobStore::empty();
@@ -69,7 +69,7 @@ async fn the_content_is_stored_by_its_digest_and_only_once() {
     assert_eq!(first, second, "el mismo contenido tiene el mismo digest");
     assert!(store.exists(&first).await.expect("the store answers"));
 
-    // Y lo que sale por el digest es EXACTAMENTE lo que entro.
+    // And what comes out by the digest is EXACTLY what went in.
     let read = store.get(&first).await.expect("the content is read");
     assert_eq!(read, bytes, "los bytes son los mismos");
     assert_eq!(
@@ -78,12 +78,12 @@ async fn the_content_is_stored_by_its_digest_and_only_once() {
         "y el digest de lo leido es el pedido"
     );
 
-    // Y un digest que no esta, no esta.
+    // And a digest that is not there, is not there.
     let missing = ContentDigest::of_bytes(b"other content");
     assert!(store.get(&missing).await.is_err(), "lo que no esta no sale");
 }
 
-/// Y en disco, lo mismo: el mismo contenido no ocupa dos veces.
+/// And on disk, the same: the same content does not take up space twice.
 #[tokio::test]
 async fn the_file_store_stores_the_content_once() {
     let tmp = tempfile::tempdir().expect("un directorio de usar y tirar");
@@ -94,7 +94,7 @@ async fn the_file_store_stores_the_content_once() {
     let path = store.the_path_of(&digest);
     assert!(path.exists(), "el blob esta en su sitio");
 
-    // Y guardarlo otra vez no crea un segundo blob.
+    // And storing it again does not create a second blob.
     let before = std::fs::read_dir(tmp.path())
         .expect("el directorio se lee")
         .count();
@@ -110,8 +110,8 @@ async fn the_file_store_stores_the_content_once() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// La cuarentena separa lo no promovido del canal de confianza, y salir de
-/// ella exige una decision.
+/// Quarantine separates what is not promoted from the trust channel, and leaving
+/// it requires a decision.
 #[tokio::test]
 async fn the_quarantine_is_the_default_and_leaving_it_needs_a_decision() {
     let hub = ArtifactHub::new(Arc::new(InMemoryBlobStore::empty()));
@@ -129,7 +129,7 @@ async fn the_quarantine_is_the_default_and_leaving_it_needs_a_decision() {
         "y el canal de confianza esta vacio"
     );
 
-    // Sin decision, no hay promocion.
+    // Without a decision, there is no promotion.
     let error = hub
         .promote(&ingested.digest, None, "alice", Utc::now())
         .await
@@ -137,7 +137,7 @@ async fn the_quarantine_is_the_default_and_leaving_it_needs_a_decision() {
     assert_eq!(error, PromotionError::NoDecision);
     assert!(hub.trusted().is_empty(), "y el canal sigue vacio");
 
-    // Con la decision que deniega, tampoco.
+    // With the decision that denies, neither.
     let denying = TrustVerdict::denying("dec-1", "1.0.0", vec!["TRUST_SBOM_MISSING".to_string()]);
     let error = hub
         .promote(&ingested.digest, Some(&denying), "alice", Utc::now())
@@ -155,7 +155,7 @@ async fn the_quarantine_is_the_default_and_leaving_it_needs_a_decision() {
     }
     assert!(hub.trusted().is_empty());
 
-    // Y con la que permite, sale al canal de confianza.
+    // And with the one that allows, it goes out to the trust channel.
     let allowing = TrustVerdict::allowing("dec-2", "1.0.0");
     let promoted = hub
         .promote(&ingested.digest, Some(&allowing), "alice", Utc::now())
@@ -165,8 +165,8 @@ async fn the_quarantine_is_the_default_and_leaving_it_needs_a_decision() {
     assert_eq!(hub.trusted().len(), 1);
     assert!(hub.quarantine().is_empty(), "y sale de la cuarentena");
 
-    // Y los bytes NO han cambiado: la promocion cambia el canal, no el
-    // contenido.
+    // And the bytes have NOT changed: promotion changes the channel, not the
+    // content.
     assert_eq!(
         promoted.digest, ingested.digest,
         "el digest es el mismo: la promocion no muta los bytes"
@@ -178,7 +178,7 @@ async fn the_quarantine_is_the_default_and_leaving_it_needs_a_decision() {
     assert_eq!(bytes_after, bytes, "y los bytes son los mismos");
 }
 
-/// Y la traza de la promocion dice quien, con que decision y por que.
+/// And the promotion trace says who, with which decision and why.
 #[tokio::test]
 async fn the_promotion_is_traced() {
     let hub = ArtifactHub::new(Arc::new(InMemoryBlobStore::empty()));
@@ -202,11 +202,11 @@ async fn the_promotion_is_traced() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// El subconjunto de OCI soportado esta declarado y probado, con su
-/// limitacion escrita.
+/// The supported OCI subset is declared and tested, with its
+/// limitation written down.
 #[test]
 fn the_oci_subset_is_declared_and_its_limitation_written() {
-    // Un manifiesto de imagen: soportado.
+    // An image manifest: supported.
     let manifest = serde_json::json!({
         "schemaVersion": 2,
         "mediaType": MANIFEST_MEDIA_TYPE,
@@ -223,8 +223,8 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
     assert_eq!(read.schema_version, 2);
     assert_eq!(read.the_digests().len(), 2, "la configuracion y la capa");
 
-    // Y lo que no es un manifiesto de imagen, se dice con su error: este
-    // lector lee manifiestos de imagen, no indices.
+    // And what is not an image manifest is reported with its error: this
+    // reader reads image manifests, not indexes.
     let index = serde_json::json!({
         "schemaVersion": 2,
         "mediaType": "application/vnd.oci.image.index.v1+json",
@@ -245,8 +245,8 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
         "con su limitacion escrita: {error}"
     );
 
-    // El indice, en cambio, es un tipo de manifiesto que el registro
-    // habla: se publica y se sirve como lo que es, con su clase.
+    // The index, on the other hand, is a manifest type the registry
+    // speaks: it is published and served as what it is, with its kind.
     assert!(
         SUPPORTED_MANIFESTS.contains(&"application/vnd.oci.image.index.v1+json"),
         "el indice multi-plataforma es un tipo de manifiesto soportado"
@@ -271,7 +271,7 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
         "un tipo que no se habla no tiene clase"
     );
 
-    // Y la lista de lo no soportado esta en el codigo, no en un documento.
+    // And the list of what is unsupported is in the code, not in a document.
     assert!(
         !UNSUPPORTED.contains(&"application/vnd.oci.image.index.v1+json"),
         "el indice ya no es una limitacion"
@@ -282,7 +282,7 @@ fn the_oci_subset_is_declared_and_its_limitation_written() {
     );
 }
 
-/// Y un digest de un manifiesto tiene que estar bien formado.
+/// And a manifest's digest has to be well formed.
 #[test]
 fn a_malformed_digest_is_not_a_digest() {
     assert!(
@@ -298,8 +298,8 @@ fn a_malformed_digest_is_not_a_digest() {
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// La promocion al hub queda forzada por la decision de confianza, y sin
-/// decision no hay promocion.
+/// Promotion to the hub is enforced by the trust decision, and without a
+/// decision there is no promotion.
 #[tokio::test]
 async fn the_promotion_is_forced_by_the_decision() {
     let hub = ArtifactHub::new(Arc::new(InMemoryBlobStore::empty()));
@@ -308,7 +308,7 @@ async fn the_promotion_is_forced_by_the_decision() {
         .await
         .expect("el artefacto se admite");
 
-    // El artefacto no es de fiar mientras no se diga lo contrario.
+    // The artifact is not trustworthy until said otherwise.
     assert_eq!(
         hub.artifact(&ingested.digest)
             .expect("el artefacto esta")
@@ -316,7 +316,7 @@ async fn the_promotion_is_forced_by_the_decision() {
         Availability::Quarantined
     );
 
-    // Y una decision que no es ALLOW no promociona.
+    // And a decision that is not ALLOW does not promote.
     let warning = TrustVerdict {
         decision_id: "dec-1".to_string(),
         outcome: Outcome::Warn,
@@ -333,14 +333,14 @@ async fn the_promotion_is_forced_by_the_decision() {
 
 // ───────────────────────────── AC6 ─────────────────────────────
 
-/// La UAT de compatibilidad demuestra la interaccion con el registro que
-/// se declare soportado.
+/// The compatibility UAT demonstrates the interaction with the registry
+/// declared as supported.
 #[tokio::test]
 async fn the_external_registry_coexists_without_migration() {
     let hub = ArtifactHub::new(Arc::new(InMemoryBlobStore::empty()));
 
-    // Un artefacto que vive en un registro externo: Hodei lo referencia, lo
-    // cita y lo sabe, sin migrar sus bytes.
+    // An artifact that lives in an external registry: Hodei references it, cites
+    // it and knows about it, without migrating its bytes.
     let external = ContentDigest::of_bytes(b"the bytes in the external registry");
     let referenced = hub.reference(external.clone(), "registry.example.com/app:1.0.0");
 
@@ -354,10 +354,10 @@ async fn the_external_registry_coexists_without_migration() {
         Some("registry.example.com/app:1.0.0")
     );
 
-    // Y el hub no los tiene: no hay migracion.
+    // And the hub does not have them: there is no migration.
     assert!(hub.bytes_of(&external).await.is_err(), "y no los inventa");
 
-    // Y un artefacto que Hodei SI tiene, con su digest, en el canal.
+    // And an artifact that Hodei DOES have, with its digest, in the channel.
     let own = hub
         .ingest(b"the bytes of our own artefact")
         .await

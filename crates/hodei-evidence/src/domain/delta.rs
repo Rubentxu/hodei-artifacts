@@ -1,8 +1,8 @@
 //! The deltas of the relations of the risk graph.
 //!
 //! When a support is added, withdrawn or changed, what changed is a
-//! FACT about one relation: el producto lo reconoce y reacciona a ello
-//! sin recorrer ni recalcular el grafo entero. The delta is said once,
+//! FACT about one relation: the product recognizes it and reacts to it
+//! without walking or recomputing the entire graph. The delta is said once,
 //! with its cause and its version, and who invalidates reads it from
 //! where it stopped -- a restart does not lose what was said, and
 //! saying it twice does not say it twice.
@@ -22,10 +22,10 @@ use kernel::Hrn;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationDeltaKind {
-    /// The relation gained its first support: una afirmacion nueva.
+    /// The relation gained its first support: a new claim.
     Added,
     /// The relation lost a support. It may still hold others: la
-    /// retirada de UN apoyo no es la retirada de la relacion.
+    /// withdrawal of ONE support is not the withdrawal of the relation.
     Removed,
     /// The relation already held supports and gained one more.
     SupportChanged,
@@ -45,9 +45,9 @@ impl RelationDeltaKind {
 /// One change of one risk relation, said for the ones that invalidate.
 ///
 /// It carries WHAT changed, WHERE, WHOSE evidence moved it, WHAT caused
-/// it and WHERE it stands in the tenant's order. La causa es la
-/// identidad de lo que lo trajo -- el evento o el changeset -- y es la
-/// clave de la deduplicacion: el mismo cambio dicho dos veces es UN
+/// it and WHERE it stands in the tenant's order. The cause is the
+/// identity of what brought it -- the event or the changeset -- and is the
+/// key of the deduplication: the same change said twice is ONE
 /// cambio.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationDelta {
@@ -78,7 +78,7 @@ impl RelationDelta {
     }
 }
 
-/// What a subscriber of the deltas wants: SU tenant, and a CLOSED set of
+/// What a subscriber of the deltas wants: ITS tenant, and a CLOSED set of
 /// relation types. A delta of another account or of a relation type
 /// outside the set is not this subscriber's business, and it does not
 /// invalidate anything of theirs.
@@ -110,7 +110,7 @@ impl RelationDeltaSubscription {
 /// The deltas are PERSISTED, with their version --the order they take in
 /// the tenant's story-- and their cause. A consumer reads from where it
 /// stopped, within a quota, and a restart reads the same deltas again:
-/// lo que se dijo sigue dicho. The append is idempotent by cause: the
+/// what was said stays said. The append is idempotent by cause: the
 /// same cause appended twice is ONE delta, not two.
 #[async_trait]
 pub trait RelationDeltaLedger: Send + Sync {
@@ -129,8 +129,8 @@ pub trait RelationDeltaLedger: Send + Sync {
         quota: usize,
     ) -> Result<(Vec<(u64, RelationDelta)>, u64), String>;
 
-    /// The version the tenant's story has reached: donde el consumidor
-    /// nuevo empieza a leer.
+    /// The version the tenant's story has reached: where the new consumer
+    /// starts reading.
     async fn version_of(&self, tenant: &Hrn) -> Result<u64, String>;
 }
 
@@ -166,8 +166,8 @@ pub struct InMemoryRelationDeltaLedger {
 struct DeltaInner {
     /// The deltas, in the order they were appended, with their version.
     deltas: Vec<(u64, RelationDelta)>,
-    /// The causes that are already said, per tenant: el mismo cambio
-    /// dicho dos veces es UN cambio.
+    /// The causes that are already said, per tenant: the same change
+    /// said twice is ONE change.
     causes: BTreeMap<String, BTreeSet<String>>,
 }
 
@@ -184,9 +184,9 @@ impl RelationDeltaLedger for InMemoryRelationDeltaLedger {
         let mut inner = self.inner.lock().expect("el registro no esta envenenado");
         let mut last = None;
         for delta in deltas {
-            // The key of the dedup: the cause AND what it said. El mismo
-            // cambio dicho dos veces es UN cambio; otro cambio del mismo
-            // cause es otro cambio.
+            // The key of the dedup: the cause AND what it said. The same
+            // change said twice is ONE change; another change with the same
+            // cause is another change.
             let key = format!(
                 "{}|{}|{}|{}",
                 delta.cause,
@@ -232,8 +232,8 @@ impl RelationDeltaLedger for InMemoryRelationDeltaLedger {
             }
             wanted.push((*version, delta.clone()));
         }
-        // Where the reader stopped: la version del ultimo que leyo, y si
-        // no leyo ninguno, la que trajo.
+        // Where the reader stopped: the version of the last one it read, and if
+        // it read none, the one it brought.
         let stopped = wanted
             .last()
             .map(|(version, _)| *version)

@@ -1,20 +1,20 @@
-//! Las piezas de estado de la cache del proxy: coalescencia de descargas,
-//! cache negativa, metricas y el error que se comparte entre peticiones.
+//! The proxy cache's state pieces: download coalescing,
+//! negative cache, metrics and the error shared between requests.
 //!
-//! La **decision** de cache (frescura, revalidacion, offline, cuarentena) es
-//! pura y vive en `hodei_catalog::proxy_cache`. Aqui solo esta lo que
-//! necesita memoria de proceso:
+//! The cache **decision** (freshness, revalidation, offline, quarantine) is
+//! pure and lives in `hodei_catalog::proxy_cache`. Only what needs process
+//! memory is here:
 //!
-//! - [`SingleFlight`]: peticiones concurrentes por la misma ruta comparten
-//!   una sola descarga. Una descarga por ruta, con el limite global de
-//!   salidas simultaneas que ya impone el cliente de salida.
-//! - [`NegativeCache`]: una ruta que el upstream dijo que no existe no se
-//!   vuelve a preguntar durante un tiempo corto.
-//! - [`ProxyMetrics`]: contadores de lo que paso con cada peticion.
+//! - [`SingleFlight`]: concurrent requests for the same path share
+//!   a single download. One download per path, within the global limit on
+//!   simultaneous egress already enforced by the egress client.
+//! - [`NegativeCache`]: a path the upstream said does not exist is not
+//!   asked about again for a short time.
+//! - [`ProxyMetrics`]: counters of what happened with each request.
 //!
-//! Nada de esto es fuente de verdad: si el proceso se reinicia, lo unico
-//! que se pierde es una optimizacion. La frescura y la procedencia salen
-//! siempre del libro de recibos.
+//! None of this is a source of truth: if the process restarts, all that is
+//! lost is an optimization. Freshness and provenance always come from the
+//! receipt ledger.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -25,40 +25,40 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
-/// Que papel jugo una peticion en una descarga compartida.
+/// The role a request played in a shared download.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Flight<V> {
-    /// Esta peticion hizo el trabajo.
+    /// This request did the work.
     Led(V),
-    /// Esta peticion esperaba y comparte el resultado de otra.
+    /// This request waited and shares the result of another.
     Followed(V),
 }
 
 impl<V> Flight<V> {
-    /// El resultado, sea cual sea el papel.
+    /// The result, whatever the role.
     pub fn into_inner(self) -> V {
         match self {
             Self::Led(value) | Self::Followed(value) => value,
         }
     }
 
-    /// Si esta peticion compartio el trabajo de otra.
+    /// Whether this request shared the work of another.
     pub fn is_followed(&self) -> bool {
         matches!(self, Self::Followed(_))
     }
 }
 
-/// Coalescencia: una sola ejecucion en vuelo por clave.
+/// Coalescing: a single in-flight execution per key.
 ///
-/// El primero en llegar (el *lider*) ejecuta el trabajo; los que llegan
-/// mientras dura esperan y reciben una copia de su resultado, con exito o
-/// con error. Si el lider se cancela (el cliente cierra la conexion), los
-/// seguidores no se quedan colgados ni heredan la cancelacion: uno de ellos
-/// pasa a ser el nuevo lider.
+/// The first to arrive (the *leader*) runs the work; those arriving
+/// while it runs wait and receive a copy of its result, success or
+/// error. If the leader is cancelled (the client closes the connection),
+/// followers are not left hanging nor do they inherit the cancellation: one
+/// of them becomes the new leader.
 ///
-/// El resultado compartido es el del lider, incluido a nombre de quien
-/// quedo el recibo: todos los que esperaron ya tenian permiso de leer esa
-/// ruta, porque la autorizacion va antes de llegar aqui.
+/// The shared result is the leader's, including on whose behalf the receipt
+/// was recorded: everyone who waited was already allowed to read that
+/// path, because authorization happens before getting here.
 pub struct SingleFlight<K, V> {
     inflight: Mutex<HashMap<K, watch::Receiver<Option<V>>>>,
 }
@@ -77,14 +77,14 @@ impl<K, V> std::fmt::Debug for SingleFlight<K, V> {
     }
 }
 
-/// Quita la entrada si el lider termina sin publicar (cancelacion o panico).
+/// Removes the entry if the leader finishes without publishing (cancellation or panic).
 struct LeaderGuard<'a, K: Eq + Hash, V> {
     flights: &'a SingleFlight<K, V>,
     key: Option<K>,
 }
 
 impl<K: Eq + Hash, V> LeaderGuard<'_, K, V> {
-    /// Quita la entrada y la deja sin efecto en el `Drop`.
+    /// Removes the entry and makes the `Drop` a no-op.
     fn release(&mut self) {
         if let Some(key) = self.key.take() {
             self.flights.remove(&key);
@@ -100,8 +100,8 @@ impl<K: Eq + Hash, V> Drop for LeaderGuard<'_, K, V> {
 
 impl<K: Eq + Hash, V> SingleFlight<K, V> {
     fn remove(&self, key: &K) {
-        // Un mutex envenenado solo puede venir de un panico con el cerrojo
-        // cogido; el mapa sigue siendo valido.
+        // A poisoned mutex can only come from a panic while holding the lock;
+        // the map is still valid.
         let mut inflight = self
             .inflight
             .lock()
@@ -109,7 +109,7 @@ impl<K: Eq + Hash, V> SingleFlight<K, V> {
         inflight.remove(key);
     }
 
-    /// Cuantas ejecuciones hay en vuelo.
+    /// How many executions are in flight.
     pub fn in_flight(&self) -> usize {
         self.inflight
             .lock()
@@ -119,13 +119,13 @@ impl<K: Eq + Hash, V> SingleFlight<K, V> {
 }
 
 impl<K: Eq + Hash + Clone, V: Clone> SingleFlight<K, V> {
-    /// Una coalescencia vacia.
+    /// An empty coalescer.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Ejecuta `work` si nadie lo esta haciendo para `key`; si no, espera a
-    /// quien lo hace y devuelve su resultado.
+    /// Runs `work` if nobody is doing it for `key`; otherwise waits for
+    /// whoever is doing it and returns its result.
     pub async fn run<F, Fut>(&self, key: K, work: F) -> Flight<V>
     where
         F: FnOnce() -> Fut,
@@ -157,22 +157,22 @@ impl<K: Eq + Hash + Clone, V: Clone> SingleFlight<K, V> {
                         flights: self,
                         key: Some(key.clone()),
                     };
-                    // Un lider termina la funcion: el trabajo solo se pide una vez.
+                    // A leader ends the function: the work is requested only once.
                     let Some(work) = work.take() else {
                         continue;
                     };
                     let value = work().await;
-                    // Primero se retira la entrada: quien llegue ahora abre
-                    // una descarga nueva en vez de leer una ya terminada.
+                    // The entry is removed first: whoever arrives now opens
+                    // a new download instead of reading one that already finished.
                     guard.release();
-                    // Sin seguidores no hay nadie a quien avisar y `send`
-                    // falla: no es un error.
+                    // Without followers there is nobody to notify and `send`
+                    // fails: that is not an error.
                     let _ = sender.send(Some(value.clone()));
                     return Flight::Led(value);
                 }
                 Role::Follower(mut receiver) => {
-                    // Si el lider se cancelo sin resultado, `wait_for`
-                    // falla y se reintenta: quien llegue primero lo releva.
+                    // If the leader was cancelled with no result, `wait_for`
+                    // fails and it retries: whoever arrives first takes over.
                     if let Ok(value) = receiver.wait_for(|value| value.is_some()).await
                         && let Some(value) = value.clone()
                     {
@@ -184,19 +184,19 @@ impl<K: Eq + Hash + Clone, V: Clone> SingleFlight<K, V> {
     }
 }
 
-/// La clave de una descarga o de una ausencia: cuenta, repositorio y ruta.
+/// The key of a download or an absence: account, repository and path.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PathKey {
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// La clave del repositorio.
+    /// The repository key.
     pub repository: String,
-    /// La ruta.
+    /// The path.
     pub asset_path: String,
 }
 
 impl PathKey {
-    /// La clave de una ruta de un repositorio de una cuenta.
+    /// The key of a path in a repository of an account.
     pub fn of(account: &str, repository: &str, asset_path: &str) -> Self {
         Self {
             account: account.to_string(),
@@ -206,28 +206,28 @@ impl PathKey {
     }
 }
 
-/// Cuantas ausencias recuerda como maximo la cache negativa.
+/// How many absences the negative cache remembers at most.
 const NEGATIVE_CAPACITY: usize = 4096;
 
-/// La cache de lo que el upstream dijo que no existe.
+/// The cache of what the upstream said does not exist.
 ///
-/// En memoria y acotada. La clave lleva la **version de la configuracion**
-/// del repositorio: cambiar el upstream, los scopes o la politica descarta
-/// de hecho todas las ausencias anteriores, porque la pregunta ya no es la
-/// misma. Solo recuerda ausencias de rutas **sin contenido**: una ruta que
-/// el catalogo ya sirve nunca se esconde tras una ausencia.
+/// In memory and bounded. The key carries the repository's **configuration
+/// version**: changing the upstream, the scopes or the policy effectively
+/// discards all earlier absences, because the question is no longer the
+/// same. It only remembers absences for paths **without content**: a path
+/// the catalog already serves is never hidden behind an absence.
 #[derive(Debug, Default)]
 pub struct NegativeCache {
     entries: Mutex<HashMap<(PathKey, u64), Instant>>,
 }
 
 impl NegativeCache {
-    /// Una cache vacia.
+    /// An empty cache.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Si hay una ausencia vigente para esa ruta y version de configuracion.
+    /// Whether there is a live absence for that path and configuration version.
     pub fn contains(&self, key: &PathKey, config_version: u64, now: Instant) -> bool {
         let entries = self
             .entries
@@ -238,8 +238,8 @@ impl NegativeCache {
             .is_some_and(|expires| *expires > now)
     }
 
-    /// Recuerda una ausencia durante `ttl`. Con la cache llena (tras purgar
-    /// las vencidas) no guarda nada: es una optimizacion, no un registro.
+    /// Remembers an absence for `ttl`. With the cache full (after purging
+    /// expired entries) it stores nothing: it is an optimization, not a record.
     pub fn remember(&self, key: &PathKey, config_version: u64, ttl: Duration, now: Instant) {
         if ttl.is_zero() {
             return;
@@ -257,7 +257,7 @@ impl NegativeCache {
         entries.insert((key.clone(), config_version), now + ttl);
     }
 
-    /// Olvida la ausencia de una ruta, sea cual sea la version.
+    /// Forgets the absence of a path, whatever the version.
     pub fn forget(&self, key: &PathKey) {
         let mut entries = self
             .entries
@@ -266,7 +266,7 @@ impl NegativeCache {
         entries.retain(|(stored, _), _| stored != key);
     }
 
-    /// Cuantas ausencias hay guardadas (vencidas incluidas).
+    /// How many absences are stored (expired ones included).
     pub fn len(&self) -> usize {
         self.entries
             .lock()
@@ -274,14 +274,14 @@ impl NegativeCache {
             .len()
     }
 
-    /// Si no hay ninguna.
+    /// Whether there are none.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 }
 
-/// Los contadores del proxy. Atomicos y sin etiquetas: son un pulso del
-/// proceso, no una serie temporal; el rastro (`tracing`) lleva el detalle.
+/// The proxy counters. Atomic and unlabeled: they are a pulse of the
+/// process, not a time series; the trace (`tracing`) carries the detail.
 #[derive(Debug, Default)]
 pub struct ProxyMetrics {
     hits: AtomicU64,
@@ -298,38 +298,38 @@ pub struct ProxyMetrics {
     upstream_errors: AtomicU64,
 }
 
-/// Una lectura de los contadores en un instante.
+/// A reading of the counters at an instant.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MetricsSnapshot {
-    /// Servido de la cache sin salir.
+    /// Served from the cache without going out.
     pub hits: u64,
-    /// No estaba y se trajo.
+    /// Was missing and was fetched.
     pub misses: u64,
-    /// Estaba caducado y el upstream lo confirmo.
+    /// Was expired and the upstream confirmed it.
     pub revalidated: u64,
-    /// Estaba caducado y el upstream entrego bytes nuevos.
+    /// Was expired and the upstream delivered new bytes.
     pub refreshed: u64,
-    /// El upstream fallo y se sirvio lo que habia, dentro de la ventana.
+    /// The upstream failed and what was there was served, within the window.
     pub stale: u64,
-    /// Una ausencia recordada ahorro una pregunta.
+    /// A remembered absence saved a question.
     pub negative_hits: u64,
-    /// Servido en modo offline.
+    /// Served in offline mode.
     pub offline_hits: u64,
-    /// Rechazado en modo offline por no estar en la cache.
+    /// Rejected in offline mode for not being in the cache.
     pub offline_misses: u64,
-    /// Retenido por entregar bytes distintos a los de un contenido inmutable.
+    /// Held back for delivering bytes different from those of immutable content.
     pub quarantined: u64,
-    /// Peticiones que compartieron la descarga de otra.
+    /// Requests that shared another's download.
     pub coalesced: u64,
-    /// Salidas al upstream.
+    /// Egress calls to the upstream.
     pub upstream_requests: u64,
-    /// Salidas al upstream que fallaron.
+    /// Egress calls to the upstream that failed.
     pub upstream_errors: u64,
 }
 
 macro_rules! counter {
     ($record:ident, $field:ident) => {
-        /// Suma uno.
+        /// Adds one.
         pub fn $record(&self) {
             self.$field.fetch_add(1, Ordering::Relaxed);
         }
@@ -350,7 +350,7 @@ impl ProxyMetrics {
     counter!(record_upstream_request, upstream_requests);
     counter!(record_upstream_error, upstream_errors);
 
-    /// Una lectura de todos los contadores.
+    /// A reading of all the counters.
     pub fn snapshot(&self) -> MetricsSnapshot {
         let read = |counter: &AtomicU64| counter.load(Ordering::Relaxed);
         MetricsSnapshot {
@@ -370,64 +370,64 @@ impl ProxyMetrics {
     }
 }
 
-/// Por que fallo una resolucion, en una forma que se puede compartir entre
-/// las peticiones que esperaron la misma descarga.
+/// Why a resolution failed, in a form that can be shared among
+/// the requests that waited for the same download.
 ///
-/// No lleva la URL ni la respuesta del upstream: el cliente no tiene por
-/// que ver la red interna del servicio.
+/// It carries neither the URL nor the upstream response: the client has no
+/// business seeing the service's internal network.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProxyFailure {
-    /// El upstream no tiene ese contenido.
+    /// The upstream does not have that content.
     #[error("the upstream does not have that content")]
     NotFound,
-    /// La ruta cae fuera de los alcances del upstream.
+    /// The path falls outside the upstream's scopes.
     #[error("the path is outside the scopes of the upstream")]
     OutOfScope,
-    /// Hay demasiadas salidas a la vez.
+    /// There are too many simultaneous egress calls.
     #[error("too many fetches are in flight")]
     Busy,
-    /// El upstream no respondio a tiempo.
+    /// The upstream did not respond in time.
     #[error("the upstream timed out")]
     Timeout,
-    /// La politica de salida no deja ir al upstream.
+    /// The egress policy does not allow going to the upstream.
     #[error("the upstream is not reachable from this service")]
     NotReachable,
-    /// El contenido no se pudo verificar contra lo que declaro el upstream.
+    /// The content could not be verified against what the upstream declared.
     #[error("the upstream content could not be verified")]
     Unverified,
-    /// El contenido llego incompleto o excede el tope.
+    /// The content arrived incomplete or exceeds the cap.
     #[error("the upstream content is incomplete or too large")]
     Incomplete,
-    /// El upstream no entrego (error de red, estado inesperado, credencial).
+    /// The upstream did not deliver (network error, unexpected status, credential).
     #[error("the upstream did not deliver")]
     UpstreamFailed,
-    /// El servicio no sale a la red.
+    /// The service does not go out to the network.
     #[error("the service is offline")]
     Offline,
-    /// El almacen o el libro fallaron: no es culpa del upstream.
+    /// The store or the ledger failed: not the upstream's fault.
     #[error("the service could not store the content")]
     Local(LocalFailure),
 }
 
-/// Un fallo propio del servicio, sin detalle que filtrar.
+/// A failure of the service itself, with no detail to leak.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LocalFailure {
-    /// El almacen o el catalogo no estan disponibles.
+    /// The store or the catalog is unavailable.
     Unavailable,
-    /// Algo roto por dentro.
+    /// Something broken internally.
     Internal,
-    /// El catalogo rechazo la publicacion por una condicion.
+    /// The catalog rejected the publication due to a condition.
     Rejected,
 }
 
 impl ProxyFailure {
-    /// Si el fallo es del upstream: lo que cuenta como error de salida y lo
-    /// unico que deja servir un contenido caducado dentro de la ventana
-    /// `stale_if_error`.
+    /// Whether the failure is the upstream's: what counts as an egress error and the
+    /// only thing that allows serving expired content within the
+    /// `stale_if_error` window.
     ///
-    /// Que el upstream diga `404` no cuenta: es una respuesta, no un error,
-    /// y el contenido que el upstream retiro no se sigue presentando como
-    /// vigente.
+    /// The upstream saying `404` does not count: it is an answer, not an error,
+    /// and content the upstream withdrew is not kept presented as
+    /// current.
     pub fn is_upstream_error(&self) -> bool {
         matches!(
             self,
@@ -471,7 +471,7 @@ mod tests {
                     .await
             }));
         }
-        // Deja que todas lleguen y se pongan a esperar al lider.
+        // Lets all of them arrive and start waiting for the leader.
         while flights.in_flight() == 0 {
             tokio::task::yield_now().await;
         }
@@ -575,7 +575,7 @@ mod tests {
             tokio::spawn(async move { flights.run("path", || async { 2 }).await })
         };
         tokio::time::sleep(Duration::from_millis(50)).await;
-        // El cliente del lider se va: su peticion se cancela.
+        // The leader's client leaves: its request is cancelled.
         leader.abort();
         let outcome = tokio::time::timeout(Duration::from_secs(5), follower)
             .await
@@ -628,12 +628,12 @@ mod tests {
         }
         assert_eq!(negatives.len(), NEGATIVE_CAPACITY);
 
-        // Llena y sin vencidas: no entra nada mas.
+        // Full and with no expired entries: nothing more fits.
         let extra = PathKey::of("acme", "central", "extra");
         negatives.remember(&extra, 1, Duration::from_secs(10), now);
         assert!(!negatives.contains(&extra, 1, now));
 
-        // Con las anteriores vencidas, se purgan y entra.
+        // With the earlier ones expired, they are purged and the new one fits.
         let later = now + Duration::from_secs(11);
         negatives.remember(&extra, 1, Duration::from_secs(10), later);
         assert!(negatives.contains(&extra, 1, later));

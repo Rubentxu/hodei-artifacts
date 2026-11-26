@@ -1,10 +1,10 @@
-//! npm hosted de HSP-111, a nivel HTTP, sin el cliente `npm`.
+//! HSP-111 hosted npm, at the HTTP level, without the `npm` client.
 //!
-//! Lo que el cliente real no deja probar con comodidad: los codigos y el
-//! cuerpo JSON de cada rechazo, la politica de scopes de un repositorio, que
-//! un proxy y un group no aceptan escrituras, y que cada cambio de packument
-//! es una instantanea nueva (otro `ETag`) que deja intactos los tarballs ya
-//! publicados, y que varias publicaciones simultaneas no se pierden.
+//! What the real client does not make comfortable to test: the codes and the
+//! JSON body of each rejection, a repository's scope policy, that
+//! a proxy and a group do not accept writes, that each packument change
+//! is a new snapshot (another `ETag`) that leaves already published
+//! tarballs intact, and that several simultaneous publishes are not lost.
 
 mod support;
 
@@ -15,13 +15,13 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha512};
 use support::{Answer, Curl, Deployment, FIRST_ACCOUNT};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Una peticion con cuerpo JSON opcional; devuelve la respuesta y su cuerpo.
+/// A request with an optional JSON body; returns the response and its body.
 fn call(
     dir: &Path,
     port: u16,
@@ -30,7 +30,7 @@ fn call(
     token: &str,
     body: Option<&Value>,
 ) -> Answer {
-    // Un par de ficheros por peticion: varias pruebas llaman a la vez.
+    // A couple of files per request: several tests call at the same time.
     static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let into = dir.join(format!("answer-{n}.bin"));
@@ -60,7 +60,7 @@ fn json_of(answer: &Answer) -> Value {
     })
 }
 
-/// El cuerpo de un `npm publish`: una version y su tarball en base64.
+/// The body of an `npm publish`: a version and its tarball in base64.
 fn publication(name: &str, version: &str, tarball: &[u8]) -> Value {
     let base = name.rsplit('/').next().expect("a base name");
     let file = format!("{name}-{version}.tgz");
@@ -142,7 +142,7 @@ fn a_publication_is_served_back_with_absolute_tarballs_and_its_integrity() {
     assert_eq!(served.status, 200);
     assert_eq!(served.body, tarball);
 
-    // Un HEAD dice cuanto traeria el GET, y una condicion vigente es un 304.
+    // A HEAD says how much the GET would bring, and a standing condition is a 304.
     let etag = packument.header("etag").expect("the packument has an etag");
     let unchanged = Curl::call_with_headers(
         port,
@@ -156,7 +156,7 @@ fn a_publication_is_served_back_with_absolute_tarballs_and_its_integrity() {
     .run();
     assert_eq!(unchanged.status, 304);
 
-    // Las rutas de servicio de npm.
+    // npm's service routes.
     assert_eq!(
         call(dir, port, "GET", "/npm/npm-hosted/-/ping", &token, None).status,
         200
@@ -164,8 +164,8 @@ fn a_publication_is_served_back_with_absolute_tarballs_and_its_integrity() {
     let whoami = call(dir, port, "GET", "/npm/npm-hosted/-/whoami", &token, None);
     assert_eq!(whoami.status, 200);
     assert!(json_of(&whoami)["username"].is_string());
-    // La auditoria de seguridad (un POST) no se ofrece: npm sigue sin ella
-    // y tolera el 404.
+    // The security audit (a POST) is not offered: npm still goes without it
+    // and tolerates the 404.
     let audit = call(
         dir,
         port,
@@ -176,7 +176,7 @@ fn a_publication_is_served_back_with_absolute_tarballs_and_its_integrity() {
     );
     assert_eq!(audit.status, 404);
     assert!(json_of(&audit)["error"].is_string(), "a 404 without JSON");
-    // Un metodo que una ruta conocida no admite: 405, tambien con JSON.
+    // A method that a known route does not allow: 405, also with JSON.
     let post = call(
         dir,
         port,
@@ -200,7 +200,7 @@ fn errors_are_json_and_follow_the_conventions_npm_expects() {
     let dir = deployment.directory.path();
     let tarball = b"bytes".to_vec();
 
-    // Sin credencial: 401 con el desafio y el motivo en JSON.
+    // Without a credential: 401 with the challenge and the reason in JSON.
     let anonymous = call(dir, port, "GET", "/npm/npm-hosted/widget", "", None);
     assert_eq!(anonymous.status, 401);
     assert!(
@@ -210,7 +210,7 @@ fn errors_are_json_and_follow_the_conventions_npm_expects() {
     );
     assert!(json_of(&anonymous)["error"].is_string());
 
-    // Un paquete que no existe es un 404 con `error`.
+    // A package that does not exist is a 404 with `error`.
     let missing = call(
         dir,
         port,
@@ -222,12 +222,12 @@ fn errors_are_json_and_follow_the_conventions_npm_expects() {
     assert_eq!(missing.status, 404);
     assert!(json_of(&missing)["error"].is_string());
 
-    // Un repositorio que no es npm no se sirve por esta superficie.
+    // A repository that is not npm is not served through this surface.
     let other = call(dir, port, "GET", "/npm/releases/widget", &token, None);
     assert_eq!(other.status, 404);
 
-    // Sobre-publicar una version es un 403, no un 409: un 409 hace que
-    // `libnpmpublish` intente fusionar documentos.
+    // Overwriting a version is a 403, not a 409: a 409 makes
+    // `libnpmpublish` try to merge documents.
     let first = call(
         dir,
         port,
@@ -257,7 +257,7 @@ fn errors_are_json_and_follow_the_conventions_npm_expects() {
     );
     assert_eq!(kept.body, tarball, "the published bytes were rewritten");
 
-    // Un integrity declarado que no es el del tarball se rechaza.
+    // A declared integrity that is not the tarball's is rejected.
     let mut lying = publication("widget", "2.0.0", &tarball);
     lying["versions"]["2.0.0"]["dist"] = json!({ "integrity": "sha512-AAAA" });
     let lying = call(
@@ -270,7 +270,7 @@ fn errors_are_json_and_follow_the_conventions_npm_expects() {
     );
     assert_eq!(lying.status, 400);
 
-    // Un nombre que no es un nombre de npm.
+    // A name that is not an npm name.
     let invalid = call(
         dir,
         port,
@@ -328,13 +328,13 @@ fn every_packument_change_is_a_new_snapshot_and_published_files_do_not_change() 
         first_etag, second_etag,
         "a publication did not make a new snapshot"
     );
-    // La version anterior sigue diciendo lo mismo que antes.
+    // The previous version still says the same as before.
     assert_eq!(
         json_of(&second)["versions"]["1.0.0"]["dist"],
         first_document["versions"]["1.0.0"]["dist"]
     );
 
-    // Mover `latest` es otra instantanea, y los tarballs no se tocan.
+    // Moving `latest` is another snapshot, and the tarballs are not touched.
     let tags = "/npm/npm-hosted/-/package/widget/dist-tags";
     let moved = call(
         dir,
@@ -367,7 +367,7 @@ fn every_packument_change_is_a_new_snapshot_and_published_files_do_not_change() 
     );
     assert_eq!(file.body, old);
 
-    // `latest` no se quita y un tag no apunta a una version que no existe.
+    // `latest` is not removed and a tag does not point to a version that does not exist.
     assert_eq!(
         call(dir, port, "DELETE", &format!("{tags}/latest"), &token, None).status,
         400
@@ -429,7 +429,7 @@ fn deprecating_is_allowed_and_unpublishing_is_refused_and_leaves_a_trace() {
         201
     );
 
-    // `npm deprecate`: el packument completo con `deprecated` y sin adjuntos.
+    // `npm deprecate`: the full packument with `deprecated` and without attachments.
     let mut document = json_of(&call(
         dir,
         port,
@@ -463,7 +463,7 @@ fn deprecating_is_allowed_and_unpublishing_is_refused_and_leaves_a_trace() {
     ));
     assert_eq!(after["versions"]["1.0.0"]["deprecated"], json!("use 2.0.0"));
 
-    // Quitar la deprecacion tambien es un cambio permitido.
+    // Removing the deprecation is also an allowed change.
     let mut document = after.clone();
     document["versions"]["1.0.0"]["deprecated"] = json!("");
     assert_eq!(
@@ -479,7 +479,7 @@ fn deprecating_is_allowed_and_unpublishing_is_refused_and_leaves_a_trace() {
         200
     );
 
-    // `npm unpublish`: quitar la version del documento, o borrar por `-rev`.
+    // `npm unpublish`: remove the version from the document, or delete by `-rev`.
     let mut removed = after.clone();
     removed["versions"] = json!({});
     let refused = call(
@@ -542,7 +542,7 @@ fn deprecating_is_allowed_and_unpublishing_is_refused_and_leaves_a_trace() {
     );
     assert_eq!(kept.body, bytes);
 
-    // El intento queda en el rastro de auditoria del servicio.
+    // The attempt stays in the service's audit trail.
     support::stop(&mut service);
     let log = deployment.the_log();
     assert!(
@@ -574,7 +574,7 @@ fn a_repository_publishes_only_the_scopes_it_declares() {
     assert_eq!(put("@acme/widget", "/npm/npm-acme/@acme%2fwidget"), 201);
     assert_eq!(put("@other/widget", "/npm/npm-acme/@other%2fwidget"), 403);
     assert_eq!(put("widget", "/npm/npm-acme/widget"), 403);
-    // La politica vale tambien para los dist-tags de un paquete ajeno.
+    // The policy also applies to the dist-tags of someone else's package.
     let tags = "/npm/npm-acme/-/package/@other%2fwidget/dist-tags/beta";
     let tag = |method: &str| call(dir, port, method, tags, &token, Some(&json!("1.0.0"))).status;
     assert_eq!(tag("PUT"), 403);
@@ -642,8 +642,8 @@ fn simultaneous_publications_of_one_package_are_all_kept() {
     let port = service.port;
     let dir = deployment.directory.path();
 
-    // Cuatro versiones a la vez: cada una lee el packument, anade la suya y
-    // escribe con precondicion; las que pierden la carrera releen y reintentan.
+    // Four versions at once: each reads the packument, adds its own and
+    // writes with a precondition; the ones that lose the race re-read and retry.
     let statuses: Vec<u16> = std::thread::scope(|scope| {
         let handles: Vec<_> = (1..=4)
             .map(|n| {

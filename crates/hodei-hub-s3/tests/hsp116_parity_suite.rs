@@ -1,4 +1,4 @@
-//! El backend de ficheros pasa la suite de HAR-22.
+//! The file backend passes the HAR-22 suite.
 
 mod common;
 
@@ -15,19 +15,19 @@ fn a_file_store() -> (tempfile::TempDir, FileBlobStore) {
 async fn the_file_store_passes_the_suite() {
     let (_directory, store) = a_file_store();
     the_suite(&store).await;
-    // La diferencia declarada: el filesystem si tiene caminos de staging.
+    // The declared difference: the filesystem does have staging paths.
     let session = store.begin().await.expect("la sesion abre");
     assert!(session.the_staging_path().is_some());
 }
 
 #[tokio::test]
 async fn the_in_memory_store_passes_the_suite_too() {
-    // El fixture no puede quedar fuera del contrato que dice imitar.
+    // The fixture cannot be left outside the contract it claims to imitate.
     the_suite(&hodei_hub::blob::InMemoryBlobStore::empty()).await;
 }
 
-/// Restart: lo escrito por un proceso lo sirve el siguiente, porque el
-/// directorio es el estado.
+/// Restart: what one process wrote is served by the next, because the
+/// directory is the state.
 #[tokio::test]
 async fn the_file_store_survives_a_restart() {
     let (directory, store) = a_file_store();

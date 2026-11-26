@@ -1,48 +1,48 @@
-// HSP-219: el `open` condicionado que comparten las suites gated del
-// catálogo Dgraph (hsp187, hsp190, hsp191) vía `include!`.
+// HSP-219: the conditioned `open` shared by the gated suites of the
+// Dgraph catalog (hsp187, hsp190, hsp191) via `include!`.
 //
-// El defecto probado: `DgraphCatalogStore::open` arranca la guarda de
-// esquema y declara su DDL aditivo con dos `alter` en cada apertura. Bajo
-// los threads por defecto de la suite —y más con dos binarios gated contra
-// el mismo alpha— los `alter` concurrentes caen en la ventana de reindexado
-// que Dgraph abre tras aceptar un DDL: el servidor responde
-// `errIndexingInProgress. Please retry` y el open revienta de forma
-// intermitente (medido 21-11: 5/8 pasadas fallan en hsp187 y 1/8 en hsp190
-// lanzando ambas suites en paralelo con threads por defecto; secuencial o
-// `--test-threads=1`: 0). La ventana dura ~1 s y es transitoria por
-// contrato: el propio mensaje dice *retry*.
+// The proven defect: `DgraphCatalogStore::open` starts the schema guard
+// and declares its additive DDL with two `alter`s on every opening. Under
+// the suite's default threads -- and more so with two gated binaries against
+// the same alpha -- the concurrent `alter`s fall into the reindexing window
+// that Dgraph opens after accepting a DDL: the server answers
+// `errIndexingInProgress. Please retry` and the open blows up
+// intermittently (measured 21-11: 5/8 runs fail in hsp187 and 1/8 in hsp190
+// launching both suites in parallel with default threads; sequential or
+// `--test-threads=1`: 0). The window lasts ~1 s and is transient by
+// contract: the message itself says *retry*.
 //
-// La estabilización es doble y vive toda en el carril de tests (la
-// producción abre una vez por proceso y no necesita el retry):
+// The stabilization is twofold and lives entirely in the test lane (production
+// opens once per process and does not need the retry):
 //
-// 1. **Serialización intra-proceso**: una puerta asíncrona global por
-//    binario de test de modo que, dentro de la suite, los opens comparten
-//    la preparación del schema de uno en uno — el primero paga el alter y
-//    los siguientes lo ven idempotente ya indexado.
-// 2. **Retry acotado con backoff** (la receta probada de HSP-191, ampliada
-//    a 8 intentos con respiro creciente): cubre la ventana cuando el DDL
-//    lo dispara OTRO proceso — dos suites gated concurrentes contra el
-//    mismo alpha, que aquí no se coordinan. Sólo se reintentan los
-//    `Unavailable`, la clase transitoria que devuelve el alter rechazado;
-//    un `Conflict`, `Denied` o `Corrupt` es un fallo real y panica de
-//    inmediato, sin enmascararlo.
+// 1. **Intra-process serialization**: a global async gate per
+//    test binary so that, within the suite, the opens share
+//    the schema preparation one at a time -- the first pays the alter and
+//    the following ones see it idempotent, already indexed.
+// 2. **Bounded retry with backoff** (HSP-191's proven recipe, extended
+//    to 8 attempts with growing breathers): covers the window when the DDL
+//    is triggered by ANOTHER process -- two concurrent gated suites against the
+//    same alpha, which are not coordinated here. Only `Unavailable`
+//    is retried, the transient class the rejected alter returns;
+//    a `Conflict`, `Denied` or `Corrupt` is a real failure and panics
+//    immediately, without masking it.
 //
-// Carril recomendado: las suites que alter-ean el mismo tipo se corren de
-// una en una (`cargo test --test <suite>`, como prescribe HSP-190), y
-// dentro de cada binario basta el carril por defecto de threads. Si dos
-// suites se lanzan a la vez, el retry acotado absorbe la ventana.
+// Recommended lane: suites that alter the same type are run one at a
+// time (`cargo test --test <suite>`, as HSP-190 prescribes), and
+// within each binary the default thread lane is enough. If two
+// suites are launched at once, the bounded retry absorbs the window.
 
-/// La puerta de apertura: un open del catálogo a la vez por proceso de test.
+/// The opening gate: one catalog open at a time per test process.
 fn hsp219_open_gate() -> &'static tokio::sync::Mutex<()> {
     static GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
     GATE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-/// El almacén Dgraph del catálogo, con la apertura condicionada al DDL
-/// concurrente del alpha (véase el módulo). Usa `AllowAllAuthorizer` como
-/// todas las suites del stack; los adaptadores `with_identity`/`with_probe`
-/// se encadenan sobre el almacén ya abierto (el helper panic antes de
-/// devolver si el open no cuaja).
+/// The catalog's Dgraph store, with the opening conditioned on the alpha's
+/// concurrent DDL (see the module). Uses `AllowAllAuthorizer` like
+/// all the stack's suites; the `with_identity`/`with_probe` adapters
+/// are chained onto the already-opened store (the helper panics before
+/// returning if the open does not hold).
 async fn open_store(
     client: std::sync::Arc<hodei_graph_client::GraphClient>,
 ) -> hodei_catalog_storage::DgraphCatalogStore {

@@ -1,36 +1,36 @@
-//! El puerto Dgraph del catálogo (HSP-187, slice Raw).
+//! The catalog's Dgraph port (HSP-187, Raw slice).
 //!
-//! Porta el catálogo durable de HAR-02/HAR-03 sobre el motor de grafo
-//! nativo (`hodei-graph-client`): Repository, Asset, Version,
-//! BlobReference y el outbox de auditoría, manteniendo el CAS **externo**
-//! — los bytes nunca viven en el grafo; el grafo apunta por digest.
+//! It ports the durable catalog of HAR-02/HAR-03 onto the native graph
+//! engine (`hodei-graph-client`): Repository, Asset, Version,
+//! BlobReference and the audit outbox, keeping the CAS **external**
+//! -- the bytes never live in the graph; the graph points by digest.
 //!
-//! La frontera de commit es la que marca HAR-03: **el commit del catálogo
-//! y el evento de auditoría son UNA transacción**. La transacción es el
-//! upsert atómico de la frontera de proyección (HSP-199): la guarda de
-//! ámbito (`hodei.guard.*`) avanza, el marcador de operación
-//! (`hodei.operation.*`) se escribe una sola vez y las filas del catálogo
-//! más el evento se aplican en bloques condicionados del mismo commit.
-//! La respuesta la decide **el estado después del commit**, nunca la
-//! esperanza de que la transacción haya commiteado.
+//! The commit boundary is the one HAR-03 marks: **the catalog commit
+//! and the audit event are ONE transaction**. The transaction is the
+//! atomic upsert of the projection boundary (HSP-199): the scope guard
+//! (`hodei.guard.*`) advances, the operation marker
+//! (`hodei.operation.*`) is written only once, and the catalog rows
+//! plus the event are applied in conditioned blocks of the same commit.
+//! The answer is decided by **the state after the commit**, never by the
+//! hope that the transaction committed.
 //!
-//! Las garantías por clave: cada fila lleva su clave compuesta
-//! (`hodei.catalog.*.key`, índice exacto y `@upsert`), así que el servidor
-//! —no un pre-lectura— arbitra dos escritores de la misma clave. El
-//! idempotente es el de HAR-02: republicar lo mismo no es un error ni una
-//! escritura nueva, y un evento que dice "publicado" sobre lo que ya
-//! estaba no añade ningún hecho.
+//! The per-key guarantees: each row carries its composite key
+//! (`hodei.catalog.*.key`, exact index and `@upsert`), so the server
+//! --not a pre-read-- arbitrates two writers of the same key. The
+//! idempotent case is that of HAR-02: republishing the same thing is neither an error nor a new
+//! write, and an event that says "published" about what was already
+//! there adds no fact.
 //!
-//! El slice de etiquetas mutables (el de los registros OCI) va sobre la
-//! misma frontera: la guarda por clave de etiqueta es la que hace que dos
-//! escritores que mueven la misma etiqueta se serialicen — el commit que
-//! el grafo arbitra en último lugar gana, y ninguno pierde su hecho. La
-//! reentrega del mismo movimiento (misma etiqueta, misma versión) relee el
-//! resultado comprometido: idempotencia por hecho, no por suerte.
+//! The mutable-tags slice (the one for OCI registries) rides on the
+//! same boundary: the guard per tag key is what makes two
+//! writers moving the same tag serialize -- the commit that
+//! the graph arbitrates last wins, and neither loses its fact. The
+//! redelivery of the same move (same tag, same version) re-reads the
+//! committed result: idempotency by fact, not by luck.
 //!
-//! Lo que el slice NO sirve todavía (reconfiguración de repositorios,
-//! vistas derivadas) lo dice con un error tipado en vez de fingir que lo
-//! sirve.
+//! What the slice does NOT serve yet (repository reconfiguration,
+//! derived views) it says with a typed error instead of pretending
+//! to serve it.
 
 use std::sync::Arc;
 
@@ -62,31 +62,31 @@ use sha2::{Digest as _, Sha256};
 
 mod gc_ledger;
 
-/// Cuántas veces la publicación relee y reintenta antes de rendirse.
+/// How many times the publication re-reads and retries before giving up.
 const WRITE_ATTEMPTS: usize = 6;
 
-/// El tipo de grafo de una fila de repositorio.
+/// The graph type of a repository row.
 pub const REPOSITORY_TYPE: &str = "CatalogRepository";
-/// El tipo de grafo de un asset.
+/// The graph type of an asset.
 pub const ASSET_TYPE: &str = "CatalogAsset";
-/// El tipo de grafo de una versión publicada.
+/// The graph type of a published version.
 pub const VERSION_TYPE: &str = "CatalogVersion";
-/// El tipo de grafo de una referencia viva a un blob del CAS.
+/// The graph type of a live reference to a CAS blob.
 pub const REFERENCE_TYPE: &str = "CatalogReference";
-/// El tipo de grafo de una fila del outbox de auditoría.
+/// The graph type of an audit outbox row.
 pub const OUTBOX_TYPE: &str = "CatalogAuditOutbox";
-/// El tipo de grafo de una etiqueta mutable.
+/// The graph type of a mutable tag.
 pub const TAG_TYPE: &str = "CatalogTag";
 
-/// Versión del esquema **propio** del catálogo sobre Dgraph. Va aparte del
-/// esquema versionado del grafo (`hodei-graph-client`, v7): este slice
-/// declara sus predicados al abrir el almacén, y no toca el contrato de
-/// arranque que el resto del stack valida.
+/// Version of the catalog's **own** schema over Dgraph. It is separate from the
+/// graph's versioned schema (`hodei-graph-client`, v7): this slice
+/// declares its predicates when the store is opened, and does not touch the startup
+/// contract that the rest of the stack validates.
 pub const CATALOG_DGRAPH_SCHEMA_VERSION: i64 = 1;
 
-/// El DDL aditivo del catálogo sobre Dgraph. Cada clave es índice exacto y
-/// `@upsert`: el servidor aborta a quien escriba una segunda fila con la
-/// misma clave, dentro de la misma transacción o entre transacciones.
+/// The additive DDL of the catalog over Dgraph. Each key is an exact index and
+/// `@upsert`: the server aborts whoever writes a second row with the
+/// same key, within the same transaction or across transactions.
 pub fn catalog_schema_dql() -> String {
     let mut ddl = String::new();
     for (predicate, kind, index) in [
@@ -299,9 +299,9 @@ pub fn catalog_schema_dql() -> String {
         ("hodei.catalog.outbox.lease_until", "datetime", ""),
         ("hodei.catalog.outbox.last_error", "string", ""),
         ("hodei.catalog.outbox.delivered_at", "datetime", ""),
-        // El slice de etiquetas mutables (OCI): la clave lleva el upsert
-        // para que dos escritores que mueven la misma etiqueta peleen por
-        // el índice y no por la fila.
+        // The mutable-tags slice (OCI): the key carries the upsert
+        // so that two writers moving the same tag fight over
+        // the index and not over the row.
         ("hodei.catalog.tag.key", "string", "@index(exact) @upsert"),
         ("hodei.catalog.tag.account", "string", "@index(exact)"),
         ("hodei.catalog.tag.repository", "string", "@index(exact)"),
@@ -385,9 +385,9 @@ pub fn catalog_schema_dql() -> String {
     ddl
 }
 
-/// Escapa una parte de una clave compuesta: el separador `|` y el `@` de
-/// las coordenadas no pueden aparecer tal cual dentro de una parte, o dos
-/// partes distintas producirían la misma clave.
+/// Escapes a part of a composite key: the `|` separator and the `@` of
+/// the coordinates cannot appear as is inside a part, or two
+/// different parts would produce the same key.
 fn key_part(value: &str) -> String {
     value
         .replace('%', "%25")
@@ -395,13 +395,13 @@ fn key_part(value: &str) -> String {
         .replace('@', "%40")
 }
 
-/// La clave compuesta de un repositorio.
+/// The composite key of a repository.
 pub fn repository_key(account: &str, repo_key: &str) -> String {
     format!("{}|{}", key_part(account), key_part(repo_key))
 }
 
-/// La clave compuesta de un asset (y de su referencia: la referencia es la
-/// fila que se mueve con el asset).
+/// The composite key of an asset (and of its reference: the reference is the
+/// row that moves with the asset).
 pub fn asset_key(account: &str, repository: &str, asset_path: &str) -> String {
     format!(
         "{}|{}|{}",
@@ -411,7 +411,7 @@ pub fn asset_key(account: &str, repository: &str, asset_path: &str) -> String {
     )
 }
 
-/// La clave compuesta de una versión publicada.
+/// The composite key of a published version.
 pub fn version_key(
     account: &str,
     repository: &str,
@@ -427,7 +427,7 @@ pub fn version_key(
     )
 }
 
-/// La clave compuesta de una etiqueta mutable.
+/// The composite key of a mutable tag.
 pub fn tag_key(account: &str, repository: &str, tag_name: &str) -> String {
     format!(
         "{}|{}|t|{}",
@@ -468,10 +468,10 @@ fn guard_part(value: &str) -> String {
     out
 }
 
-/// El sujeto de la guarda de una publicación: el camino del asset dentro
-/// de la cuenta. Dos escritores de la misma ruta —de donde venga el
-/// código— derivan el mismo sujeto y por eso se pelean por la misma
-/// guarda; dos rutas distintas nunca colisionan.
+/// The subject of the guard of a publication: the asset's path within
+/// the account. Two writers of the same path --wherever the
+/// code comes from-- derive the same subject and therefore fight over the same
+/// guard; two different paths never collide.
 fn asset_guard_scope(
     account: &str,
     repository: &str,
@@ -488,10 +488,10 @@ fn asset_guard_scope(
     )
 }
 
-/// El sujeto de la guarda de una etiqueta: la clave de la etiqueta dentro
-/// de la cuenta. Dos escritores que mueven la misma etiqueta —a la misma
-/// versión o a versiones distintas— se pelean por ESTA guarda, y el commit
-/// que el grafo arbitra en último lugar es el que gana.
+/// The subject of the guard of a tag: the tag's key within
+/// the account. Two writers moving the same tag --to the same
+/// version or to different versions-- fight over THIS guard, and the commit
+/// that the graph arbitrates last is the one that wins.
 fn tag_guard_scope(
     account: &str,
     repository: &str,
@@ -504,11 +504,11 @@ fn tag_guard_scope(
     )
 }
 
-/// Los ajustes de npm de un repositorio, tal y como los valida la
-/// referencia Surreal (HSP-111): solo un repositorio npm los declara, y
-/// los que declara tienen que entenderse. El slice Dgraph comparte el
-/// mismo contrato de alta, para que el mismo descriptor valga en los dos
-/// motores (HSP-193).
+/// The npm settings of a repository, as the Surreal
+/// reference validates them (HSP-111): only an npm repository declares them, and
+/// the ones it declares have to be understood. The Dgraph slice shares the
+/// same creation contract, so that the same descriptor is valid in both
+/// engines (HSP-193).
 fn the_npm_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(), CatalogError> {
     if format != RepositoryFormat::Npm {
         if config.config_settings.get("npm").is_some() {
@@ -523,12 +523,12 @@ fn the_npm_of(format: RepositoryFormat, config: &RepositoryConfig) -> Result<(),
         .map_err(CatalogError::invalid)
 }
 
-/// La configuración de un repositorio, vista desde su modo, tal y como la
-/// valida la referencia Surreal (HSP-112): un proxy sin upstream válido no
-/// se crea, y un `proxy` en otro modo es un error, no un ajuste dormido.
-/// El slice Dgraph comparte el mismo contrato de alta para que un
-/// descriptor PyPI —que es el que ejercita el upstream en el hosted/proxy
-/// de HSP-194— valga en los dos motores (HSP-178).
+/// The configuration of a repository, seen from its mode, as the
+/// Surreal reference validates it (HSP-112): a proxy without a valid upstream is not
+/// created, and a `proxy` in another mode is an error, not a dormant setting.
+/// The Dgraph slice shares the same creation contract so that a PyPI
+/// descriptor --the one that exercises the upstream in the hosted/proxy
+/// of HSP-194-- is valid in both engines (HSP-178).
 fn the_upstream_of(mode: RepositoryMode, config: &RepositoryConfig) -> Result<(), CatalogError> {
     if mode != RepositoryMode::Proxy {
         if config.config_settings.get("proxy").is_some() {
@@ -547,7 +547,7 @@ fn the_upstream_of(mode: RepositoryMode, config: &RepositoryConfig) -> Result<()
     }
 }
 
-/// El sujeto de la guarda de una creación de repositorio.
+/// The subject of the guard of a repository creation.
 fn repository_guard_scope(account: &str, repo_key: &str) -> Result<GuardScope, CatalogError> {
     scope_of(
         GuardKind::CatalogRepository,
@@ -556,9 +556,9 @@ fn repository_guard_scope(account: &str, repo_key: &str) -> Result<GuardScope, C
     )
 }
 
-/// Valida el sujeto de una guarda: una clave que la guarda no puede
-/// proteger (el separador, espacios, caracteres de control) no es una
-/// clave que este slice publique.
+/// Validates the subject of a guard: a key that the guard cannot
+/// protect (the separator, spaces, control characters) is not a
+/// key this slice publishes.
 fn scope_of(kind: GuardKind, tenant: &str, subject: &str) -> Result<GuardScope, CatalogError> {
     let tenant = Tenant::new(tenant).map_err(|error| {
         CatalogError::invalid(format!("the account is not a guard tenant: {error}"))
@@ -567,18 +567,18 @@ fn scope_of(kind: GuardKind, tenant: &str, subject: &str) -> Result<GuardScope, 
         .map_err(|error| CatalogError::invalid(format!("the key is not publishable here: {error}")))
 }
 
-/// El identificador de operación determinista de una publicación: el mismo
-/// hecho dicho dos veces lleva el mismo identificador, así que el
-/// reintento tras el commit relee el resultado comprometido en vez de
-/// escribir por segunda vez.
+/// The deterministic operation identifier of a publication: the same
+/// fact said twice carries the same identifier, so the
+/// retry after the commit re-reads the committed result instead of
+/// writing a second time.
 fn publication_operation_id(
     account: &str,
     publication: &Publication,
     kind: &WriteKind,
 ) -> OperationId {
     let mut hasher = Sha256::new();
-    // La cuenta entra en el hecho: la misma ruta en dos cuentas son dos
-    // hechos distintos, y un marcador once-only es por grafo.
+    // The account enters the fact: the same path in two accounts is two
+    // different facts, and a once-only marker is per graph.
     hasher.update(account.as_bytes());
     hasher.update([0]);
     hasher.update(publication.repository.as_bytes());
@@ -631,7 +631,7 @@ fn repository_config_operation_id(
         .expect("a sha256-derived operation id is always valid")
 }
 
-/// El identificador de operación determinista de una creación de repositorio.
+/// The deterministic operation identifier of a repository creation.
 fn repository_operation_id(descriptor: &RepositoryDescriptor) -> OperationId {
     let mut hasher = Sha256::new();
     hasher.update(descriptor.account.as_bytes());
@@ -655,11 +655,11 @@ fn repository_operation_id(descriptor: &RepositoryDescriptor) -> OperationId {
     OperationId::new(&id).expect("a sha256-derived operation id is always valid")
 }
 
-/// El identificador de operación determinista de un movimiento de
-/// etiqueta: la misma etiqueta movida a la MISMA versión es el mismo hecho
-/// (el reintento tras el timeout relee el resultado comprometido), y la
-/// misma etiqueta movida a OTRA versión es otro hecho (el último commit
-/// gana, y ambos quedan aplicados en el orden en que el grafo los arbitró).
+/// The deterministic operation identifier of a tag
+/// move: the same tag moved to the SAME version is the same fact
+/// (the retry after the timeout re-reads the committed result), and the
+/// same tag moved to ANOTHER version is another fact (the last commit
+/// wins, and both are applied in the order in which the graph arbitrated them).
 fn tag_operation_id(
     account: &str,
     repository: &str,
@@ -681,38 +681,38 @@ fn tag_operation_id(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura de filas.
+// Reading rows.
 // ---------------------------------------------------------------------------
 
-/// Los campos que lee una fila de repositorio.
+/// The fields read by a repository row.
 const REPOSITORY_FIELDS: &str = "hodei.catalog.repository.key hodei.catalog.repository.account \
      hodei.catalog.repository.repo_key hodei.catalog.repository.hrn hodei.catalog.repository.format \
      hodei.catalog.repository.mode hodei.catalog.repository.config_version \
      hodei.catalog.repository.config_scope hodei.catalog.repository.config_settings \
      hodei.catalog.repository.created_at hodei.catalog.repository.updated_at";
 
-/// Los campos que lee una fila de asset.
+/// The fields read by an asset row.
 const ASSET_FIELDS: &str = "hodei.catalog.asset.key hodei.catalog.asset.account \
      hodei.catalog.asset.repository hodei.catalog.asset.asset_path \
      hodei.catalog.asset.package_name hodei.catalog.asset.package_version \
      hodei.catalog.asset.digest_algorithm hodei.catalog.asset.digest \
      hodei.catalog.asset.size_bytes hodei.catalog.asset.subject hodei.catalog.asset.updated_at";
 
-/// Los campos que lee una fila de versión.
+/// The fields read by a version row.
 const VERSION_FIELDS: &str = "hodei.catalog.version.key hodei.catalog.version.account \
      hodei.catalog.version.repository hodei.catalog.version.package_name \
      hodei.catalog.version.package_version hodei.catalog.version.digest_algorithm \
      hodei.catalog.version.digest hodei.catalog.version.size_bytes \
      hodei.catalog.version.published_at";
 
-/// Los campos que lee una fila de referencia.
+/// The fields read by a reference row.
 const REFERENCE_FIELDS: &str = "hodei.catalog.reference.key hodei.catalog.reference.account \
      hodei.catalog.reference.repository hodei.catalog.reference.asset_path \
      hodei.catalog.reference.digest_algorithm hodei.catalog.reference.digest \
      hodei.catalog.reference.scope hodei.catalog.reference.size_bytes \
      hodei.catalog.reference.trust_state hodei.catalog.reference.updated_at";
 
-/// Los campos que lee una fila del outbox.
+/// The fields read by an outbox row.
 const OUTBOX_FIELDS: &str = "hodei.catalog.outbox.key hodei.catalog.outbox.tenant \
      hodei.catalog.outbox.actor hodei.catalog.outbox.correlation_id hodei.catalog.outbox.action \
      hodei.catalog.outbox.resource hodei.catalog.outbox.digest hodei.catalog.outbox.result \
@@ -720,7 +720,7 @@ const OUTBOX_FIELDS: &str = "hodei.catalog.outbox.key hodei.catalog.outbox.tenan
      hodei.catalog.outbox.lease_owner hodei.catalog.outbox.lease_until \
      hodei.catalog.outbox.last_error hodei.catalog.outbox.delivered_at";
 
-/// Lee un texto de un nodo, o lo dice como corrupción.
+/// Reads a text from a node, or reports it as corruption.
 fn node_text(node: &serde_json::Value, field: &str) -> Result<String, CatalogError> {
     node.get(field)
         .and_then(serde_json::Value::as_str)
@@ -763,7 +763,7 @@ fn node_digest(
     })
 }
 
-/// La fila de un repositorio tal como está en el grafo.
+/// The row of a repository as it is in the graph.
 #[derive(Clone)]
 struct RepositoryRow {
     account: String,
@@ -794,8 +794,8 @@ impl RepositoryRow {
         })
     }
 
-    /// El descriptor de la fila, con la identidad comprobada contra lo que
-    /// la clave dice que son.
+    /// The row's descriptor, with the identity checked against what
+    /// the key says they are.
     fn into_descriptor(
         self,
         account: &str,
@@ -859,7 +859,7 @@ impl RepositoryRow {
     }
 }
 
-/// La fila de una versión publicada.
+/// The row of a published version.
 #[derive(Clone)]
 struct VersionRow {
     account: String,
@@ -903,7 +903,7 @@ impl VersionRow {
     }
 }
 
-/// La fila de un asset.
+/// The row of an asset.
 #[derive(Clone)]
 struct AssetRow {
     account: String,
@@ -940,8 +940,8 @@ impl AssetRow {
         })
     }
 
-    /// El registro del asset, con la identidad comprobada contra lo que
-    /// la clave dice: una fila que no se llama como su clave está rota.
+    /// The asset's record, with the identity checked against what
+    /// the key says: a row that is not named like its key is broken.
     fn into_record(
         self,
         account: &str,
@@ -976,7 +976,7 @@ impl AssetRow {
     }
 }
 
-/// La fila de una referencia viva a un blob.
+/// The row of a live reference to a blob.
 #[derive(Clone)]
 struct ReferenceRow {
     digest: ContentDigest,
@@ -1031,7 +1031,7 @@ impl ReferenceRow {
     }
 }
 
-/// La fila de una etiqueta mutable tal como está en el grafo.
+/// The row of a mutable tag as it is in the graph.
 struct TagRow {
     account: String,
     repository: String,
@@ -1053,9 +1053,9 @@ impl TagRow {
         })
     }
 
-    /// La etiqueta, con la identidad comprobada contra lo que la clave
-    /// dice que son: una fila que no lleva la identidad que su clave nombra
-    /// no es una respuesta, es una corrupción.
+    /// The tag, with the identity checked against what the key
+    /// says they are: a row that does not carry the identity its key names
+    /// is not an answer, it is corruption.
     fn into_tag(
         self,
         account: &str,
@@ -1083,10 +1083,10 @@ impl TagRow {
 }
 
 // ---------------------------------------------------------------------------
-// El estado de una publicación, pre-leído en una pregunta.
+// The state of a publication, pre-read in one question.
 // ---------------------------------------------------------------------------
 
-/// Lo que hay en el grafo para una publicación.
+/// What is in the graph for a publication.
 struct PublicationState {
     repository: Option<RepositoryRow>,
     version: Option<VersionRow>,
@@ -1095,10 +1095,10 @@ struct PublicationState {
     event: Option<OutboxRow>,
 }
 
-/// Lee el estado de una publicación en una sola pregunta: repositorio,
-/// versión, asset, referencia y la fila del evento que la publicación va
-/// a decir. El evento se lee aquí para que una fila ya dicha con otro
-/// contenido se descubra **antes** de escribir nada.
+/// Reads the state of a publication in a single question: repository,
+/// version, asset, reference and the row of the event the publication is going
+/// to say. The event is read here so that a row already said with other
+/// content is discovered **before** writing anything.
 async fn read_publication_state(
     client: &Arc<GraphClient>,
     account: &str,
@@ -1172,35 +1172,35 @@ async fn read_publication_state(
     })
 }
 
-/// Lo que la publicación tiene que hacer, decidido del estado: la misma
-/// función antes de la transacción (para decidir) y después del commit
-/// (para responder), porque la respuesta sale del estado y no de la
-/// esperanza de que la transacción haya commiteado.
+/// What the publication has to do, decided from the state: the same
+/// function before the transaction (to decide) and after the commit
+/// (to answer), because the answer comes from the state and not from the
+/// hope that the transaction committed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WriteKind {
-    /// La ruta está vacía: crear asset, versión (si falta), referencia y
-    /// evento.
+    /// The path is empty: create asset, version (if missing), reference and
+    /// event.
     Create,
-    /// La ruta apunta a otro contenido y la publicación lo sustituye: el
-    /// puntero se mueve, la versión anterior no se toca.
+    /// The path points to other content and the publication replaces it: the
+    /// pointer moves, the previous version is not touched.
     Replace {
-        /// El digest que la ruta apunta ahora.
+        /// The digest the path points to now.
         previous: String,
     },
-    /// La ruta ya apunta a este contenido: reparar lo que falte
-    /// (referencia, versión) sin decir un hecho nuevo.
+    /// The path already points to this content: repair what is missing
+    /// (reference, version) without saying a new fact.
     Repair,
 }
 
-/// La publicación que se juzga sobre el estado DESPUÉS del commit. La
-/// precondición del cliente ya la arbitró la transacción: la pre-lectura
-/// la decidió y la guarda del grafo la impuso al commitear, así que el
-/// estado posterior la satisface POR CONSTRUCCIÓN — un `Absent` que nació
-/// de una ruta vacía, o un `Present` del digest que el propio commit
-/// movió. Juzgarla otra vez diría que la escritura que acaba de cumplir
-/// la condición la incumple, y la publicación que asentó saldría como
-/// fallo de precondición (HSP-193, el consumidor npm del puntero de
-/// packument fue el primero en pisarla).
+/// The publication judged over the state AFTER the commit. The
+/// client's precondition was already arbitrated by the transaction: the pre-read
+/// decided it and the graph's guard enforced it at commit, so the
+/// later state satisfies it BY CONSTRUCTION -- an `Absent` that was born
+/// of an empty path, or a `Present` of the digest that the commit itself
+/// moved. Judging it again would say that the write that just fulfilled
+/// the condition violates it, and the publication that settled would come out as a
+/// precondition failure (HSP-193, the npm consumer of the packument
+/// pointer was the first to stumble on it).
 fn the_settled_publication(publication: &Publication) -> Publication {
     Publication {
         precondition: None,
@@ -1208,29 +1208,29 @@ fn the_settled_publication(publication: &Publication) -> Publication {
     }
 }
 
-/// El plan decidido sobre un estado de publicación.
+/// The plan decided over a publication state.
 struct PublishPlan {
-    /// Lo que hay que escribir, si hay que escribir.
+    /// What has to be written, if anything has to be written.
     write: Option<WriteKind>,
-    /// Todo lo que la publicación declara ya está: no se escribe nada ni
-    /// se dice un hecho nuevo.
+    /// Everything the publication declares is already there: nothing is written nor
+    /// is a new fact said.
     complete: bool,
-    /// Ya hay algo ahí con otro contenido.
+    /// There is already something there with other content.
     conflict: Option<CatalogError>,
-    /// La condición que el cliente exigió no se cumple.
+    /// The condition the client demanded is not met.
     precondition_failure: Option<CatalogError>,
 }
 
 impl PublishPlan {
-    /// Decide el plan sobre el estado leído. La lógica es la del oráculo
-    /// Surreal: el conflicto de versión decide primero (una versión
-    /// publicada no cambia), después el de la ruta (una ruta que apunta a
-    /// algo no se mueve sola), después la precondición, y solo entonces se
-    /// planea la escritura. El repositorio que falta lo comprueba quien
-    /// llama, antes de aquí.
+    /// Decides the plan over the state read. The logic is that of the Surreal
+    /// oracle: the version conflict decides first (a published
+    /// version does not change), then the path one (a path that points to
+    /// something does not move on its own), then the precondition, and only then
+    /// is the write planned. The missing repository is checked by whoever
+    /// calls, before getting here.
     fn decide(state: &PublicationState, publication: &Publication) -> Self {
-        // La versión es inmutable: si está con otro contenido, no se
-        // escribe nada y el conflicto se dice.
+        // The version is immutable: if it is there with other content, nothing is
+        // written and the conflict is reported.
         if let Some(version) = state.version.as_ref() {
             let same = version.digest == publication.digest
                 && version.size_bytes == publication.size_bytes;
@@ -1270,9 +1270,9 @@ impl PublishPlan {
                 let same_digest = asset.digest == publication.digest
                     && asset.size_bytes == publication.size_bytes;
                 if same_digest {
-                    // La ruta ya apunta a este contenido: la publicación
-                    // es lo mismo dicho dos veces. La precondición se
-                    // comprueba contra lo que hay.
+                    // The path already points to this content: the publication
+                    // is the same thing said twice. The precondition is
+                    // checked against what is there.
                     if let Some(failure) =
                         the_precondition_failure(publication, Some(&asset.digest))
                     {
@@ -1293,8 +1293,8 @@ impl PublishPlan {
                         }
                     }
                 } else if !publication.overwrite {
-                    // La ruta ya apunta a otra cosa y nadie pidió
-                    // sustituirla: el camino ya dice algo.
+                    // The path already points to something else and nobody asked to
+                    // replace it: the path already says something.
                     Self {
                         conflict: Some(CatalogError::Conflict {
                             kind: "asset",
@@ -1332,8 +1332,8 @@ impl PublishPlan {
     }
 }
 
-/// La condición que el cliente exigía, decidida contra el digest que hay
-/// en la ruta (o nada, si la ruta está vacía).
+/// The condition the client demanded, decided against the digest that is
+/// at the path (or nothing, if the path is empty).
 fn the_precondition_failure(
     publication: &Publication,
     current: Option<&ContentDigest>,
@@ -1390,10 +1390,10 @@ fn the_precondition_failure(
 }
 
 // ---------------------------------------------------------------------------
-// Los N-Quads de cada fila.
+// The N-Quads of each row.
 // ---------------------------------------------------------------------------
 
-/// El nombre del ámbito, tal y como va a la base.
+/// The name of the scope, as it goes to the database.
 fn scope_name(scope: DigestScope) -> &'static str {
     match scope {
         DigestScope::Global => "global",
@@ -1401,8 +1401,8 @@ fn scope_name(scope: DigestScope) -> &'static str {
     }
 }
 
-/// El resultado que la operación graba en su marcador: lo que un replay
-/// devuelve como respuesta ya comprometida.
+/// The result the operation records in its marker: what a replay
+/// returns as an already-committed answer.
 fn the_recorded_result(kind: &WriteKind) -> String {
     match kind {
         WriteKind::Create => "created".to_owned(),
@@ -1411,8 +1411,8 @@ fn the_recorded_result(kind: &WriteKind) -> String {
     }
 }
 
-/// El evento de auditoría como fila del outbox, en la MISMA transacción
-/// que las filas del catálogo.
+/// The audit event as an outbox row, in the SAME transaction
+/// as the catalog rows.
 fn outbox_event_nquads(event: &AuditEvent) -> String {
     format!(
         "_:evn <dgraph.type> \"{OUTBOX_TYPE}\" .\n\
@@ -1439,7 +1439,7 @@ fn outbox_event_nquads(event: &AuditEvent) -> String {
     )
 }
 
-/// La fila del asset que nace con la publicación.
+/// The asset row that is born with the publication.
 fn asset_create_nquads(account: &str, publication: &Publication, now: &str) -> String {
     let subject = publication
         .subject
@@ -1480,7 +1480,7 @@ fn asset_create_nquads(account: &str, publication: &Publication, now: &str) -> S
     )
 }
 
-/// La fila de la versión que nace con la publicación.
+/// The version row that is born with the publication.
 fn version_create_nquads(account: &str, publication: &Publication, now: &str) -> String {
     format!(
         "_:vn <dgraph.type> \"{VERSION_TYPE}\" .\n\
@@ -1510,8 +1510,8 @@ fn version_create_nquads(account: &str, publication: &Publication, now: &str) ->
     )
 }
 
-/// La fila de la referencia al blob que nace con la publicación. Los bytes
-/// viven en el CAS; la referencia solo dice donde están.
+/// The row of the blob reference that is born with the publication. The bytes
+/// live in the CAS; the reference only says where they are.
 fn reference_create_nquads(
     account: &str,
     publication: &Publication,
@@ -1545,9 +1545,9 @@ fn reference_create_nquads(
     )
 }
 
-/// La fila de una etiqueta que nace: la versión a la que apunta ya existe
-/// (el llamante lo comprueba), y el índice @upsert de la clave hace que una
-/// creación repetida no duplique la fila.
+/// The row of a tag that is born: the version it points to already exists
+/// (the caller checks it), and the key's @upsert index ensures that a
+/// repeated creation does not duplicate the row.
 fn tag_create_nquads(
     account: &str,
     repository: &str,
@@ -1574,9 +1574,9 @@ fn tag_create_nquads(
     )
 }
 
-/// El movimiento de la fila de la etiqueta: solo cambia la versión a la
-/// que apunta y el momento. Ni la versión ni el asset ni el referrer se
-/// tocan: la etiqueta es una referencia, no el contenido.
+/// The move of the tag's row: only the version it points to and the moment
+/// change. Neither the version nor the asset nor the referrer are
+/// touched: the tag is a reference, not the content.
 fn tag_move_nquads(coordinates: &PackageCoordinates, now: &str) -> String {
     format!(
         "uid(tn) <hodei.catalog.tag.package_name> {package} .\n\
@@ -1588,7 +1588,7 @@ fn tag_move_nquads(coordinates: &PackageCoordinates, now: &str) -> String {
     )
 }
 
-/// La fila de un repositorio que nace.
+/// The row of a repository that is born.
 fn repository_create_nquads(descriptor: &RepositoryDescriptor, now: &str) -> String {
     format!(
         "_:rn <dgraph.type> \"{REPOSITORY_TYPE}\" .\n\
@@ -1616,8 +1616,8 @@ fn repository_create_nquads(descriptor: &RepositoryDescriptor, now: &str) -> Str
     )
 }
 
-/// La puerta del padre de cada bloque: la misma que la guarda usa, para
-/// que una escritura cuya pre-lectura quedó obsoleta no escriba nada.
+/// The parent's gate of each block: the same one the guard uses, so
+/// that a write whose pre-read became stale writes nothing.
 fn parent_gate(current: u64) -> &'static str {
     if current == 0 {
         "eq(len(op), 0) AND eq(len(g), 0)"
@@ -1626,9 +1626,9 @@ fn parent_gate(current: u64) -> &'static str {
     }
 }
 
-/// Las líneas de consulta de una publicación: ligan exactamente las
-/// variables que los bloques usan, porque DQL rechaza las variables que
-/// nadie nombra.
+/// The query lines of a publication: they bind exactly the
+/// variables the blocks use, because DQL rejects variables that
+/// nobody names.
 fn the_effect_query_lines(
     kind: &WriteKind,
     event: &AuditEvent,
@@ -1643,8 +1643,8 @@ fn the_effect_query_lines(
         &publication.coordinates.package_version,
     );
     let asset = asset_key(account, &publication.repository, &publication.asset_path);
-    // DQL rechaza las variables definidas y no usadas: cada caso liga
-    // exactamente lo que sus bloques nombran.
+    // DQL rejects defined and unused variables: each case binds
+    // exactly what its blocks name.
     let mut lines = vec![format!(
         "v as var(func: eq(hodei.catalog.version.key, {}))",
         dql_string(&version)
@@ -1708,8 +1708,8 @@ fn the_effect_query_lines(
     lines
 }
 
-/// El movimiento de la fila del asset: el puntero pasa a apuntar al
-/// contenido nuevo, por el uid que el filtro de la consulta ligó.
+/// The move of the asset's row: the pointer now points to the
+/// new content, through the uid that the query's filter bound.
 fn asset_move_nquads(publication: &Publication, now: &str) -> String {
     let subject = publication
         .subject
@@ -1737,7 +1737,7 @@ fn asset_move_nquads(publication: &Publication, now: &str) -> String {
     )
 }
 
-/// El movimiento de la fila de la referencia, que se mueve con el asset.
+/// The move of the reference's row, which moves with the asset.
 fn reference_move_nquads(publication: &Publication, scope: DigestScope, now: &str) -> String {
     format!(
         "uid(rf) <hodei.catalog.reference.digest_algorithm> \"{algorithm}\" .\n\
@@ -1752,11 +1752,11 @@ fn reference_move_nquads(publication: &Publication, scope: DigestScope, now: &st
     )
 }
 
-/// Los bloques condicionados de una publicación, con la puerta del padre
-/// de la llamada. El contrato de la frontera: el evento se escribe solo
-/// si las filas de contenido se escriben, y las filas de contenido solo
-/// se escriben si el evento puede escribirse — un asset sin su evento es
-/// un hecho sin rastro, y el gate lo impide antes de escribir nada.
+/// The conditioned blocks of a publication, with the parent's gate
+/// of the call. The boundary's contract: the event is written only
+/// if the content rows are written, and the content rows are only
+/// written if the event can be written -- an asset without its event is
+/// a fact without a trace, and the gate prevents it before writing anything.
 #[allow(clippy::too_many_arguments)]
 fn the_blocks(
     parent: &str,
@@ -1768,8 +1768,8 @@ fn the_blocks(
     scope: DigestScope,
     now: &str,
 ) -> Vec<GraphMutationBlock> {
-    // El gate del evento: mientras el hecho no esté dicho, las filas de
-    // contenido llevan la condición de que la fila del evento esté libre.
+    // The event gate: while the fact is not said, the content
+    // rows carry the condition that the event's row be free.
     let ev_gate = if event_said {
         String::new()
     } else {
@@ -1836,11 +1836,11 @@ fn the_blocks(
 }
 
 // ---------------------------------------------------------------------------
-// El almacén.
+// The store.
 // ---------------------------------------------------------------------------
 
-/// El catálogo sobre Dgraph. Se abre con la guarda validada (el arranque
-/// versionado del grafo) y declara su esquema aditivo propio encima.
+/// The catalog over Dgraph. It is opened with the validated guard (the
+/// graph's versioned startup) and declares its own additive schema on top.
 pub struct DgraphCatalogStore {
     client: Arc<GraphClient>,
     guards: GuardStore,
@@ -1856,8 +1856,8 @@ impl std::fmt::Debug for DgraphCatalogStore {
     }
 }
 
-/// La decisión de un guard error tipado del cliente, dicho como error del
-/// catálogo. Nada se calla: cada clase se dice como es.
+/// The decision of a typed guard error of the client, said as a
+/// catalog error. Nothing is silenced: each class is said as it is.
 fn the_guard_error(error: hodei_graph_client::GuardError) -> CatalogError {
     match error {
         hodei_graph_client::GuardError::InvalidScope { scope, reason } => {
@@ -1879,9 +1879,9 @@ fn the_guard_error(error: hodei_graph_client::GuardError) -> CatalogError {
 }
 
 impl DgraphCatalogStore {
-    /// Abre el almacén sobre un cliente ya conectado y autenticado: la
-    /// guarda valida el esquema versionado del grafo (v7) y después este
-    /// slice declara su DDL aditivo propio, que es idempotente.
+    /// Opens the store over an already connected and authenticated client: the
+    /// guard validates the graph's versioned schema (v7) and then this
+    /// slice declares its own additive DDL, which is idempotent.
     pub async fn open(
         client: Arc<GraphClient>,
         authorizer: Arc<dyn CatalogAuthorizer>,
@@ -1893,9 +1893,9 @@ impl DgraphCatalogStore {
             .alter_schema(&catalog_schema_dql())
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        // El DDL aditivo del libro de la recoleccion coordinada
-        // (HSP-192): tipos y claves propias, idempotente, sin tocar el
-        // esquema versionado del grafo.
+        // The additive DDL of the coordinated collection ledger
+        // (HSP-192): own types and keys, idempotent, without touching the
+        // graph's versioned schema.
         client
             .alter_schema(&gc_ledger::gc_schema_dql())
             .await
@@ -1924,26 +1924,26 @@ impl DgraphCatalogStore {
         self
     }
 
-    /// El almacén con el decisor que la frontera ya no repite.
+    /// The store with the decider that the boundary no longer repeats.
     pub fn with_authorizer(mut self, authorizer: Arc<dyn CatalogAuthorizer>) -> Self {
         self.authorizer = authorizer;
         self
     }
 
-    /// El almacén con la sonda de integridad del CAS.
+    /// The store with the CAS integrity probe.
     pub fn with_probe(mut self, probe: Arc<dyn BlobIntegrityProbe>) -> Self {
         self.probe = Some(probe);
         self
     }
 
-    /// El almacén con la identidad (reloj e identificadores) que el rastro
-    /// usa.
+    /// The store with the identity (clock and identifiers) that the trace
+    /// uses.
     pub fn with_identity(mut self, identity: Identity) -> Self {
         self.identity = identity;
         self
     }
 
-    /// Decide la petición contra el autorizador inyectado.
+    /// Decides the request against the injected authorizer.
     async fn decide(&self, request: &AccessRequest) -> Result<(), CatalogError> {
         match self.authorizer.authorize(request).await? {
             AccessDecision::Allow => Ok(()),
@@ -1956,7 +1956,7 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// La fila de un repositorio por su clave, sin autorizar.
+    /// The row of a repository by its key, without authorizing.
     async fn the_repository_row(
         &self,
         account: &str,
@@ -1980,7 +1980,7 @@ impl DgraphCatalogStore {
         .and_then(|row| row)
     }
 
-    /// La fila de una versión por sus coordenadas, sin autorizar.
+    /// The row of a version by its coordinates, without authorizing.
     async fn the_version_row(
         &self,
         account: &str,
@@ -2011,7 +2011,7 @@ impl DgraphCatalogStore {
             .and_then(|row| row)
     }
 
-    /// La fila de una referencia por su clave, sin autorizar.
+    /// The row of a reference by its key, without authorizing.
     async fn the_reference_row(
         &self,
         account: &str,
@@ -2068,9 +2068,9 @@ impl DgraphCatalogStore {
         Ok((asset, reference))
     }
 
-    /// La fila de una etiqueta por su clave, sin autorizar: la identidad
-    /// (cuenta, repositorio, nombre) se comprueba contra la fila, para que
-    /// una clave que apunta a otro dueño no cruce cuentas.
+    /// The row of a tag by its key, without authorizing: the identity
+    /// (account, repository, name) is checked against the row, so that
+    /// a key that points to another owner does not cross accounts.
     async fn the_tag_row(
         &self,
         account: &str,
@@ -2101,8 +2101,8 @@ impl DgraphCatalogStore {
         .and_then(|row| row)
     }
 
-    /// El evento de auditoría de una publicación. El **tenant** es la
-    /// cuenta verificada del principal, no la que dice la publicación.
+    /// The audit event of a publication. The **tenant** is the
+    /// verified account of the principal, not the one the publication says.
     fn the_publication_event(
         &self,
         event_id: &str,
@@ -2129,10 +2129,10 @@ impl DgraphCatalogStore {
         )
     }
 
-    /// Dice el evento de una publicación que no llegó a publicarse, fuera
-    /// de la transacción del catálogo: un rechazo o un fallo no escriben
-    /// filas del catálogo y no hay mutación que atar. Si la escritura
-    /// falla, se avisa y no se finge que el rastro está.
+    /// Says the event of a publication that did not get published, outside
+    /// the catalog's transaction: a rejection or a failure writes no
+    /// catalog rows and there is no mutation to tie to. If the write
+    /// fails, it warns and does not pretend the trace is there.
     async fn audit_the_publication(
         &self,
         event_id: &str,
@@ -2158,9 +2158,9 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// Lo que puede fallar antes de escribir, por el contenido: el CAS
-    /// tiene que tener los bytes que la publicación declara. Sin sonda no
-    /// se puede comprobar, y el catálogo guarda lo que se le declara.
+    /// What can fail before writing, by content: the CAS
+    /// has to have the bytes the publication declares. Without a probe it
+    /// cannot be checked, and the catalog keeps what it is declared.
     async fn the_probe_failure(
         &self,
         principal_account: &str,
@@ -2182,10 +2182,10 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// Escribe una publicación: la guarda de la ruta avanza y, en la MISMA
-    /// transacción, las filas del catálogo y el evento de auditoría se
-    /// aplican o no se aplica ninguno. Devuelve lo que el marcador de la
-    /// operación contestó.
+    /// Writes a publication: the path's guard advances and, in the SAME
+    /// transaction, the catalog rows and the audit event are
+    /// applied or none is. Returns what the operation's marker
+    /// answered.
     #[allow(clippy::too_many_arguments)]
     async fn write_the_publication(
         &self,
@@ -2234,8 +2234,8 @@ impl DgraphCatalogStore {
     }
 }
 
-/// La fila única que una lectura por clave puede devolver: cero, una, o
-/// corrupción (dos filas con la misma clave no son dos respuestas).
+/// The single row a read by key can return: zero, one, or
+/// corruption (two rows with the same key are not two answers).
 fn single_row(
     nodes: Option<&serde_json::Value>,
     kind: &'static str,
@@ -2256,8 +2256,8 @@ fn single_row(
     }
 }
 
-/// Lo que la publicación dejó, construido del estado que el grafo dice
-/// ahora. La respuesta sale del estado, nunca de la esperanza.
+/// What the publication left, built from the state the graph says
+/// now. The answer comes from the state, never from hope.
 fn the_outcome_from_state(
     state: &PublicationState,
     principal_account: &str,
@@ -2333,9 +2333,9 @@ impl CatalogReader for DgraphCatalogStore {
             repository,
         ))
         .await?;
-        // El rango del prefijo sobre el índice exacto del camino: todo lo
-        // que empieza por el prefijo es mayor o igual que el prefijo y
-        // menor que el prefijo con el último carácter subido.
+        // The prefix range over the path's exact index: everything
+        // that starts with the prefix is greater than or equal to the prefix and
+        // less than the prefix with the last character incremented.
         let upper = format!("{prefix}\u{10FFFF}");
         let query = format!(
             "{{ q(func: eq(hodei.catalog.asset.repository, {}), orderasc: hodei.catalog.asset.asset_path, first: {}) \
@@ -2392,7 +2392,7 @@ impl CatalogReader for DgraphCatalogStore {
             .await?;
         let asset = asset.ok_or_else(|| CatalogError::missing("asset", key.clone()))?;
 
-        // La versión a la que apunta tiene que decir el mismo contenido.
+        // The version it points to has to say the same content.
         let coordinates = PackageCoordinates {
             package_name: asset.package_name.clone(),
             package_version: asset.package_version.clone(),
@@ -2422,9 +2422,9 @@ impl CatalogReader for DgraphCatalogStore {
             ));
         }
 
-        // Y la referencia tiene que apuntar al mismo contenido que el
-        // asset: si no, la descarga serviría un blob y la recolección
-        // guardaría otro.
+        // And the reference has to point to the same content as the
+        // asset: otherwise, the download would serve one blob and the collection
+        // would keep another.
         let reference = reference.ok_or_else(|| {
             CatalogError::corrupt("asset", key.clone(), "the asset has no reference to a blob")
         })?;
@@ -2436,7 +2436,7 @@ impl CatalogReader for DgraphCatalogStore {
             ));
         }
 
-        // Y el blob del CAS tiene que ser del tamaño que el catálogo dice.
+        // And the CAS blob has to be of the size the catalog says.
         if let Some(probe) = &self.probe {
             let location =
                 BlobLocation::new(principal_account, reference.scope, asset.digest.clone());
@@ -2549,9 +2549,9 @@ impl CatalogReader for DgraphCatalogStore {
             repository,
         ))
         .await?;
-        // La lista es una lectura del repositorio, y el orden es el del
-        // nombre: el que lista etiquetas las lista en un orden que no
-        // cambia de una llamada a la siguiente.
+        // The list is a read of the repository, and the order is by
+        // name: whoever lists tags lists them in an order that does not
+        // change from one call to the next.
         let query = format!(
             "{{ q(func: eq(hodei.catalog.tag.account, {}), orderasc: hodei.catalog.tag.tag_name) \
              @filter(eq(hodei.catalog.tag.repository, {})) \
@@ -2661,9 +2661,9 @@ impl CatalogWriter for DgraphCatalogStore {
         let key = repository_key(principal_account, &descriptor.repo_key);
 
         for _attempt in 0..WRITE_ATTEMPTS {
-            // Lo que hay decide: la misma creación dichas dos veces es el
-            // mismo repositorio; la clave ocupada con otro contenido es un
-            // conflicto que el índice arbitra.
+            // What is there decides: the same creation said twice is the
+            // same repository; the key occupied with other content is a
+            // conflict that the index arbitrates.
             if let Some(row) = self
                 .the_repository_row(principal_account, &descriptor.repo_key)
                 .await?
@@ -2711,8 +2711,8 @@ impl CatalogWriter for DgraphCatalogStore {
             {
                 return row.into_descriptor(principal_account, &descriptor.repo_key);
             }
-            // La fila no quedó: otro escritor ganó la ventana. La
-            // siguiente intenta relee y decide con lo que hay.
+            // The row did not land: another writer won the window. The
+            // next attempt re-reads and decides with what is there.
         }
         Err(CatalogError::unavailable(
             "the repository could not be created after the attempts",
@@ -2835,14 +2835,14 @@ impl CatalogWriter for DgraphCatalogStore {
         principal_account: &str,
         publication: Publication,
     ) -> Result<PublishOutcome, CatalogError> {
-        // El evento de auditoría se identifica una vez por operación: el
-        // mismo hecho no se dice dos veces con dos nombres, ni se dice con
-        // dos resultados distintos.
+        // The audit event is identified once per operation: the
+        // same fact is not said twice with two names, nor is it said with
+        // two different results.
         let event_id = self.identity.new_id();
         let occurred_at = self.identity.now();
 
-        // Se decide **antes** de validar: un principal sin permiso no
-        // llega a saber si lo que pide está bien formado.
+        // It is decided **before** validating: a principal without permission does not
+        // get to know whether what it asks for is well formed.
         if let Err(error) = self
             .decide(&AccessRequest::publish(
                 principal_account,
@@ -2867,8 +2867,8 @@ impl CatalogWriter for DgraphCatalogStore {
             return Err(error);
         }
 
-        // Una petición **mal formada** se rechaza antes de la frontera de
-        // efecto y no deja rastro: no hubo una operación que auditar.
+        // A **malformed** request is rejected before the effect boundary
+        // and leaves no trace: there was no operation to audit.
         if publication.repository.trim().is_empty() {
             return Err(CatalogError::invalid("the repository is empty"));
         }
@@ -2896,9 +2896,9 @@ impl CatalogWriter for DgraphCatalogStore {
                 read_publication_state(&self.client, principal_account, &publication, &event_id)
                     .await?;
 
-            // El identificador del evento ya está dicho con OTRO hecho: la
-            // publicación no puede salir, y la contradicción se reporta,
-            // no se calla.
+            // The event identifier is already said with ANOTHER fact: the
+            // publication cannot go out, and the contradiction is reported,
+            // not silenced.
             if let Some(row) = state.event.as_ref() {
                 let planned = self.the_publication_event(
                     &event_id,
@@ -2915,8 +2915,8 @@ impl CatalogWriter for DgraphCatalogStore {
             }
 
             let Some(repository_row) = state.repository.as_ref() else {
-                // El repositorio no existe. La petición ocurrió y el
-                // sistema la rechazó, y eso se dice.
+                // The repository does not exist. The request happened and the
+                // system rejected it, and that is said.
                 self.audit_the_publication(
                     &event_id,
                     occurred_at,
@@ -3007,9 +3007,9 @@ impl CatalogWriter for DgraphCatalogStore {
                 return Err(failure);
             }
             if plan.complete {
-                // No se escribe nada: no hay mutación, y un evento que
-                // dice "publicado" sobre una publicación que ya estaba no
-                // añade ningún hecho nuevo.
+                // Nothing is written: there is no mutation, and an event that
+                // says "published" about a publication that was already there
+                // adds no new fact.
                 return the_outcome_from_state(
                     &state,
                     principal_account,
@@ -3040,8 +3040,8 @@ impl CatalogWriter for DgraphCatalogStore {
                 )
                 .await?;
             if outcome.replayed {
-                // El mismo hecho ya está comprometido: el reintento tras el
-                // commit relee el resultado comprometido y no escribe nada.
+                // The same fact is already committed: the retry after the
+                // commit re-reads the committed result and writes nothing.
                 let state = read_publication_state(
                     &self.client,
                     principal_account,
@@ -3063,10 +3063,10 @@ impl CatalogWriter for DgraphCatalogStore {
                     "the operation replayed but the state does not say the fact".to_owned();
                 continue;
             }
-            // El commit contestó; el ESTADO decide lo que esta llamada
-            // dejó: una creación que se asentó es una creación, y una
-            // sustitución que se asentó es una sustitución. La precondición
-            // del cliente ya la arbitró la transacción.
+            // The commit answered; the STATE decides what this call
+            // left: a creation that settled is a creation, and a
+            // replacement that settled is a replacement. The client's
+            // precondition was already arbitrated by the transaction.
             let state =
                 read_publication_state(&self.client, principal_account, &publication, &event_id)
                     .await?;
@@ -3111,10 +3111,10 @@ impl CatalogWriter for DgraphCatalogStore {
             last_failure = "the write did not settle after the commit".to_owned();
         }
 
-        // El último intento también se relee: perder la carrera en el
-        // último intento es un conflicto, no un fallo del almacenamiento.
-        // La precondición del cliente ya la arbitraron la pre-lectura y la
-        // guarda, como en el resto de lecturas posteriores al commit.
+        // The last attempt is also re-read: losing the race on the
+        // last attempt is a conflict, not a storage failure.
+        // The client's precondition was already arbitrated by the pre-read and the
+        // guard, as in the rest of the post-commit reads.
         let state =
             read_publication_state(&self.client, principal_account, &publication, &event_id)
                 .await?;
@@ -3180,9 +3180,9 @@ impl CatalogWriter for DgraphCatalogStore {
             return Err(CatalogError::invalid("the name of the tag is empty"));
         }
 
-        // El repositorio tiene que existir y aceptar escrituras de
-        // cliente: una etiqueta es una escritura de cliente aunque el
-        // contenido al que apunta ya esté.
+        // The repository has to exist and accept client writes:
+        // a tag is a client write even if the content it points
+        // to is already there.
         let row = self
             .the_repository_row(principal_account, repository)
             .await?
@@ -3207,8 +3207,8 @@ impl CatalogWriter for DgraphCatalogStore {
             ));
         }
 
-        // La etiqueta apunta a una versión que exista. Las versiones no se
-        // borran, así que esta comprobación no se queda vieja.
+        // The tag points to a version that exists. Versions are not
+        // deleted, so this check does not go stale.
         self.the_version_row(principal_account, repository, &coordinates)
             .await?
             .ok_or_else(|| {
@@ -3232,9 +3232,9 @@ impl CatalogWriter for DgraphCatalogStore {
             set_nquads: String::new(),
             recorded_result: "moved".to_owned(),
         };
-        // El mismo bloque sirve para crear y para mover: si la fila ya
-        // está, el índice la encuentra y el uid(tn) la reescribe; si no
-        // está, el nodo nace con su clave, que el @upsert mantiene única.
+        // The same block serves to create and to move: if the row is
+        // already there, the index finds it and the uid(tn) rewrites it; if it is not
+        // there, the node is born with its key, which the @upsert keeps unique.
         let _outcome = self
             .guards
             .execute_guarded_composite(
@@ -3265,15 +3265,15 @@ impl CatalogWriter for DgraphCatalogStore {
             .await
             .map_err(the_guard_error)?;
 
-        // La etiqueta se lee por dentro: la escritura ya se autorizó, y
-        // releer por el camino público exigiría un permiso de lectura que
-        // el que mueve la etiqueta no tiene por qué tener.
+        // The tag is read from the inside: the write was already authorized, and
+        // re-reading through the public path would require a read permission that
+        // whoever moves the tag need not have.
         //
-        // Un marcador en replay no dice nada del ESTADO actual: una
-        // reentrega que llega despues de que otro commit movió la etiqueta
-        // es un hecho ya dicho al que otro hecho ganó — eso es el último
-        // commit gana, no una corrupción. Lo que se devuelve es lo que el
-        // grafo dice ahora.
+        // A marker in replay says nothing about the CURRENT state: a
+        // redelivery that arrives after another commit moved the tag
+        // is an already-said fact that another fact won over -- that is last
+        // commit wins, not corruption. What is returned is what the
+        // graph says now.
         let written = self
             .the_tag_row(principal_account, repository, tag_name)
             .await?
@@ -3304,22 +3304,22 @@ impl CatalogWriter for DgraphCatalogStore {
 }
 
 // ---------------------------------------------------------------------------
-// La búsqueda indexada (HSP-191).
+// The indexed search (HSP-191).
 //
-// Cada consulta va acotada por cuenta y por repositorio sobre índices
-// exactos. El canal de confianza se recorre por los digests con concesión
-// activa que da el libro de concesiones; el estado de confianza de cada
-// resultado sale del mismo libro, nunca de la referencia. El texto es una
-// subcadena sin distinción de mayúsculas que se evalúa como filtro dentro
-// del repositorio ya acotado (sin índice de trigramas: ningún escaneo sale
-// del repositorio, y el coste de escritura de cada asset no cambia).
+// Each query is bounded by account and by repository over exact
+// indexes. The trusted channel is walked through the digests with an active
+// grant given by the grant ledger; the trust state of each
+// result comes from the same ledger, never from the reference. The text is a
+// case-insensitive substring evaluated as a filter inside the
+// already bounded repository (no trigram index: no scan leaves
+// the repository, and the write cost of each asset does not change).
 // ---------------------------------------------------------------------------
 
-/// Cuántos repositorios pueden compartir una etiqueta que la búsqueda
-/// resuelve, la misma frontera que la referencia Surreal.
+/// How many repositories can share a tag that the search
+/// resolves, the same boundary as the Surreal reference.
 const MAX_TAG_TARGETS: usize = 64;
 
-/// La coordenada a la que apunta una etiqueta, leída del grafo.
+/// The coordinate a tag points to, read from the graph.
 struct TagTarget {
     repository: String,
     package_name: String,
@@ -3327,8 +3327,8 @@ struct TagTarget {
 }
 
 impl DgraphCatalogStore {
-    /// El repositorio de la cuenta, por el índice exacto de la cuenta, en
-    /// el orden de su clave: el mismo orden que la referencia Surreal.
+    /// The account's repository, by the account's exact index, in
+    /// the order of its key: the same order as the Surreal reference.
     async fn the_repository_listing(
         &self,
         principal_account: &str,
@@ -3358,8 +3358,8 @@ impl DgraphCatalogStore {
         Ok(repositories)
     }
 
-    /// Las coordenadas que una etiqueta nombra, por el índice exacto de su
-    /// nombre: una etiqueta que no existe no estrecha nada.
+    /// The coordinates a tag names, by the exact index of its
+    /// name: a tag that does not exist narrows nothing.
     async fn the_tag_targets(
         &self,
         principal_account: &str,
@@ -3396,11 +3396,11 @@ impl DgraphCatalogStore {
         Ok(targets)
     }
 
-    /// La ventana de filas de UN repositorio, por los índices exactos: la
-    /// cuenta y el repositorio en la raíz (el índice que las sirve), el
-    /// resto en el filtro del mismo índice. La página es **por clave**
-    /// (HSP-191): con cursor, la ventana empieza DESPUÉS de la clave que
-    /// ya se vio, y una inserción antes de esa clave no la mueve.
+    /// The window of rows of ONE repository, by the exact indexes: the
+    /// account and the repository at the root (the index that serves them), the
+    /// rest in the filter of the same index. The page is **by key**
+    /// (HSP-191): with a cursor, the window starts AFTER the key that
+    /// was already seen, and an insertion before that key does not move it.
     async fn the_asset_window(
         &self,
         principal_account: &str,
@@ -3496,9 +3496,9 @@ impl DgraphCatalogStore {
             .collect::<Result<Vec<_>, _>>()
     }
 
-    /// Cuántas filas quedan por recorrer, contadas en el adaptador con un
-    /// índice que solo pide el camino: el mismo conteo acotado que la
-    /// referencia Surreal.
+    /// How many rows remain to be walked, counted in the adapter with an
+    /// index that only asks for the path: the same bounded count as the
+    /// Surreal reference.
     async fn the_remaining_count(
         &self,
         principal_account: &str,
@@ -3514,22 +3514,22 @@ impl DgraphCatalogStore {
     }
 }
 
-/// Cuántos digests con concesión activa nombra UNA consulta de la ventana.
+/// How many digests with an active grant ONE query of the window names.
 ///
-/// La consulta es texto y la lista va en el filtro: el grupo acota el tamaño
-/// de lo que se envía, y los grupos de un repositorio se mezclan en el
-/// adaptador por el orden del camino.
+/// The query is text and the list goes in the filter: the group bounds the size
+/// of what is sent, and the groups of a repository are merged in the
+/// adapter by path order.
 const GRANTED_DIGESTS_PER_QUERY: usize = 64;
 
-/// Cuántos digests con concesión activa puede tener un repositorio del canal
-/// de confianza para buscarlo. Más allá no es una búsqueda: es recorrer el
-/// libro entero, y se dice con un error de petición, igual que las
-/// etiquetas compartidas por demasiados repositorios.
+/// How many digests with an active grant a trusted-channel repository may have in order to
+/// search it. Beyond that it is not a search: it is walking the
+/// whole ledger, and it is said with a request error, just like
+/// tags shared by too many repositories.
 const MAX_GRANTED_DIGESTS: usize = 2048;
 
-/// Lo que estrecha la ventana de un repositorio además de la consulta: las
-/// coordenadas de la etiqueta, la clave que el cursor ya vio y el grupo de
-/// digests concedidos.
+/// What narrows a repository's window besides the query: the
+/// tag's coordinates, the key the cursor already saw and the group of
+/// granted digests.
 #[derive(Clone, Copy, Default)]
 struct WindowScope<'a> {
     target: Option<&'a TagTarget>,
@@ -3537,18 +3537,18 @@ struct WindowScope<'a> {
     granted: Option<&'a GrantedDigests>,
 }
 
-/// Un grupo de digests concedidos de un mismo algoritmo.
+/// A group of granted digests of the same algorithm.
 struct GrantedDigests {
     algorithm: DigestAlgorithm,
     values: Vec<String>,
 }
 
-/// El patrón DQL `/texto/i` de un texto que el cliente escribe.
+/// The DQL pattern `/text/i` for a text the client writes.
 ///
-/// El texto se busca como **subcadena sin distinción de mayúsculas**, igual
-/// que la referencia, así que cada carácter con significado de expresión
-/// regular se escapa y el patrón nunca es una expresión que el cliente
-/// controle. Los caracteres de control no son texto buscable.
+/// The text is searched as a **case-insensitive substring**, just like
+/// the reference, so every character with a regular expression
+/// meaning is escaped and the pattern is never an expression the client
+/// controls. Control characters are not searchable text.
 fn the_text_pattern(text: &str) -> Result<String, CatalogError> {
     if text.chars().any(char::is_control) {
         return Err(CatalogError::invalid(
@@ -3584,15 +3584,15 @@ fn the_text_pattern(text: &str) -> Result<String, CatalogError> {
 }
 
 impl DgraphCatalogStore {
-    /// Los grupos de digests por los que se recorre un repositorio.
+    /// The groups of digests by which a repository is walked.
     ///
-    /// Un repositorio abierto es un solo grupo sin restricción. Uno del
-    /// canal de confianza solo sirve lo que tiene una concesión activa **ahora**:
-    /// los digests se leen del libro (una lectura acotada por cuenta y
-    /// repositorio), uno por contenido aunque varias decisiones lo hayan
-    /// concedido, y se parten en grupos por algoritmo. Sin libro no hay
-    /// forma de saber qué está concedido y la búsqueda falla cerrada: una
-    /// página vacía diría que no hay nada.
+    /// An open repository is a single group without restriction. One of the
+    /// trusted channel only serves what has an active grant **now**:
+    /// the digests are read from the ledger (a read bounded by account and
+    /// repository), one per content even if several decisions granted it,
+    /// and split into groups by algorithm. Without a ledger there is no
+    /// way to know what is granted and the search fails closed: an empty
+    /// page would say there is nothing.
     async fn the_digest_groups(
         &self,
         principal_account: &str,
@@ -3616,7 +3616,7 @@ impl DgraphCatalogStore {
             if !grant.is_active_at(now) {
                 continue;
             }
-            // Una búsqueda por digest solo mira la concesión de ese digest.
+            // A search by digest only looks at that digest's grant.
             if query
                 .digest
                 .as_ref()
@@ -3660,9 +3660,9 @@ impl DgraphCatalogStore {
         Ok(groups)
     }
 
-    /// Los resultados de la página que tienen una concesión activa: pares
-    /// (repositorio, digest). Una lectura del libro por repositorio de la
-    /// página, acotada por los digests que la página nombra.
+    /// The results of the page that have an active grant: pairs
+    /// (repository, digest). One ledger read per repository of the
+    /// page, bounded by the digests the page names.
     async fn the_granted_hits(
         &self,
         principal_account: &str,
@@ -3693,10 +3693,10 @@ impl DgraphCatalogStore {
     }
 }
 
-/// Si un filtro con índice propio le gana el orden al camino. La búsqueda
-/// del grafo SIEMPRE sale en el orden del camino (`orderasc: asset_path`),
-/// que es total dentro de la cuenta: el orden es el mismo para todos los
-/// filtros, y una página no repite ni pierde un resultado.
+/// Whether a filter with its own index beats the path in order. The graph's search
+/// ALWAYS comes out in path order (`orderasc: asset_path`),
+/// which is total within the account: the order is the same for all
+/// filters, and a page neither repeats nor loses a result.
 fn the_attribute_matches(
     attribute: &RepositoryAttribute,
     repository: &RepositoryDescriptor,
@@ -3708,8 +3708,8 @@ fn the_attribute_matches(
     }
 }
 
-/// El formato del repositorio que salió en la página, del descriptor que
-/// la cuenta ya nombró.
+/// The format of the repository that came out in the page, from the descriptor that
+/// the account already named.
 fn repository_format(candidates: &[&RepositoryDescriptor], repository: &str) -> RepositoryFormat {
     candidates
         .iter()
@@ -3737,14 +3737,14 @@ impl CatalogSearch for DgraphCatalogStore {
             .validate()
             .map_err(|error| CatalogError::invalid(error.to_string()))?;
 
-        // Un principal que no puede leer ni un repositorio no ve nada: la
-        // búsqueda no es el camino de vuelta alrededor del permiso.
+        // A principal that cannot read even one repository sees nothing: the
+        // search is not the way back around the permission.
         if repositories.is_empty() {
             return Ok(SearchPage::empty(query));
         }
-        // Los repositorios que toman parte, en el orden en que se
-        // recorren. El atributo se decide con el descriptor, como en la
-        // referencia: el motor no tiene que resolverlo.
+        // The repositories that take part, in the order in which they
+        // are walked. The attribute is decided with the descriptor, as in the
+        // reference: the engine does not have to resolve it.
         let mut candidates: Vec<&RepositoryDescriptor> = repositories.iter().collect();
         candidates.sort_by(|left, right| left.repo_key.cmp(&right.repo_key));
         if let Some(named) = &query.repository {
@@ -3756,8 +3756,8 @@ impl CatalogSearch for DgraphCatalogStore {
         if candidates.is_empty() {
             return Ok(SearchPage::empty(query));
         }
-        // La etiqueta se resuelve primero: lo que estrecha son sus
-        // coordenadas, no su nombre.
+        // The tag is resolved first: what narrows is its
+        // coordinates, not its name.
         let targets = match &query.tag {
             Some(tag) => self.the_tag_targets(principal_account, tag).await?,
             None => Vec::new(),
@@ -3766,8 +3766,8 @@ impl CatalogSearch for DgraphCatalogStore {
             return Ok(SearchPage::empty(query));
         }
 
-        // El cursor: la página empieza DESPUÉS de la clave ya vista, en el
-        // orden total (repositorio, camino) en que las filas salen.
+        // The cursor: the page starts AFTER the key already seen, in the
+        // total order (repository, path) in which the rows come out.
         let cursor = match &query.cursor {
             Some(cursor) => Some(parse_search_cursor(cursor).map_err(|error| {
                 CatalogError::invalid(format!("the cursor cannot be read: {error}"))
@@ -3775,7 +3775,7 @@ impl CatalogSearch for DgraphCatalogStore {
             None => None,
         };
 
-        // La ventana que se pide, y una fila más para saber si hay más.
+        // The window that is requested, and one more row to know whether there are more.
         let window = query.offset + query.limit + 1;
 
         let mut collected: Vec<AssetRow> = Vec::new();
@@ -3783,8 +3783,8 @@ impl CatalogSearch for DgraphCatalogStore {
         let mut exact = true;
 
         for repository in &candidates {
-            // La clave ya vista deja detrás los repositorios que van antes
-            // en el orden y estrecha el suyo.
+            // The key already seen leaves behind the repositories that come before
+            // in the order and narrows its own.
             let after_path = match cursor.as_ref() {
                 Some((cursor_repository, cursor_path)) => {
                     if repository.repo_key.as_str() < cursor_repository.as_str() {
@@ -3796,8 +3796,8 @@ impl CatalogSearch for DgraphCatalogStore {
                 None => None,
             };
 
-            // La etiqueta, en este repositorio. Una etiqueta que no apunta
-            // aquí no estrecha nada aquí.
+            // The tag, in this repository. A tag that does not point
+            // here narrows nothing here.
             let target = targets
                 .iter()
                 .find(|target| target.repository == repository.repo_key);
@@ -3805,9 +3805,9 @@ impl CatalogSearch for DgraphCatalogStore {
                 continue;
             }
 
-            // Un repositorio abierto se recorre entero; uno servido por el
-            // canal de confianza, solo por los digests con concesión
-            // activa, en grupos acotados.
+            // An open repository is walked in full; one served by the
+            // trusted channel, only through the digests with an active
+            // grant, in bounded groups.
             let groups = self
                 .the_digest_groups(principal_account, repository, query)
                 .await?;
@@ -3856,10 +3856,10 @@ impl CatalogSearch for DgraphCatalogStore {
                 }
                 repository_rows.extend(rows);
             }
-            // Los grupos son conjuntos disjuntos de digests y cada uno sale
-            // en el orden del camino: la unión se ordena por el camino, que
-            // es único dentro del repositorio, y la ventana de la cuenta
-            // entera es la que se guarda.
+            // The groups are disjoint sets of digests and each one comes out
+            // in path order: the union is sorted by path, which
+            // is unique within the repository, and the window of the whole
+            // account is the one that is kept.
             repository_rows.sort_by(|left, right| left.asset_path.cmp(&right.asset_path));
             collected.extend(repository_rows);
             collected.truncate(window);
@@ -3869,10 +3869,10 @@ impl CatalogSearch for DgraphCatalogStore {
             exact = false;
         }
 
-        // La página: la ventana entera, menos lo que queda detrás. El corte
-        // es sobre el orden total de las filas: una página no repite ni
-        // pierde un resultado, y el que pide por clave re-pagina sin
-        // saltos.
+        // The page: the whole window, minus what remains behind. The cut
+        // is over the total order of the rows: a page neither repeats nor
+        // loses a result, and whoever asks by key re-paginates without
+        // gaps.
         let start = if query.cursor.is_some() {
             0
         } else {
@@ -3890,10 +3890,10 @@ impl CatalogSearch for DgraphCatalogStore {
         };
         let rows = &collected[start..end];
 
-        // La confianza la dice el libro de concesiones, no la referencia: la
-        // referencia guarda lo que la admisión dijo al publicar y no cambia
-        // nunca, y una promoción o una revocación tiene que verse en la
-        // petición siguiente sin reescribir nada.
+        // Trust is said by the grant ledger, not by the reference: the
+        // reference keeps what admission said on publishing and never
+        // changes, and a promotion or a revocation has to be seen on the
+        // next request without rewriting anything.
         let granted = self.the_granted_hits(principal_account, rows).await?;
 
         let mut results = Vec::with_capacity(rows.len());
@@ -3935,10 +3935,10 @@ impl CatalogSearch for DgraphCatalogStore {
 }
 
 // ---------------------------------------------------------------------------
-// El outbox de auditoría sobre el grafo.
+// The audit outbox over the graph.
 // ---------------------------------------------------------------------------
 
-/// La fila de un evento tal como está en el grafo.
+/// The row of an event as it is in the graph.
 #[derive(Debug, Clone)]
 struct OutboxRow {
     event_id: String,
@@ -3958,7 +3958,7 @@ struct OutboxRow {
     delivered_at: Option<DateTime<Utc>>,
 }
 
-/// El resultado de un evento, dicho como texto.
+/// The result of an event, said as text.
 fn the_result(value: &str) -> AuditResult {
     match value {
         "allowed" => AuditResult::Allowed,
@@ -3968,7 +3968,7 @@ fn the_result(value: &str) -> AuditResult {
     }
 }
 
-/// El estado de una entrada, dicho como texto.
+/// The state of an entry, said as text.
 fn the_state(value: &str) -> EntryState {
     match value {
         "claimed" => EntryState::Claimed,
@@ -3977,14 +3977,14 @@ fn the_state(value: &str) -> EntryState {
     }
 }
 
-/// Un texto opcional de un nodo.
+/// An optional text of a node.
 fn node_option_text(node: &serde_json::Value, field: &str) -> Option<String> {
     node.get(field)
         .and_then(serde_json::Value::as_str)
         .map(str::to_string)
 }
 
-/// Un momento opcional de un nodo.
+/// An optional moment of a node.
 fn node_option_time(node: &serde_json::Value, field: &str) -> Option<DateTime<Utc>> {
     node_option_text(node, field).and_then(|text| {
         DateTime::parse_from_rfc3339(&text)
@@ -4017,7 +4017,7 @@ impl OutboxRow {
         })
     }
 
-    /// El evento de la fila, reconstruido.
+    /// The event of the row, reconstructed.
     fn the_event(&self) -> AuditEvent {
         AuditEvent::new(
             self.event_id.clone(),
@@ -4034,7 +4034,7 @@ impl OutboxRow {
         )
     }
 
-    /// La entrada de la fila, con su estado.
+    /// The entry of the row, with its state.
     fn the_entry(&self) -> AuditEntry {
         AuditEntry {
             event: self.the_event(),
@@ -4048,18 +4048,18 @@ impl OutboxRow {
     }
 }
 
-/// La falta del almacenamiento, dicha como error de auditoría.
+/// The storage failure, said as an audit error.
 fn the_audit_error(error: impl std::fmt::Display) -> AuditError {
     AuditError::StoreUnavailable {
         detail: error.to_string(),
     }
 }
 
-/// El outbox de auditoría sobre el grafo. El lado de la **escritura** lo
-/// tiene el catálogo (la fila del evento se escribe dentro de la
-/// transacción que publica); lo que hay aquí es el lado de la **entrega**:
-/// reclamar un evento, marcarlo entregado y devolverlo al mercado cuando
-/// la entrega no ocurrió, cada uno con su compare-and-set de una pieza.
+/// The audit outbox over the graph. The **write** side is held
+/// by the catalog (the event's row is written inside the
+/// transaction that publishes); what is here is the **delivery** side:
+/// claiming an event, marking it delivered and returning it to the market when
+/// the delivery did not happen, each with its one-piece compare-and-set.
 #[derive(Clone)]
 pub struct DgraphAuditOutbox {
     client: Arc<GraphClient>,
@@ -4072,12 +4072,12 @@ impl std::fmt::Debug for DgraphAuditOutbox {
 }
 
 impl DgraphAuditOutbox {
-    /// El outbox sobre un cliente ya conectado y autenticado.
+    /// The outbox over an already connected and authenticated client.
     pub fn new(client: Arc<GraphClient>) -> Self {
         Self { client }
     }
 
-    /// La fila de un evento, si está.
+    /// The row of an event, if it is there.
     async fn the_row(&self, event_id: &str) -> Result<Option<OutboxRow>, AuditError> {
         let query = format!(
             "{{ q(func: eq(hodei.catalog.outbox.key, {})) {{ {OUTBOX_FIELDS} }} }}",
@@ -4099,9 +4099,9 @@ impl DgraphAuditOutbox {
         }
     }
 
-    /// El upsert que dice un evento una sola vez: el índice `@upsert` de
-    /// la clave decide entre dos escritores, y la relectura decide si el
-    /// segundo decía lo mismo.
+    /// The upsert that says an event only once: the `@upsert` index of
+    /// the key decides between two writers, and the re-read decides whether the
+    /// second one said the same thing.
     fn put_upsert(&self, event: &AuditEvent) -> hodei_graph_client::GraphUpsertTransaction {
         hodei_graph_client::GraphUpsertTransaction {
             query: format!(
@@ -4118,7 +4118,7 @@ impl DgraphAuditOutbox {
         }
     }
 
-    /// El upsert que reclama un evento pendiente (o cuyo lease expiró).
+    /// The upsert that claims a pending event (or one whose lease expired).
     fn claim_upsert(
         &self,
         event_id: &str,
@@ -4151,8 +4151,8 @@ impl DgraphAuditOutbox {
         }
     }
 
-    /// El upsert que marca la entrega, con el worker en la condición: un
-    /// lease que expiró ya no es un permiso para marcar nada.
+    /// The upsert that marks the delivery, with the worker in the condition: a
+    /// lease that expired is no longer a permission to mark anything.
     fn mark_delivered_upsert(
         &self,
         event_id: &str,
@@ -4180,9 +4180,9 @@ impl DgraphAuditOutbox {
         }
     }
 
-    /// El upsert que devuelve un evento al mercado, con el worker y los
-    /// intentos ya contados en la condición: un compare-and-set de una
-    /// pieza que no puede desmentir la entrega de otro.
+    /// The upsert that returns an event to the market, with the worker and the
+    /// attempts already counted in the condition: a one-piece compare-and-set
+    /// that cannot contradict another's delivery.
     fn mark_undelivered_upsert(
         &self,
         event_id: &str,
@@ -4217,8 +4217,8 @@ impl DgraphAuditOutbox {
 #[async_trait]
 impl AuditOutbox for DgraphAuditOutbox {
     async fn put_pending(&self, event: &AuditEvent) -> Result<(), AuditError> {
-        // Decir un evento dos veces es decirlo una. Antes de culpar al
-        // almacenamiento se mira lo que hay.
+        // Saying an event twice is saying it once. Before blaming the
+        // storage, what is there is looked at.
         if let Some(existing) = self.the_row(&event.event_id).await? {
             return if existing.the_event().same_fact(event) {
                 Ok(())
@@ -4234,10 +4234,10 @@ impl AuditOutbox for DgraphAuditOutbox {
         for _attempt in 0..5 {
             match self.client.upsert(self.put_upsert(event)).await {
                 Ok(response) => {
-                    // El bloque solo se aplica si la fila estaba libre
-                    // DENTRO de la transacción: si no lo estuvo, la fila
-                    // apareció entre la lectura y la escritura, y lo que
-                    // dice la fila decide.
+                    // The block is only applied if the row was free
+                    // INSIDE the transaction: if it was not, the row
+                    // appeared between the read and the write, and what the
+                    // row says decides.
                     let applied = response
                         .json
                         .get("evq")
@@ -4260,9 +4260,9 @@ impl AuditOutbox for DgraphAuditOutbox {
                     }
                 }
                 Err(GraphClientError::UpsertConflict { detail }) => {
-                    // Dos escritores dijeron el mismo identificador a la
-                    // vez: el índice decidió; la relectura dice si el
-                    // segundo decía lo mismo.
+                    // Two writers said the same identifier at the
+                    // same time: the index decided; the re-read says whether the
+                    // second one said the same thing.
                     tracing::debug!(event_id = %event.event_id, %detail, "the outbox write conflicted");
                 }
                 Err(other) => return Err(the_audit_error(other)),
@@ -4284,8 +4284,8 @@ impl AuditOutbox for DgraphAuditOutbox {
             .upsert(self.claim_upsert(event_id, worker, lease_until, now))
             .await
             .map_err(the_audit_error)?;
-        // El estado después del commit responde: dos workers piden lo
-        // mismo y el que pierde ve que la fila ya no es suya.
+        // The state after the commit answers: two workers ask for the
+        // same thing and the loser sees that the row is no longer theirs.
         let row = self.the_row(event_id).await?;
         Ok(row
             .filter(|row| {
@@ -4301,7 +4301,7 @@ impl AuditOutbox for DgraphAuditOutbox {
         worker: &str,
         at: DateTime<Utc>,
     ) -> Result<(), AuditError> {
-        // Lo que ya es verdad no se cambia.
+        // What is already true is not changed.
         if let Some(row) = self.the_row(event_id).await? {
             if row.state == EntryState::Delivered.as_str() {
                 return Ok(());
@@ -4333,7 +4333,7 @@ impl AuditOutbox for DgraphAuditOutbox {
         worker: &str,
         detail: &str,
     ) -> Result<(), AuditError> {
-        // Una entrega que ya ocurrió no se puede desmentir.
+        // A delivery that already happened cannot be contradicted.
         let Some(row) = self.the_row(event_id).await? else {
             return Err(AuditError::StoreUnavailable {
                 detail: format!("the event {event_id} is not there, so nobody can say it failed"),

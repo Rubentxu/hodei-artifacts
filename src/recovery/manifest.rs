@@ -1,101 +1,101 @@
-//! El manifiesto de una copia: lo que la copia dice de si misma.
+//! The manifest of a backup: what the backup says about itself.
 //!
-//! Es lo ultimo que se escribe, y lo que permite comprobar la copia entera
-//! sin restaurarla: el hash de los metadatos, y el digest y la longitud de
-//! cada blob. Una copia sin manifiesto no esta terminada y no se restaura.
+//! It is the last thing written, and what makes it possible to check the whole backup
+//! without restoring it: the hash of the metadata, and the digest and length of
+//! each blob. A backup without a manifest is not finished and is not restored.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::RecoveryError;
 
-/// La version del formato de la copia.
+/// The version of the backup format.
 ///
-/// Sube cuando un formato antiguo ya no se puede leer. Una copia con un
-/// formato que este binario no entiende se **rechaza** con un mensaje, en
-/// lugar de restaurarse a medias.
+/// It goes up when an old format can no longer be read. A backup with a
+/// format that this binary does not understand is **rejected** with a message, instead
+/// of being restored halfway.
 pub const FORMAT: u32 = 1;
 
-/// El nombre del manifiesto dentro de la copia.
+/// The name of the manifest within the backup.
 pub const MANIFEST_FILE: &str = "manifest.json";
 
-/// El fichero de metadatos (SurrealQL) dentro de la copia.
+/// The metadata file (SurrealQL) within the backup.
 pub const METADATA_FILE: &str = "metadata.surql";
 
-/// El directorio de blobs dentro de la copia, con el mismo reparto que el
-/// almacen: `<ab>/<cd>/<digest hex>`.
+/// The blobs directory within the backup, with the same layout as the
+/// store: `<ab>/<cd>/<digest hex>`.
 pub const BLOBS_DIR: &str = "blobs";
 
-/// Los metadatos exportados.
+/// The exported metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MetadataEntry {
-    /// El fichero, relativo a la copia.
+    /// The file, relative to the backup.
     pub file: String,
-    /// El SHA-256 del fichero, en hexadecimal.
+    /// The SHA-256 of the file, in hexadecimal.
     pub sha256: String,
-    /// Los bytes que ocupa.
+    /// The bytes it occupies.
     pub bytes: u64,
 }
 
-/// Un blob de la copia.
+/// A blob of the backup.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BlobEntry {
-    /// El contenido, como `sha256:<hex>`.
+    /// The content, as `sha256:<hex>`.
     pub digest: String,
-    /// Los bytes que ocupa.
+    /// The bytes it occupies.
     pub length: u64,
 }
 
-/// Un blob que existia y no se copio, y por que.
+/// A blob that existed and was not copied, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Excluded {
-    /// El contenido, como `sha256:<hex>`.
+    /// The content, as `sha256:<hex>`.
     pub digest: String,
-    /// Por que no se copio.
+    /// Why it was not copied.
     pub reason: String,
 }
 
-/// Lo que una copia dice de si misma.
+/// What a backup says about itself.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BackupManifest {
-    /// La version del formato.
+    /// The format version.
     pub format: u32,
-    /// La version del servicio que la hizo.
+    /// The version of the service that made it.
     pub service_version: String,
-    /// El namespace de SurrealDB.
+    /// The SurrealDB namespace.
     pub namespace: String,
-    /// La base de SurrealDB.
+    /// The SurrealDB database.
     pub database: String,
-    /// Cuando empezo la copia.
+    /// When the backup started.
     pub started_at: DateTime<Utc>,
-    /// El instante del que son los metadatos: todo lo confirmado antes de
-    /// este instante esta en la copia, y nada de lo confirmado despues.
+    /// The instant the metadata belongs to: everything committed before
+    /// this instant is in the backup, and nothing committed after.
     ///
-    /// Es la base del RPO: lo que se escribio entre este instante y un
-    /// fallo posterior se pierde.
+    /// It is the basis of the RPO: what was written between this instant and a
+    /// later failure is lost.
     pub metadata_snapshot_at: DateTime<Utc>,
-    /// Cuando termino la copia.
+    /// When the backup finished.
     pub finished_at: DateTime<Utc>,
-    /// Los metadatos.
+    /// The metadata.
     pub metadata: MetadataEntry,
-    /// Los blobs copiados, ordenados por digest.
+    /// The copied blobs, sorted by digest.
     pub blobs: Vec<BlobEntry>,
-    /// Los blobs que no se copiaron porque ya estaban danados.
+    /// The blobs that were not copied because they were already damaged.
     #[serde(default)]
     pub excluded: Vec<Excluded>,
 }
 
 impl BackupManifest {
-    /// Los bytes de blobs que lleva la copia.
+    /// The bytes of blobs that the backup carries.
     pub fn blob_bytes(&self) -> u64 {
         self.blobs.iter().map(|blob| blob.length).sum()
     }
 
-    /// Comprueba que la copia se puede restaurar con este binario.
+    /// Checks that the backup can be restored with this binary.
     ///
-    /// No toca el disco: es la parte pura. Rechaza un formato que no se
-    /// entiende y todo lo que, de aceptarse, dejaria que un manifiesto
-    /// hostil escribiera fuera de la copia o del almacen.
+    /// It does not touch the disk: it is the pure part. It rejects a format that is not
+    /// understood and anything that, if accepted, would let a hostile
+    /// manifest write outside the backup or the store.
     pub fn check_restorable(&self) -> Result<(), RecoveryError> {
         if self.format != FORMAT {
             return Err(RecoveryError::Unsound(format!(
@@ -134,7 +134,7 @@ impl BackupManifest {
     }
 }
 
-/// El hexadecimal de un digest `sha256:<hex>` bien formado.
+/// The hex of a well-formed `sha256:<hex>` digest.
 pub fn hex_of(digest: &str) -> Option<&str> {
     let hex = digest.strip_prefix("sha256:")?;
     is_hex(hex, 64).then_some(hex)

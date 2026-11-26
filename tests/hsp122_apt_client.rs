@@ -1,22 +1,22 @@
-//! El `apt-get install` de HSP-122 contra el **cliente real**: un
-//! `debian:bookworm` en podman cuyo `sources.list` apunta al hub.
+//! HSP-122's `apt-get install` against the **real client**: a
+//! `debian:bookworm` in podman whose `sources.list` points at the hub.
 //!
-//! La distro esta **fijada**, que es lo que pide el criterio de
-//! aceptacion: `apt 2.6.1`, `dpkg 1.21.x`, `gpgv` incluido. El flujo es
-//! el de cualquier sysadmin:
+//! The distro is **pinned**, which is what the acceptance criterion
+//! asks for: `apt 2.6.1`, `dpkg 1.21.x`, `gpgv` included. The flow is
+//! that of any sysadmin:
 //!
-//! 1. dentro del contenedor se construye un `.deb` real con
-//!    `dpkg-deb --build` (los nuestros, sinteticos, no instalarian);
-//! 2. el hub lo publica por `PUT /apt/{repo}/pool/...`;
-//! 3. la clave del hub (`key.asc`) se dearma y se instala como
-//!    `signed-by`, la ruta documentada por Debian;
-//! 4. `apt-get update` tiene que **verificar la firma del Release** con
-//!    gpgv para no marcar el origen como no firmado, y
-//!    `apt-get install -y hello-hodei` tiene que bajar el paquete del
-//!    pool, comprobar su SHA256 contra el indice e instalarlo.
+//! 1. inside the container a real `.deb` is built with
+//! `dpkg-deb --build` (ours, synthetic, would not install);
+//! 2. the hub publishes it through `PUT /apt/{repo}/pool/...`;
+//! 3. the hub's key (`key.asc`) is dearmored and installed as
+//! `signed-by`, the path documented by Debian;
+//! 4. `apt-get update` has to **verify the Release signature** with
+//! gpgv so as not to mark the origin as unsigned, and
+//! `apt-get install -y hello-hodei` has to download the package from the
+//! pool, check its SHA256 against the index and install it.
 //!
-//! Sin podman o sin la imagen, la suite falla diciendo que falta, como
-//! las demas suites de cliente real.
+//! Without podman or without the image, the suite fails saying it is missing, like
+//! the other real-client suites.
 
 mod support;
 
@@ -63,8 +63,8 @@ fn require_podman() {
     );
 }
 
-/// Ejecuta un script dentro del contenedor con `work` montado en `/work`
-/// y red de host para alcanzar al hub en el 127.0.0.1.
+/// Runs a script inside the container with `work` mounted at `/work`
+/// and host networking to reach the hub at 127.0.0.1.
 fn container_run(work: &Path, script: &str) -> std::process::Output {
     let output = Command::new("podman")
         .arg("run")
@@ -114,7 +114,7 @@ fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// El contenido binario de un bloque armor OpenPGP.
+/// The binary content of an OpenPGP armor block.
 fn dearmor(armored: &str) -> Vec<u8> {
     let body: String = armored
         .lines()
@@ -132,7 +132,7 @@ fn dearmor(armored: &str) -> Vec<u8> {
 
 const POOL_PATH: &str = "pool/main/hello-hodei/hello-hodei_1.0.0_amd64.deb";
 
-/// El control del paquete real: `dpkg-deb` lo exige bien formado.
+/// The real package control: `dpkg-deb` requires it well formed.
 const DEBIAN_CONTROL: &str = concat!(
     "Package: hello-hodei\n",
     "Version: 1.0.0\n",
@@ -160,7 +160,7 @@ fn the_real_apt_client_installs_and_verifies_the_signed_metadata() {
     std::fs::create_dir_all(&payload).expect("the payload dir");
     std::fs::write(payload.join("greeting.txt"), "hola desde hodei\n").expect("the payload");
 
-    // 1. Un `.deb` de verdad, construido por el dpkg de la distro fijada.
+    // 1. A real `.deb`, built by the dpkg of the pinned distro.
     container_run(
         &work,
         "cd /work && dpkg-deb --build --root-owner-group pkg hello.deb && chmod 644 hello.deb",
@@ -168,7 +168,7 @@ fn the_real_apt_client_installs_and_verifies_the_signed_metadata() {
     let deb = std::fs::read(work.join("hello.deb")).expect("the built deb");
     assert!(!deb.is_empty(), "dpkg-deb produced a package");
 
-    // 2. Se publica por la superficie apt del hub.
+    // 2. It is published through the hub's apt surface.
     let published = call(
         port,
         "PUT",
@@ -178,13 +178,13 @@ fn the_real_apt_client_installs_and_verifies_the_signed_metadata() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // 3. La clave del hub, dearma como manda la documentacion de Debian.
+    // 3. The hub's key, dearmored as Debian's documentation dictates.
     let key = call(port, "GET", "/apt/debian-hosted/key.asc", &token, None);
     assert_eq!(key.status, 200, "{}", text_of(&key));
     std::fs::write(work.join("key.gpg"), dearmor(&text_of(&key))).expect("the keyring");
 
-    // 4. El apt real: update verifica la firma del Release con gpgv e
-    // install baja el paquete del pool comprobando su SHA256.
+    // 4. The real apt: update verifies the Release signature with gpgv and
+    // install downloads the package from the pool checking its SHA256.
     let script = format!(
         concat!(
             "set -e\n",
@@ -222,8 +222,8 @@ fn apt_refuses_the_metadata_signed_by_an_stranger_key() {
 
     let work = next("stage-stranger");
     std::fs::create_dir_all(&work).expect("the scratch dir");
-    // Un anillo de un tercero que no es el firmante del hub: con el,
-    // `apt-get update` tiene que negarse, no instalar a ciegas.
+    // A third party's keyring that is not the hub's signer: with it,
+    // `apt-get update` has to refuse, not install blindly.
     let stranger =
         hodei_artifacts_api::openpgp::MetadataSigner::generate("Stranger <x@example.local>")
             .expect("a second key");

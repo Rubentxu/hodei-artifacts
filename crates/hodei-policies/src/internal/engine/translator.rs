@@ -19,14 +19,14 @@ use std::str::FromStr;
 /// This function converts a kernel HRN to a Cedar EntityUid that can be used
 /// in Cedar policy evaluation.
 ///
-/// The identifier of the entity is the **HRN canónico completo**: la
-/// partición, el servicio, la región, la cuenta, el tipo y el id del
-/// recurso. Dos recursos homónimos en cuentas distintas producen UIDs
-/// distintos, así que no pueden confundirse en la evaluación.
+/// The identifier of the entity is the **full canonical HRN**: the
+/// partition, the service, the region, the account, the type and the
+/// resource id. Two same-named resources in different accounts produce
+/// different UIDs, so they cannot be confused during evaluation.
 ///
-/// El UID se construye solo con APIs Cedar tipadas (`EntityTypeName`,
-/// `EntityId`, `EntityUid::from_type_name_and_id`): el texto del HRN no se
-/// interpola en una cadena de UID.
+/// The UID is built only with typed Cedar APIs (`EntityTypeName`,
+/// `EntityId`, `EntityUid::from_type_name_and_id`): the HRN text is not
+/// interpolated into a UID string.
 ///
 /// # Arguments
 ///
@@ -355,8 +355,8 @@ mod tests {
         assert_eq!(euid.id().escaped(), "hrn:aws:iam::123:User/alice");
     }
 
-    /// Dos recursos homónimos en cuentas distintas no pueden compartir UID:
-    /// es la garantía de aislamiento inter-tenant.
+    /// Two same-named resources in different accounts cannot share a UID:
+    /// it is the guarantee of inter-tenant isolation.
     #[test]
     fn homonyms_of_different_accounts_get_distinct_uids() {
         let in_a = Hrn::new(
@@ -381,8 +381,8 @@ mod tests {
         assert_eq!(uid_a.type_name().to_string(), uid_b.type_name().to_string());
     }
 
-    /// La acción usa el namespace plano, el mismo que declara el schema
-    /// registrado y que produce `ActionTrait::action_name()`.
+    /// The action uses the flat namespace, the same one the registered schema
+    /// declares and that `ActionTrait::action_name()` produces.
     #[test]
     fn an_action_maps_to_the_flat_action_uid() {
         let uid = translate_action_to_cedar_euid("CreateUser").expect("action uid");
@@ -391,12 +391,12 @@ mod tests {
         assert_eq!(uid.id().escaped(), "CreateUser");
     }
 
-    /// Un recurso no acción conserva su tipo con namespace.
+    /// A non-action resource keeps its namespaced type.
     ///
-    /// El namespace es el servicio declarado (`artifacts` → `Artifacts`) y el
-    /// nombre del tipo es el tipo de recurso (`repository` → `Repository`),
-    /// que es la misma regla que usa `HodeiEntityType::entity_type_name()`
-    /// al registrar el schema.
+    /// The namespace is the declared service (`artifacts` → `Artifacts`) and the
+    /// type name is the resource type (`repository` → `Repository`),
+    /// which is the same rule used by `HodeiEntityType::entity_type_name()`
+    /// when registering the schema.
     #[test]
     fn a_resource_is_not_an_action() {
         let resource = Hrn::new(

@@ -1,27 +1,27 @@
-//! La superficie **NuGet v3**: `dotnet restore` y `dotnet nuget push`
-//! contra un repositorio de Hodei.
+//! The **NuGet v3** surface: `dotnet restore` and `dotnet nuget push`
+//! against a Hodei repository.
 //!
-//! Vive en `/nuget/{repositorio}/...` y habla la gramatica de la
-//! resource hub: el service index, el flat container, la hoja de
-//! registros y el endpoint de publicacion. La gramatica pura —rutas,
-//! versiones, identidad del paquete y documentos— esta en
-//! `hodei_catalog::nuget`; aqui solo hay lo que necesita efectos.
+//! Lives at `/nuget/{repository}/...` and speaks the grammar of the
+//! resource hub: the service index, the flat container, the registration
+//! leaf and the publish endpoint. The pure grammar --paths,
+//! versions, package identity and documents-- is in
+//! `hodei_catalog::nuget`; here there is only what needs effects.
 //!
-//! Cada version publicada deja **un unico asset inmutable** en el
-//! catalogo, con su direccion canonica de protocolo:
-//! `flatcontainer/{id}/{version}/{id}.nupkg`. La lista de versiones y
-//! la hoja de registros se ensamblan con lo almacenado, como el indice
-//! sparse de cargo: no hay documento que reescribir, y una version
-//! publicada es para siempre. La metadata del paquete no se duplica:
-//! vive dentro del propio nupkg, y el servidor la lee al publicar en
-//! vez de reescribirla.
+//! Each published version leaves **a single immutable asset** in the
+//! catalog, with its canonical protocol address:
+//! `flatcontainer/{id}/{version}/{id}.nupkg`. The version list and
+//! the registration leaf are assembled from what is stored, like cargo's
+//! sparse index: there is no document to rewrite, and a published
+//! version is forever. The package metadata is not duplicated:
+//! it lives inside the nupkg itself, and the server reads it on publish
+//! instead of rewriting it.
 //!
-//! La modalidad **hosted** escribe por `PUT package/{id}/{version}` con
-//! el nupkg como cuerpo; la identidad que manda la URL es una promesa,
-//! y manda la del nuspec: si no coinciden, la publicacion se rechaza.
-//! La modalidad **proxy** re-serva el flat container y los registros
-//! byte a byte: un nupkg reescrito rompe su hash, y NuGet valida el
-//! paquete contra el `contentHash` del registro.
+//! The **hosted** mode writes via `PUT package/{id}/{version}` with
+//! the nupkg as body; the identity the URL carries is a promise,
+//! and the nuspec's wins: if they do not match, the publication is rejected.
+//! The **proxy** mode re-serves the flat container and the registrations
+//! byte for byte: a rewritten nupkg breaks its hash, and NuGet validates the
+//! package against the registration's `contentHash`.
 
 use std::collections::HashMap;
 
@@ -50,14 +50,14 @@ use crate::handlers::{correlation_id, record_audit};
 use crate::public_url::TheOrigin;
 use crate::raw::conditional;
 
-/// Lo que pasa con una peticion que no se puede servir.
+/// What happens to a request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un error de la gramatica NuGet.
+    /// An error from the NuGet grammar.
     NuGet(NugetError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -95,10 +95,10 @@ impl IntoResponse for Failure {
         };
         let mut response = (status, axum::Json(json!({ "error": message }))).into_response();
         if status == StatusCode::UNAUTHORIZED {
-            // El desafio es Basic, no Bearer: NuGet solo adjunta las
-            // credenciales de la fuente cuando el 401 las pide con ese
-            // esquema, y el dialecto del hub ya acepta Basic con la
-            // clave como contrasena.
+            // The challenge is Basic, not Bearer: NuGet only attaches the
+            // source credentials when the 401 requests them with that
+            // scheme, and the hub dialect already accepts Basic with the
+            // key as the password.
             response.headers_mut().insert(
                 header::WWW_AUTHENTICATE,
                 HeaderValue::from_static("Basic realm=\"hodei\""),
@@ -108,9 +108,9 @@ impl IntoResponse for Failure {
     }
 }
 
-/// El resto de la ruta de `/nuget/{repositorio}/{resto}`, sin decodificar:
-/// el identificador de un paquete puede llevar `%2e` y un `%2f` no debe
-/// abrir caminos.
+/// The rest of the path of `/nuget/{repository}/{rest}`, undecoded:
+/// a package identifier may carry `%2e` and a `%2f` must not
+/// open paths.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -118,7 +118,7 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
         .ok_or(RawApiError::NotFound)?;
     let (repository, rest) = match rest.split_once('/') {
         Some((repository, rest)) => (repository, rest),
-        // `/nuget/{repositorio}` a secas tambien es el indice de servicios.
+        // A bare `/nuget/{repository}` is also the service index.
         None => (rest, ""),
     };
     if !crate::raw::path::valid_repository_name(repository) {
@@ -127,12 +127,12 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// La URL base del feed tal y como la ve el cliente: el service index
+/// The base URL of the feed as the client sees it: the service index
 ///
-/// El origen lo decide el despliegue y no la peticion: el `Host` y el
-/// `X-Forwarded-Proto` de una peticion los puede escribir cualquiera, y
-/// una URL que el cliente mueve es una URL que el cliente envenena.
-/// declara direcciones absolutas, y absolutas por el host que pregunto.
+/// The origin is decided by the deployment and not by the request: the `Host` and
+/// `X-Forwarded-Proto` of a request can be written by anyone, and
+/// a URL the client moves is a URL the client poisons.
+/// declares absolute addresses, and absolute for the host that asked.
 fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
     origin
         .url(&format!("/nuget/{repository}"))
@@ -142,12 +142,12 @@ fn the_base(origin: &TheOrigin, repository: &str) -> Result<String, Failure> {
         .map_err(Failure::from)
 }
 
-/// El cliente NuGet llega de dos maneras: con Basic desde sus
-/// credenciales de fuente (la contrasena es la clave, el usuario es
-/// informativo) o con la cabecera `X-NuGet-ApiKey` que manda
-/// `dotnet nuget push`. La API key puede viajar base64 por contrato
-/// del cliente; la superficie compartida solo habla Bearer, asi que
-/// aqui se normaliza una y otra cabecera.
+/// The NuGet client arrives in two ways: with Basic from its
+/// source credentials (the password is the key, the user is
+/// informative) or with the `X-NuGet-ApiKey` header that
+/// `dotnet nuget push` sends. The API key may travel base64 by contract
+/// of the client; the shared surface only speaks Bearer, so
+/// both headers are normalized here.
 fn normalize_authorization(headers: &mut HeaderMap) {
     let basic = headers
         .get(header::AUTHORIZATION)
@@ -176,8 +176,8 @@ fn normalize_authorization(headers: &mut HeaderMap) {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| {
-            // El cliente admite la clave en base64: si decodifica a algo
-            // legible, eso es lo que el servidor debe creer.
+            // The client allows the key in base64: if it decodes to something
+            // readable, that is what the server must believe.
             match base64::engine::general_purpose::STANDARD.decode(value) {
                 Ok(decoded) => String::from_utf8(decoded)
                     .map(|decoded| {
@@ -197,12 +197,12 @@ fn normalize_authorization(headers: &mut HeaderMap) {
     }
 }
 
-/// La identidad que declaraba el nuspec de una publicacion exitosa,
-/// para que la auditoria nombre el paquete aunque la URL no lo hiciera.
+/// The identity the nuspec declared for a successful publication,
+/// so that the audit names the package even if the URL did not.
 #[derive(Clone)]
 struct PublishedId(String);
 
-/// Cualquier peticion de `/nuget/{repositorio}/...`.
+/// Any request to `/nuget/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -212,12 +212,12 @@ pub async fn handle(
     request: axum::extract::Request<Body>,
 ) -> Result<Response, Failure> {
     normalize_authorization(&mut headers);
-    // El service index es anonimo por contrato del cliente: `dotnet
-    // nuget push` lo carga **sin credenciales** antes de mandar la API
-    // key al endpoint de publicacion. El documento no toca el catalogo:
-    // dice donde vive cada protocolo del repositorio, y nada de
-    // contenido. Cualquier otra peticion sin credenciales sigue
-    // muriendo en el contexto, como siempre.
+    // The service index is anonymous by client contract: `dotnet
+    // nuget push` loads it **without credentials** before sending the API
+    // key to the publish endpoint. The document does not touch the catalog:
+    // it says where each protocol of the repository lives, and nothing of
+    // content. Any other request without credentials continues
+    // dying in the context, as always.
     if !headers.contains_key(header::AUTHORIZATION) && matches!(method, Method::GET | Method::HEAD)
     {
         let anonymous = (|| -> Result<Option<Response>, Failure> {
@@ -233,10 +233,10 @@ pub async fn handle(
                 Ok(None)
             }
         })();
-        // Un error aqui no se traga: si la peticion no trae credenciales
-        // y el service index no se puede construir --porque el `Host` no
-        // es una autoridad-- la respuesta dice eso, y no se disfraza de
-        // un 401 de un camino que ya no era este.
+        // An error here is not swallowed: if the request carries no credentials
+        // and the service index cannot be built --because the `Host` is not
+        // an authority-- the response says that, and is not disguised as
+        // a 401 from a path that was no longer this one.
         match anonymous {
             Ok(Some(response)) => return Ok(response),
             Ok(None) => {}
@@ -326,12 +326,12 @@ fn record_outcome(
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
-/// Una lectura es un salto al proxy o una visita al almacen propio, y la
-/// modalidad del repositorio decide: un proxy no inventa versiones, y un
-/// hosted no sale a la red.
+/// A read is a hop to the proxy or a visit to the own store, and the
+/// repository's mode decides: a proxy does not invent versions, and a
+/// hosted one does not go out to the network.
 async fn read(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -385,11 +385,11 @@ async fn read(
             ))
         }
         NuGetRoute::Flat(FlatRequest::File { id, version, file }) => {
-            // En el flat container solo hay lo que se publico: un
-            // `PUT` deja el nupkg, y cualquier otro nombre bajo esa
-            // version no nombra nada. El contrato admite dos formas:
-            // la direccion canonica `{id}.nupkg` y la que de verdad
-            // pide el cliente al descargar, `{id}.{version}.nupkg`.
+            // In the flat container there is only what was published: a
+            // `PUT` leaves the nupkg, and any other name under that
+            // version names nothing. The contract admits two forms:
+            // the canonical address `{id}.nupkg` and the one the client
+            // actually requests when downloading, `{id}.{version}.nupkg`.
             if *file != format!("{id}.nupkg") && *file != format!("{id}.{version}.nupkg") {
                 return Err(Failure::plain(
                     StatusCode::NOT_FOUND,
@@ -411,8 +411,8 @@ async fn read(
     }
 }
 
-/// Las versiones almacenadas de un paquete, ordenadas por la regla de
-/// NuGet: los numeros primero y los previos antes que su version base.
+/// The stored versions of a package, ordered by NuGet's
+/// rule: numbers first and prereleases before their base version.
 async fn hosted_versions(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -446,8 +446,8 @@ async fn hosted_versions(
     Ok(versions)
 }
 
-/// Los bytes de un asset publicado, verificados contra el catalogo, con
-/// su tipo de contenido de protocolo.
+/// The bytes of a published asset, verified against the catalog, with
+/// its protocol content type.
 async fn read_asset_named(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -909,10 +909,10 @@ async fn proxy_bytes(
     Ok(bytes)
 }
 
-/// Un proxy NuGet re-serva el documento del upstream tal cual: el
-/// flat container y los registros se cachean bajo su ruta de protocolo
-/// y un nupkg reescrito dejaria de casar con el `contentHash` que el
-/// propio upstream declara.
+/// A NuGet proxy re-serves the upstream document as is: the
+/// flat container and the registrations are cached under their protocol path
+/// and a rewritten nupkg would stop matching the `contentHash` the
+/// upstream itself declares.
 async fn read_proxy(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -957,12 +957,12 @@ async fn read_proxy(
 }
 
 // ---------------------------------------------------------------------------
-// Publicacion (hosted)
+// Publishing (hosted)
 // ---------------------------------------------------------------------------
 
-/// Publicar un nupkg. La identidad del nuspec manda sobre la URL, y la
-/// inmutabilidad manda sobre todo lo demas: el mismo digest es un si,
-/// un digest distinto es un 409 que explica por que.
+/// Publish a nupkg. The nuspec identity wins over the URL, and
+/// immutability wins over everything else: the same digest is a yes,
+/// a different digest is a 409 that explains why.
 async fn publish(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -985,11 +985,11 @@ async fn publish(
         .await
         .map_err(|_| Failure::Raw(RawApiError::PayloadTooLarge))?;
 
-    // El cliente real manda el nupkg dentro de un formulario multipart
-    // y sin identidad en la URL; el cuerpo crudo tambien es publicacion
-    // valida. En ambos casos la identidad interior es la autoridad: la
-    // URL es una promesa del cliente sobre el nuspec, y aqui se cumple
-    // o se rechaza.
+    // The real client sends the nupkg inside a multipart form
+    // and without identity in the URL; the raw body is also a valid
+    // publication. In both cases the inner identity is the authority: the
+    // URL is a promise by the client about the nuspec, and here it is kept
+    // or rejected.
     let payload = if body.starts_with(b"PK") {
         body.to_vec()
     } else {
@@ -1026,9 +1026,9 @@ async fn publish(
     )
     .await?;
 
-    // Una version ya publicada es para siempre: el mismo digest es el eco
-    // de una publicacion interrumpida, un digest distinto es un 409 que
-    // explica por que.
+    // An already-published version is forever: the same digest is the echo
+    // of an interrupted publication, a different digest is a 409 that
+    // explains why.
     let immutable =
         format!("version {version} of {id} is already published; a published version is immutable");
     if let Some(existing) =
@@ -1066,7 +1066,7 @@ async fn publish(
                 None,
                 correlation,
             );
-            // La auditoria nombra el paquete aunque la URL no lo hiciera.
+            // The audit names the package even if the URL did not.
             response.extensions_mut().insert(PublishedId(id));
             Ok(response)
         }
@@ -1076,7 +1076,7 @@ async fn publish(
 }
 
 // ---------------------------------------------------------------------------
-// Respuestas
+// Responses
 // ---------------------------------------------------------------------------
 
 fn json_response(

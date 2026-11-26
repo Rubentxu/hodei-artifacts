@@ -1,20 +1,20 @@
-//! El plano de la promocion: quien decide y que se concede.
+//! The promotion plane: who decides and what is granted.
 //!
-//! Promover un digest al canal trusted es una decision en dos mitades que
-//! no se confunden: Cedar dice **quien** puede promover, y la politica de
-//! confianza dice si el **software** lo merece. Esta pieza compone el
-//! servicio de promocion con su almacen duradero y con la politica
-//! activa, y calcula **que digests** abarca una promocion.
+//! Promoting a digest to the trusted channel is a decision in two halves that
+//! are not confused: Cedar says **who** may promote, and the trust
+//! policy says whether the **software** deserves it. This piece composes the
+//! promotion service with its durable store and with the active
+//! policy, and computes **which digests** a promotion covers.
 //!
-//! # Que abarca una promocion
+//! # What a promotion covers
 //!
-//! Promover un manifiesto OCI sin su configuracion y sus capas dejaria una
-//! imagen que se anuncia y no se puede bajar. Por eso la concesion abarca
-//! el digest pedido **y** los digests que ese manifiesto nombra; un
-//! indice, ademas, los manifiestos hijos que el propio repositorio tiene,
-//! con una profundidad y un numero de nodos acotados. Un manifiesto que
-//! no se puede leer concede solo su propio digest: una cadena a medias no
-//! se amplia por conjetura.
+//! Promoting an OCI manifest without its config and its layers would leave an
+//! image that is advertised and cannot be pulled. That is why the grant covers
+//! the requested digest **and** the digests that manifest names; an
+//! index also covers the child manifests the repository itself holds,
+//! with a bounded depth and number of nodes. A manifest that
+//! cannot be read grants only its own digest: a half chain is not
+//! widened by conjecture.
 
 use std::collections::{HashSet, VecDeque};
 use std::path::Path;
@@ -29,20 +29,20 @@ use hodei_trust_policy::{
     PromotionTarget, PromotionTargets, TrustPolicy,
 };
 
-/// La distribucion a la que se promueve: el canal trusted.
+/// The distribution promoted to: the trusted channel.
 pub const TRUSTED_DISTRIBUTION: &str = "trusted";
 
-/// Hasta que profundidad se sigue un indice de manifiestos.
+/// How deep a manifest index is followed.
 const MAX_DEPTH: usize = 4;
-/// Cuantos manifiestos se leen como maximo en una promocion.
+/// How many manifests are read at most in a promotion.
 const MAX_MANIFESTS: usize = 256;
 
-/// El tope de digests que abarca una promocion: un manifiesto con muchos
-/// descriptores no multiplica las consultas al catalogo. Pasado el tope se
-/// concede menos, nunca mas.
+/// The cap on digests a promotion covers: a manifest with many
+/// descriptors does not multiply the catalog queries. Past the cap
+/// less is granted, never more.
 const MAX_COVERED: usize = 4096;
 
-/// El servicio de promocion y la politica con la que decide.
+/// The promotion service and the policy it decides with.
 pub struct TrustPlane {
     service: PromotionService,
     registry: PolicyRegistry,
@@ -51,8 +51,8 @@ pub struct TrustPlane {
 }
 
 impl TrustPlane {
-    /// Un plano sobre un almacen de decisiones y un registro de politicas,
-    /// con el techo de vigencia que toda concesion nueva debe respetar.
+    /// A plane over a decision store and a policy registry,
+    /// with the validity ceiling every new grant must respect.
     pub fn new(
         store: Arc<dyn DecisionStore>,
         registry: PolicyRegistry,
@@ -73,42 +73,42 @@ impl TrustPlane {
         }
     }
 
-    /// El servicio que decide y escribe la decision.
+    /// The service that decides and writes the decision.
     pub fn service(&self) -> &PromotionService {
         &self.service
     }
 
-    /// El identificador de la politica con la que se decide.
+    /// The identifier of the policy it decides with.
     pub fn policy_id(&self) -> &str {
         &self.policy_id
     }
 
-    /// El registro de politicas del plano.
+    /// The plane's policy registry.
     ///
-    /// Es una manija mas sobre el MISMO estado interior: el ciclo
-    /// reactivo (HSP-137) necesita un segundo `PromotionService` --el
-    /// primero no es clonable-- que decida contra la politica que esta
-    /// activo ahora, exactamente la que la promocion publica usa. Clonar
-    /// el registro comparte el interior: una politica activada despues
-    /// se ve desde las dos mitades.
+    /// It is one more handle over the SAME inner state: the reactive
+    /// cycle (HSP-137) needs a second `PromotionService` --the
+    /// first is not cloneable-- that decides against the policy that is
+    /// active right now, exactly the one the public promotion uses. Cloning
+    /// the registry shares the interior: a policy activated later
+    /// is seen from both halves.
     pub fn registry(&self) -> PolicyRegistry {
         self.registry.clone()
     }
 
-    /// La version de la politica que decide **ahora**.
+    /// The version of the policy that decides **now**.
     ///
-    /// Es la segunda mitad del compare-and-set de la promocion: la
-    /// decision lleva la version con la que se midio, y una concesion
-    /// solo se publica si esa version sigue siendo la activa. Sin
-    /// politica activa no hay version que oponer: nada se publica.
+    /// It is the second half of the promotion's compare-and-set: the
+    /// decision carries the version it was measured with, and a grant
+    /// is only published if that version is still the active one. Without an
+    /// active policy there is no version to compare against: nothing is published.
     pub fn active_policy_version(&self) -> Option<String> {
         self.registry
             .active(&self.policy_id)
             .map(|policy| policy.version)
     }
 
-    /// La vigencia de una concesion emitida por la decision dada: la
-    /// primera caducidad exigida, cortada por el techo del plano.
+    /// The validity of a grant issued by the given decision: the
+    /// first required expiry, cut by the plane's ceiling.
     pub fn validity_of(&self, decision: &PromotionDecision, now: DateTime<Utc>) -> DateTime<Utc> {
         grant_valid_until(
             &decision.trust,
@@ -119,19 +119,19 @@ impl TrustPlane {
     }
 }
 
-/// El momento en que la concesion deja de ser digna de fe.
+/// The moment at which the grant stops being trustworthy.
 ///
-/// Es la **primera caducidad** de lo que la decision exigió: el minimo de
-/// las caducidades de las excepciones que la decision aplico de verdad
-/// (`requirements` con `exception`), cortado siempre por el techo de
-/// revalidacion. La politica y la evidencia no tienen fecha propia en el
-/// registro —la politica se cambia por version y la evidencia por el
-/// riesgo que la reevalua—, y por eso el techo es su caducidad comun:
-/// pasada la hora, la concesion vuelve a pasar por una decision nueva.
+/// It is the **first expiry** of what the decision required: the minimum of
+/// the expiries of the exceptions the decision actually applied
+/// (`requirements` with `exception`), always cut by the revalidation
+/// ceiling. The policy and the evidence have no date of their own in the
+/// registry --the policy changes by version and the evidence by the
+/// risk that reevaluates it--, and that is why the ceiling is their common expiry:
+/// once the hour passes, the grant goes through a new decision again.
 ///
-/// Se calcula sobre la decision **persistida**, junto con su contexto:
-/// lo que la concesion promete es lo que aquella dijo, no lo que el
-/// cliente pidio.
+/// It is computed over the **persisted** decision, together with its context:
+/// what the grant promises is what that decision said, not what the
+/// client asked for.
 pub fn grant_valid_until(
     trust: &hodei_trust_policy::TrustDecision,
     exceptions: &[hodei_trust_policy::ExceptionFact],
@@ -156,7 +156,7 @@ pub fn grant_valid_until(
     }
 }
 
-/// El destino de toda promocion: el canal trusted de la cuenta.
+/// The destination of every promotion: the account's trusted channel.
 pub struct TrustedChannelTargets;
 
 #[async_trait]
@@ -173,12 +173,12 @@ impl PromotionTargets for TrustedChannelTargets {
     }
 }
 
-/// Un registro con la politica de un fichero JSON activada, o vacio.
+/// A registry with the policy of a JSON file activated, or empty.
 ///
-/// Un registro vacio no es un registro que permite: toda promocion queda
-/// rechazada con una decision `PolicyUnavailable` escrita. Un fichero que
-/// se declara y no se puede leer o entender **es un error de arranque**,
-/// no una politica ausente a la que nadie ha prestado atencion.
+/// An empty registry is not a registry that permits: every promotion ends up
+/// rejected with a written `PolicyUnavailable` decision. A file that
+/// is declared and cannot be read or understood **is a startup error**,
+/// not an absent policy nobody has paid attention to.
 pub fn registry_from(policy_file: Option<&str>, policy_id: &str) -> Result<PolicyRegistry, String> {
     let registry = PolicyRegistry::empty();
     let Some(path) = policy_file else {
@@ -198,11 +198,11 @@ pub fn registry_from(policy_file: Option<&str>, policy_id: &str) -> Result<Polic
     Ok(registry)
 }
 
-/// Lo que se ha leido de un manifiesto, sin interpretar.
+/// What was read from a manifest, uninterpreted.
 enum Read {
-    /// Los digests que nombra.
+    /// The digests it names.
     Edges(Vec<ContentDigest>),
-    /// No se pudo leer o entender.
+    /// It could not be read or understood.
     Opaque,
 }
 
@@ -216,12 +216,12 @@ async fn read_edges(content: &dyn BlobStore, digest: &ContentDigest) -> Read {
     }
 }
 
-/// Los digests que abarca promover `digest`, que vive en `asset_path`.
+/// The digests that promoting `digest`, which lives at `asset_path`, covers.
 ///
-/// `is_manifest_of` dice si un digest es un manifiesto **de este
-/// repositorio** (tiene su asset `manifests/<hex>` y apunta a ese digest);
-/// es lo unico que se sigue de un indice. El primero de la lista es
-/// siempre el digest pedido.
+/// `is_manifest_of` says whether a digest is a manifest **of this
+/// repository** (it has its `manifests/<hex>` asset and points to that digest);
+/// it is the only thing followed from an index. The first in the list is
+/// always the requested digest.
 pub async fn digests_covered<F, Fut>(
     content: &dyn BlobStore,
     digest: &ContentDigest,
@@ -426,8 +426,8 @@ mod tests {
         }
     }
 
-    /// AC2: la vigencia manda la primera caducidad de las excepciones que
-    /// la decision aplico de verdad, por delante del techo.
+    /// AC2: the validity is governed by the first expiry of the exceptions that
+    /// the decision actually applied, ahead of the ceiling.
     #[test]
     fn the_validity_is_the_earliest_expiry_of_the_exceptions_applied() {
         let now = Utc::now();
@@ -440,9 +440,9 @@ mod tests {
         assert_eq!(until, now + Duration::hours(3));
     }
 
-    /// El techo de revalidacion corta por delante de todo: sin excepciones
-    /// exigidas —o con excepciones lejanas— la concesion vive hasta el
-    /// techo, y ni un segundo mas.
+    /// The revalidation ceiling cuts ahead of everything: without required
+    /// exceptions --or with distant exceptions-- the grant lives until the
+    /// ceiling, and not one second more.
     #[test]
     fn the_ceiling_bounds_the_validity_when_nothing_expires_before() {
         let now = Utc::now();
@@ -457,8 +457,8 @@ mod tests {
         assert_eq!(bounded, now + ceiling);
     }
 
-    /// Una excepcion que la decision no nombro no caduca nada: la vigencia
-    /// se calcula con lo exigido, no con lo que habia por ahí.
+    /// An exception the decision did not name expires nothing: the validity
+    /// is computed from what was required, not from whatever happens to be around.
     #[test]
     fn an_exception_the_decision_did_not_apply_bounds_nothing() {
         let now = Utc::now();
@@ -468,11 +468,11 @@ mod tests {
         assert_eq!(until, now + Duration::hours(6));
     }
 
-    /// La segunda mitad del compare-and-set de AC3: el plano dice la
-    /// version activa **ahora**, no la que conocia al nacer. Si la
-    /// politica se troca en medio de una promocion, la comparacion del
-    /// handler ve la nueva y la decision medida con la vieja no se
-    /// publica.
+    /// The second half of AC3's compare-and-set: the plane says the
+    /// version active **now**, not the one it knew at birth. If the
+    /// policy is swapped in the middle of a promotion, the handler's
+    /// comparison sees the new one and the decision measured with the old one is not
+    /// published.
     #[test]
     fn the_active_version_is_the_live_state_of_the_registry() {
         struct NoDecisions;

@@ -1,34 +1,34 @@
-//! La cache de admision del canal trusted.
+//! The admission cache of the trusted channel.
 //!
-//! El libro de concesiones vive en la base, y cada peticion del canal
-//! trusted era una lectura suya. Esta cache guarda **solo respuestas
-//! afirmativas**: una concesion activa y fresca exime de volver a
-//! preguntar; todo lo demas —la ausencia, un fallo del libro— se lee en
-//! vivo cada vez, de modo que ningun estado desconocido se convierte en
-//! permiso por inercia de la cache.
+//! The grant ledger lives in the database, and every request on the trusted
+//! channel used to be a read of it. This cache stores **only affirmative
+//! answers**: an active, fresh grant exempts from asking again;
+//! everything else --absence, a ledger failure-- is read live every time, so
+//! that no unknown state becomes a permit by cache
+//! inertia.
 //!
-//! Las reglas que la hacen segura:
+//! The rules that make it safe:
 //!
-//! - **Clave por identidad, no por nombre**: cuenta, repositorio y
-//!   digest. Una etiqueta que se mueve a otros bytes consulta una clave
-//!   distinta y no hereda la concesion antigua.
-//! - **Expiracion**: cada entrada vive un `ttl`; despues la cache vuelve
-//!   a preguntar al libro. Es el techo de desactualizacion entre
-//!   instancias que no comparten escrituras.
-//! - **Invalidacion por cambio relevante**: toda escritura que pasa por
-//!   aqui —concesion o revocacion— barre las entradas que toca. Una
-//!   revocacion por esta instancia se nota en la peticion siguiente,
-//!   como cuando no habia cache.
-//! - **Generacion contra lecturas en vuelo**: cada escritura sube un
-//!   contador *antes* de tocar el libro, y una lectura cuyo libro
-//!   respondio despues de ese salto no inserta su foto: una revocacion
-//!   confirmada no puede quedar tapada por la insercion tardia de una
-//!   lectura que empezo antes, ni una reconcesion enterrada por la foto
-//!   vieja. El limite: una escritura concurrente cuesta como mucho una
-//!   lectura extra al libro, nunca un permiso viejo. Una descarga ya
-//!   iniciada se sirve con la concesion que admitio su peticion —la
-//!   revocacion corta las peticiones nuevas, no las que ya vuelan—,
-//!   exactamente como sin cache.
+//! - **Keyed by identity, not by name**: account, repository and
+//!   digest. A tag that moves to other bytes queries a different key
+//!   and does not inherit the old grant.
+//! - **Expiration**: each entry lives for a `ttl`; after that the cache goes
+//!   back to asking the ledger. It is the staleness ceiling between
+//!   instances that do not share writes.
+//! - **Invalidation on relevant change**: every write that goes through
+//!   here --grant or revocation-- sweeps the entries it touches. A
+//!   revocation by this instance is noticed on the next request,
+//!   as when there was no cache.
+//! - **Generation against in-flight reads**: each write bumps a
+//!   counter *before* touching the ledger, and a read whose ledger
+//!   answered after that bump does not insert its snapshot: a confirmed
+//!   revocation cannot be masked by the late insertion of a
+//!   read that started earlier, nor a re-grant buried by the old
+//!   snapshot. The bound: a concurrent write costs at most one extra
+//!   read of the ledger, never a stale permit. A download already
+//!   started is served with the grant that admitted its request --the
+//!   revocation cuts new requests, not those already in flight--,
+//!   exactly as without a cache.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -40,39 +40,39 @@ use chrono::{DateTime, Utc};
 use hodei_catalog::{CatalogError, TrustGrant, TrustLedger};
 use hodei_evidence::ContentDigest;
 
-/// La duracion por defecto de una entrada: lo que puede tardar en
-/// notarse una revocacion hecha por otra instancia.
+/// The default duration of an entry: how long a revocation made by
+/// another instance can take to be noticed.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60);
 
-/// La clave de una decision cacheada: la identidad con la que el libro
-/// concede —cuenta, repositorio y digest—, no el nombre por el que el
-/// cliente pregunto.
+/// The key of a cached decision: the identity under which the ledger
+/// grants --account, repository and digest--, not the name the
+/// client asked by.
 type Key = (String, String, String);
 
-/// Una concesion activa con la hora a la que deja de ser digna de fe.
+/// An active grant with the time at which it stops being trustworthy.
 struct Entry {
     grant: TrustGrant,
     expires_at: Instant,
 }
 
-/// El libro envuelto en una cache de solo-positivos.
+/// The ledger wrapped in a positives-only cache.
 ///
-/// Es un `TrustLedger` mas: el estado del servicio no distingue, y las
-/// rutas de lectura siguen llamando a `admit` igual que cuando no habia
-/// cache. Las escrituras se invalidan a si mismas porque pasan por aqui.
+/// It is just another `TrustLedger`: the service state does not distinguish, and the
+/// read paths keep calling `admit` just as when there was no
+/// cache. Writes invalidate themselves because they pass through here.
 pub struct CachedTrustLedger {
     inner: std::sync::Arc<dyn TrustLedger>,
     ttl: Duration,
     admitted: Mutex<HashMap<Key, Entry>>,
-    /// El contador que sube toda escritura antes de tocar el libro. Una
-    /// lectura en vuelo que vio una generacion distinta de la actual
-    /// cuando el libro le respondio no inserta su foto: puede estar
-    /// obsoleta —la revocacion o la reconcesion ya es firme—.
+    /// The counter that every write bumps before touching the ledger. An
+    /// in-flight read that saw a generation different from the current one
+    /// when the ledger answered it does not insert its snapshot: it may be
+    /// stale --the revocation or re-grant is already firm--.
     generation: AtomicU64,
 }
 
 impl CachedTrustLedger {
-    /// El libro real, con el ttl que debe tener cada entrada.
+    /// The real ledger, with the ttl each entry must have.
     pub fn new(inner: std::sync::Arc<dyn TrustLedger>, ttl: Duration) -> Self {
         Self {
             inner,
@@ -82,7 +82,7 @@ impl CachedTrustLedger {
         }
     }
 
-    /// El ttl con el que nace la instancia de produccion.
+    /// The ttl the production instance is born with.
     pub fn with_default_ttl(inner: std::sync::Arc<dyn TrustLedger>) -> Self {
         Self::new(inner, DEFAULT_TTL)
     }
@@ -95,11 +95,11 @@ impl CachedTrustLedger {
         )
     }
 
-    /// La entrada viva de la clave, si existe y no ha caducado.
+    /// The live entry for the key, if it exists and has not expired.
     fn fresh(&self) -> MutexGuard<'_, HashMap<Key, Entry>> {
-        // El mutex puede estar envenenado si una ruta en panico dejo el
-        // mapa a medias: la cache se reanuda vacia, que es el lado
-        // cerrado —preguntar de nuevo al libro—, no un permiso falso.
+        // The mutex may be poisoned if a panicking path left the
+        // map half-written: the cache resumes empty, which is the closed
+        // side --asking the ledger again--, not a false permit.
         let mut map = self.admitted.lock().unwrap_or_else(|poison| {
             let mut map = poison.into_inner();
             map.clear();
@@ -114,14 +114,14 @@ impl CachedTrustLedger {
 #[async_trait]
 impl TrustLedger for CachedTrustLedger {
     async fn grant(&self, grants: &[TrustGrant]) -> Result<(), CatalogError> {
-        // Primero la generacion, luego el libro: una lectura que empezo
-        // antes de este punto ya no podra insertar su foto vieja cuando
-        // el libro le responda.
+        // Generation first, then the ledger: a read that started
+        // before this point will no longer be able to insert its old snapshot when
+        // the ledger answers it.
         self.generation.fetch_add(1, Ordering::SeqCst);
         self.inner.grant(grants).await?;
-        // La concesion nueva —o la decision nueva que re-concede algo
-        // revocado— invalida su clave: lo que la cache guardaba era la
-        // respuesta a una pregunta anterior.
+        // The new grant --or the new decision that re-grants something
+        // revoked-- invalidates its key: what the cache held was the
+        // answer to an earlier question.
         let mut map = self.fresh();
         for grant in grants {
             map.remove(&Self::key(&grant.account, &grant.repository, &grant.digest));
@@ -197,12 +197,12 @@ impl TrustLedger for CachedTrustLedger {
         at: DateTime<Utc>,
     ) -> Result<Option<TrustGrant>, CatalogError> {
         let key = Self::key(account, repository, digest);
-        // La cache acorta el viaje, no la vida de la concesion: una
-        // entrada solo sirve si la vigencia del grant que guarda sigue
-        // en pie **a la hora preguntada**. El ttl dice cada cuanto se
-        // vuelve al libro; `valid_until` dice hasta cuando vale lo que
-        // el libro dijo. Son dos relojes distintos, y manda el de la
-        // vigencia.
+        // The cache shortens the trip, not the life of the grant: an
+        // entry only serves if the validity of the grant it holds is still
+        // standing **at the time asked**. The ttl says how often
+        // the ledger is revisited; `valid_until` says until when what
+        // the ledger said holds. They are two different clocks, and the
+        // validity one governs.
         if let Some(grant) = self
             .fresh()
             .get(&key)
@@ -216,18 +216,18 @@ impl TrustLedger for CachedTrustLedger {
             .inner
             .active_grant(account, repository, digest, at)
             .await?;
-        // Solo la afirmacion **vigente** se cachea: la ausencia, el fallo
-        // del libro y lo caducado se vuelven a preguntar siempre, porque
-        // una revocacion hecha en otra instancia o un libro que vuelve a
-        // vivir deben poder negarse —y conceder— en la peticion siguiente.
+        // Only the **current** affirmation is cached: absence, ledger failure
+        // and expired entries are always asked again, because
+        // a revocation made on another instance or a ledger that comes back to
+        // life must be able to deny --and grant-- on the next request.
         if let Some(active) = grant.as_ref().filter(|grant| grant.is_active_at(at)) {
-            // Sujetando el mapa se compara la generacion: si el libro
-            // respondio despues de que alguna escritura subiera el
-            // contador, su foto puede estar obsoleta y no se inserta.
-            // O bien el revoker barre despues de nuestra insercion, o
-            // nosotros no llegamos a hacerla; en ningún caso queda un
-            // permiso viejo en la cache. Cuesta como mucho una lectura
-            // extra al libro, nunca un falso admisible.
+            // While holding the map the generation is compared: if the ledger
+            // answered after some write bumped the
+            // counter, its snapshot may be stale and is not inserted.
+            // Either the revoker sweeps after our insertion, or
+            // we never get to make it; in no case is an old
+            // permit left in the cache. It costs at most one extra
+            // read of the ledger, never a false admissible.
             let mut map = self.fresh();
             if gen_before == self.generation.load(Ordering::SeqCst) {
                 map.insert(
@@ -272,8 +272,8 @@ mod tests {
 
     use super::*;
 
-    /// El libro de las pruebas: recuerda sus lecturas y niega lo que le
-    /// pongan delante, sin base de datos detras.
+    /// The tests' ledger: it remembers its reads and denies whatever is
+    /// put in front of it, with no database behind it.
     struct FakeLedger {
         grants: tokio::sync::Mutex<Vec<TrustGrant>>,
         reads: AtomicUsize,
@@ -410,8 +410,8 @@ mod tests {
         ContentDigest::of_bytes(label.as_bytes())
     }
 
-    /// La razon de ser de la cache: la segunda peticion del mismo
-    /// digest no vuelve al libro.
+    /// The raison d'etre of the cache: the second request for the same
+    /// digest does not go back to the ledger.
     #[tokio::test]
     async fn an_admitted_digest_is_asked_to_the_book_once() {
         let digest = the_digest_of("admitted bytes");
@@ -428,8 +428,8 @@ mod tests {
         assert_eq!(fake.the_reads(), 1, "dos de tres lecturas fueron por cache");
     }
 
-    /// AC de seguridad: una revocacion por esta instancia se nota en la
-    /// peticion siguiente, sin esperar al ttl.
+    /// Security AC: a revocation by this instance is noticed on the
+    /// next request, without waiting for the ttl.
     #[tokio::test]
     async fn a_revocation_takes_effect_on_the_next_request() {
         let digest = the_digest_of("revoked bytes");
@@ -466,8 +466,8 @@ mod tests {
         );
     }
 
-    /// La revocacion por decision barre todas sus claves: la decision
-    /// promovio varios digests de golpe.
+    /// Revocation by decision sweeps all its keys: the decision
+    /// promoted several digests at once.
     #[tokio::test]
     async fn revoking_a_decision_clears_every_digest_it_granted() {
         let first = the_digest_of("first");
@@ -504,9 +504,9 @@ mod tests {
         }
     }
 
-    /// AC1: la clave es el digest. Mover la etiqueta a otros bytes
-    /// pregunta por una clave que la cache no tiene: la decision de ayer
-    /// sobre `sha256:X` no dice nada sobre `sha256:Y`.
+    /// AC1: the key is the digest. Moving the tag to other bytes
+    /// asks for a key the cache does not have: yesterday's decision
+    /// about `sha256:X` says nothing about `sha256:Y`.
     #[tokio::test]
     async fn a_moved_tag_does_not_inherit_the_cached_decision() {
         let old_bytes = the_digest_of("the bytes the tag had");
@@ -532,8 +532,8 @@ mod tests {
         );
     }
 
-    /// Lo negado se pregunta cada vez: promover algo nuevo por otra
-    /// instancia se sirve en la peticion siguiente.
+    /// What is denied is asked every time: promoting something new from another
+    /// instance is served on the next request.
     #[tokio::test]
     async fn negatives_are_never_cached() {
         let digest = the_digest_of("not yet admitted");
@@ -551,7 +551,7 @@ mod tests {
         }
         assert_eq!(fake.the_reads(), 2, "cada no vuelve a preguntar");
 
-        // Y cuando otra instancia promove, aqui se ve sin ttl de por medio.
+        // And when another instance promotes, it shows up here with no ttl in between.
         fake.grant(&[a_grant(&digest)])
             .await
             .expect("promocion ajena");
@@ -564,9 +564,9 @@ mod tests {
         );
     }
 
-    /// El ttl es el techo de desactualizacion: caducada la entrada, la
-    /// cache vuelve a preguntar, y si el libro murio entre tanto, la
-    /// pregunta se hace y falla —el fallo nunca es un permiso.
+    /// The ttl is the staleness ceiling: once the entry expires, the
+    /// cache asks again, and if the ledger died in the meantime, the
+    /// question is made and fails --a failure is never a permit.
     #[tokio::test]
     async fn an_expired_entry_asks_the_book_again() {
         let digest = the_digest_of("expired admission");
@@ -582,9 +582,9 @@ mod tests {
         assert_eq!(fake.the_reads(), 2, "el ttl expirado iguala al libro vivo");
     }
 
-    /// El libro que se deja bloquear dentro de la lectura, para fijar la
-    /// carrera entre una lectura iniciada antes de la revocacion y su
-    /// insercion posterior.
+    /// The ledger that lets itself be blocked inside the read, to pin the
+    /// race between a read started before the revocation and its
+    /// later insertion.
     struct BlockyLedger {
         grants: tokio::sync::Mutex<Vec<TrustGrant>>,
         entered: tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
@@ -600,7 +600,7 @@ mod tests {
             }
         }
 
-        /// Arma una barrera: la proxima lectura avisa y espera.
+        /// Arms a barrier: the next read signals and waits.
         async fn arm(
             &self,
         ) -> (
@@ -682,10 +682,10 @@ mod tests {
             digest: &ContentDigest,
             at: DateTime<Utc>,
         ) -> Result<Option<TrustGrant>, CatalogError> {
-            // La foto se toma **antes** de la barrera: una lectura del
-            // libro iniciada antes de la revocacion ve el estado que
-            // habia cuando empezo, y el problema es donde la envoltora
-            // con cache inserta esa foto tardia.
+            // The snapshot is taken **before** the barrier: a ledger read
+            // started before the revocation sees the state there was
+            // when it began, and the problem is where the caching wrapper
+            // inserts that late snapshot.
             let snapshot = {
                 let grants = self.grants.lock().await;
                 grants
@@ -711,9 +711,9 @@ mod tests {
         }
     }
 
-    /// AC1: la carrera reproducida con barreras deterministas. Una
-    /// lectura iniciada **antes** de la revocacion no puede reabrir la
-    /// concesion en la cache despues de su confirmacion.
+    /// AC1: the race reproduced with deterministic barriers. A
+    /// read started **before** the revocation cannot reopen the
+    /// grant in the cache after its confirmation.
     #[tokio::test]
     async fn a_read_started_before_a_confirmed_revoke_never_admits_again() {
         let digest = the_digest_of("revoked mid-read");
@@ -764,9 +764,9 @@ mod tests {
         );
     }
 
-    /// La misma carrera con una re-concesion: una concesion nueva escrita
-    /// durante la lectura vieja no puede quedar tapada por la insercion
-    /// tardia de la decision anterior.
+    /// The same race with a re-grant: a new grant written
+    /// during the old read cannot be masked by the late insertion
+    /// of the earlier decision.
     #[tokio::test]
     async fn a_regrant_written_mid_read_is_not_buried_by_the_stale_insert() {
         let digest = the_digest_of("regranted mid-read");
@@ -811,8 +811,8 @@ mod tests {
         );
     }
 
-    /// AC3: la revocacion de una cuenta no desmonta las entradas ni el
-    /// progreso de las lecturas en vuelo de otra cuenta.
+    /// AC3: the revocation of an account does not tear down the entries nor the
+    /// progress of in-flight reads of another account.
     #[tokio::test]
     async fn revoking_one_account_leaves_another_in_flight_untouched() {
         let mine = a_grant(&the_digest_of("mine"));
@@ -861,9 +861,9 @@ mod tests {
         );
     }
 
-    /// AC2, y la separacion que el contrato exige: la cache acorta el
-    /// viaje, no alarga la vida. Una entrada con ttl de una hora no
-    /// sirve un grant cuya vigencia caduco.
+    /// AC2, and the separation the contract requires: the cache shortens the
+    /// trip, it does not lengthen the life. An entry with a one-hour ttl does not
+    /// serve a grant whose validity expired.
     #[tokio::test]
     async fn the_cache_does_not_extend_the_validity_of_a_grant() {
         let digest = the_digest_of("short lived admission");

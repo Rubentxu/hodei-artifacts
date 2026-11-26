@@ -1,24 +1,24 @@
-//! El arranque productivo sobre el backend S3 (HSP-138).
+//! Production startup over the S3 backend (HSP-138).
 //!
-//! Aquí se prueba **la elección**, no el backend: la selección ya pasó su
-//! contrato de paridad en `crates/hodei-hub-s3/tests`. Lo que este fichero
-//! certify es que el binario normal arranca contra el object store según
-//! la configuración, que un almacén inaccesible **para el arranque con
-//! error explícito y no escribe un byte en `cas_path`**, que raw y OCI
-//! reales publican y descargan sobre un cubo conservando su SHA256, que
-//! el reinicio con el mismo catálogo y el mismo cubo conserva los datos,
-//! y que el GC usa el backend elegido (la herramienta `hodei-recovery`,
-//! y su negativa sobre S3, se retiró en HSP-314 F4).
+//! What is tested here is **the choice**, not the backend: the selection already passed its
+//! parity contract in `crates/hodei-hub-s3/tests`. What this file
+//! verifies is that the normal binary starts against the object store according to
+//! the configuration, that an inaccessible store **stops startup with an
+//! explicit error and does not write a byte to `cas_path`**, that real raw and OCI
+//! publish and download over a bucket preserving their SHA256, that
+//! a restart with the same catalog and the same bucket preserves the data,
+//! and that the GC uses the chosen backend (the `hodei-recovery` tool,
+//! and its refusal on S3, was removed in HSP-314 F4).
 //!
-//! El servidor S3 es un RustFS propio de la suite: si ya esta vivo se
-//! reutiliza, si no se levanta. El estado se separa por cubo, único por
-//! proceso. El servicio corre sobre el perfil de grafo (un namespace de
-//! Dgraph por despliegue); el catalogo es del grafo y los bytes son del cubo.
+//! The S3 server is a RustFS owned by the suite: if it is already alive it is
+//! reused, otherwise it is brought up. State is separated per bucket, unique per
+//! process. The service runs on the graph profile (one Dgraph namespace
+//! per deployment); the catalog belongs to the graph and the bytes to the bucket.
 //!
-//! Las credenciales del SDK viajan **por el entorno del proceso hijo**,
-//! que es exactamente la cadena de proveedores que la configuración
-//! promete y que nunca un campo de TOML: una de las cosas que este
-//! fichero comprueba es que el log del servicio no las repite.
+//! The SDK credentials travel **through the child process's environment**,
+//! which is exactly the provider chain the configuration
+//! promises and never a TOML field: one of the things this
+//! file checks is that the service log does not repeat them.
 
 mod support;
 
@@ -31,37 +31,36 @@ use aws_sdk_s3::Client;
 use serde_json::Value;
 use support::{Deployment, FIRST_ACCOUNT, FIRST_REPOSITORY};
 
-/// El medio tipo del manifiesto OCI: la via por la que una capa vive.
+/// The OCI manifest media type: the way a layer lives.
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 
-/// El seeder del catalogo (repositorios por cuenta).
+/// The catalog seeder (repositories per account).
 ///
-/// `Deployment::seed` reinvoca **este** binario de pruebas con
-/// `--exact the_catalog_can_be_seeded`: sin esta funcion el seed
-/// fallaria, y toda la suite se iría detrás con él.
+/// `Deployment::seed` re-invokes **this** test binary with
+/// `--exact the_catalog_can_be_seeded`: without this function the seed
+/// would fail, and the whole suite would go down with it.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// La imagen del servidor S3, fijada por digest: la misma de la conformidad
-/// de HSP-139.
+/// The S3 server image, pinned by digest: the same as HSP-139's
+/// conformance.
 ///
-/// Es RustFS y no LocalStack porque el barrido del GC del perfil de grafo es
-/// la pasada coordinada, y esta borra con `DeleteObject` condicionado por
-/// `If-Match`: LocalStack 4.14 contesta `501 NotImplemented` a ese
-/// encabezado y un servidor que no lo implementa no puede probar el
-/// barrido.
-const S3_IMAGE: &str =
-    "docker.io/rustfs/rustfs@sha256:0dff1515b3c52b5ce8c5df2263420c7f93ae1c5d07cca79e19e57cff86b84c85";
+/// It is RustFS and not LocalStack because the graph profile's GC sweep is
+/// the coordinated pass, and it deletes with `DeleteObject` conditioned on
+/// `If-Match`: LocalStack 4.14 answers `501 NotImplemented` to that
+/// header and a server that does not implement it cannot test the
+/// sweep.
+const S3_IMAGE: &str = "docker.io/rustfs/rustfs@sha256:0dff1515b3c52b5ce8c5df2263420c7f93ae1c5d07cca79e19e57cff86b84c85";
 
-/// El nombre del contenedor de esta suite. Es propio y no el de la serie
-/// HSP-139: la credencial del servidor es el centinela de esta prueba.
+/// The name of this suite's container. It is its own and not that of the
+/// HSP-139 series: the server's credential is this test's sentinel.
 fn container_name() -> String {
     std::env::var("HSP138_S3_CONTAINER").unwrap_or_else(|_| "hodei-hsp138-rustfs".to_string())
 }
 
-/// El volumen con nombre donde RustFS guarda los objetos.
+/// The named volume where RustFS stores the objects.
 fn volume_name() -> String {
     format!("{}-data", container_name())
 }
@@ -78,12 +77,12 @@ fn docker(args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// El endpoint S3 del contenedor de la suite, levantandolo si hace falta.
+/// The S3 endpoint of the suite's container, bringing it up if needed.
 ///
-/// Un contenedor que ya esta en marcha se respeta aunque aun no sirva
-/// --puede estar arrancando--, y solo se sustituye el que no vive. La clave
-/// secreta del servidor es el centinela: es la que el servicio lleva en su
-/// entorno y la que se busca en su log.
+/// A container that is already running is respected even if it does not serve yet
+/// -- it may be starting --, and only one that is not alive is replaced. The secret
+/// key of the server is the sentinel: it is the one the service carries in its
+/// environment and the one searched for in its log.
 fn the_endpoint() -> String {
     let name = container_name();
     let running = docker(&["inspect", "-f", "{{.State.Running}}", &name])
@@ -97,8 +96,8 @@ fn the_endpoint() -> String {
             "-d",
             "--name",
             &name,
-            // root dentro del contenedor: el volumen lo creo docker como
-            // root y el usuario por defecto de la imagen no puede escribir.
+            // root inside the container: the volume was created by docker as
+            // root and the image's default user cannot write.
             "--user",
             "root",
             "-p",
@@ -156,20 +155,20 @@ fn s3_is_alive(address: &str) -> bool {
     answer.contains("200")
 }
 
-/// El cubo de este proceso: dos ejecuciones paralelas no se pisan.
+/// This process's bucket: two parallel runs do not step on each other.
 fn the_bucket() -> String {
     format!("hsp138-arranque-{}", std::process::id())
 }
 
-/// La credencia con la que el servicio de pruebas va al cubo. No es un
-/// secreto --es la del servidor de pruebas-- pero su valor se busca en el log del
-/// servicio como se buscara la clave real de un bucket policy: si el
-/// servicio escribe el valor que el SDK le dio, el log es una fuga.
+/// The credential the test service uses to reach the bucket. It is not a
+/// secret -- it is the test server's -- but its value is searched for in the
+/// service log as the real key of a bucket policy would be: if the
+/// service writes the value the SDK gave it, the log is a leak.
 const SENTINEL: &str = "hsp138-sentinel-secret-not-for-logs";
 
-/// El cliente S3 de la observacion externa: lo que el servicio escribe
-/// en el cubo se comprueba desde fuera del servicio, no por lo que el
-/// servicio dice de si mismo.
+/// The S3 client for external observation: what the service writes
+/// to the bucket is checked from outside the service, not by what the
+/// service says about itself.
 async fn an_observing_client() -> Client {
     let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
         .region(aws_config::Region::new("us-east-1"))
@@ -187,12 +186,12 @@ async fn an_observing_client() -> Client {
     )
 }
 
-/// Crea el cubo, tolerando el que ya existe por otra ejecucion.
+/// Creates the bucket, tolerating one that already exists from another run.
 async fn a_bucket(client: &Client, name: &str) {
     let _ = client.create_bucket().bucket(name).send().await;
 }
 
-/// Las claves vivas bajo el prefijo de los blobs.
+/// The live keys under the blobs prefix.
 async fn the_keys_of(client: &Client, bucket: &str) -> Vec<String> {
     let mut keys = Vec::new();
     let mut token: Option<String> = None;
@@ -217,8 +216,8 @@ async fn the_keys_of(client: &Client, bucket: &str) -> Vec<String> {
     }
 }
 
-/// Si la clave existe: la presencia de un blob se comprueba de fuera,
-/// y su ausencia despues del sweep tambien.
+/// Whether the key exists: the presence of a blob is checked from outside,
+/// and so is its absence after the sweep.
 async fn a_key_exists(client: &Client, bucket: &str, key: &str) -> bool {
     client
         .head_object()
@@ -229,8 +228,8 @@ async fn a_key_exists(client: &Client, bucket: &str, key: &str) -> bool {
         .is_ok()
 }
 
-/// La clave que el backend S3 da a un digest: el prefijo del almacen,
-/// dos niveles por seguridad de listado, y el hex.
+/// The key the S3 backend gives a digest: the store prefix,
+/// two levels for listing safety, and the hex.
 fn the_key_of(digest_hex: &str) -> String {
     format!(
         "blobs/{}/{}/{}",
@@ -240,8 +239,8 @@ fn the_key_of(digest_hex: &str) -> String {
     )
 }
 
-/// El despliegue con la administracion abierta: la politica extendida y
-/// el esquema con el recurso `Admin`, como en la serie de GC.
+/// The deployment with administration open: the extended policy and
+/// the schema with the `Admin` resource, as in the GC series.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     let mut schema: Value = serde_json::from_str(support::SCHEMA).expect("the schema parses");
@@ -270,15 +269,15 @@ fn a_deployment() -> Deployment {
     deployment
 }
 
-/// El entorno del servicio que elige el cubo: backend, endpoint, region
-/// y las credenciales **por el proceso**, no por la configuracion. La
-/// clave secreta es el centinela: se buscara en el log.
+/// The service environment that chooses the bucket: backend, endpoint, region
+/// and the credentials **through the process**, not through configuration. The
+/// secret key is the sentinel: it will be searched for in the log.
 fn the_s3_environment(bucket: &str) -> Vec<(String, String)> {
     vec![
         ("HODEI_CONTENT__BACKEND".to_string(), "s3".to_string()),
         ("HODEI_CONTENT__S3__BUCKET".to_string(), bucket.to_string()),
-        // El endpoint se da con su esquema: la config tambien admite el
-        // bare host:port, y aqui interesa el caso literal del servidor de pruebas.
+        // The endpoint is given with its scheme: the config also accepts
+        // bare host:port, and here the literal case of the test server is what matters.
         ("HODEI_CONTENT__S3__ENDPOINT".to_string(), the_endpoint()),
         (
             "HODEI_CONTENT__S3__REGION".to_string(),
@@ -294,14 +293,14 @@ fn the_s3_environment(bucket: &str) -> Vec<(String, String)> {
     ]
 }
 
-/// El digest hex de un contenido.
+/// The hex digest of a content.
 fn the_digest(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// Publica un blob crudo por la distribucion one-shot, y devuelve su
-/// digest: la via por la que el contenido entra al cubo es la misma de
-/// siempre, y por eso se usa la de la serie de GC.
+/// Publishes a raw blob through one-shot distribution, and returns its
+/// digest: the way content enters the bucket is the same as
+/// always, which is why the GC series' one is used.
 fn push_blob(deployment: &Deployment, port: u16, token: &str, content: &[u8]) -> String {
     let digest = the_digest(content);
     let file = deployment.directory.path().join("blob.bin");
@@ -325,8 +324,8 @@ fn push_blob(deployment: &Deployment, port: u16, token: &str, content: &[u8]) ->
     digest
 }
 
-/// Publica un fichero por la superficie raw y devuelve el digest del
-/// contenido que nombra su `ETag`-like: la publicacion de la via cruda.
+/// Publishes a file through the raw surface and returns the digest of the
+/// content named by its `ETag`-like: publication via the raw path.
 fn publish_raw(deployment: &Deployment, port: u16, content: &[u8]) -> String {
     let file = deployment.directory.path().join("raw.bin");
     std::fs::write(&file, content).expect("the file is written");
@@ -346,7 +345,7 @@ fn publish_raw(deployment: &Deployment, port: u16, content: &[u8]) -> String {
     the_digest(content)
 }
 
-/// Descarga la ruta raw y devuelve los bytes servidos.
+/// Downloads the raw path and returns the served bytes.
 fn download_raw(deployment: &Deployment, port: u16, into: &Path) -> Vec<u8> {
     let _ = std::fs::remove_file(into);
     let answer = support::curl_download(
@@ -365,7 +364,7 @@ fn download_raw(deployment: &Deployment, port: u16, into: &Path) -> Vec<u8> {
     std::fs::read(into).expect("the bytes were written")
 }
 
-/// Una peticion administrativa: codigo y JSON del cuerpo.
+/// An administrative request: code and JSON of the body.
 fn admin(
     deployment: &Deployment,
     port: u16,
@@ -396,7 +395,7 @@ fn admin(
     (answer.status, json)
 }
 
-/// El health del servicio que arranco: `/health/ready` responde.
+/// The health of the service that started: `/health/ready` responds.
 fn the_health(port: u16) -> u16 {
     let address = format!("127.0.0.1:{port}");
     let mut stream = TcpStream::connect(&address).expect("the service listens");
@@ -419,15 +418,15 @@ fn the_health(port: u16) -> u16 {
         .unwrap_or(0)
 }
 
-/// AC1 (la mitad que el harness no puede medir): un backend elegido e
-/// inaccesible **no arranca el servicio y no escribe en el directorio**.
+/// AC1 (the half the harness cannot measure): a chosen but
+/// inaccessible backend **does not start the service and does not write to the directory**.
 ///
-/// No pasa por `Deployment::start`: ese arnes reintentaria y
-/// terminaria en panic con el mensaje del harness, y aqui lo que se
-/// observa es la salida real del binario --codigo, stderr-- y el estado
-/// del `cas_path` despues del intento. Un endpoint muerto contesta al
-/// instante (conexion rechazada) y el preflight del arranque la traduce
-/// en un error explicito: el servicio muere antes de escuchar.
+/// It does not go through `Deployment::start`: that harness would retry and
+/// end in a panic with the harness's message, and here what is
+/// observed is the binary's real output -- code, stderr -- and the state
+/// of `cas_path` after the attempt. A dead endpoint answers
+/// instantly (connection refused) and the startup preflight translates it
+/// into an explicit error: the service dies before listening.
 #[test]
 fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
     let tmp = tempfile::tempdir().expect("a temp dir");
@@ -463,9 +462,9 @@ fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
         command.env(name, value);
     }
     let mut child = command
-        // El backend elegido, con un cubo que no puede existir: el
-        // endpoint muerto contesta "conexion rechazada" y el preflight
-        // lo traduce en error; el timeout de 10 s es el techo.
+        // The chosen backend, with a bucket that cannot exist: the
+        // dead endpoint answers "connection refused" and the preflight
+        // translates it into an error; the 10 s timeout is the ceiling.
         .env("HODEI_CONTENT__BACKEND", "s3")
         .env("HODEI_CONTENT__S3__BUCKET", "hsp138-inexistente")
         .env("HODEI_CONTENT__S3__ENDPOINT", "http://127.0.0.1:1")
@@ -501,19 +500,19 @@ fn an_unreachable_bucket_stops_the_boot_and_leaves_the_directory_alone() {
         said.contains("Bootstrap failed") && said.contains("bucket"),
         "el error tiene que decir que el problema es el cubo:\n{said}"
     );
-    // Y el directorio que la config nombra sigue intacto: no fue
-    // sustituto de nada. Bajo filesystem el arranque lo crearia; aqui
-    // ni eso: el backend elegido no lo toca.
+    // And the directory the config names remains untouched: it was not
+    // a substitute for anything. Under filesystem startup would create it; here
+    // not even that: the chosen backend does not touch it.
     assert!(
         !cas.exists(),
         "AC1: el cas_path no se toca cuando el backend elegido es S3"
     );
 }
 
-/// AC1 y AC2 juntos, el caso feliz: el binario normal arranca contra el
-/// cubo, el raw y el OCI reales publican y descargan con su SHA256, los
-/// bytes viven **en el cubo** y no en el directorio, el reinicio con el
-/// mismo catalogo y el mismo cubo conserva, y el GC borra desde el cubo.
+/// AC1 and AC2 together, the happy path: the normal binary starts against the
+/// bucket, real raw and OCI publish and download with their SHA256, the
+/// bytes live **in the bucket** and not in the directory, a restart with the
+/// same catalog and the same bucket preserves them, and the GC deletes from the bucket.
 #[tokio::test]
 async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_restart() {
     let bucket = the_bucket();
@@ -526,9 +525,9 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect();
 
-    // El arranque: si el preflight fallara, el harness panicaria con el
-    // log, y ahi se veria. Si arranca, `/health/ready` contesta 200 --
-    // la readiness positiva pedida por AC1 es este camino.
+    // Startup: if the preflight failed, the harness would panic with the
+    // log, and it would show there. If it starts, `/health/ready` answers 200 --
+    // the positive readiness required by AC1 is this path.
     let mut service = deployment.start(&pairs);
     assert_eq!(the_health(service.port), 200, "la readiness sobre S3");
 
@@ -537,7 +536,7 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
     let raw_digest = publish_raw(&deployment, service.port, &raw);
     assert_eq!(raw_digest, the_digest(&raw), "el SHA256 que se conserva");
 
-    // OCI: la capa y el manifiesto entran por la distribucion.
+    // OCI: the layer and the manifest enter through the distribution.
     let layer = push_blob(&deployment, service.port, &alice, b"an s3 layer");
     let config = push_blob(
         &deployment,
@@ -580,7 +579,7 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
         deployment.the_log()
     );
 
-    // La descarga, por la via cruda, byte a byte igual.
+    // The download, through the raw path, byte for byte equal.
     let back = download_raw(
         &deployment,
         service.port,
@@ -588,31 +587,31 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
     );
     assert_eq!(back, raw, "AC2: lo que se descarga es lo que se publico");
 
-    // Y los bytes estan **en el cubo**, en la clave que el backend usa,
-    // con el digest que el contenido dice.
+    // And the bytes are **in the bucket**, at the key the backend uses,
+    // with the digest the content states.
     for digest in [&raw_digest, &layer, &config] {
         assert!(
             a_key_exists(&client, &bucket, &the_key_of(digest)).await,
             "AC2: el contenido {digest} tiene que vivir en el cubo"
         );
     }
-    // El directorio que la config nombra no es autoridad de nada: no
-    // existe siquiera, porque el arranque no lo abrio.
+    // The directory the config names is no authority for anything: it does
+    // not even exist, because startup did not open it.
     assert!(
         !Path::new(&deployment.cas).exists(),
         "AC1: un despliegue S3 no escribe ni crea su cas_path"
     );
-    // Las credenciales no salen en el log: la cadena del SDK las dio al
-    // proceso, y el servicio no las repite. El centinela es el valor
-    // que el entorno del servicio lleva como clave secreta; si el log
-    // lo contiene, el servicio escribe credenciales.
+    // The credentials do not appear in the log: the SDK chain gave them to the
+    // process, and the service does not repeat them. The sentinel is the value
+    // the service's environment carries as secret key; if the log
+    // contains it, the service writes credentials.
     let log = deployment.the_log();
     assert!(
         !log.contains(SENTINEL),
         "AC4: el log del servicio no escribe la credencial con la que trabaja"
     );
 
-    // El reinicio: el mismo catalogo (la misma base), el mismo cubo.
+    // The restart: the same catalog (the same database), the same bucket.
     let port = service.port;
     support::stop(&mut service);
     let mut again = deployment.start_on(port, &pairs);
@@ -630,12 +629,12 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
         "AC2: la capa sigue en el cubo tras el reinicio"
     );
 
-    // El GC sobre el backend elegido: un objeto que ningun registro del
-    // catalogo nombra se va del cubo cuando vence la gracia. El huerfano
-    // se planta **desde fuera**, escribiendo la clave en el cubo con el
-    // cliente observador: subirlo por la distribucion crearia su fila en
-    // el catalogo, y un blob con fila es una raiz, no un huerfano. Es la
-    // misma planta que la serie de GC escribia a mano en el directorio.
+    // The GC over the chosen backend: an object that no catalog record
+    // names leaves the bucket when the grace period expires. The orphan
+    // is planted **from outside**, writing the key into the bucket with the
+    // observer client: uploading it through the distribution would create its row in
+    // the catalog, and a blob with a row is a root, not an orphan. It is the
+    // same plant the GC series used to write by hand in the directory.
     let orphan_bytes = b"an orphan for the bucket gc";
     let orphan = the_digest(orphan_bytes);
     client
@@ -675,9 +674,9 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
         report["dry_run"], false,
         "el barrido tenia que ejecutarse de verdad: {report}"
     );
-    // El barrido corre detached: la respuesta es el reconocimiento, no
-    // la ultima delete_object contestada. Se espera a que el cubo lo
-    // cuente --con techo--, como en la serie de GC sobre el directorio.
+    // The sweep runs detached: the response is the acknowledgement, not
+    // the last delete_object answered. We wait until the bucket
+    // accounts for it -- with a ceiling --, as in the GC series over the directory.
     let until = Instant::now() + Duration::from_secs(30);
     while a_key_exists(&client, &bucket, &the_key_of(&orphan)).await && Instant::now() < until {
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -692,8 +691,8 @@ async fn the_service_boots_on_the_bucket_and_keeps_what_it_published_across_a_re
         "AC3: lo que un manifiesto nombra no se borra"
     );
 
-    // Y lo publicado sigue viviendole al servicio, con el cubo como
-    // unica autoridad: el listado externo muestra los blobs vivos.
+    // And what was published still lives for the service, with the bucket as
+    // sole authority: the external listing shows the live blobs.
     let keys = the_keys_of(&client, &bucket).await;
     assert!(
         keys.contains(&the_key_of(&raw_digest)) && keys.contains(&the_key_of(&layer)),

@@ -1,11 +1,11 @@
-//! El evaluador de decisiones: la decision de verdad, con la capsula de
-//! verdad.
+//! The decision evaluator: the real decision, with the truth
+//! capsule.
 //!
-//! La simulacion decide con la MISMA capsula que decide la verdad: la
-//! evidencia del sujeto, ensamblada en su capsula, y la politica
-//! evaluada contra ella. Y los hechos hipoteticos se aplican **antes** de
-//! ensamblar, que es lo que hace que la decision del fork sea la
-//! decision de un mundo donde esos hechos pasaron.
+//! The simulation decides with the SAME capsule that decides the truth: the
+//! subject's evidence, assembled into its capsule, and the policy
+//! evaluated against it. And the hypothetical facts are applied **before**
+//! assembling, which is what makes the fork's decision the
+//! decision of a world where those facts happened.
 
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ use hodei_trust_policy::context::RiskFacts;
 use hodei_trust_policy::decision::evaluate;
 use kernel::Hrn;
 
-/// El evaluador que decide con la capsula del sujeto.
+/// The evaluator that decides with the subject's capsule.
 pub struct CapsuleDecisionEvaluator {
     reader: Arc<dyn EvidenceStore>,
     assembler: CapsuleAssembler,
@@ -31,7 +31,7 @@ pub struct CapsuleDecisionEvaluator {
 }
 
 impl CapsuleDecisionEvaluator {
-    /// El evaluador sobre un lector de evidencia y una cuenta.
+    /// The evaluator over an evidence reader and an account.
     pub fn new(reader: Arc<dyn EvidenceStore>, account: impl Into<String>) -> Self {
         Self {
             reader,
@@ -40,27 +40,27 @@ impl CapsuleDecisionEvaluator {
         }
     }
 
-    /// La evidencia del sujeto, con los hechos hipoteticos aplicados.
+    /// The subject's evidence, with the hypothetical facts applied.
     ///
-    /// Una ventana en la que no se fia del constructor deja sin verificar
-    /// lo que se observo dentro de la ventana: es lo que significa decir
-    /// que el constructor estaba comprometido durante ese rato.
+    /// A window in which the builder is not trusted leaves unverified
+    /// what was observed within the window: that is what it means to say
+    /// that the builder was compromised during that time.
     async fn the_evidence(
         &self,
         subject: &Hrn,
         facts: &[Hypothetical],
     ) -> Result<Vec<EvidenceRecord>, String> {
-        // El fallo de lectura NO es una capsula vacia: un error del
-        // almacen llega como error, porque una capsula vacia diria "no
-        // sabemos nada" y el almacen dice "no pudimos mirar". Son cosas
-        // distintas, y la segunda no decide nada.
+        // A read failure is NOT an empty capsule: a store error
+        // arrives as an error, because an empty capsule would say "we
+        // know nothing" and the store says "we could not look". They are
+        // different things, and the second decides nothing.
         let evidence = self
             .reader
             .evidence_of_subject(&self.account, subject)
             .await
             .map_err(|error| error.to_string())?;
-        // Las ventanas que alcanzan a ESTE sujeto: una ventana que no
-        // nombra al sujeto no le dice nada.
+        // The windows that reach THIS subject: a window that does not
+        // name the subject says nothing about it.
         let windows: Vec<(DateTime<Utc>, DateTime<Utc>)> = facts
             .iter()
             .filter_map(|fact| match &fact.claim {
@@ -94,7 +94,7 @@ impl CapsuleDecisionEvaluator {
         Ok(evidence)
     }
 
-    /// Los hechos de riesgo que los hechos hipoteticos anaden.
+    /// The risk facts that the hypothetical facts add.
     fn the_risk(&self, subject: &Hrn, facts: &[Hypothetical]) -> RiskFacts {
         let critical: usize = facts
             .iter()
@@ -131,9 +131,9 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
             .the_evidence(subject, facts)
             .await
             .map_err(|reason| format!("the evidence of {subject} could not be read: {reason}"))?;
-        // Una evidencia REALMENTE vacia no es un error: el sujeto puede
-        // no tener nada dicho, y la decision se toma con lo que hay --
-        // que puede ser Indeterminate, y Indeterminate NO es un ALLOW.
+        // Truly EMPTY evidence is not an error: the subject may
+        // have nothing said, and the decision is taken with what there is --
+        // which may be Indeterminate, and Indeterminate is NOT an ALLOW.
         let capsule = self.assembler.assemble(subject, &evidence, now);
         let context = hodei_trust_policy::TrustContext::builder(&capsule)
             .with_risk(self.the_risk(subject, facts))
@@ -159,12 +159,12 @@ impl DecisionEvaluator for CapsuleDecisionEvaluator {
     }
 }
 
-/// El manifiesto de lo que se leyo: una pieza de evidencia por su id y
-/// el digest de su contenido.
+/// The manifest of what was read: a piece of evidence by its id and
+/// the digest of its content.
 ///
-/// El digest es lo que permite comprobar el origen: si la evidencia
-/// cambia de contenido, cambia el digest, y el digest es lo que se
-/// compara al final de la simulacion.
+/// The digest is what allows the origin to be checked: if the evidence
+/// changes content, the digest changes, and the digest is what is
+/// compared at the end of the simulation.
 fn the_read_set_of(evidence: &[EvidenceRecord]) -> ReadSet {
     let mut read_set = ReadSet::empty();
     for record in evidence {
@@ -176,13 +176,13 @@ fn the_read_set_of(evidence: &[EvidenceRecord]) -> ReadSet {
     read_set
 }
 
-/// La misma pieza de evidencia, con otra verificacion.
+/// The same piece of evidence, with another verification.
 ///
-/// La validez desconocida se CONSERVA como desconocida: una evidencia
-/// que no dice cuando deja de ser cierta no se le inventa una fecha de
-/// caducidad, porque esa fecha seria una verdad que nadie dijo. Y la
-/// fecha de caducidad inventada caduca cuando la evidencia no caduca,
-/// y hace desaparecer una afirmacion que sigue en pie.
+/// Unknown validity is KEPT as unknown: evidence
+/// that does not say when it stops being true is not given an invented
+/// expiry date, because that date would be a truth that nobody stated. And the
+/// invented expiry date expires when the evidence does not expire,
+/// and makes an assertion that still stands disappear.
 fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -> EvidenceRecord {
     let mut builder = EvidenceRecord::builder(record.id().clone(), record.tenant_hrn().clone())
         .subjects(record.subject_refs().to_vec())
@@ -199,8 +199,8 @@ fn the_record_with(record: EvidenceRecord, verification: EvidenceVerification) -
         .verification(verification)
         .normalization(record.normalization().clone())
         .correlation_id(record.correlation_id().unwrap_or_default().to_string());
-    // Las dos validez se copian tal cual, incluidas las que no se
-    // saben: el registro reconstruido es el mismo registro.
+    // Both validities are copied as they are, including those that are not
+    // known: the rebuilt record is the same record.
     if let Some(valid_from) = record.valid_from() {
         builder = builder.valid_from(valid_from);
     }

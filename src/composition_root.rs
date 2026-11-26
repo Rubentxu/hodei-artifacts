@@ -1,15 +1,15 @@
 //! Composition Root - Dependency Injection
 //!
-//! Este módulo implementa el patrón Composition Root, que es el único lugar
-//! en la aplicación donde se instancian las implementaciones concretas y se
-//! ensamblan los casos de uso.
+//! This module implements the Composition Root pattern, which is the only place
+//! in the application where concrete implementations are instantiated and
+//! use cases are assembled.
 //!
 //! # Principios
 //!
-//! 1. **Único lugar de construcción**: Solo aquí se crean adaptadores concretos
-//! 2. **Inyección vía puertos**: Los casos de uso se ensamblan usando traits (puertos)
-//! 3. **Resolución en compilación**: Uso de generics para zero-cost abstractions
-//! 4. **Desacoplamiento**: Los handlers solo conocen los puertos, no las implementaciones
+//! 1. **Single place of construction**: Concrete adapters are only created here
+//! 2. **Injection via ports**: Use cases are assembled using traits (ports)
+//! 3. **Compile-time resolution**: Use of generics for zero-cost abstractions
+//! 4. **Decoupling**: Handlers only know the ports, not the implementations
 
 use crate::authorization::{AuthorizerPort, DenyAllAuthorizer};
 use hodei_iam::register_iam_schema::factories as iam_factories;
@@ -25,10 +25,10 @@ use hodei_policies::validate_policy::port::ValidatePolicyPort;
 use std::sync::Arc;
 use tracing::info;
 
-/// Ports de casos de uso de hodei-policies
+/// Use case ports of hodei-policies
 ///
-/// Esta estructura agrupa todos los puertos (traits) de hodei-policies
-/// que serán inyectados en otros bounded contexts.
+/// This structure groups all the ports (traits) of hodei-policies
+/// that will be injected into other bounded contexts.
 pub struct PolicyPorts {
     pub register_entity_type: Arc<dyn RegisterEntityTypePort>,
     pub register_action_type: Arc<dyn RegisterActionTypePort>,
@@ -39,10 +39,10 @@ pub struct PolicyPorts {
     pub playground_evaluate: Arc<dyn PlaygroundEvaluatePort>,
 }
 
-/// Ports de casos de uso de hodei-iam
+/// Use case ports of hodei-iam
 ///
-/// Esta estructura agrupa todos los puertos (traits) de hodei-iam
-/// que serán expuestos a los handlers de la API.
+/// This structure groups all the ports (traits) of hodei-iam
+/// that will be exposed to the API handlers.
 pub struct IamPorts {
     pub register_iam_schema:
         Arc<dyn hodei_iam::features::register_iam_schema::ports::RegisterIamSchemaPort>,
@@ -55,10 +55,10 @@ pub struct IamPorts {
         Arc<dyn hodei_iam::features::evaluate_iam_policies::ports::EvaluateIamPoliciesPort>,
 }
 
-/// Composition Root - Punto de ensamblaje de toda la aplicación
+/// Composition Root - Assembly point of the whole application
 ///
-/// Esta estructura contiene todos los puertos de casos de uso que serán
-/// inyectados en los handlers de Axum.
+/// This structure holds all the use case ports that will be
+/// injected into the Axum handlers.
 pub struct CompositionRoot {
     pub policy_ports: PolicyPorts,
     pub iam_ports: IamPorts,
@@ -66,19 +66,19 @@ pub struct CompositionRoot {
 }
 
 impl CompositionRoot {
-    /// Crea el Composition Root para producción
+    /// Creates the Composition Root for production
     ///
-    /// Este método es el único lugar donde se instancian adaptadores concretos.
-    /// Todos los casos de uso se ensamblan usando factories que devuelven puertos.
+    /// This method is the only place where concrete adapters are instantiated.
+    /// All use cases are assembled using factories that return ports.
     ///
-    /// # Argumentos
+    /// # Arguments
     ///
-    /// * `schema_storage` - Adaptador concreto para almacenamiento de esquemas
-    /// * `policy_adapter` - Adaptador concreto para gestión de políticas IAM
+    /// * `schema_storage` - Concrete adapter for schema storage
+    /// * `policy_adapter` - Concrete adapter for IAM policy management
     ///
-    /// # Retorna
+    /// # Returns
     ///
-    /// Una instancia de CompositionRoot con todos los puertos listos para inyección
+    /// A CompositionRoot instance with all ports ready for injection
     pub fn production<S, P>(schema_storage: Arc<S>, policy_adapter: Arc<P>) -> Self
     where
         S: SchemaStoragePort + Clone + 'static,
@@ -101,12 +101,12 @@ impl CompositionRoot {
     /// the most recently stored schema would let a schema registered after
     /// the bundle displace it.
     ///
-    /// # Argumentos
+    /// # Arguments
     ///
-    /// * `schema_storage` - Adaptador concreto para almacenamiento de esquemas
-    /// * `policy_adapter` - Adaptador concreto para gestión de políticas IAM
-    /// * `authoritative_schema_id` - Identidad del esquema declarado por el
-    ///   despliegue, o `None` cuando el despliegue no declara ninguno
+    /// * `schema_storage` - Concrete adapter for schema storage
+    /// * `policy_adapter` - Concrete adapter for IAM policy management
+    /// * `authoritative_schema_id` - Identity of the schema declared by the
+    ///   deployment, or `None` when the deployment declares none
     pub fn production_with_authoritative_schema<S, P>(
         schema_storage: Arc<S>,
         policy_adapter: Arc<P>,
@@ -125,11 +125,11 @@ impl CompositionRoot {
         info!("🏗️  Initializing Composition Root (Production)");
 
         // ============================================================
-        // PASO 1: Crear puertos de hodei-policies
+        // STEP 1: Create hodei-policies ports
         // ============================================================
         info!("📦 Creating hodei-policies ports...");
 
-        // 1.1. Bundle de registro de esquemas (entity, action, build)
+        // 1.1. Schema registration bundle (entity, action, build)
         info!("  ├─ Schema registration bundle");
         let (register_entity_type, register_action_type, build_schema) =
             policy_factories::create_schema_registration_components(schema_storage.clone());
@@ -179,11 +179,11 @@ impl CompositionRoot {
         };
 
         // ============================================================
-        // PASO 2: Crear puertos de hodei-iam usando puertos de policies
+        // STEP 2: Create hodei-iam ports using policies ports
         // ============================================================
         info!("📦 Creating hodei-iam ports...");
 
-        // 2.1. Register IAM schema (orquesta los puertos de policies)
+        // 2.1. Register IAM schema (orchestrates the policies ports)
         info!("  ├─ RegisterIamSchemaPort");
         let register_iam_schema = iam_factories::create_register_iam_schema_use_case(
             policy_ports.register_entity_type.clone(),
@@ -282,10 +282,10 @@ impl CompositionRoot {
         self
     }
 
-    /// Crea el puerto de playground evaluate con todas sus dependencias
+    /// Creates the playground evaluate port with all its dependencies
     ///
-    /// Este método encapsula la creación del playground evaluate que requiere
-    /// múltiples adaptadores internos.
+    /// This method encapsulates the creation of the playground evaluate, which requires
+    /// multiple internal adapters.
     fn create_playground_evaluate_port<S>(schema_storage: Arc<S>) -> Arc<dyn PlaygroundEvaluatePort>
     where
         S: SchemaStoragePort + 'static,
@@ -295,13 +295,13 @@ impl CompositionRoot {
             SchemaLoaderAdapter,
         };
 
-        // Crear adaptadores concretos para playground
+        // Create concrete adapters for the playground
         let schema_loader = Arc::new(SchemaLoaderAdapter::new(schema_storage));
         let policy_validator = Arc::new(PolicyValidatorAdapter);
         let policy_evaluator = Arc::new(PolicyEvaluatorAdapter);
         let context_converter = Arc::new(ContextConverterAdapter);
 
-        // Ensamblar el caso de uso usando la factory
+        // Assemble the use case using the factory
         playground_factories::create_playground_evaluate_use_case(
             schema_loader,
             policy_validator,
@@ -310,10 +310,10 @@ impl CompositionRoot {
         )
     }
 
-    /// Crea un Composition Root para testing
+    /// Creates a Composition Root for testing
     ///
-    /// Este método permite crear un composition root con mocks o
-    /// implementaciones de prueba para tests de integración.
+    /// This method allows creating a composition root with mocks or
+    /// test implementations for integration tests.
     #[cfg(test)]
     pub fn test<S, P>(schema_storage: Arc<S>, policy_adapter: Arc<P>) -> Self
     where
@@ -326,7 +326,7 @@ impl CompositionRoot {
             + hodei_iam::features::evaluate_iam_policies::ports::PolicyFinderPort
             + 'static,
     {
-        // En tests, podemos usar implementaciones mock
+        // In tests, we can use mock implementations
         Self::production(schema_storage, policy_adapter)
     }
 }
@@ -339,7 +339,7 @@ mod tests {
     use hodei_policies::build_schema::dto::BuildSchemaCommand;
     use hodei_policies::build_schema::error::BuildSchemaError;
 
-    /// Mock simple de SchemaStoragePort para tests
+    /// Simple mock of SchemaStoragePort for tests
     #[derive(Clone)]
     struct MockSchemaStorage;
 
@@ -373,7 +373,7 @@ mod tests {
         }
     }
 
-    /// Mock simple de todos los puertos de políticas IAM
+    /// Simple mock of all the IAM policy ports
     struct MockPolicyAdapter;
 
     #[async_trait]
@@ -491,7 +491,7 @@ mod tests {
         let policy_adapter = Arc::new(MockPolicyAdapter);
         let root = CompositionRoot::production(storage, policy_adapter);
 
-        // Verificar que todos los puertos fueron creados
+        // Check that all the ports were created
         assert!(Arc::strong_count(&root.policy_ports.register_entity_type) >= 1);
         assert!(Arc::strong_count(&root.policy_ports.register_action_type) >= 1);
         assert!(Arc::strong_count(&root.policy_ports.build_schema) >= 1);
@@ -513,17 +513,17 @@ mod tests {
         let policy_adapter = Arc::new(MockPolicyAdapter);
         let root = CompositionRoot::production(storage, policy_adapter);
 
-        // Verificar que el puerto de build_schema es usable
+        // Check that the build_schema port is usable
         let command = BuildSchemaCommand {
             version: Some("test".to_string()),
             validate: false,
         };
 
-        // Esto debería compilar y ejecutar sin errores
-        // (aunque falle por falta de tipos registrados, eso es esperado)
+        // This should compile and run without errors
+        // (even if it fails for lack of registered types, that is expected)
         let result = root.policy_ports.build_schema.execute(command).await;
 
-        // Verificamos que el error sea por falta de tipos, no por problemas de DI
+        // We verify that the error is due to missing types, not DI problems
         assert!(result.is_err());
     }
 
@@ -612,6 +612,6 @@ mod tests {
         let storage = Arc::new(MockSchemaStorage);
         let policy_adapter = Arc::new(MockPolicyAdapter);
         let _root = CompositionRoot::test(storage, policy_adapter);
-        // Si compila y se crea, el test pasa
+        // If it compiles and gets created, the test passes
     }
 }

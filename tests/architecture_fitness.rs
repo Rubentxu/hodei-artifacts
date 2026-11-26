@@ -1,22 +1,22 @@
-//! Comprobaciones de forma arquitectónica.
+//! Architectural shape checks.
 //!
-//! Una arquitectura que solo existe en un documento se deshace en el primer
-//! commit que nadie revisa con cuidado. Estas comprobaciones leen el código
-//! y fallan cuando aparece una forma que el diseño prohíbe.
+//! An architecture that only exists in a document comes undone in the first
+//! commit nobody reviews carefully. These checks read the code
+//! and fail when a shape the design forbids appears.
 //!
-//! Las comprobaciones son cuatro, y todas leen el repositorio:
+//! There are four checks, and all of them read the repository:
 //!
-//! 1. El codigo activo no baja a una implementacion concreta por downcast.
-//!    El ADR-0007 quiere el registro del schema declarado, no una puerta por
-//!    la que la aplicacion baje al tipo concreto. El codigo activo no lo
-//!    usaba, pero el puerto lo ofrecia, y una puerta ofrecida es una puerta
-//!    que se puede volver a abrir.
-//! 2. El nucleo protegido y los contratos de evidencia no dependen de un
-//!    mecanismo concreto. La persistencia real vive en el contexto que la
-//!    posee.
-//! 3. El codigo activo no importa lo interno de otro contexto.
-//! 4. No hay exito de relleno: ni un `todo!()`, ni un fichero de pruebas que
-//!    se declara a si mismo un marcador de posicion sin pruebas dentro.
+//! 1. Active code does not drop down to a concrete implementation by downcast.
+//!    ADR-0007 wants the registry of the declared schema, not a door through
+//!    which the application goes down to the concrete type. Active code did
+//!    not use it, but the port offered it, and an offered door is a door
+//!    that can be opened again.
+//! 2. The protected kernel and the evidence contracts do not depend on a
+//!    concrete mechanism. Real persistence lives in the context that
+//!    owns it.
+//! 3. Active code does not import the internals of another context.
+//! 4. There is no filler success: neither a `todo!()`, nor a test file that
+//!    declares itself a placeholder with no tests inside.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -291,8 +291,8 @@ fn workspace_dependencies(root: &Path, member: &str) -> Vec<String> {
 ///
 /// The check follows the edges **inside** this repository: a crate can only
 /// drag a mechanism in through another crate of this repository, and those
-/// are the edges a commit introduces. Las aristas que salen del workspace
-/// —las de las crates heredadas, que no se compilan— no se siguen.
+/// are the edges a commit introduces. The edges that leave the workspace
+/// (those of the legacy crates, which are not compiled) are not followed.
 fn the_workspace_closure(root: &Path, member: &str) -> Vec<String> {
     let members = workspace_members(root);
     let mut seen: Vec<String> = Vec::new();

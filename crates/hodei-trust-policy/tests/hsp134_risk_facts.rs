@@ -79,8 +79,8 @@ fn risk_policy() -> TrustPolicy {
     )
 }
 
-/// Lo que la vista del grafo no pudo establecer no aprueba el requisito
-/// de ausencia de criticos: UNKNOWN no es cero.
+/// What the graph view could not establish does not satisfy the requirement
+/// of absence of criticals: UNKNOWN is not zero.
 #[test]
 fn an_unestablished_risk_does_not_pass_the_absence_of_criticals() {
     let context = TrustContext::builder(&complete_capsule())
@@ -95,7 +95,7 @@ fn an_unestablished_risk_does_not_pass_the_absence_of_criticals() {
     assert!(!decision.outcome.advances());
 }
 
-/// Con el riesgo establecido y cero criticos, el mismo requisito pasa.
+/// With the risk established and zero criticals, the same requirement passes.
 #[test]
 fn an_established_zero_passes_where_the_unknown_did_not() {
     let context = TrustContext::builder(&complete_capsule())
@@ -106,8 +106,8 @@ fn an_established_zero_passes_where_the_unknown_did_not() {
     assert!(!decision.has_reason(ReasonCode::RiskUnknown));
 }
 
-/// La decision dice contra que version del riesgo midio, y reproducirla
-/// con el mismo contexto devuelve el mismo veredicto y la misma version.
+/// The decision says which version of the risk it measured against, and replaying it
+/// with the same context returns the same verdict and the same version.
 #[test]
 fn the_decision_carries_the_risk_version_and_replays_with_it() {
     let context = TrustContext::builder(&complete_capsule())
@@ -124,8 +124,8 @@ fn the_decision_carries_the_risk_version_and_replays_with_it() {
     assert_eq!(first.reasons, second.reasons);
 }
 
-/// Un requisito que pregunta explicitamente por el riesgo establece la
-/// diferencia entre un cero medido y la ausencia de medicion.
+/// A requirement that explicitly asks about the risk establishes the
+/// difference between a measured zero and the absence of measurement.
 #[test]
 fn a_policy_that_asks_for_the_risk_distinguishes_zero_from_unknown() {
     let policy = TrustPolicy::new(
@@ -143,8 +143,8 @@ fn a_policy_that_asks_for_the_risk_distinguishes_zero_from_unknown() {
     assert!(evaluate(&zero, &policy).outcome.advances());
 }
 
-/// La version vive en el riesgo que el llamador trajo: el evaluador no
-/// la inventa, y su ausencia (cero) se propaga tal cual.
+/// The version lives in the risk the caller brought: the evaluator does not
+/// invent it, and its absence (zero) is propagated as is.
 #[test]
 fn the_version_is_the_one_the_facts_carried_and_nothing_else() {
     let context = TrustContext::builder(&complete_capsule())

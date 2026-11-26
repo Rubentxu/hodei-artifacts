@@ -1,12 +1,12 @@
-//! PyPI hosted, proxy y group de HSP-112, a nivel HTTP.
+//! PyPI hosted, proxy and group of HSP-112, at the HTTP level.
 //!
-//! Lo que se prueba: la subida con el protocolo que habla `twine`, el
-//! indice que negocia HTML y JSON, el nombre normalizado, el hash que se
-//! comprueba contra los bytes que han llegado, el estado *yanked* de una
-//! version, el grupo que junta los proyectos de sus miembros y el proxy
-//! que trae el indice de su upstream sin devolver el HTML de este.
+//! What is tested: the upload with the protocol `twine` speaks, the
+//! index that negotiates HTML and JSON, the normalized name, the hash that is
+//! checked against the bytes that arrived, the *yanked* state of a
+//! version, the group that joins the projects of its members and the proxy
+//! that brings the index from its upstream without returning the upstream's HTML.
 //!
-//! El cliente real (`twine` y `pip`) esta en `hsp112_pypi_cli.rs`.
+//! The real client (`twine` and `pip`) is in `hsp112_pypi_cli.rs`.
 
 mod support;
 
@@ -21,27 +21,27 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use support::{Answer, Curl, Deployment, FIRST_ACCOUNT};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El separador de la subida.
+/// The upload separator.
 const BOUNDARY: &str = "hodeipypiboundary";
 
-/// El cuerpo de una subida de `twine`: los campos y el fichero.
+/// The body of a `twine` upload: the fields and the file.
 ///
-/// Los campos son los que manda `twine`: la accion, la version del
-/// protocolo, el nombre, la version y el hash.
+/// The fields are those `twine` sends: the action, the protocol
+/// version, the name, the version and the hash.
 fn the_upload(name: &str, version: &str, filename: &str, file: &[u8], sha256: &str) -> Vec<u8> {
     the_upload_with(name, version, filename, file, sha256, None)
 }
 
-/// El cuerpo de una subida, con firma si se pide.
+/// The body of an upload, signed if requested.
 ///
-/// El `twine upload --sign` manda la firma como otra parte con nombre de
-/// fichero: no es una segunda distribucion.
+/// `twine upload --sign` sends the signature as another part with a file
+/// name: it is not a second distribution.
 fn the_upload_with(
     name: &str,
     version: &str,
@@ -92,7 +92,7 @@ fn the_upload_with(
     body
 }
 
-/// El hash de unos bytes, en hexadecimal.
+/// The hash of some bytes, in hexadecimal.
 fn the_sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -100,10 +100,10 @@ fn the_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Una peticion al servicio.
+/// A request to the service.
 ///
-/// El cuerpo se deja siempre en un fichero: una respuesta sin cuerpo no
-/// dice **que** sirvio el servicio, y solo dice que dijo algo.
+/// The body is always left in a file: a response without a body does not
+/// say **what** the service served, it only says that it said something.
 fn call(
     dir: &Path,
     port: u16,
@@ -122,7 +122,7 @@ fn call(
     Curl::call_with_headers(port, method, path, token, None, extra, Some(&target)).run()
 }
 
-/// Una subida al servicio.
+/// An upload to the service.
 fn upload(dir: &Path, port: u16, repository: &str, token: &str, body: Vec<u8>) -> Answer {
     static CALLS: AtomicUsize = AtomicUsize::new(0);
     let n = CALLS.fetch_add(1, Ordering::Relaxed);
@@ -141,7 +141,7 @@ fn upload(dir: &Path, port: u16, repository: &str, token: &str, body: Vec<u8>) -
     .run()
 }
 
-/// El JSON de una respuesta.
+/// The JSON of a response.
 fn json_of(answer: &Answer) -> Value {
     serde_json::from_slice(&answer.body).unwrap_or_else(|error| {
         panic!(
@@ -151,7 +151,7 @@ fn json_of(answer: &Answer) -> Value {
     })
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
@@ -183,7 +183,7 @@ fn a_distribution_is_published_and_served_in_the_index() {
     assert_eq!(published.status, 200, "{}", text_of(&published));
     assert_eq!(json_of(&published)["ok"], json!(true));
 
-    // El indice en JSON: el hash, la URL y la version de Python.
+    // The JSON index: the hash, the URL and the Python version.
     let page = call(
         dir,
         port,
@@ -214,7 +214,7 @@ fn a_distribution_is_published_and_served_in_the_index() {
     let url = files[0]["url"].as_str().expect("the url");
     assert!(url.contains("/pypi/pypi-hosted/files/labpkg/"), "{url}");
 
-    // El indice en HTML: el mismo hash, en el fragmento.
+    // The HTML index: the same hash, in the fragment.
     let html = call(
         dir,
         port,
@@ -233,7 +233,7 @@ fn a_distribution_is_published_and_served_in_the_index() {
     assert!(page.contains(&format!("#sha256={hash}")), "{page}");
     assert!(page.contains("data-requires-python=\"&gt;=3.9\""), "{page}");
 
-    // El indice lleva su ETag, y con el no se sirve otra vez.
+    // The index carries its ETag, and with it it is not served again.
     let etag = html.header("etag").expect("the index has an ETag");
     let again = call(
         dir,
@@ -246,7 +246,7 @@ fn a_distribution_is_published_and_served_in_the_index() {
     );
     assert_eq!(again.status, 304);
 
-    // El fichero se descarga tal cual se publico.
+    // The file is downloaded as it was published.
     let into = dir.join("downloaded.whl");
     let download = call(
         dir,
@@ -270,8 +270,8 @@ fn the_project_name_is_normalized_the_same_way_everywhere() {
     let port = service.port;
     let dir = deployment.directory.path();
 
-    // El nombre del metadata y el del fichero no son el mismo: los dos son
-    // el mismo proyecto.
+    // The metadata name and the file name are not the same: both are
+    // the same project.
     let wheel = support::a_wheel("Lab.Pkg", "1.0", None);
     let hash = the_sha256(&wheel);
     let published = upload(
@@ -307,7 +307,7 @@ fn the_project_name_is_normalized_the_same_way_everywhere() {
         );
         assert_eq!(json_of(&page)["name"], json!("lab-pkg"));
     }
-    // Un proyecto que no existe no se inventa.
+    // A project that does not exist is not invented.
     let missing = call(
         dir,
         port,
@@ -345,7 +345,7 @@ fn an_upload_whose_hash_is_not_the_one_of_its_content_is_refused() {
         ),
     );
     assert_eq!(published.status, 400, "{}", text_of(&published));
-    // Lo que no se publico no sale en el indice.
+    // What was not published does not appear in the index.
     let page = call(
         dir,
         port,
@@ -369,7 +369,7 @@ fn an_upload_that_carries_two_distributions_is_refused() {
 
     let wheel = support::a_wheel("labpkg", "1.0", None);
     let hash = the_sha256(&wheel);
-    // Dos partes de fichero: no se elige una, se dice que no.
+    // Two file parts: one is not chosen, it is refused.
     let mut body = the_upload(
         "labpkg",
         "1.0",
@@ -420,7 +420,7 @@ fn a_yanked_version_is_marked_and_still_downloadable() {
         assert_eq!(published.status, 200, "{}", text_of(&published));
     }
 
-    // Retirar la version 2.0.
+    // Yank version 2.0.
     let into = dir.join("yank.json");
     std::fs::write(
         &into,
@@ -445,7 +445,7 @@ fn a_yanked_version_is_marked_and_still_downloadable() {
     .run();
     assert_eq!(yank.status, 200, "{}", text_of(&yank));
 
-    // El indice dice que 2.0 esta retirada, y 1.0 no.
+    // The index says 2.0 is yanked, and 1.0 is not.
     let page = call(
         dir,
         port,
@@ -466,7 +466,7 @@ fn a_yanked_version_is_marked_and_still_downloadable() {
     assert_eq!(yanked[0]["filename"], json!("labpkg-2.0-py3-none-any.whl"));
     assert_eq!(yanked[0]["yanked"], json!("the wheel was broken"));
 
-    // Y el HTML lo dice de la otra manera.
+    // And the HTML says it the other way.
     let html = call(
         dir,
         port,
@@ -482,7 +482,7 @@ fn a_yanked_version_is_marked_and_still_downloadable() {
         "{page}"
     );
 
-    // Lo retirado se sigue descargando: se pide exactamente esa version.
+    // What is yanked can still be downloaded: exactly that version is requested.
     let download = call(
         dir,
         port,
@@ -524,7 +524,7 @@ fn a_group_joins_the_projects_of_its_members() {
         assert_eq!(published.status, 200, "{}", text_of(&published));
     }
 
-    // El grupo tiene los dos proyectos.
+    // The group has both projects.
     let index = call(
         dir,
         port,
@@ -545,7 +545,7 @@ fn a_group_joins_the_projects_of_its_members() {
     assert!(names.contains(&"onepkg"), "{document}");
     assert!(names.contains(&"twopkg"), "{document}");
 
-    // Y el fichero sale del miembro que lo tiene.
+    // And the file comes from the member that has it.
     let download = call(
         dir,
         port,
@@ -563,10 +563,10 @@ fn a_proxy_serves_the_index_of_its_upstream_without_its_html() {
     let deployment = Deployment::new();
     let root = deployment.directory.path();
 
-    // El upstream sirve el JSON de la Simple API cuando se le pide el JSON,
-    // y su propio HTML cuando no. Lo que sale de aqui es siempre el
-    // nuestro: el HTML del upstream no se devuelve, y sus valores se
-    // escapan.
+    // The upstream serves the Simple API JSON when JSON is requested,
+    // and its own HTML when not. What comes out of here is always
+    // ours: the upstream's HTML is not returned, and its values are
+    // escaped.
     let wheel = support::a_wheel("labpkg", "1.0", None);
     let hash = the_sha256(&wheel);
     let upstream = start_upstream_on(|port| {
@@ -613,7 +613,7 @@ fn a_proxy_serves_the_index_of_its_upstream_without_its_html() {
     let service_port = service.port;
     let dir = deployment.directory.path();
 
-    // El indice del proxy lo escribe el servicio, no el upstream.
+    // The proxy index is written by the service, not by the upstream.
     let page = call(
         dir,
         service_port,
@@ -630,10 +630,10 @@ fn a_proxy_serves_the_index_of_its_upstream_without_its_html() {
         "the upstream wrote HTML: {html}"
     );
     assert!(html.contains("&lt;script&gt;"), "{html}");
-    // Y el HTML es nuestro: la URL es de esta superficie.
+    // And the HTML is ours: the URL belongs to this surface.
     assert!(html.contains("/pypi/pypi-central/files/labpkg/"), "{html}");
 
-    // El fichero sale del upstream, y su hash es el que dijo el indice.
+    // The file comes from the upstream, and its hash is the one the index said.
     let into = root.join("from-proxy.whl");
     let download = call(
         dir,
@@ -647,8 +647,8 @@ fn a_proxy_serves_the_index_of_its_upstream_without_its_html() {
     assert_eq!(download.status, 200, "{}", text_of(&download));
     assert_eq!(std::fs::read(&into).expect("the download"), wheel);
 
-    // El upstream recibio una peticion por ruta: la pagina del proyecto se
-    // pidio una vez, y la descarga del fichero no la volvio a pedir.
+    // The upstream received one request per path: the project page was
+    // requested once, and the file download did not request it again.
     assert_eq!(upstream.asked_for("/simple/labpkg"), 1);
     assert_eq!(
         upstream.asked_for("/packages/labpkg-1.0-py3-none-any.whl"),
@@ -718,11 +718,11 @@ fn a_proxy_does_not_accept_writes() {
     assert_eq!(published.status, 405);
 }
 
-/// Una distribucion de mas de dos megas se publica.
+/// A distribution of more than two megabytes is published.
 ///
-/// El limite por defecto del servidor web es de dos megas, y una
-/// distribucion de verdad no cabe en dos. El limite que manda es el
-/// configurado, y lo aplica el servicio.
+/// The web server's default limit is two megabytes, and a
+/// real distribution does not fit in two. The limit that rules is the
+/// configured one, and the service enforces it.
 #[test]
 fn a_distribution_bigger_than_two_megabytes_is_published() {
     let deployment = Deployment::new();
@@ -750,7 +750,7 @@ fn a_distribution_bigger_than_two_megabytes_is_published() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // Y se descarga igual que se publico.
+    // And it is downloaded just as it was published.
     let into = dir.join("big.whl");
     let download = call(
         dir,
@@ -765,10 +765,10 @@ fn a_distribution_bigger_than_two_megabytes_is_published() {
     assert_eq!(std::fs::read(&into).expect("the download"), wheel);
 }
 
-/// Un tramo del contenido se sirve como un tramo.
+/// A range of the content is served as a range.
 ///
-/// El `pip` de hoy pide un tramo para no bajar dos veces lo mismo, y un
-/// tramo que no cabe se dice que no cabe.
+/// Today's `pip` asks for a range so as not to download the same thing twice, and a
+/// range that does not fit is reported as not fitting.
 #[test]
 fn a_range_asks_for_a_part_of_the_distribution() {
     let deployment = Deployment::new();
@@ -795,7 +795,7 @@ fn a_range_asks_for_a_part_of_the_distribution() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // El principio del fichero.
+    // The beginning of the file.
     let into = dir.join("part.whl");
     let part = call(
         dir,
@@ -813,7 +813,7 @@ fn a_range_asks_for_a_part_of_the_distribution() {
     );
     assert_eq!(std::fs::read(&into).expect("the part"), wheel[..10]);
 
-    // Un tramo que no cabe: se dice que no.
+    // A range that does not fit: it is refused.
     let impossible = call(
         dir,
         port,
@@ -824,31 +824,31 @@ fn a_range_asks_for_a_part_of_the_distribution() {
         None,
     );
     assert_eq!(impossible.status, 416);
-    // Y se dice cuanto hay: RFC 9110 pide que el `Content-Range` de un
-    // tramo que no cabe diga la longitud de lo que hay.
+    // And it says how much there is: RFC 9110 requires the `Content-Range` of an
+    // unsatisfiable range to state the length of what exists.
     assert_eq!(
         impossible.header("content-range").as_deref(),
         Some(format!("bytes */{}", wheel.len()).as_str())
     );
 }
 
-/// Una subida que pasa del limite se dice que no.
+/// An upload that exceeds the limit is refused.
 ///
-/// El limite se aplica en dos capas: el transporte topa el cuerpo entero
-/// --el sobre `multipart` incluido-- y el manejador topa los bytes del
-/// fichero. Las dos responden `413`.
+/// The limit is applied in two layers: the transport caps the whole body
+/// --the `multipart` envelope included-- and the handler caps the bytes of the
+/// file. Both answer `413`.
 #[test]
 fn an_upload_bigger_than_the_limit_is_refused() {
     let deployment = Deployment::new();
     deployment.seed_pypi(&[("pypi-hosted", Value::Null)]);
     let token = support::token(FIRST_ACCOUNT, "alice");
-    // El limite configurado es de 64 KiB.
+    // The configured limit is 64 KiB.
     let service = deployment.start(&[("HODEI_SERVER__MAX_BODY_SIZE", "65536")]);
     let port = service.port;
     let dir = deployment.directory.path();
 
-    // Un fichero que pasa del limite: lo dice el manejador, que es quien
-    // cuenta los bytes del fichero.
+    // A file that exceeds the limit: the handler says so, as it is the one that
+    // counts the file's bytes.
     let wheel = support::a_big_wheel("bigpkg", "1.0", None, 128 * 1024);
     let hash = the_sha256(&wheel);
     let refused = upload(
@@ -866,10 +866,10 @@ fn an_upload_bigger_than_the_limit_is_refused() {
     );
     assert_eq!(refused.status, 413, "{}", text_of(&refused));
 
-    // Un sobre con una cabecera gigante no lo cuenta el manejador--que
-    // solo cuenta los bytes de los campos--: lo corta el transporte. Sin
-    // ese tope, la subida se publicaria: el `413` es la prueba de que el
-    // cuerpo entero tiene un limite.
+    // An envelope with a giant header is not counted by the handler--which
+    // only counts the field bytes--: the transport cuts it off. Without
+    // that cap, the upload would be published: the `413` is the proof that the
+    // whole body has a limit.
     let wheel = support::a_wheel("hugepkg", "1.0", None);
     let hash = the_sha256(&wheel);
     let cut = upload(
@@ -887,7 +887,7 @@ fn an_upload_bigger_than_the_limit_is_refused() {
     );
     assert_eq!(cut.status, 413, "{}", text_of(&cut));
 
-    // Y nada se publico.
+    // And nothing was published.
     let index = call(
         dir,
         port,
@@ -902,10 +902,10 @@ fn an_upload_bigger_than_the_limit_is_refused() {
     assert!(!text_of(&index).contains("hugepkg"), "{}", text_of(&index));
 }
 
-/// Una subida cuyo sobre lleva una cabecera gigante.
+/// An upload whose envelope carries a giant header.
 ///
-/// La cabecera de la parte no es un campo: el manejador no la cuenta, y
-/// sin un tope en el transporte se acumularia en memoria sin limite.
+/// The part's header is not a field: the handler does not count it, and
+/// without a cap at the transport it would accumulate in memory without limit.
 fn the_upload_with_a_giant_header(
     name: &str,
     version: &str,
@@ -914,8 +914,8 @@ fn the_upload_with_a_giant_header(
     sha256: &str,
 ) -> Vec<u8> {
     let body = the_upload(name, version, filename, file, sha256);
-    // Se antepone una parte con una cabecera enorme: el sobre tiene que
-    // pesar mas que el limite del transporte.
+    // A part with a huge header is prepended: the envelope has to
+    // weigh more than the transport limit.
     let giant = format!(
         "--{BOUNDARY}\r\n\
          Content-Disposition: form-data; name=\"{}\"\r\n\r\nx\r\n",
@@ -927,11 +927,11 @@ fn the_upload_with_a_giant_header(
     with_giant
 }
 
-/// Un nombre de wheel que el `pip` instala se publica.
+/// A wheel name that `pip` installs is published.
 ///
-/// La etiqueta de compilacion de un wheel es un digito y, detras, lo que
-/// sea: `1.5` es una etiqueta valida y el `pip` la instala. Un nombre que
-/// el `pip` instalaria no se rechaza en la puerta.
+/// The build tag of a wheel is a digit followed by whatever
+/// else: `1.5` is a valid tag and `pip` installs it. A name that
+/// `pip` would install is not rejected at the door.
 #[test]
 fn a_wheel_with_a_build_tag_is_published() {
     let deployment = Deployment::new();
@@ -958,7 +958,7 @@ fn a_wheel_with_a_build_tag_is_published() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // Y el indice lo anuncia con ese nombre.
+    // And the index announces it under that name.
     let index = call(
         dir,
         port,
@@ -976,10 +976,10 @@ fn a_wheel_with_a_build_tag_is_published() {
     );
 }
 
-/// Una version local se canoniza como dice la PEP.
+/// A local version is canonicalized as the PEP says.
 ///
-/// `1.0+01` y `1.0+1` son la misma version: el cliente puede escribir la
-/// primera y el nombre del fichero llevar la segunda.
+/// `1.0+01` and `1.0+1` are the same version: the client may write the
+/// first and the file name carry the second.
 #[test]
 fn a_local_version_is_canonicalized() {
     let deployment = Deployment::new();
@@ -1006,7 +1006,7 @@ fn a_local_version_is_canonicalized() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // El indice anuncia la version canonica.
+    // The index announces the canonical version.
     let index = call(
         dir,
         port,
@@ -1027,11 +1027,11 @@ fn a_local_version_is_canonicalized() {
     );
 }
 
-/// El canal de confianza no anuncia lo que no deja servir.
+/// The trust channel does not announce what it does not let serve.
 ///
-/// El canal `trusted` solo sirve los digests con concesion activa. Un
-/// indice que anuncia una distribucion que no se puede descargar es un
-/// indice roto.
+/// The `trusted` channel only serves digests with an active grant. An
+/// index that announces a distribution that cannot be downloaded is a
+/// broken index.
 #[test]
 fn the_trusted_channel_does_not_announce_what_it_does_not_serve() {
     let deployment = Deployment::new();
@@ -1058,7 +1058,7 @@ fn the_trusted_channel_does_not_announce_what_it_does_not_serve() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // El indice no anuncia la distribucion: el canal no la admite.
+    // The index does not announce the distribution: the channel does not admit it.
     let page = call(
         dir,
         port,
@@ -1073,7 +1073,7 @@ fn the_trusted_channel_does_not_announce_what_it_does_not_serve() {
     let files = document["files"].as_array().expect("the files");
     assert!(files.is_empty(), "the index announces what it cannot serve");
 
-    // Y la distribucion no se descarga.
+    // And the distribution is not downloaded.
     let download = call(
         dir,
         port,
@@ -1086,10 +1086,10 @@ fn the_trusted_channel_does_not_announce_what_it_does_not_serve() {
     assert_eq!(download.status, 404);
 }
 
-/// La version se compara en su forma canonica.
+/// The version is compared in its canonical form.
 ///
-/// El cliente puede escribir la version como le plazca y el nombre del
-/// fichero la lleva canonica: `1.0-2` y `1.0.post2` son la misma version.
+/// The client may write the version however it likes and the file
+/// name carries it canonical: `1.0-2` and `1.0.post2` are the same version.
 #[test]
 fn a_version_that_is_not_canonical_is_accepted() {
     let deployment = Deployment::new();
@@ -1110,7 +1110,7 @@ fn a_version_that_is_not_canonical_is_accepted() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // Y el indice lo dice con la version canonica.
+    // And the index says it with the canonical version.
     let page = call(
         dir,
         port,
@@ -1124,11 +1124,11 @@ fn a_version_that_is_not_canonical_is_accepted() {
     assert_eq!(json_of(&page)["versions"], json!(["1.0.post2"]));
 }
 
-/// Una subida firmada no se toma por dos distribuciones.
+/// A signed upload is not taken for two distributions.
 ///
-/// El `twine upload --sign` manda la firma como otra parte con nombre de
-/// fichero. No es una segunda distribucion: la superficie no guarda
-/// firmas, y una subida firmada se publica como las demas.
+/// `twine upload --sign` sends the signature as another part with a file
+/// name. It is not a second distribution: the surface does not store
+/// signatures, and a signed upload is published like the others.
 #[test]
 fn a_signed_upload_is_not_taken_for_two_distributions() {
     let deployment = Deployment::new();
@@ -1156,7 +1156,7 @@ fn a_signed_upload_is_not_taken_for_two_distributions() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // Y la distribucion se sirve como las demas.
+    // And the distribution is served like the others.
     let page = call(
         dir,
         port,
@@ -1170,19 +1170,19 @@ fn a_signed_upload_is_not_taken_for_two_distributions() {
     assert_eq!(json_of(&page)["versions"], json!(["1.0"]));
 }
 
-/// Las paginas de un upstream: la del JSON y la del HTML.
+/// The pages of an upstream: the JSON one and the HTML one.
 type Pages = HashMap<String, (Vec<u8>, Vec<u8>)>;
 
-/// Un upstream de laboratorio: responde lo que se le pide, por ruta.
+/// A laboratory upstream: answers what is asked of it, by path.
 struct Upstream {
-    /// El puerto donde escucha.
+    /// The port it listens on.
     port: u16,
-    /// Cuantas peticiones ha atendido, por ruta.
+    /// How many requests it has served, by path.
     asked: Arc<std::sync::Mutex<HashMap<String, usize>>>,
 }
 
 impl Upstream {
-    /// Cuantas veces le han pedido esa ruta.
+    /// How many times that path has been requested.
     fn asked_for(&self, path: &str) -> usize {
         self.asked
             .lock()
@@ -1193,12 +1193,12 @@ impl Upstream {
     }
 }
 
-/// Un upstream que se levanta en un puerto libre y sirve las paginas dadas.
+/// An upstream that comes up on a free port and serves the given pages.
 ///
-/// Cada pagina tiene dos formas: la del JSON y la del HTML. El upstream
-/// contesta con la del JSON cuando la peticion pide el JSON, y con la del
-/// HTML cuando no: asi se puede ver que lo que sale de la superficie es
-/// siempre el JSON republished, nunca el HTML del upstream.
+/// Each page has two forms: the JSON one and the HTML one. The upstream
+/// answers with the JSON one when the request asks for JSON, and with the
+/// HTML one when not: this way it can be seen that what comes out of the surface is
+/// always the republished JSON, never the upstream's HTML.
 fn start_upstream_on<F>(pages: F) -> Upstream
 where
     F: Fn(u16) -> Pages,

@@ -155,8 +155,9 @@ async fn strip_the_marks(tmp: &Workdir) {
             blocks: vec![GraphMutationBlock {
                 cond: None,
                 set_nquads: String::new(),
-                delete_nquads: "uid(u) <hodei.iam.created_at> * .\nuid(u) <hodei.iam.updated_at> * .\n"
-                    .to_string(),
+                delete_nquads:
+                    "uid(u) <hodei.iam.created_at> * .\nuid(u) <hodei.iam.updated_at> * .\n"
+                        .to_string(),
             }],
             commit_now: true,
         })

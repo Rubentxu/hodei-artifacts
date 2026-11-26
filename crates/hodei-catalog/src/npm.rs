@@ -1,75 +1,75 @@
-//! La parte pura del formato npm: nombres, rutas, documentos de
-//! publicacion y packuments.
+//! The pure part of the npm format: names, routes, publish
+//! documents and packuments.
 //!
-//! Nada aqui toca disco, red ni catalogo: son funciones sobre cadenas y
-//! JSON, y por eso se prueban sin infraestructura. El servicio las usa para
-//! decidir que quiere el cliente (`route`), si un documento de publicacion
-//! es admisible (`PublishDocument`) y como queda el packument despues de
-//! cada operacion.
+//! Nothing here touches disk, network or catalog: these are functions over strings and
+//! JSON, and for that reason they are tested without infrastructure. The service uses them to
+//! decide what the client wants (`route`), whether a publish document
+//! is admissible (`PublishDocument`) and what the packument looks like after
+//! each operation.
 //!
-//! # El packument es una instantanea, no una vista
+//! # The packument is a snapshot, not a view
 //!
-//! A diferencia de `maven-metadata.xml`, un packument lleva datos que no se
-//! pueden derivar de los ficheros (el `package.json` de cada version, los
-//! dist-tags, las deprecaciones). Por eso un hosted guarda **cada estado**
-//! del packument como contenido direccionado por su digest y mueve el
-//! puntero de la ruta: publicar, mover un dist-tag o deprecar crean una
-//! instantanea nueva y no reescriben los bytes de las anteriores.
+//! Unlike `maven-metadata.xml`, a packument carries data that cannot
+//! be derived from the files (each version's `package.json`, the
+//! dist-tags, the deprecations). That is why a hosted repository stores **every state**
+//! of the packument as content addressed by its digest and moves the
+//! route pointer: publishing, moving a dist-tag or deprecating create a new
+//! snapshot and do not rewrite the bytes of the previous ones.
 //!
 //! # Layout
 //!
-//! La ruta de un asset es la del protocolo, la misma en hosted y en proxy:
+//! An asset's path is the protocol's, the same in hosted and proxy:
 //!
 //! ```text
-//! {nombre}                      el packument
-//! {nombre}/-/{base}-{version}.tgz   el tarball
+//! {name}                        the packument
+//! {name}/-/{base}-{version}.tgz     the tarball
 //! ```
 //!
-//! donde `nombre` puede ser `@alcance/base`.
+//! where `name` may be `@scope/base`.
 
 use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-/// La longitud maxima de un nombre de paquete (completo, con alcance).
+/// The maximum length of a package name (complete, with scope).
 pub const MAX_NAME_LEN: usize = 214;
 
-/// La longitud maxima de un dist-tag.
+/// The maximum length of a dist-tag.
 pub const MAX_TAG_LEN: usize = 64;
 
-/// El dist-tag que npm resuelve cuando no se pide otro.
+/// The dist-tag that npm resolves when no other is requested.
 pub const LATEST: &str = "latest";
 
-/// El sufijo de las coordenadas de las instantaneas del packument.
+/// The suffix of the packument snapshot coordinates.
 ///
-/// `#` no puede aparecer en un nombre npm, asi que las coordenadas de las
-/// instantaneas nunca chocan con las de un tarball.
+/// `#` cannot appear in an npm name, so the snapshot coordinates
+/// never collide with those of a tarball.
 pub const PACKUMENT_COORDINATES_SUFFIX: &str = "#packument";
 
-/// Los nombres que npm reserva aunque cumplan el resto de reglas.
+/// The names that npm reserves even if they satisfy the rest of the rules.
 const RESERVED: &[&str] = &["node_modules", "favicon.ico"];
 
-/// Por que un nombre, una ruta o un documento no se admite.
+/// Why a name, a route or a document is not admitted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NpmError {
-    /// El nombre del paquete no cumple las reglas de npm.
+    /// The package name does not satisfy npm's rules.
     InvalidName(&'static str),
-    /// La ruta no es ninguna de las que habla el protocolo.
+    /// The route is none of those the protocol speaks.
     InvalidPath(&'static str),
-    /// El documento no se entiende o no es admisible.
+    /// The document is not understood or is not admissible.
     InvalidDocument(&'static str),
-    /// El dist-tag no es admisible.
+    /// The dist-tag is not admissible.
     InvalidTag(&'static str),
-    /// La version ya esta publicada y una version no se reescribe.
+    /// The version is already published and a version is not rewritten.
     VersionExists(String),
-    /// Lo pedido no existe en el packument.
+    /// What was requested does not exist in the packument.
     UnknownVersion(String),
-    /// El documento intenta quitar algo: eso es un unpublish.
+    /// The document tries to remove something: that is an unpublish.
     Unpublish,
 }
 
 impl NpmError {
-    /// El motivo, tal y como se le dice al cliente.
+    /// The reason, as it is told to the client.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidName(reason)
@@ -88,19 +88,19 @@ impl NpmError {
     }
 }
 
-/// Un nombre de paquete, ya validado.
+/// A package name, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageName {
     full: String,
-    /// El alcance con `@`, si lo tiene.
+    /// The scope with `@`, if it has one.
     scope: Option<String>,
     base: String,
 }
 
 impl PackageName {
-    /// Lee un nombre. `strict` aplica las reglas de un paquete **nuevo**
-    /// (solo minusculas); un proxy admite lo que el upstream ya publico,
-    /// que incluye nombres antiguos con mayusculas.
+    /// Reads a name. `strict` applies the rules of a **new** package
+    /// (lowercase only); a proxy admits what the upstream already published,
+    /// which includes old names with uppercase letters.
     pub fn parse(name: &str, strict: bool) -> Result<Self, NpmError> {
         if name.is_empty() {
             return Err(NpmError::InvalidName("the package name is empty"));
@@ -150,69 +150,69 @@ impl PackageName {
         })
     }
 
-    /// El nombre completo, con alcance.
+    /// The full name, with scope.
     pub fn full(&self) -> &str {
         &self.full
     }
 
-    /// El alcance con `@`, si lo tiene.
+    /// The scope with `@`, if it has one.
     pub fn scope(&self) -> Option<&str> {
         self.scope.as_deref()
     }
 
-    /// El nombre sin alcance.
+    /// The name without scope.
     pub fn base(&self) -> &str {
         &self.base
     }
 
-    /// El nombre del fichero del tarball de una version.
+    /// The tarball file name of a version.
     pub fn tarball_file(&self, version: &str) -> String {
         format!("{}-{version}.tgz", self.base)
     }
 
-    /// La ruta del tarball de una version dentro del repositorio.
+    /// The path of a version's tarball inside the repository.
     pub fn tarball_path(&self, version: &str) -> String {
         format!("{}/-/{}", self.full, self.tarball_file(version))
     }
 }
 
-/// Lo que el cliente pide.
+/// What the client requests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
     /// `GET /-/ping`.
     Ping,
     /// `GET /-/whoami`.
     Whoami,
-    /// El packument de un paquete.
+    /// The packument of a package.
     Packument {
         /// The package whose packument is asked for.
         name: PackageName,
     },
-    /// El tarball de un paquete.
+    /// The tarball of a package.
     Tarball {
         /// The package the tarball belongs to.
         name: PackageName,
         /// The name of the file inside the package.
         file: String,
     },
-    /// Todos los dist-tags de un paquete.
+    /// All the dist-tags of a package.
     DistTags {
         /// The package whose dist-tags are asked for.
         name: PackageName,
     },
-    /// Un dist-tag de un paquete.
+    /// A dist-tag of a package.
     DistTag {
         /// The package the tag belongs to.
         name: PackageName,
         /// The tag and the version it points at.
         tag: String,
     },
-    /// `DELETE` de un paquete entero (`/{nombre}/-rev/{rev}`).
+    /// `DELETE` of an entire package (`/{name}/-rev/{rev}`).
     UnpublishPackage {
         /// The package that is withdrawn.
         name: PackageName,
     },
-    /// `DELETE` de un tarball (`/{nombre}/-/{fichero}/-rev/{rev}`).
+    /// `DELETE` of a tarball (`/{name}/-/{file}/-rev/{rev}`).
     UnpublishTarball {
         /// The package the tarball belongs to.
         name: PackageName,
@@ -222,8 +222,8 @@ pub enum Route {
 }
 
 impl Route {
-    /// La ruta del asset que respalda la peticion, si la peticion lee
-    /// contenido del repositorio.
+    /// The path of the asset backing the request, if the request reads
+    /// repository content.
     pub fn asset_path(&self) -> Option<String> {
         match self {
             Self::Packument { name } | Self::DistTags { name } | Self::DistTag { name, .. } => {
@@ -235,8 +235,8 @@ impl Route {
     }
 }
 
-/// Decodifica un segmento: solo `%2f` (la barra de un nombre con alcance) y
-/// `%40` (la arroba) tienen sentido en un nombre npm.
+/// Decodes a segment: only `%2f` (the slash of a scoped name) and
+/// `%40` (the at sign) make sense in an npm name.
 fn decode_segment(segment: &str) -> Result<String, NpmError> {
     let mut out = String::with_capacity(segment.len());
     let bytes = segment.as_bytes();
@@ -270,8 +270,8 @@ fn path_char_ok(character: char) -> bool {
         || matches!(character, '-' | '.' | '_' | '~' | '@' | '%' | '+' | ':')
 }
 
-/// Un nombre de fichero de tarball: lo que el upstream publica, sin
-/// atravesar directorios.
+/// A tarball file name: what the upstream publishes, without
+/// traversing directories.
 fn tarball_file_ok(file: &str) -> bool {
     file.len() <= 255
         && file.ends_with(".tgz")
@@ -281,7 +281,7 @@ fn tarball_file_ok(file: &str) -> bool {
         })
 }
 
-/// Lee la ruta que sigue a `/npm/{repositorio}/`, **sin decodificar**.
+/// Reads the path following `/npm/{repository}/`, **without decoding**.
 pub fn route(rest: &str) -> Result<Route, NpmError> {
     if rest.is_empty() || rest.len() > 1024 {
         return Err(NpmError::InvalidPath("the path is empty or too long"));
@@ -302,8 +302,8 @@ pub fn route(rest: &str) -> Result<Route, NpmError> {
         .iter()
         .map(|segment| decode_segment(segment))
         .collect::<Result<_, _>>()?;
-    // Un segmento puede traer una barra (el `%2f` del alcance) solo si es
-    // la del nombre: `@alcance/base`.
+    // A segment may carry a slash (the scope's `%2f`) only if it is
+    // the one in the name: `@scope/base`.
     if segments
         .iter()
         .any(|segment| segment == "." || segment == "..")
@@ -330,8 +330,8 @@ pub fn route(rest: &str) -> Result<Route, NpmError> {
         };
     }
 
-    // El nombre: `@alcance%2fbase` llega en un segmento, `@alcance/base` en
-    // dos; los dos son el mismo paquete.
+    // The name: `@scope%2fbase` arrives in one segment, `@scope/base` in
+    // two; both are the same package.
     let (name_text, tail): (String, &[String]) =
         if segments[0].starts_with('@') && !segments[0].contains('/') {
             match segments.get(1) {
@@ -371,7 +371,7 @@ pub fn route(rest: &str) -> Result<Route, NpmError> {
     }
 }
 
-/// Lee una version semver. npm exige una version completa y valida.
+/// Reads a semver version. npm requires a complete, valid version.
 pub fn valid_version(version: &str) -> Result<&str, NpmError> {
     if version.len() > 256 || semver::Version::parse(version).is_err() {
         return Err(NpmError::InvalidDocument(
@@ -381,7 +381,7 @@ pub fn valid_version(version: &str) -> Result<&str, NpmError> {
     Ok(version)
 }
 
-/// Un dist-tag: un nombre corto que no es una version ni un rango.
+/// A dist-tag: a short name that is neither a version nor a range.
 pub fn valid_tag(tag: &str) -> Result<&str, NpmError> {
     if tag.is_empty() || tag.len() > MAX_TAG_LEN {
         return Err(NpmError::InvalidTag("the dist-tag is empty or too long"));
@@ -394,8 +394,8 @@ pub fn valid_tag(tag: &str) -> Result<&str, NpmError> {
             "the dist-tag has characters npm never uses",
         ));
     }
-    // Un tag que se lee como version o como rango haria ambiguo
-    // `npm install pkg@x`: npm lo prohibe.
+    // A tag that reads as a version or as a range would make
+    // `npm install pkg@x` ambiguous: npm forbids it.
     if semver::Version::parse(tag).is_ok() || semver::VersionReq::parse(tag).is_ok() {
         return Err(NpmError::InvalidTag(
             "a dist-tag cannot be a version or a range",
@@ -404,58 +404,58 @@ pub fn valid_tag(tag: &str) -> Result<&str, NpmError> {
     Ok(tag)
 }
 
-/// Un adjunto del documento de publicacion, ya decodificado.
+/// An attachment of the publish document, already decoded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attachment {
-    /// El nombre del fichero.
+    /// The file name.
     pub file: String,
-    /// El contenido: el tarball.
+    /// The content: the tarball.
     pub bytes: Vec<u8>,
 }
 
-/// La peticion de un `PUT /{nombre}`.
+/// The request of a `PUT /{name}`.
 ///
-/// Es una **publicacion** si trae el tarball y una **actualizacion de
-/// metadatos** (deprecar) si no lo trae. Cualquier otra cosa es un error.
+/// It is a **publication** if it carries the tarball and a **metadata
+/// update** (deprecate) if it does not. Anything else is an error.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Update {
-    /// Una version nueva con su tarball.
+    /// A new version with its tarball.
     Publish(Box<NewVersion>),
-    /// Cambios de `deprecated` sobre versiones que ya existen.
+    /// `deprecated` changes on versions that already exist.
     Metadata(Box<Document>),
 }
 
-/// La version que se publica.
+/// The version being published.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NewVersion {
-    /// El nombre del paquete.
+    /// The package name.
     pub name: PackageName,
-    /// La version.
+    /// The version.
     pub version: String,
-    /// El `package.json` que el cliente declara, sin tocar.
+    /// The `package.json` the client declares, untouched.
     pub manifest: Map<String, Value>,
-    /// Los dist-tags que el cliente pide para esta version.
+    /// The dist-tags the client requests for this version.
     pub tags: Vec<String>,
-    /// El tarball.
+    /// The tarball.
     pub attachment: Attachment,
-    /// Los campos del documento que describen el paquete.
+    /// The document fields that describe the package.
     pub document: Document,
 }
 
-/// El documento tal y como llega, ya con forma.
+/// The document as it arrives, already shaped.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Document {
-    /// El nombre del paquete.
+    /// The package name.
     pub name: PackageName,
-    /// El objeto entero.
+    /// The entire object.
     pub value: Map<String, Value>,
 }
 
-/// Lee el cuerpo de un `PUT /{nombre}`.
+/// Reads the body of a `PUT /{name}`.
 ///
-/// `expected` es el nombre de la ruta: el documento no puede hablar de otro
-/// paquete. `decode` convierte el base64 del adjunto (el servicio decide el
-/// codec; aqui no hay dependencias de hash ni de base64).
+/// `expected` is the route's name: the document cannot talk about another
+/// package. `decode` converts the attachment's base64 (the service decides the
+/// codec; there are no hash or base64 dependencies here).
 pub fn parse_update(
     expected: &PackageName,
     body: &[u8],
@@ -515,9 +515,9 @@ pub fn parse_update(
         ));
     }
     let (file, attachment) = attachments.iter().next().expect("one attachment");
-    // `libnpmpublish` llama al adjunto `{nombre completo}-{version}.tgz`
-    // (`@acme/widget-1.0.0.tgz` si lleva alcance); el registro lo guarda como
-    // `{base}-{version}.tgz`. Se aceptan las dos formas y se guarda la segunda.
+    // `libnpmpublish` calls the attachment `{full name}-{version}.tgz`
+    // (`@acme/widget-1.0.0.tgz` if scoped); the registry stores it as
+    // `{base}-{version}.tgz`. Both forms are accepted and the second is stored.
     let basename = expected.tarball_file(version);
     if *file != basename && *file != format!("{}-{version}.tgz", expected.full()) {
         return Err(NpmError::InvalidDocument(
@@ -573,16 +573,16 @@ pub fn parse_update(
     })))
 }
 
-/// Lo que el servicio sabe del tarball al publicar.
+/// What the service knows about the tarball when publishing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TarballFacts {
-    /// `sha1` en hexadecimal: el `shasum` historico de npm.
+    /// `sha1` in hexadecimal: npm's historical `shasum`.
     pub shasum: String,
-    /// `sha512-{base64}`: el `integrity` de npm.
+    /// `sha512-{base64}`: npm's `integrity`.
     pub integrity: String,
 }
 
-/// Comprueba lo que el cliente declara de su tarball contra lo calculado.
+/// Checks what the client declares about its tarball against what was computed.
 pub fn check_declared_dist(
     manifest: &Map<String, Value>,
     facts: &TarballFacts,
@@ -607,14 +607,14 @@ pub fn check_declared_dist(
     Ok(())
 }
 
-/// Quien publico, cuando, y con que correlacion: el origen de la version.
+/// Who published, when, and with what correlation: the origin of the version.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Origin {
-    /// El sujeto verificado que publica.
+    /// The verified subject that publishes.
     pub publisher: String,
-    /// El instante, en RFC 3339.
+    /// The instant, in RFC 3339.
     pub at: String,
-    /// La correlacion de la peticion.
+    /// The request correlation.
     pub correlation: String,
 }
 
@@ -635,7 +635,7 @@ fn object_entry<'a>(
     slot.as_object_mut().expect("an object")
 }
 
-/// El packument de un paquete que todavia no tiene versiones.
+/// The packument of a package that does not yet have versions.
 pub fn empty_packument(name: &PackageName, now: &str) -> Map<String, Value> {
     let mut packument = Map::new();
     packument.insert("_id".into(), Value::String(name.full().to_string()));
@@ -648,7 +648,7 @@ pub fn empty_packument(name: &PackageName, now: &str) -> Map<String, Value> {
     packument
 }
 
-/// Lee el packument guardado.
+/// Reads the stored packument.
 pub fn parse_packument(bytes: &[u8]) -> Result<Map<String, Value>, NpmError> {
     match serde_json::from_slice::<Value>(bytes) {
         Ok(Value::Object(object)) => Ok(object),
@@ -658,7 +658,7 @@ pub fn parse_packument(bytes: &[u8]) -> Result<Map<String, Value>, NpmError> {
     }
 }
 
-/// Si el packument ya tiene la version.
+/// Whether the packument already has the version.
 pub fn has_version(packument: &Map<String, Value>, version: &str) -> bool {
     packument
         .get("versions")
@@ -666,10 +666,10 @@ pub fn has_version(packument: &Map<String, Value>, version: &str) -> bool {
         .is_some_and(|versions| versions.contains_key(version))
 }
 
-/// Anade una version publicada al packument.
+/// Adds a published version to the packument.
 ///
-/// Una version **no se reescribe**: si ya esta, es un error aunque el
-/// contenido sea el mismo, que es lo que npm espera de un registro.
+/// A version is **not rewritten**: if it already exists, it is an error even if the
+/// content is the same, which is what npm expects from a registry.
 pub fn add_version(
     packument: &mut Map<String, Value>,
     new: &NewVersion,
@@ -683,7 +683,7 @@ pub fn add_version(
     let mut dist = Map::new();
     dist.insert("shasum".into(), Value::String(facts.shasum.clone()));
     dist.insert("integrity".into(), Value::String(facts.integrity.clone()));
-    // La URL absoluta depende de quien pregunta: se pone al servir.
+    // The absolute URL depends on who asks: it is set when serving.
     dist.insert(
         "tarball".into(),
         Value::String(new.name.tarball_path(&new.version)),
@@ -693,8 +693,8 @@ pub fn add_version(
         "_id".into(),
         Value::String(format!("{}@{}", new.name.full(), new.version)),
     );
-    // El origen lo pone el servicio y no el cliente: lo que el cliente
-    // diga de si mismo no es una procedencia.
+    // The origin is set by the service and not the client: what the client
+    // says about itself is not a provenance.
     let mut hodei = Map::new();
     hodei.insert(
         "publishedBy".into(),
@@ -712,7 +712,7 @@ pub fn add_version(
     for tag in &new.tags {
         tags.insert(tag.clone(), Value::String(new.version.clone()));
     }
-    // La descripcion del paquete es la de lo ultimo que se llama `latest`.
+    // The package description is that of whatever was last called `latest`.
     if new.tags.iter().any(|tag| tag == LATEST) {
         for field in [
             "description",
@@ -735,10 +735,10 @@ pub fn add_version(
     Ok(())
 }
 
-/// Mueve (o crea) un dist-tag.
+/// Moves (or creates) a dist-tag.
 ///
-/// El destino tiene que ser una version que existe: un tag que apunta a
-/// nada rompe `npm install pkg@tag`.
+/// The target must be a version that exists: a tag pointing at
+/// nothing breaks `npm install pkg@tag`.
 pub fn set_dist_tag(
     packument: &mut Map<String, Value>,
     tag: &str,
@@ -758,8 +758,8 @@ pub fn set_dist_tag(
     Ok(true)
 }
 
-/// Quita un dist-tag. `latest` no se quita: es lo que resuelve
-/// `npm install pkg`.
+/// Removes a dist-tag. `latest` is not removed: it is what
+/// `npm install pkg` resolves.
 pub fn remove_dist_tag(
     packument: &mut Map<String, Value>,
     tag: &str,
@@ -779,11 +779,11 @@ pub fn remove_dist_tag(
     Ok(true)
 }
 
-/// Aplica a un packument lo que dice un documento sin tarball.
+/// Applies to a packument what a document without tarball says.
 ///
-/// Solo se admite cambiar `deprecated` de versiones que ya existen. Quitar
-/// una version del documento es un unpublish, y anadir una sin tarball no
-/// tiene bytes que servir: los dos se rechazan.
+/// Only changing `deprecated` of versions that already exist is admitted. Removing
+/// a version from the document is an unpublish, and adding one without a tarball has
+/// no bytes to serve: both are rejected.
 pub fn apply_metadata(
     packument: &mut Map<String, Value>,
     document: &Document,
@@ -844,12 +844,12 @@ pub fn apply_metadata(
     Ok(changed)
 }
 
-/// El packument tal y como se sirve: cada `dist.tarball` apunta a **este**
-/// repositorio, y no al upstream ni a la ruta relativa que se guarda.
+/// The packument as it is served: each `dist.tarball` points at **this**
+/// repository, and not at the upstream or the relative path that is stored.
 ///
-/// `base` es `{esquema}://{host}/npm/{repositorio}` sin barra final y `name`
-/// el nombre que pidio el cliente: nunca el del documento, que en un proxy lo
-/// escribe el upstream y no es de fiar para construir una ruta.
+/// `base` is `{scheme}://{host}/npm/{repository}` without trailing slash and `name`
+/// the name the client requested: never the document's, which in a proxy is
+/// written by the upstream and cannot be trusted to build a path.
 pub fn rewrite_tarballs(packument: &mut Map<String, Value>, name: &str, base: &str) {
     let Some(versions) = packument.get_mut("versions").and_then(Value::as_object_mut) else {
         return;
@@ -870,7 +870,7 @@ pub fn rewrite_tarballs(packument: &mut Map<String, Value>, name: &str, base: &s
     }
 }
 
-/// Los dist-tags de un packument.
+/// The dist-tags of a packument.
 pub fn dist_tags(packument: &Map<String, Value>) -> Value {
     packument
         .get("dist-tags")
@@ -878,8 +878,8 @@ pub fn dist_tags(packument: &Map<String, Value>) -> Value {
         .unwrap_or_else(|| Value::Object(Map::new()))
 }
 
-/// Si la ruta de un asset es la de un tarball: el contenido inmutable de
-/// un repositorio npm. Todo lo demas es un packument, que se republica.
+/// Whether an asset's path is a tarball's: the immutable content of
+/// an npm repository. Everything else is a packument, which is republished.
 pub fn is_tarball_path(asset_path: &str) -> bool {
     let mut segments = asset_path.rsplit('/');
     let (Some(file), Some(dash)) = (segments.next(), segments.next()) else {
@@ -888,30 +888,30 @@ pub fn is_tarball_path(asset_path: &str) -> bool {
     dash == "-" && file.ends_with(".tgz")
 }
 
-/// La configuracion de un repositorio npm.
+/// The configuration of an npm repository.
 ///
-/// Vive bajo la clave `npm` de los ajustes del repositorio:
+/// It lives under the `npm` key of the repository settings:
 ///
 /// ```json
 /// { "npm": { "scopes": ["@acme"] } }
 /// ```
 ///
-/// Sin `scopes`, un hosted admite cualquier paquete. Con `scopes`, solo los
-/// que cuelgan de uno de esos alcances: es la forma npm de separar quien
-/// puede publicar que (un registro y un token por alcance).
+/// Without `scopes`, a hosted repository admits any package. With `scopes`, only those
+/// hanging from one of those scopes: it is the npm way of separating who
+/// can publish what (one registry and one token per scope).
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct NpmConfig {
-    /// Los alcances que el repositorio admite, con su arroba.
+    /// The scopes the repository admits, with their at sign.
     #[serde(default)]
     pub scopes: Vec<String>,
 }
 
 impl NpmConfig {
-    /// La configuracion de unos ajustes de repositorio.
+    /// The configuration of some repository settings.
     ///
-    /// Sin clave `npm`, la de por defecto; una clave que no se entiende es un
-    /// error, nunca la de por defecto.
+    /// Without an `npm` key, the default one; a key that is not understood is an
+    /// error, never the default.
     pub fn of_settings(settings: &Value) -> Result<Self, String> {
         let Some(value) = settings.get("npm") else {
             return Ok(Self::default());
@@ -936,7 +936,7 @@ impl NpmConfig {
         Ok(config)
     }
 
-    /// Si el repositorio admite publicar ese paquete.
+    /// Whether the repository admits publishing that package.
     pub fn admits(&self, name: &PackageName) -> bool {
         if self.scopes.is_empty() {
             return true;
@@ -961,7 +961,7 @@ mod tests {
     }
 
     fn b64(text: &str) -> Option<Vec<u8>> {
-        // Un codec de pruebas: el servicio inyecta el de verdad.
+        // A test codec: the service injects the real one.
         Some(text.as_bytes().to_vec())
     }
 
@@ -993,7 +993,7 @@ mod tests {
                 "{bad:?} must be refused"
             );
         }
-        // Un proxy admite lo que el upstream ya publico: nombres antiguos.
+        // A proxy admits what the upstream already published: old names.
         assert!(PackageName::parse("JSONStream", false).is_ok());
         assert!(PackageName::parse(&"a".repeat(215), false).is_err());
     }
@@ -1105,19 +1105,19 @@ mod tests {
         assert_eq!(new.tags, vec!["latest".to_string()]);
         assert_eq!(new.attachment.bytes, b"tarball");
 
-        // Otro paquete que el de la ruta.
+        // A package other than the route's.
         assert!(parse_update(&name("other"), &publish_doc("1.0.0", "t"), &b64).is_err());
-        // Un adjunto que no se llama como la version.
+        // An attachment that is not named like the version.
         let mut doc: Value = serde_json::from_slice(&publish_doc("1.0.0", "t")).unwrap();
         doc["_attachments"] = json!({"widget-9.9.9.tgz": {"data": "t"}});
         assert!(parse_update(&widget, &serde_json::to_vec(&doc).unwrap(), &b64).is_err());
-        // Una version que no es semver.
+        // A version that is not semver.
         assert!(parse_update(&widget, &publish_doc("latest", "t"), &b64).is_err());
-        // Un tag que apunta a otra version.
+        // A tag pointing at another version.
         let mut doc: Value = serde_json::from_slice(&publish_doc("1.0.0", "t")).unwrap();
         doc["dist-tags"] = json!({"latest": "0.0.1"});
         assert!(parse_update(&widget, &serde_json::to_vec(&doc).unwrap(), &b64).is_err());
-        // Un adjunto vacio y un cuerpo que no es JSON.
+        // An empty attachment and a body that is not JSON.
         assert!(parse_update(&widget, &publish_doc("1.0.0", ""), &b64).is_err());
         assert!(parse_update(&widget, b"not json", &b64).is_err());
     }
@@ -1133,7 +1133,7 @@ mod tests {
             }))
             .unwrap()
         };
-        // El cliente real manda el nombre completo; el registro guarda la base.
+        // The real client sends the full name; the registry stores the base.
         for file in ["@acme/widget-1.0.0.tgz", "widget-1.0.0.tgz"] {
             let Update::Publish(new) = parse_update(&scoped, &document(file), &b64).unwrap() else {
                 panic!("a publication");
@@ -1241,7 +1241,7 @@ mod tests {
             apply_metadata(&mut packument, &metadata(json!({})), "t"),
             Err(NpmError::Unpublish)
         );
-        // Anadir una version sin tarball tampoco se admite.
+        // Adding a version without a tarball is not admitted either.
         let extra = metadata(json!({"1.0.0": {}, "2.0.0": {}}));
         assert!(matches!(
             apply_metadata(&mut packument, &extra, "t"),
@@ -1263,7 +1263,7 @@ mod tests {
             packument["versions"]["1.0.0"]["dist"]["tarball"],
             "http://127.0.0.1:8080/npm/npm-all/widget/-/widget-1.0.0.tgz"
         );
-        // Un packument de un upstream: su URL se sustituye por la nuestra.
+        // A packument from an upstream: its URL is replaced by ours.
         let mut upstream = json!({
             "name": "@acme/lib",
             "versions": {"2.0.0": {"dist": {"tarball": "https://registry.npmjs.org/@acme/lib/-/lib-2.0.0.tgz"}}}
@@ -1272,7 +1272,7 @@ mod tests {
         .unwrap()
         .clone();
         rewrite_tarballs(&mut upstream, "@acme/lib", "http://hodei/npm/proxy");
-        // El nombre del documento no decide la ruta.
+        // The document's name does not decide the route.
         let mut hostile = json!({
             "name": "a/../../otro",
             "versions": {"2.0.0": {"dist": {"tarball": "https://x/y/-/lib-2.0.0.tgz"}}}

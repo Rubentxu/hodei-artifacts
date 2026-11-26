@@ -1,17 +1,17 @@
-//! El arnes de LocalStack para las pruebas de integracion S3.
+//! The LocalStack harness for the S3 integration tests.
 //!
-//! Un contenedor compartido por todas las pruebas de este crate: se
-//! reutiliza si ya esta vivo y se levanta si no. La imagen esta fijada a
-//! 4.14, la ultima comunitaria que no pide token de licencias. El puerto
-//! es efimero y se descubre con `docker inspect`; el estado no se toca de
-//! una prueba a otra porque cada prueba usa su propio cubo, único por
-//! proceso.
+//! One container shared by all the tests of this crate: it is
+//! reused if it is already alive and started if not. The image is pinned to
+//! 4.14, the last community one that does not ask for a license token. The port
+//! is ephemeral and discovered with `docker inspect`; state is not shared from
+//! one test to another because each test uses its own bucket, unique per
+//! process.
 //!
-//! Esto sustituye al emulador de AWS en modo embebido: su grafo compila
-//! RustPython (roto en esta maquina) y unos trescientos crates de
-//! servicios que agotan la mesa de procesos del compilador. Aqui el SDK
-//! es el mismo que en produccion y el protocolo S3 lo sirve un servidor
-//! real por red localhost.
+//! This replaces the AWS emulator in embedded mode: its graph compiles
+//! RustPython (broken on this machine) and some three hundred service
+//! crates that exhaust the compiler's process table. Here the SDK
+//! is the same as in production and the S3 protocol is served by a real
+//! server over the localhost network.
 
 use std::io::{Read, Write};
 use std::process::Command;
@@ -23,18 +23,18 @@ use hodei_hub_s3::{S3BlobConfig, S3BlobStore};
 
 const IMAGE: &str = "localstack/localstack:4.14";
 
-/// Contra que banco corre el informe de capacidades: la etiqueta fija,
-/// que es la version del servidor de pruebas.
+/// Which bench the capabilities report runs against: the fixed tag,
+/// which is the version of the test server.
 pub const VERSION_NOTE: &str = "localstack/localstack:4.14";
 
-/// Cuanto se le da a LocalStack para servir S3 desde que se lanza o se
-/// hereda en marcha. En una maquina cargada, el arranque no cabe en un
-/// minuto: se espera el doble de lo razonable y aun se falla a la vista.
+/// How long LocalStack is given to serve S3 from when it is launched or
+/// inherited already running. On a loaded machine, startup does not fit in a
+/// minute: twice the reasonable time is awaited and it still fails in plain sight.
 const START_GRACE_SECONDS: u64 = 300;
 
-/// El nombre del contenedor compartido. `HSP116_S3_CONTAINER` lo cambia
-/// cuando dos ejecuciones de pruebas conviven en la misma maquina y no
-/// deben pisarse el servidor S3 entre sí.
+/// The name of the shared container. `HSP116_S3_CONTAINER` changes it
+/// when two test runs coexist on the same machine and must not
+/// trample each other's S3 server.
 fn container_name() -> String {
     std::env::var("HSP116_S3_CONTAINER").unwrap_or_else(|_| "hodei-hsp116-localstack".to_string())
 }
@@ -51,7 +51,7 @@ fn docker(args: &[&str]) -> Result<String, String> {
     }
 }
 
-/// El puerto efimero del contenedor que ya estaba, si responde al health.
+/// The ephemeral port of the container that was already there, if it answers the health check.
 fn a_healthy_port() -> Option<String> {
     let name = container_name();
     let port = docker(&[
@@ -68,7 +68,7 @@ fn a_healthy_port() -> Option<String> {
     Some(port.to_string())
 }
 
-/// Un GET crudo al health: sin SDK ni dependencias de HTTP de prueba.
+/// A raw GET to the health endpoint: without an SDK or HTTP test dependencies.
 fn s3_is_alive(address: &str) -> bool {
     let Ok(mut stream) = std::net::TcpStream::connect(address) else {
         return false;
@@ -86,19 +86,19 @@ fn s3_is_alive(address: &str) -> bool {
     body.contains(r#""s3":"available""#) || body.contains(r#""s3":"running""#)
 }
 
-/// El arnes se levanta una sola vez por proceso: si no, los hilos de un
-/// mismo binario de pruebas se pisan con `rm -f` el contenedor que otro
-/// acaba de lanzar.
+/// The harness is started only once per process: otherwise the threads of one
+/// test binary trample each other with `rm -f` on the container another one
+/// has just launched.
 static SHARED_ENDPOINT: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
 
-/// Si el contenedor existe y esta en ejecucion, sea nuestro o de otro.
+/// Whether the container exists and is running, whether ours or someone else's.
 fn the_container_is_running(name: &str) -> bool {
     docker(&["inspect", "-f", "{{.State.Running}}", name])
         .map(|state| state.trim() == "true")
         .unwrap_or(false)
 }
 
-/// Espera a que haya un puerto sano, sondeando cada dos segundos.
+/// Waits for a healthy port to appear, polling every two seconds.
 fn a_healthy_port_within(seconds: u64) -> Option<String> {
     for _ in 0..(seconds / 2) {
         if let Some(port) = a_healthy_port() {
@@ -109,7 +109,7 @@ fn a_healthy_port_within(seconds: u64) -> Option<String> {
     a_healthy_port()
 }
 
-/// El endpoint de S3 del contenedor compartido, levantandolo si hace falta.
+/// The S3 endpoint of the shared container, starting it if needed.
 pub async fn the_endpoint() -> String {
     SHARED_ENDPOINT
         .get_or_init(|| async {
@@ -118,11 +118,11 @@ pub async fn the_endpoint() -> String {
                 if let Some(port) = a_healthy_port() {
                     return Ok::<_, String>(port);
                 }
-                // Un contenedor en marcha se respeta aunque aun no sirva:
-                // puede estar arrancando (el nuestro o el de otra prueba en
-                // paralelo); solo se sustituye el que ya no vive. En esta
-                // maquina, con carga, LocalStack tarda mas de lo que tarda
-                // un portero impaciente en declarar el muerto.
+                // A running container is respected even if it does not serve yet:
+                // it may be starting up (ours or another test's running in
+                // parallel); only one that is no longer alive is replaced. On this
+                // machine, under load, LocalStack takes longer than an impatient doorman
+                // takes to declare it dead.
                 if !the_container_is_running(&name) {
                     let _ = docker(&["rm", "-f", &name]);
                     docker(&[
@@ -149,8 +149,8 @@ pub async fn the_endpoint() -> String {
         .await
         .clone()
 }
-/// Un cliente S3 contra el contenedor. Las credenciales son las fijas de
-/// LocalStack: no son un secreto, y ni siquiera pasan por el almacen.
+/// An S3 client against the container. The credentials are LocalStack's fixed
+/// ones: they are not a secret, and do not even go through the store.
 pub async fn a_client() -> Client {
     let endpoint = the_endpoint().await;
     let credentials = Credentials::from_keys("test", "test", None);
@@ -167,13 +167,13 @@ pub async fn a_client() -> Client {
     Client::from_conf(s3_config)
 }
 
-/// El nombre de cubo, unico por proceso: dos ejecuciones paralelas no se
-/// pisan el estado y un listado empieza de verdad vacio.
+/// The bucket name, unique per process: two parallel runs do not
+/// trample each other's state and a listing starts truly empty.
 pub fn a_unique_bucket(prefix: &str) -> String {
     format!("hsp116-{prefix}-{}", std::process::id())
 }
 
-/// Crear el cubo, tolerando el que ya exista por otra ejecucion.
+/// Create the bucket, tolerating one that already exists from another run.
 pub async fn a_bucket(client: &Client, name: &str) {
     match client.create_bucket().bucket(name).send().await {
         Ok(_) => {}
@@ -189,9 +189,9 @@ pub async fn a_bucket(client: &Client, name: &str) {
     }
 }
 
-/// Un almacen S3 sobre un cubo recien creado del contenedor compartido.
-/// Levantarlo dos veces sobre el mismo cubo es el restart: el estado
-/// vive en el servidor, no en el proceso.
+/// An S3 store over a freshly created bucket of the shared container.
+/// Starting it twice over the same bucket is the restart: the state
+/// lives on the server, not in the process.
 pub async fn a_store(bucket: &str) -> S3BlobStore {
     let client = a_client().await;
     a_bucket(&client, bucket).await;

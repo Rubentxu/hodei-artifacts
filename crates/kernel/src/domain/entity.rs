@@ -1,17 +1,17 @@
-//! Traits y tipos para describir entidades del dominio de forma agnóstica
+//! Traits and types to describe domain entities in an agnostic way
 //!
-//! Este módulo define las abstracciones fundamentales para que las entidades
-//! de dominio puedan integrarse con el sistema de políticas sin acoplarse a
-//! ninguna implementación específica (como Cedar).
+//! This module defines the fundamental abstractions so that domain
+//! entities can integrate with the policy system without coupling to
+//! any specific implementation (such as Cedar).
 //!
-//! # Principios de Diseño
+//! # Design Principles
 //!
-//! - **Agnóstico**: Sin dependencias de motores de políticas externos
-//! - **Tipo seguro**: Usa Value Objects en lugar de strings primitivos
-//! - **Metadata y Runtime**: Separa información de tipo (metadata) de instancias
-//! - **Extensible**: Permite que bounded contexts definan sus propias entidades
+//! - **Agnostic**: No dependencies on external policy engines
+//! - **Type safe**: Uses Value Objects instead of primitive strings
+//! - **Metadata and Runtime**: Separates type information (metadata) from instances
+//! - **Extensible**: Allows bounded contexts to define their own entities
 //!
-//! # Ejemplos
+//! # Examples
 //!
 //! ```ignore
 //! use kernel::domain::{HodeiEntityType, HodeiEntity, AttributeValue};
@@ -52,80 +52,80 @@ use crate::domain::{AttributeName, AttributeValue, Hrn, ResourceTypeName, Servic
 use std::collections::HashMap;
 
 // ============================================================================
-// AttributeType - Metadata de tipos de atributos
+// AttributeType - Attribute type metadata
 // ============================================================================
 
-/// Describe el tipo de un atributo para metadatos de esquema
+/// Describes the type of an attribute for schema metadata
 ///
-/// Este enum se usa para declarar qué tipos de atributos soporta una entidad,
-/// permitiendo validación y generación de esquemas de forma agnóstica.
+/// This enum is used to declare which attribute types an entity supports,
+/// enabling validation and schema generation in an agnostic way.
 ///
-/// # Ejemplos
+/// # Examples
 ///
 /// ```
 /// use kernel::domain::AttributeType;
 ///
-/// // Primitivos
+/// // Primitives
 /// let string_type = AttributeType::String;
 /// let long_type = AttributeType::Long;
 /// let bool_type = AttributeType::Bool;
 ///
-/// // Colecciones
+/// // Collections
 /// let string_set = AttributeType::Set(Box::new(AttributeType::String));
 ///
-/// // Referencias a entidades
+/// // Entity references
 /// let user_ref = AttributeType::EntityRef("User");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AttributeType {
-    /// Tipo booleano
+    /// Boolean type
     Bool,
-    /// Entero de 64 bits
+    /// 64-bit integer
     Long,
-    /// Cadena de texto
+    /// Text string
     String,
-    /// Conjunto (Set) de elementos del tipo especificado
+    /// Set of elements of the specified type
     Set(Box<AttributeType>),
-    /// Registro (Record/Map) con campos tipados
-    /// El HashMap contiene el nombre del campo y su tipo
+    /// Record (Record/Map) with typed fields
+    /// The HashMap holds the field name and its type
     Record(HashMap<String, AttributeType>),
-    /// Referencia a otra entidad por su tipo
-    /// El &'static str debe ser el nombre del tipo de entidad (ej: "User", "Group")
+    /// Reference to another entity by its type
+    /// The &'static str must be the entity type name (e.g. "User", "Group")
     EntityRef(&'static str),
 }
 
 impl AttributeType {
-    /// Crea un AttributeType::Bool
+    /// Creates an AttributeType::Bool
     pub const fn bool() -> Self {
         Self::Bool
     }
 
-    /// Crea un AttributeType::Long
+    /// Creates an AttributeType::Long
     pub const fn long() -> Self {
         Self::Long
     }
 
-    /// Crea un AttributeType::String
+    /// Creates an AttributeType::String
     pub const fn string() -> Self {
         Self::String
     }
 
-    /// Crea un AttributeType::Set
+    /// Creates an AttributeType::Set
     pub fn set(inner: AttributeType) -> Self {
         Self::Set(Box::new(inner))
     }
 
-    /// Crea un AttributeType::Record
+    /// Creates an AttributeType::Record
     pub fn record(fields: HashMap<String, AttributeType>) -> Self {
         Self::Record(fields)
     }
 
-    /// Crea un AttributeType::EntityRef
+    /// Creates an AttributeType::EntityRef
     pub const fn entity_ref(entity_type: &'static str) -> Self {
         Self::EntityRef(entity_type)
     }
 
-    /// Retorna una representación en string del tipo (útil para debugging y schemas)
+    /// Returns a string representation of the type (useful for debugging and schemas)
     pub fn type_name(&self) -> String {
         match self {
             Self::Bool => "Bool".to_string(),
@@ -137,7 +137,7 @@ impl AttributeType {
         }
     }
 
-    /// Retorna la declaración de tipo para el schema de Cedar
+    /// Returns the type declaration for the Cedar schema
     pub fn to_cedar_decl(&self) -> String {
         match self {
             Self::Bool => "Bool".to_string(),
@@ -151,21 +151,21 @@ impl AttributeType {
 }
 
 // ============================================================================
-// HodeiEntityType - Metadata a nivel de tipo
+// HodeiEntityType - Type-level metadata
 // ============================================================================
 
-/// Metadata a nivel de tipo para entidades del dominio
+/// Type-level metadata for domain entities
 ///
-/// Este trait debe implementarse en el tipo (struct) de la entidad, no en
-/// instancias. Proporciona información estática sobre la entidad que puede
-/// usarse para generar esquemas, validar políticas, etc.
+/// This trait must be implemented on the entity's type (struct), not on
+/// instances. It provides static information about the entity that can be
+/// used to generate schemas, validate policies, etc.
 ///
-/// # Implementación
+/// # Implementation
 ///
-/// Todos los métodos son asociados (no requieren `self`), ya que describen
-/// el tipo en sí, no instancias particulares.
+/// All methods are associated (they do not require `self`), since they describe
+/// the type itself, not particular instances.
 ///
-/// # Ejemplo
+/// # Example
 ///
 /// ```ignore
 /// impl HodeiEntityType for User {
@@ -178,7 +178,7 @@ impl AttributeType {
 ///     }
 ///
 ///     fn is_principal_type() -> bool {
-///         true // Los usuarios pueden ser principals
+///         true // Users can be principals
 ///     }
 ///
 ///     fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
@@ -190,22 +190,22 @@ impl AttributeType {
 /// }
 /// ```
 pub trait HodeiEntityType {
-    /// Nombre del servicio (namespace lógico) al que pertenece esta entidad
+    /// Name of the service (logical namespace) this entity belongs to
     ///
-    /// Por ejemplo: "iam", "organizations", "supply-chain"
+    /// For example: "iam", "organizations", "supply-chain"
     fn service_name() -> ServiceName;
 
-    /// Nombre del tipo de recurso
+    /// Name of the resource type
     ///
-    /// Por ejemplo: "User", "Group", "Account", "ServiceControlPolicy"
+    /// For example: "User", "Group", "Account", "ServiceControlPolicy"
     fn resource_type_name() -> ResourceTypeName;
 
-    /// Nombre completo del tipo de entidad (Servicio::Tipo)
+    /// Full name of the entity type (Service::Type)
     ///
-    /// Este método tiene una implementación por defecto que combina
-    /// el service_name y resource_type_name.
+    /// This method has a default implementation that combines
+    /// service_name and resource_type_name.
     ///
-    /// Retorna un string como "Iam::User" o "Organizations::Account"
+    /// Returns a string such as "Iam::User" or "Organizations::Account"
     fn entity_type_name() -> String {
         let service = Self::service_name();
         let resource = Self::resource_type_name();
@@ -213,49 +213,49 @@ pub trait HodeiEntityType {
         format!("{}::{}", namespace, resource.as_str())
     }
 
-    /// Indica si este tipo puede actuar como Principal en políticas
+    /// Indicates whether this type can act as a Principal in policies
     ///
-    /// Un principal es la entidad que realiza una acción (ej: User, ServiceAccount)
+    /// A principal is the entity that performs an action (e.g. User, ServiceAccount)
     fn is_principal_type() -> bool {
         false
     }
 
-    /// Indica si este tipo puede actuar como Resource en políticas
+    /// Indicates whether this type can act as a Resource in policies
     ///
-    /// Un resource es la entidad sobre la que se realiza la acción
+    /// A resource is the entity on which the action is performed
     fn is_resource_type() -> bool {
         true
     }
 
-    /// Esquema de atributos que declara esta entidad
+    /// Attribute schema declared by this entity
     ///
-    /// Retorna una lista de pares (nombre_atributo, tipo_atributo) que
-    /// describe los atributos que las instancias de este tipo pueden tener.
+    /// Returns a list of (attribute_name, attribute_type) pairs that
+    /// describes the attributes instances of this type may have.
     ///
-    /// Esto es útil para validación y generación de esquemas.
+    /// This is useful for validation and schema generation.
     fn attributes_schema() -> Vec<(AttributeName, AttributeType)> {
         Vec::new()
     }
 
-    /// Tipos de entidades que pueden ser parents (jerarquía)
+    /// Entity types that can be parents (hierarchy)
     ///
-    /// Por ejemplo, un User puede tener como parent un Group.
-    /// Retorna una lista de nombres de tipos de entidad.
+    /// For example, a User can have a Group as parent.
+    /// Returns a list of entity type names.
     fn parent_types() -> Vec<String> {
         Vec::new()
     }
 }
 
 // ============================================================================
-// HodeiEntity - Instancia runtime de una entidad
+// HodeiEntity - Runtime instance of an entity
 // ============================================================================
 
-/// Representa una instancia concreta (runtime) de una entidad del dominio
+/// Represents a concrete (runtime) instance of a domain entity
 ///
-/// Este trait se implementa en instancias de entidades y proporciona
-/// acceso a sus datos en runtime.
+/// This trait is implemented on entity instances and provides
+/// access to their data at runtime.
 ///
-/// # Ejemplo
+/// # Example
 ///
 /// ```ignore
 /// impl HodeiEntity for User {
@@ -277,38 +277,38 @@ pub trait HodeiEntityType {
 ///     }
 ///
 ///     fn parent_hrns(&self) -> Vec<Hrn> {
-///         // Retornar HRNs de los grupos a los que pertenece
+///         // Return the HRNs of the groups it belongs to
 ///         self.group_hrns.clone()
 ///     }
 /// }
 /// ```
 pub trait HodeiEntity: std::fmt::Debug + Send + Sync {
-    /// Retorna el HRN (Hodei Resource Name) canónico de esta entidad
+    /// Returns the canonical HRN (Hodei Resource Name) of this entity
     ///
-    /// El HRN es el identificador único y global de la entidad.
+    /// The HRN is the unique, global identifier of the entity.
     fn hrn(&self) -> &Hrn;
 
-    /// Retorna los atributos de esta entidad como mapa clave-valor
+    /// Returns this entity's attributes as a key-value map
     ///
-    /// Los atributos son propiedades adicionales de la entidad que pueden
-    /// usarse en la evaluación de políticas.
+    /// Attributes are additional properties of the entity that may
+    /// be used in policy evaluation.
     fn attributes(&self) -> HashMap<AttributeName, AttributeValue>;
 
-    /// Retorna los HRNs de las entidades parent (jerarquía/membership)
+    /// Returns the HRNs of the parent entities (hierarchy/membership)
     ///
-    /// Por ejemplo, un User puede retornar los HRNs de los Groups a los que pertenece.
-    /// Por defecto retorna un vector vacío (sin parents).
+    /// For example, a User may return the HRNs of the Groups it belongs to.
+    /// By default returns an empty vector (no parents).
     fn parent_hrns(&self) -> Vec<Hrn> {
         Vec::new()
     }
 
-    /// Retorna los atributos de esta entidad en formato compatible con Cedar
+    /// Returns this entity's attributes in a Cedar-compatible format
     ///
-    /// Esta es una extensión opcional del trait que permite a las entidades
-    /// proporcionar sus atributos en un formato que Cedar puede entender directamente.
-    /// Por defecto, convierte los atributos estándar a un formato compatible.
+    /// This is an optional extension of the trait that allows entities to
+    /// provide their attributes in a format Cedar can understand directly.
+    /// By default, it converts the standard attributes to a compatible format.
     fn cedar_attributes(&self) -> Option<Vec<(String, crate::domain::AttributeType)>> {
-        // Convertir los atributos estándar a formato Cedar
+        // Convert the standard attributes to Cedar format
         let mut cedar_attrs = Vec::new();
         for (name, value) in self.attributes() {
             let cedar_type = match value {
@@ -321,7 +321,7 @@ pub trait HodeiEntity: std::fmt::Debug + Send + Sync {
                             AttributeValue::String(_) => crate::domain::AttributeType::string(),
                             AttributeValue::Long(_) => crate::domain::AttributeType::long(),
                             AttributeValue::Bool(_) => crate::domain::AttributeType::bool(),
-                            AttributeValue::Set(_) => crate::domain::AttributeType::string(), // Anidado, usar String
+                            AttributeValue::Set(_) => crate::domain::AttributeType::string(), // Nested, use String
                             AttributeValue::Record(_) => crate::domain::AttributeType::string(),
                             AttributeValue::EntityRef(_) => crate::domain::AttributeType::string(),
                         };
@@ -330,8 +330,8 @@ pub trait HodeiEntity: std::fmt::Debug + Send + Sync {
                         crate::domain::AttributeType::set(crate::domain::AttributeType::string())
                     }
                 }
-                AttributeValue::Record(_) => crate::domain::AttributeType::string(), // Simplificado
-                AttributeValue::EntityRef(_) => crate::domain::AttributeType::string(), // Simplificado
+                AttributeValue::Record(_) => crate::domain::AttributeType::string(), // Simplified
+                AttributeValue::EntityRef(_) => crate::domain::AttributeType::string(), // Simplified
             };
             cedar_attrs.push((name.as_str().to_string(), cedar_type));
         }
@@ -340,32 +340,32 @@ pub trait HodeiEntity: std::fmt::Debug + Send + Sync {
 }
 
 // ============================================================================
-// Marker Traits para roles en políticas
+// Marker Traits for policy roles
 // ============================================================================
 
-/// Marker trait para entidades que pueden actuar como Principal
+/// Marker trait for entities that can act as Principal
 ///
-/// Un Principal es la entidad que realiza una acción (ej: User, ServiceAccount).
-/// Este trait requiere que la entidad implemente tanto `HodeiEntity` (runtime)
-/// como `HodeiEntityType` (metadata).
+/// A Principal is the entity that performs an action (e.g. User, ServiceAccount).
+/// This trait requires the entity to implement both `HodeiEntity` (runtime)
+/// and `HodeiEntityType` (metadata).
 pub trait Principal: HodeiEntity + HodeiEntityType {}
 
-/// Marker trait para entidades que pueden actuar como Resource
+/// Marker trait for entities that can act as Resource
 ///
-/// Un Resource es la entidad sobre la que se realiza una acción.
-/// Este trait requiere que la entidad implemente tanto `HodeiEntity` (runtime)
-/// como `HodeiEntityType` (metadata).
+/// A Resource is the entity on which an action is performed.
+/// This trait requires the entity to implement both `HodeiEntity` (runtime)
+/// and `HodeiEntityType` (metadata).
 pub trait Resource: HodeiEntity + HodeiEntityType {}
 
 // ============================================================================
-// ActionTrait - Define acciones del dominio
+// ActionTrait - Defines domain actions
 // ============================================================================
 
-/// Define una acción que puede realizarse en el sistema
+/// Defines an action that can be performed in the system
 ///
-/// Las acciones son operaciones que un Principal puede realizar sobre un Resource.
+/// Actions are operations that a Principal can perform on a Resource.
 ///
-/// # Ejemplo
+/// # Example
 ///
 /// ```ignore
 /// pub struct CreateUserAction;
@@ -389,86 +389,86 @@ pub trait Resource: HodeiEntity + HodeiEntityType {}
 /// }
 /// ```
 pub trait ActionTrait {
-    /// Nombre identificador único de la acción
+    /// Unique identifying name of the action
     ///
-    /// Por ejemplo: "CreateUser", "DeleteGroup", "AttachPolicy"
+    /// For example: "CreateUser", "DeleteGroup", "AttachPolicy"
     fn name() -> &'static str;
 
-    /// Nombre del servicio al que pertenece esta acción
+    /// Name of the service this action belongs to
     fn service_name() -> ServiceName;
 
-    /// Nombre completo de la acción (`Action::"Nombre"`)
+    /// Full name of the action (`Action::"Nombre"`)
     ///
-    /// El namespace de acción es **plano**: es la forma que el schema Cedar
-    /// registrado declara sus tipos de acción y la que el motor de evaluación
-    /// construye al resolver una petición. Las tres rutas que producían antes
-    /// formas divergentes (`Iam::Action::"X"` aquí, `Action::"X"` en el motor)
-    /// producen ahora la misma.
+    /// The action namespace is **flat**: it is the form the registered Cedar
+    /// schema declares its action types with and the one the evaluation engine
+    /// builds when resolving a request. The three paths that used to produce
+    /// divergent forms (`Iam::Action::"X"` here, `Action::"X"` in the engine)
+    /// now produce the same one.
     fn action_name() -> String {
         format!("Action::\"{}\"", Self::name())
     }
 
-    /// Tipo de Principal que puede realizar esta acción
+    /// Principal type that can perform this action
     ///
-    /// Retorna el nombre completo del tipo (ej: "Iam::User")
+    /// Returns the full type name (e.g. "Iam::User")
     fn applies_to_principal() -> String;
 
-    /// Tipo de Resource sobre el que se puede realizar esta acción
+    /// Resource type on which this action can be performed
     ///
-    /// Retorna el nombre completo del tipo (ej: "Iam::Group")
+    /// Returns the full type name (e.g. "Iam::Group")
     fn applies_to_resource() -> String;
 }
 
 // ============================================================================
-// PolicyStorage - Abstracción de persistencia de políticas
+// PolicyStorage - Policy persistence abstraction
 // ============================================================================
 
-/// Abstracción para almacenar y recuperar políticas
+/// Abstraction for storing and retrieving policies
 ///
-/// Este trait define la interfaz para persistir políticas como strings.
-/// Las políticas se almacenan en su formato textual (ej: Cedar DSL, Rego, etc.)
-/// sin acoplar el kernel a ningún formato específico.
+/// This trait defines the interface to persist policies as strings.
+/// Policies are stored in their textual format (e.g. Cedar DSL, Rego, etc.)
+/// without coupling the kernel to any specific format.
 #[async_trait::async_trait]
 pub trait PolicyStorage: Send + Sync {
-    /// Guarda una política
+    /// Saves a policy
     ///
-    /// # Parámetros
-    /// - `id`: Identificador único de la política
-    /// - `policy_text`: El texto de la política en su formato DSL
+    /// # Parameters
+    /// - `id`: Unique identifier of the policy
+    /// - `policy_text`: The policy text in its DSL format
     async fn save_policy(&self, id: &str, policy_text: &str) -> Result<(), PolicyStorageError>;
 
-    /// Elimina una política por su ID
+    /// Deletes a policy by its ID
     ///
-    /// Retorna `true` si la política existía y fue eliminada, `false` si no existía.
+    /// Returns `true` if the policy existed and was deleted, `false` if it did not exist.
     async fn delete_policy(&self, id: &str) -> Result<bool, PolicyStorageError>;
 
-    /// Recupera una política por su ID
+    /// Retrieves a policy by its ID
     ///
-    /// Retorna `None` si la política no existe.
+    /// Returns `None` if the policy does not exist.
     async fn get_policy_by_id(&self, id: &str) -> Result<Option<String>, PolicyStorageError>;
 
-    /// Carga todas las políticas almacenadas
+    /// Loads all stored policies
     ///
-    /// Retorna una lista de tuplas (id, policy_text)
+    /// Returns a list of (id, policy_text) tuples
     async fn load_all_policies(&self) -> Result<Vec<(String, String)>, PolicyStorageError>;
 }
 
-/// Errores de la capa de persistencia de políticas
+/// Persistence layer errors for policies
 #[derive(thiserror::Error, Debug)]
 pub enum PolicyStorageError {
-    /// Error genérico del proveedor de almacenamiento
+    /// Generic storage provider error
     #[error("Underlying storage error: {0}")]
     ProviderError(#[from] Box<dyn std::error::Error + Send + Sync>),
 
-    /// Error al parsear una política
+    /// Error parsing a policy
     #[error("Policy parsing error: {0}")]
     ParsingError(String),
 
-    /// Política no encontrada
+    /// Policy not found
     #[error("Policy not found: {0}")]
     PolicyNotFound(String),
 
-    /// Error de validación
+    /// Validation error
     #[error("Validation error: {0}")]
     ValidationError(String),
 }
@@ -482,7 +482,7 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // Tests de AttributeType
+    // AttributeType tests
     // ========================================================================
 
     #[test]
@@ -511,7 +511,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de HodeiEntityType
+    // HodeiEntityType tests
     // ========================================================================
 
     struct TestUser;
@@ -562,7 +562,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de HodeiEntity
+    // HodeiEntity tests
     // ========================================================================
 
     #[derive(Debug)]
@@ -637,7 +637,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de ActionTrait
+    // ActionTrait tests
     // ========================================================================
 
     struct CreateUserAction;
@@ -679,7 +679,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests de PolicyStorage
+    // PolicyStorage tests
     // ========================================================================
 
     struct InMemoryPolicyStorage {
@@ -752,7 +752,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests adicionales para AttributeType::Record
+    // Additional tests for AttributeType::Record
     // ========================================================================
 
     #[test]
@@ -805,7 +805,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests para parent_types en HodeiEntityType
+    // Tests for parent_types in HodeiEntityType
     // ========================================================================
 
     struct TestUserWithParents;
@@ -843,7 +843,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests para parent_hrns en HodeiEntity
+    // Tests for parent_hrns in HodeiEntity
     // ========================================================================
 
     #[derive(Debug)]
@@ -930,7 +930,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Tests para Principal y Resource marker traits
+    // Tests for Principal and Resource marker traits
     // ========================================================================
 
     #[derive(Debug)]
@@ -1005,7 +1005,7 @@ mod tests {
             ),
         };
 
-        // Verificar que implementa HodeiEntity
+        // Verify that it implements HodeiEntity
         assert_eq!(principal.hrn().resource_id(), "test-principal");
         assert!(TestPrincipal::is_principal_type());
     }
@@ -1020,18 +1020,18 @@ mod tests {
             ),
         };
 
-        // Verificar que implementa HodeiEntity
+        // Verify that it implements HodeiEntity
         assert_eq!(resource.hrn().resource_id(), "test-resource");
         assert!(TestResource::is_resource_type());
     }
 
     // ========================================================================
-    // Tests para is_resource_type con valor por defecto
+    // Tests for is_resource_type with default value
     // ========================================================================
 
     #[test]
     fn entity_type_is_resource_by_default() {
-        // TestUser no sobrescribe is_resource_type, debería ser true por defecto
+        // TestUser does not override is_resource_type, should be true by default
         assert!(TestUser::is_resource_type());
     }
 
@@ -1049,14 +1049,14 @@ mod tests {
             }
         }
 
-        // is_principal_type() debería ser false por defecto
+        // is_principal_type() should be false by default
         assert!(!DefaultEntity::is_principal_type());
-        // is_resource_type() debería ser true por defecto
+        // is_resource_type() should be true by default
         assert!(DefaultEntity::is_resource_type());
     }
 
     // ========================================================================
-    // Tests adicionales para PolicyStorage con errores
+    // Additional tests for PolicyStorage with errors
     // ========================================================================
 
     struct FailingPolicyStorage;
@@ -1162,19 +1162,19 @@ mod tests {
     async fn policy_storage_update_existing() {
         let storage = InMemoryPolicyStorage::new();
 
-        // Guardar política inicial
+        // Save initial policy
         storage.save_policy("p1", "version 1").await.unwrap();
         let v1 = storage.get_policy_by_id("p1").await.unwrap();
         assert_eq!(v1, Some("version 1".to_string()));
 
-        // Actualizar con nueva versión
+        // Update with new version
         storage.save_policy("p1", "version 2").await.unwrap();
         let v2 = storage.get_policy_by_id("p1").await.unwrap();
         assert_eq!(v2, Some("version 2".to_string()));
     }
 
     // ========================================================================
-    // Tests para attributes_schema por defecto
+    // Tests for default attributes_schema
     // ========================================================================
 
     #[test]

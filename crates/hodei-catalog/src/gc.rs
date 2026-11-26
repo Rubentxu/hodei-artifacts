@@ -1,19 +1,19 @@
-//! El censo del contenido y el libro de la recoleccion.
+//! The content census and the collection ledger.
 //!
-//! El catalogo es la unica fuente de **raices**: lo que dice que un blob
-//! esta vivo es una fila real (un asset, una referencia, una version), no
-//! un contador. Este modulo define lo que el recolector lee y escribe, y
-//! no decide nada: quien decide es el plan del recolector, con estos
-//! datos.
+//! The catalog is the only source of **roots**: what says a blob
+//! is alive is a real row (an asset, a reference, a version), not
+//! a counter. This module defines what the collector reads and writes, and
+//! decides nothing: whoever decides is the collector's plan, with this
+//! data.
 //!
-//! # Lo que el libro guarda
+//! # What the ledger keeps
 //!
-//! - Los **holds**: retenciones manuales (legal hold) sobre un digest, un
-//!   repositorio o una cuenta. Pueden caducar.
-//! - Las **pasadas**: la marca durable de una recoleccion. Una pasada
-//!   marcada y no completada es lo que se reanuda tras un reinicio.
-//! - Los **borrados**: el rastro de cada blob que se borro, con quien lo
-//!   pidio y en que pasada.
+//! - The **holds**: manual retentions (legal hold) over a digest, a
+//!   repository or an account. They can expire.
+//! - The **runs**: the durable mark of a collection. A run
+//!   marked and not completed is what resumes after a restart.
+//! - The **deletions**: the trace of each blob that was deleted, with who
+//!   requested it and in which run.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -23,22 +23,22 @@ use std::time::Duration;
 
 use crate::CatalogError;
 
-/// De que fila del catalogo sale una raiz.
+/// Which catalog row a root comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RootKind {
-    /// La fila del asset: la ruta apunta a este contenido.
+    /// The asset row: the path points to this content.
     Asset,
-    /// La referencia al blob que la ruta sirve ahora.
+    /// The reference to the blob the path now serves.
     Reference,
-    /// La version publicada: conserva el digest aunque el asset se mueva.
+    /// The published version: it keeps the digest even if the asset moves.
     Version,
-    /// El `subject` de un manifiesto: un referrer cuelga de este digest.
+    /// The `subject` of a manifest: a referrer hangs from this digest.
     Subject,
 }
 
 impl RootKind {
-    /// El nombre estable, tal y como sale en los informes.
+    /// The stable name, as it appears in reports.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Asset => "asset",
@@ -49,80 +49,80 @@ impl RootKind {
     }
 }
 
-/// Una raiz: una fila real del catalogo que mantiene vivo un contenido.
+/// A root: a real catalog row that keeps a content alive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentRoot {
-    /// De que fila sale.
+    /// Which row it comes from.
     pub kind: RootKind,
-    /// La cuenta propietaria.
+    /// The owning account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// La ruta o la version que lo referencia.
+    /// The path or the version that references it.
     pub subject: String,
-    /// El contenido que mantiene vivo.
+    /// The content it keeps alive.
     pub digest: ContentDigest,
 }
 
-/// A que alcanza una retencion.
+/// What a hold reaches.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HoldScope {
-    /// Un contenido concreto.
+    /// A specific content.
     Digest {
-        /// El contenido retenido.
+        /// The retained content.
         digest: ContentDigest,
     },
-    /// Todo lo que referencia un repositorio.
+    /// Everything a repository references.
     Repository {
-        /// La cuenta.
+        /// The account.
         account: String,
-        /// El repositorio.
+        /// The repository.
         repository: String,
     },
-    /// Todo lo que referencia una cuenta.
+    /// Everything an account references.
     Account {
-        /// La cuenta.
+        /// The account.
         account: String,
     },
 }
 
-/// Una retencion: lo que alcanza no es reclamable mientras dure.
+/// A hold: what it reaches is not reclaimable while it lasts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentHold {
-    /// El identificador de la retencion.
+    /// The identifier of the hold.
     pub id: String,
-    /// A que alcanza.
+    /// What it reaches.
     pub scope: HoldScope,
-    /// Por que se puso.
+    /// Why it was placed.
     pub reason: String,
-    /// Quien la puso.
+    /// Who placed it.
     pub actor: String,
-    /// Cuando se puso.
+    /// When it was placed.
     pub created_at: DateTime<Utc>,
-    /// Cuando caduca. Sin fecha, dura hasta que alguien la libere.
+    /// When it expires. Without a date, it lasts until someone releases it.
     pub expires_at: Option<DateTime<Utc>>,
 }
 
 impl ContentHold {
-    /// Si la retencion sigue vigente en `now`.
+    /// Whether the hold is still in force at `now`.
     pub fn is_active(&self, now: DateTime<Utc>) -> bool {
         self.expires_at.is_none_or(|expires| expires > now)
     }
 }
 
-/// En que punto esta una pasada de recoleccion.
+/// Where a collection run stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunState {
-    /// Los candidatos estan marcados y el barrido no ha terminado.
+    /// The candidates are marked and the sweep has not finished.
     Marked,
-    /// El barrido termino.
+    /// The sweep finished.
     Swept,
 }
 
 impl RunState {
-    /// El nombre estable, tal y como va en la base.
+    /// The stable name, as it goes in the database.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Marked => "marked",
@@ -131,58 +131,58 @@ impl RunState {
     }
 }
 
-/// Un candidato marcado en una pasada.
+/// A candidate marked in a run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunCandidate {
-    /// El contenido marcado.
+    /// The marked content.
     pub digest: ContentDigest,
-    /// Los bytes que ocupa.
+    /// The bytes it occupies.
     pub length: u64,
 }
 
-/// Una pasada de recoleccion: la marca durable que sobrevive a un corte.
+/// A collection run: the durable mark that survives a cut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GcRun {
-    /// El identificador de la pasada.
+    /// The identifier of the run.
     pub id: String,
-    /// En que punto esta.
+    /// Where it stands.
     pub state: RunState,
-    /// El periodo de gracia con el que se marco, en segundos.
+    /// The grace period it was marked with, in seconds.
     pub grace_secs: u64,
-    /// Quien la lanzo.
+    /// Who launched it.
     pub actor: String,
-    /// Los candidatos marcados.
+    /// The marked candidates.
     pub candidates: Vec<RunCandidate>,
-    /// Cuando se marco.
+    /// When it was marked.
     pub marked_at: DateTime<Utc>,
-    /// Cuantos blobs se borraron.
+    /// How many blobs were deleted.
     pub deleted: u64,
-    /// Cuantos bytes se liberaron.
+    /// How many bytes were freed.
     pub bytes_freed: u64,
-    /// Cuando termino el barrido.
+    /// When the sweep finished.
     pub swept_at: Option<DateTime<Utc>>,
-    /// El scope de autoridad bajo el que se marco esta pasada (modo
-    /// coordinado, HSP-192). Vacio en el modo legacy.
+    /// The authority scope under which this run was marked (coordinated
+    /// mode, HSP-192). Empty in legacy mode.
     #[serde(default)]
     pub scope: Option<String>,
-    /// La generacion del claim que abrio la pasada. Un zombie de una
-    /// generacion anterior puede leer la marca pero no barre bajo ella.
+    /// The generation of the claim that opened the run. A zombie of an
+    /// earlier generation can read the mark but does not sweep under it.
     #[serde(default)]
     pub generation: Option<u64>,
 }
 
-/// Si el borrado ya ocurrio o solo se pretende.
+/// Whether the deletion already happened or is only intended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DeletionState {
-    /// Se anoto la intencion y todavia no se sabe si el borrado ocurrio.
+    /// The intent was recorded and it is not yet known whether the deletion happened.
     Intended,
-    /// El almacen confirmo el borrado.
+    /// The store confirmed the deletion.
     Confirmed,
 }
 
 impl DeletionState {
-    /// El nombre estable, tal y como va en la base.
+    /// The stable name, as it goes in the database.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Intended => "intended",
@@ -191,130 +191,130 @@ impl DeletionState {
     }
 }
 
-/// El rastro del borrado de un blob.
+/// The trace of a blob's deletion.
 ///
-/// Se escribe **antes** de borrar (`Intended`) y se confirma despues: un
-/// corte entre las dos cosas deja la intencion anotada, y el reinicio la
-/// confirma al ver que el blob ya no esta.
+/// It is written **before** deleting (`Intended`) and confirmed afterwards: a
+/// cut between the two leaves the intent recorded, and the restart
+/// confirms it upon seeing that the blob is no longer there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GcDeletion {
-    /// El contenido borrado.
+    /// The deleted content.
     pub digest: ContentDigest,
-    /// Los bytes que ocupaba.
+    /// The bytes it occupied.
     pub length: u64,
-    /// La pasada que lo borro.
+    /// The run that deleted it.
     pub run_id: String,
-    /// Quien lo pidio.
+    /// Who requested it.
     pub actor: String,
-    /// La cuenta verificada del que lo pidio.
+    /// The verified account of whoever requested it.
     pub account: String,
-    /// Si el borrado se confirmo.
+    /// Whether the deletion was confirmed.
     pub state: DeletionState,
-    /// Cuando se anoto.
+    /// When it was recorded.
     pub at: DateTime<Utc>,
-    /// La marca de version del object store que la pasada observo al
-    /// pretender el borrado (modo coordinado, HSP-192). Vacia en el
-    /// modo legacy.
+    /// The version mark of the object store that the run observed when
+    /// intending the deletion (coordinated mode, HSP-192). Empty in
+    /// legacy mode.
     #[serde(default)]
     pub marker: Option<String>,
 }
 
-/// Lo que una pasada dejo en cuarentena (HSP-192, AC2).
+/// What a run left in quarantine (HSP-192, AC2).
 ///
-/// La cuarentena es versionada: los bytes marcados se copian a un nombre
-/// NUEVO, nunca se reescribe la clave original. Mientras la cuarentena
-/// no este reconciliada, la clave queda **reservada**: ni el propio GC
-/// vuelve a tocarla ni la pasada la da por reclamada.
+/// Quarantine is versioned: the marked bytes are copied to a NEW
+/// name, the original key is never rewritten. While the quarantine
+/// is not reconciled, the key stays **reserved**: neither the GC itself
+/// touches it again nor does the run consider it reclaimed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Quarantined {
-    /// El contenido marcado.
+    /// The marked content.
     pub digest: ContentDigest,
-    /// Los bytes que ocupaba la version cuarentenada.
+    /// The bytes the quarantined version occupied.
     pub length: u64,
-    /// La pasada que lo cuarenteno.
+    /// The run that quarantined it.
     pub run_id: String,
-    /// La clave de cuarentena versionada donde esta el objeto.
+    /// The versioned quarantine key where the object is.
     pub quarantine_key: String,
-    /// La marca de la version cuarentenada (ETag, mtime... lo que el
-    /// almacen use para decir "esta version exacta").
+    /// The mark of the quarantined version (ETag, mtime... whatever the
+    /// store uses to say "this exact version").
     pub marker: String,
-    /// Cuando se cuarenteno.
+    /// When it was quarantined.
     pub at: DateTime<Utc>,
 }
 
-/// Un paginado de raices leido del catalogo (HSP-192, AC3).
+/// A page of roots read from the catalog (HSP-192, AC3).
 ///
-/// El censo no materializa el grafo completo: se recorre por paginas
-/// acotadas por `limit`, con el cursor de la pagina anterior. Una
-/// pagina llena de paginas `limit` avisa de que hay mas; una pagina mas
-/// corta marca el final.
+/// The census does not materialize the whole graph: it is walked in pages
+/// bounded by `limit`, with the cursor of the previous page. A
+/// page full to `limit` signals that there are more; a shorter
+/// page marks the end.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RootPage {
-    /// Las raices de esta pagina.
+    /// The roots of this page.
     pub roots: Vec<ContentRoot>,
-    /// Si el catalogo dijo que caben mas raices despues de esta pagina.
+    /// Whether the catalog said that more roots fit after this page.
     pub has_more: bool,
 }
 
-/// El claim fenced de una pasada (HSP-192, AC1).
+/// The fenced claim of a run (HSP-192, AC1).
 ///
-/// El claim es DURABLE —vive en la autoridad del grafo, no en la
-/// memoria del worker— y expira por `lease_until`. El token es la cota
-/// de fencing: TODA accion de la pasada (marcar, borrar, cuarentenar,
-/// confirmar) debe traer el token de la generacion vigente, y un token
-/// viejo se rechaza aunque el proceso del worker viejo siga vivo.
+/// The claim is DURABLE --it lives in the graph's authority, not in the
+/// worker's memory-- and expires at `lease_until`. The token is the
+/// fencing bound: EVERY action of the run (mark, delete, quarantine,
+/// confirm) must carry the token of the current generation, and an
+/// old token is rejected even if the old worker's process is still alive.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GcLease {
-    /// La generacion monotonica del claim: sube cada vez que alguien
-    /// toma el control, incluido un take-over del lease vencido.
+    /// The monotonic generation of the claim: it rises every time someone
+    /// takes control, including a take-over of an expired lease.
     pub generation: u64,
-    /// El identificador opaco de este claim: lo que el worker presenta
-    /// en cada operacion. Un worker resucitado con la generacion anterior
-    /// no puede presentar el token de la nueva.
+    /// The opaque identifier of this claim: what the worker presents
+    /// in each operation. A resurrected worker with the previous generation
+    /// cannot present the new one's token.
     pub token: String,
-    /// El instante en que el claim deja de valer.
+    /// The instant at which the claim stops being valid.
     pub lease_until: DateTime<Utc>,
 }
 
-/// El libro del recolector sobre el catalogo.
+/// The collector's ledger over the catalog.
 ///
-/// No autoriza: es administracion del almacen, igual que `initialize`. La
-/// puerta es la API de administracion del hub, que decide por ruta.
+/// It does not authorize: it is store administration, like `initialize`. The
+/// gate is the hub's administration API, which decides by route.
 ///
-/// # Coordinacion entre replicas (HSP-192)
+/// # Coordination between replicas (HSP-192)
 ///
-/// Los metodos nuevos tienen implementacion por defecto que falla
-/// cerrado: un libro sin claim fenced **no puede** participar de una
-/// pasada coordinada, y el error lo dice en el tipo. El modo legacy
-/// (`sweep`) no los usa y sigue funcionando igual.
+/// The new methods have a default implementation that fails
+/// closed: a ledger without a fenced claim **cannot** take part in a
+/// coordinated run, and the error says so in the type. The legacy mode
+/// (`sweep`) does not use them and keeps working the same.
 #[async_trait]
 pub trait ContentLedger: Send + Sync {
-    /// Todas las raices del catalogo.
+    /// All the roots of the catalog.
     ///
-    /// Si no se pueden leer todas, es un error: un censo parcial no es un
-    /// censo, y quien recolecta con el no puede distinguir lo huerfano de
-    /// lo que no se vio.
+    /// If not all of them can be read, it is an error: a partial census is not a
+    /// census, and whoever collects with it cannot tell the orphaned from
+    /// what was not seen.
     async fn content_roots(&self) -> Result<Vec<ContentRoot>, CatalogError>;
 
-    /// Las retenciones registradas, vigentes o no.
+    /// The registered holds, in force or not.
     async fn holds(&self) -> Result<Vec<ContentHold>, CatalogError>;
 
-    /// Registra una retencion. Repetir el mismo `id` la reemplaza.
+    /// Registers a hold. Repeating the same `id` replaces it.
     async fn place_hold(&self, hold: &ContentHold) -> Result<(), CatalogError>;
 
-    /// Libera una retencion. Devuelve si existia.
+    /// Releases a hold. Returns whether it existed.
     async fn release_hold(&self, id: &str) -> Result<bool, CatalogError>;
 
-    /// La pasada marcada y sin completar, si la hay.
+    /// The marked and uncompleted run, if there is one.
     async fn pending_run(&self) -> Result<Option<GcRun>, CatalogError>;
 
-    /// La ultima pasada completada, si la hay.
+    /// The last completed run, if there is one.
     async fn last_swept_run(&self) -> Result<Option<GcRun>, CatalogError>;
 
-    /// Escribe la marca de una pasada.
+    /// Writes the mark of a run.
     async fn open_run(&self, run: &GcRun) -> Result<(), CatalogError>;
 
-    /// Cierra una pasada con sus totales.
+    /// Closes a run with its totals.
     async fn complete_run(
         &self,
         run_id: &str,
@@ -323,13 +323,13 @@ pub trait ContentLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<(), CatalogError>;
 
-    /// Escribe o confirma el rastro del borrado de un blob.
+    /// Writes or confirms the trace of a blob's deletion.
     ///
-    /// Al confirmar, escribe tambien el evento de auditoria. Confirmar
-    /// dos veces no repite el evento.
+    /// On confirming, it also writes the audit event. Confirming
+    /// twice does not repeat the event.
     async fn record_deletion(&self, deletion: &GcDeletion) -> Result<(), CatalogError>;
 
-    /// El rastro del borrado de un contenido, si lo hay.
+    /// The trace of a content's deletion, if there is one.
     async fn deletion_of(&self, digest: &ContentDigest)
     -> Result<Option<GcDeletion>, CatalogError>;
 

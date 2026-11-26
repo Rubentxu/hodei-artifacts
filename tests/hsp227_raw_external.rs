@@ -1,21 +1,21 @@
-//! HSP-227: Raw externo: proxy cacheado y precedencia de grupo.
+//! HSP-227: External raw: cached proxy and group precedence.
 //!
-//! Lo que se demuestra aqui, contra el **service de verdad**:
+//! What is demonstrated here, against the **real service**:
 //!
-//! - un grupo de repositorios crudos sirve los bytes que el upstream
-//!   declaro, con su digest y sus cabeceras;
-//! - `HEAD` y `Range` contestan lo mismo que el `GET`;
-//! - cuando dos miembros tienen la misma ruta, gana el primero, y el
-//!   **rastro** dice cual fue y en que version de la configuracion del
-//!   grupo, sin mezclar las cabeceras de uno con las del otro;
-//! - el traversal se bloquea, una redireccion prohibida no se sigue, y una
-//!   lectura sin credencial no recibe contenido.
+//! - a group of raw repositories serves the bytes the upstream
+//! declared, with its digest and its headers;
+//! - `HEAD` and `Range` answer the same as `GET`;
+//! - when two members have the same path, the first wins, and the
+//! **trail** says which it was and in which version of the group's
+//! configuration, without mixing one's headers with the other's;
+//! - traversal is blocked, a forbidden redirect is not followed, and a
+//! read without credentials receives no content.
 //!
-//! Por defecto el camino **no usa la red**: el upstream es el del
-//! laboratorio y el contenido es un fixture. El caso contra un origen
-//! publico es opt-in (`HODEI_LAB_REAL=1`), y sin el queda `NOT_RUN`, con lo
-//! que el informe no es verde: un caso que no se ejecuta no es un caso que
-//! pasa.
+//! By default the path **does not use the network**: the upstream is the
+//! lab's and the content is a fixture. The case against a public origin
+//! is opt-in (`HODEI_LAB_REAL=1`), and without it it stays `NOT_RUN`, so
+//! the report is not green: a case that is not executed is not a case that
+//! passes.
 
 mod support;
 
@@ -29,26 +29,26 @@ use support::lab::{
 };
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// La ruta del contenido bajo prueba.
+/// The path of the content under test.
 const ASSET_PATH: &str = "docs/readme.txt";
 
-/// El repositorio **hosted** del grupo.
+/// The group's **hosted** repository.
 const HOSTED: &str = "raw-hosted";
 
-/// El repositorio **proxy** del grupo: el que habla con el upstream.
+/// The group's **proxy** repository: the one that talks to the upstream.
 const PROXY: &str = "raw-mirror";
 
-/// El grupo bajo prueba.
+/// The group under test.
 const GROUP: &str = "raw-group";
 
-/// El origen publico del caso real: un fichero **fijado** (una etiqueta, no
-/// una rama), con licencia permisiva.
+/// The public origin of the real case: a **pinned** file (a tag, not
+/// a branch), with a permissive license.
 const REAL_BASE: &str = "https://raw.githubusercontent.com/rust-lang/rust/1.75.0/";
 
-/// La ruta del fichero real dentro de su origen.
+/// The real file's path inside its origin.
 const REAL_PATH: &str = "README.md";
 
-/// Los casos que una corrida completa tiene que ejecutar.
+/// The cases a complete run has to execute.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1-the-group-serves-the-bytes-the-upstream-declared",
@@ -84,7 +84,7 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El titulo y el disclaimer del informe de esta suite.
+/// The title and the disclaimer of this suite's report.
 const THE_TITLE: &str = "Laboratorio de Raw — informe";
 
 const THE_DISCLAIMER: &[&str] = &[
@@ -94,32 +94,32 @@ const THE_DISCLAIMER: &[&str] = &[
     "- **Ni el laboratorio.** Los casos de `scope: harness` miden el arnés —el recuento— y no el producto. Los dos recuentos van aparte.",
 ];
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El laboratorio.
+// The lab.
 // ---------------------------------------------------------------------------
 
-/// El laboratorio de raw: un despliegue, un upstream que cuenta y el grupo
-/// bajo prueba.
+/// The raw lab: a deployment, an upstream that counts and the group
+/// under test.
 struct Lab {
     deployment: Deployment,
-    /// El upstream local del proxy.
+    /// The proxy's local upstream.
     upstream: Upstream,
-    /// La URL del upstream del proxy.
+    /// The proxy's upstream URL.
     upstream_url: String,
-    /// El contenido que el upstream sirve.
+    /// The content the upstream serves.
     payload: Vec<u8>,
-    /// El digest del contenido.
+    /// The content's digest.
     digest: String,
 }
 
 impl Lab {
-    /// Un laboratorio con un upstream **local** que cuenta.
+    /// A lab with a **local** upstream that counts.
     fn local() -> Self {
         let upstream = Upstream::start();
         let url = upstream.base();
@@ -134,7 +134,7 @@ impl Lab {
         }
     }
 
-    /// Siembra el hosted, el proxy y el grupo.
+    /// Seeds the hosted, the proxy and the group.
     fn seed(&self) {
         self.deployment.seed_repositories(&[
             json!({ "key": HOSTED, "format": "raw" }),
@@ -159,23 +159,23 @@ impl Lab {
         })]);
     }
 
-    /// Arranca el servicio con la salida que el caso necesita.
+    /// Starts the service with the egress the case needs.
     fn start(&self, extra: &[(&str, &str)]) -> support::Service {
         self.deployment.start(extra)
     }
 
-    /// La salida que deja pasar al upstream local del laboratorio.
+    /// The egress that lets the lab's local upstream through.
     fn the_local_egress(&self) -> String {
         format!("127.0.0.1:{};private;http", self.upstream.port())
     }
 
-    /// El camino que el upstream recibe: su base mas la ruta.
+    /// The path the upstream receives: its base plus the path.
     fn the_upstream_path(&self) -> String {
         format!("files/{ASSET_PATH}")
     }
 }
 
-/// El SHA256 de unos bytes, en hexadecimal.
+/// The SHA256 of some bytes, in hexadecimal.
 fn the_sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -183,7 +183,7 @@ fn the_sha256(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Una peticion al servicio, con su respuesta.
+/// A request to the service, with its response.
 fn call(
     dir: &Path,
     port: u16,
@@ -197,12 +197,12 @@ fn call(
     Curl::call_with_headers(port, method, path, token, None, headers, Some(&into)).run()
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &support::Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// El resumen de un caso, con el id y el titulo del caso.
+/// A case's summary, with the case's id and title.
 fn a_case(
     id: &str,
     title: &str,
@@ -215,7 +215,7 @@ fn a_case(
 }
 
 // ---------------------------------------------------------------------------
-// AC1: los bytes, el digest y las cabeceras.
+// AC1: the bytes, the digest and the headers.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -254,9 +254,9 @@ fn ac1_the_group_serves_the_bytes_the_upstream_declared() {
                 lab.digest,
                 "the bytes that came down are not the ones the upstream declared"
             );
-            // El ETag que se sirve identifica **el contenido servido**, no
-            // la version que el upstream tiene: es el digest de lo que
-            // bajo, y por eso no puede ser el de otro miembro.
+            // The ETag that is served identifies **the served content**, not
+            // the version the upstream has: it is the digest of what it
+            // downloaded, and that is why it cannot be another member's.
             assert_eq!(
                 answer.header("etag").as_deref(),
                 Some(format!("\"sha256:{}\"", lab.digest).as_str()),
@@ -302,7 +302,7 @@ fn ac1_head_and_range_answer_the_same() {
             let token = support::token(FIRST_ACCOUNT, "alice");
             let dir = lab.deployment.directory.path();
 
-            // HEAD: las mismas cabeceras, sin cuerpo.
+            // HEAD: the same headers, no body.
             let head = call(
                 dir,
                 port,
@@ -328,7 +328,7 @@ fn ac1_head_and_range_answer_the_same() {
                 "the HEAD does not carry the length of the content"
             );
 
-            // Range: un trozo, y el codigo que lo dice.
+            // Range: a chunk, and the code that says so.
             let ranged = call(
                 dir,
                 port,
@@ -401,7 +401,7 @@ fn ac1_the_public_origin_serves_the_same_bytes() {
             let token = support::token(FIRST_ACCOUNT, "alice");
             let dir = deployment.directory.path();
 
-            // La descarga directa: la referencia de lo que hay que servir.
+            // The direct download: the reference of what has to be served.
             let direct = std::process::Command::new("curl")
                 .args(["--silent", "--show-error", "--fail", "--location"])
                 .arg(format!("{REAL_BASE}{REAL_PATH}"))
@@ -446,7 +446,7 @@ fn ac1_the_public_origin_serves_the_same_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la precedencia y el rastro.
+// AC2: precedence and the trail.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -471,9 +471,9 @@ fn ac2_the_first_member_that_has_the_path_wins() {
             let token = support::token(FIRST_ACCOUNT, "alice");
             let dir = lab.deployment.directory.path();
 
-            // El miembro hosted publica **la misma ruta** con **otros
-            // bytes**: si el grupo mezclara el indice de uno con el
-            // fichero de otro, lo que se sirviera no casaria con su digest.
+            // The hosted member publishes **the same path** with **other
+            // bytes**: if the group mixed one's index with
+            // the other's file, what was served would not match its digest.
             let hosted = b"# el contenido del hosted\n\ncon otros bytes.\n".to_vec();
             let hosted_digest = the_sha256(&hosted);
             let published = upload(dir, port, HOSTED, &token, &hosted);
@@ -497,9 +497,9 @@ fn ac2_the_first_member_that_has_the_path_wins() {
                 hosted_digest,
                 "the group did not serve the bytes of the member that won"
             );
-            // Y las cabeceras son las del que gano, no una mezcla: el
-            // ETag identifica el contenido que se sirvio, y es el del
-            // miembro que gano.
+            // And the headers are those of the winner, not a mix: the
+            // ETag identifies the content that was served, and it is the
+            // winning member's.
             assert_eq!(
                 answer.header("etag").as_deref(),
                 Some(format!("\"sha256:{hosted_digest}\"").as_str()),
@@ -510,8 +510,8 @@ fn ac2_the_first_member_that_has_the_path_wins() {
                 Some("\"upstream\""),
                 "the ETag of the loser traveled with the content of the winner"
             );
-            // El rastro dice quien gano y en que version de la
-            // configuracion del grupo.
+            // The trail says who won and in which version of the
+            // group's configuration.
             assert_eq!(
                 answer.header("x-hodei-resolved-from").as_deref(),
                 Some(HOSTED),
@@ -590,7 +590,7 @@ fn ac2_the_traversal_is_blocked() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: lo que no se puede servir.
+// AC3: what cannot be served.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -602,8 +602,8 @@ fn ac3_a_redirect_that_is_not_allowed_is_not_followed() {
         Expectation::Succeeds,
         || {
             let lab = Lab::local();
-            // El upstream manda a otro origen: el destino no esta en la
-            // lista de salida, asi que la redireccion no se sigue.
+            // The upstream sends to another origin: the destination is not in the
+            // egress list, so the redirect is not followed.
             lab.upstream.put_doc(
                 &lab.the_upstream_path(),
                 Doc::new(&lab.payload).redirect("https://otro.example/secreto"),
@@ -705,7 +705,7 @@ fn ac3_a_read_without_a_credential_receives_no_content() {
 }
 
 // ---------------------------------------------------------------------------
-// El recuento.
+// The tally.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -741,7 +741,7 @@ fn ac3_the_count_does_not_lie() {
     );
 }
 
-/// Una subida al hosted: el contenido crudo.
+/// An upload to the hosted: the raw content.
 fn upload(dir: &Path, port: u16, repository: &str, token: &str, payload: &[u8]) -> support::Answer {
     let sent = dir.join("upload.bin");
     let into = dir.join("upload-answer.bin");

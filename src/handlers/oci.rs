@@ -1,28 +1,28 @@
-//! La superficie OCI Distribution de Hodei, en el wire.
+//! The Hodei OCI Distribution surface, on the wire.
 //!
-//! `hodei-hub::oci` lee manifiestos como **tipos**; esto es el
-//! **protocolo**: los endpoints `/v2` de la distribucion, servidos desde
-//! el catalogo y el almacen de bytes que ya existen. No hay un
-//! almacenamiento de imagen propio: un manifiesto es un asset del
-//! repositorio, un blob es un asset que el repositorio referencia, y una
-//! etiqueta es la referencia mutable que el catalogo resuelve.
+//! `hodei-hub::oci` reads manifests as **types**; this is the
+//! **protocol**: the `/v2` endpoints of the distribution, served from
+//! the catalog and the byte store that already exist. There is no
+//! image storage of its own: a manifest is an asset of the
+//! repository, a blob is an asset the repository references, and a
+//! tag is the mutable reference that the catalog resolves.
 //!
-//! El corte de **pull** son las lecturas: `GET /v2/`, blobs y manifiestos
-//! por digest y por etiqueta, con la negociacion de tipos. El corte de
-//! **push** --las sesiones de subida y el manifiesto-- esta en
-//! [`crate::oci::push`], y lo que los dos comparten --el dialecto del
-//! error, el nombre, el digest, el reparto del path-- esta en
+//! The **pull** slice is the reads: `GET /v2/`, blobs and manifests
+//! by digest and by tag, with type negotiation. The **push**
+//! slice --upload sessions and the manifest-- is in
+//! [`crate::oci::push`], and what both share --the error
+//! dialect, the name, the digest, the path split-- is in
 //! [`crate::oci`].
 //!
-//! La identidad del contenido es el digest, y la etiqueta nunca se
-//! convierte en contenido: se resuelve y se olvida, y la respuesta dice
-//! el digest resuelto, para que un cliente que pidio por etiqueta sepa
-//! que lo que hay detras es inmutable.
+//! The content's identity is the digest, and the tag never
+//! becomes content: it is resolved and forgotten, and the response states
+//! the resolved digest, so that a client that asked by tag knows
+//! that what lies behind it is immutable.
 //!
-//! Los errores hablan **OCI**: un envelope con `code` y `message`, y los
-//! codigos son los del dialecto (BLOB_UNKNOWN, MANIFEST_UNKNOWN,
-//! NAME_UNKNOWN, NAME_INVALID, DIGEST_INVALID). Un repositorio de otra
-//! cuenta es `NAME_UNKNOWN`, que no dice si existe en otro sitio.
+//! Errors speak **OCI**: an envelope with `code` and `message`, and the
+//! codes are those of the dialect (BLOB_UNKNOWN, MANIFEST_UNKNOWN,
+//! NAME_UNKNOWN, NAME_INVALID, DIGEST_INVALID). A repository of another
+//! account is `NAME_UNKNOWN`, which does not say whether it exists elsewhere.
 
 use axum::body::Body;
 use axum::extract::{OriginalUri, State};
@@ -37,19 +37,19 @@ use crate::oci::{the_catalog, the_content_store, the_context, the_decision, the_
 use crate::public_url::TheOrigin;
 use hodei_catalog::RepositoryMode;
 
-/// Los media types de manifiesto que este registro sirve.
+/// The manifest media types this registry serves.
 ///
-/// Son los que el subconjunto de OCI declara en el codigo: el manifiesto
-/// de imagen de OCI y el de Docker, el indice multi-plataforma y la lista
-/// de Docker, y el manifiesto de artefacto con su `subject`.
+/// They are those the OCI subset declares in code: the OCI image
+/// manifest and the Docker one, the multi-platform index and the Docker
+/// list, and the artifact manifest with its `subject`.
 const SUPPORTED_MANIFESTS: &[&str] = hodei_hub::oci::SUPPORTED_MANIFESTS;
 
-/// La cabecera que anuncia la version de la API de distribucion.
+/// The header announcing the distribution API version.
 const API_VERSION_HEADER: &str = "Docker-Distribution-API-Version";
 
-/// El ping del protocolo: `GET /v2/`.
+/// The protocol ping: `GET /v2/`.
 ///
-/// Autenticado como todo el resto de la superficie; no mira repositorios.
+/// Authenticated like the rest of the surface; it does not look at repositories.
 pub async fn version_check(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -65,11 +65,11 @@ pub async fn version_check(
     Ok(response)
 }
 
-/// El punto de entrada de la superficie.
+/// The entry point of the surface.
 ///
-/// El metodo y el path dicen que operacion es. El `GET` de una sesion de
-/// subida es el **estado** de la subida, no la lectura de un blob, y por
-/// eso se decide antes de leer.
+/// The method and the path say which operation it is. The `GET` of an upload
+/// session is the upload's **status**, not the read of a blob, and
+/// so it is decided before reading.
 pub async fn dispatch(
     State(state): State<AppState>,
     origin: TheOrigin,
@@ -78,9 +78,9 @@ pub async fn dispatch(
     headers: HeaderMap,
     request: axum::http::Request<Body>,
 ) -> Result<Response, OciFailure> {
-    // El reto de autenticacion lo pone el borde: el borde sabe donde
-    // vive el despliegue, y un `401` sin reto no dice al cliente como
-    // autenticarse.
+    // The authentication challenge is set by the edge: the edge knows where
+    // the deployment lives, and a `401` without a challenge does not tell the client how to
+    // authenticate.
     let answer = match method {
         Method::GET | Method::HEAD => {
             if let Ok(Target::UploadSession { .. }) = the_target(uri.path()) {
@@ -94,11 +94,11 @@ pub async fn dispatch(
     answer.map_err(|failure| failure.with_the_realm(the_realm(&origin)))
 }
 
-/// El contenido de la distribucion: blobs y manifests.
+/// The distribution content: blobs and manifests.
 ///
-/// El GET y el HEAD comparten handler: el HEAD dice las mismas cabeceras
-/// y no trae cuerpo, que es lo que el spec pide y lo que un cliente de
-/// pull necesita para saber el tamano sin descargarlo.
+/// GET and HEAD share a handler: HEAD gives the same headers
+/// and brings no body, which is what the spec asks for and what a pull client
+/// needs to know the size without downloading it.
 pub async fn content(
     state: AppState,
     uri: OriginalUri,
@@ -108,9 +108,9 @@ pub async fn content(
     let context = the_context(&state, &headers).await?;
     let head = method == Method::HEAD;
 
-    // El nombre, la clase de recurso y la referencia salen del path en
-    // crudo: `/<name>/blobs/<digest>` o `/<name>/manifests/<reference>`,
-    // donde `<name>` puede tener niveles (`team/demo`).
+    // The name, the resource kind and the reference come from the raw
+    // path: `/<name>/blobs/<digest>` or `/<name>/manifests/<reference>`,
+    // where `<name>` may have levels (`team/demo`).
     let target = the_target(uri.path())?;
     match target {
         Target::Blob { name, reference } => {
@@ -119,9 +119,9 @@ pub async fn content(
         Target::Manifest { name, reference } => {
             manifest(&state, &context, &name, &reference, &headers, head).await
         }
-        // La lista de etiquetas y los referrers no son contenido: son
-        // preguntas por el repositorio, y las responde la superficie de
-        // las consultas.
+        // The tag list and the referrers are not content: they are
+        // questions about the repository, and the queries surface
+        // answers them.
         Target::Tags { name } => {
             crate::oci::query::the_tags(
                 &state,
@@ -142,19 +142,19 @@ pub async fn content(
             )
             .await
         }
-        // El inicio de una subida y su sesion no son contenido: son el
-        // estado de una subida, y se dicen en la superficie de push.
+        // The start of an upload and its session are not content: they are the
+        // state of an upload, and are handled in the push surface.
         Target::UploadStart { .. } | Target::UploadSession { .. } => Err(OciFailure::unsupported(
             "an upload is not content of the repository",
         )),
     }
 }
 
-/// Un blob del repositorio, servido por su digest.
+/// A blob of the repository, served by its digest.
 ///
-/// La referencia del catálogo es la que autoriza el servir: los bytes que
-/// estan en el CAS pero que el repositorio no referencia no son contenido
-/// del repositorio, y se responden como BLOB_UNKNOWN.
+/// The catalog reference is what authorizes serving: bytes that
+/// are in the CAS but that the repository does not reference are not the
+/// repository's content, and are answered as BLOB_UNKNOWN.
 async fn blob(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -173,8 +173,8 @@ async fn blob(
         &repository,
     )?;
 
-    // Un repositorio proxy no guarda lo que se publico en el: lo trae de
-    // un upstream, con las reglas de la distribucion por delante.
+    // A proxy repository does not store what was published in it: it fetches it from
+    // an upstream, with the distribution rules in front.
     if repository.mode == RepositoryMode::Proxy {
         return crate::oci::proxy::the_blob(
             state,
@@ -188,9 +188,9 @@ async fn blob(
         .await;
     }
 
-    // Un grupo no guarda lo que se publico en el: lo resuelve entre sus
-    // miembros, en el orden en que estan configurados, y dice de que
-    // miembro salio lo que se sirve.
+    // A group does not store what was published in it: it resolves it among its
+    // members, in the order they are configured, and says which
+    // member what is served came from.
     if repository.mode == RepositoryMode::Group {
         let resolution =
             crate::oci::group::the_blob(state, context, &repository, &digest, headers).await;
@@ -205,8 +205,8 @@ async fn blob(
         return Ok(response);
     }
 
-    // La fila del asset es la referencia: sin ella, el blob no es
-    // contenido de este repositorio, esten sus bytes donde esten.
+    // The asset row is the reference: without it, the blob is not
+    // content of this repository, wherever its bytes are.
     let (reader, _) = the_catalog(state)?;
     let asset = reader
         .asset(context.account().as_str(), name, &format!("blobs/{digest}"))
@@ -218,14 +218,14 @@ async fn blob(
             _other => OciFailure::unavailable("the catalog is not available"),
         })?;
 
-    // Los bytes que se sirven son los que la **fila** referencia, no los
-    // que dice la URL. El digest de la URL dice **que** se pide; la fila
-    // dice **que** hay. Si se sirieran los del digest de la URL, una
-    // fila que solo nombra una ruta serviria el contenido de otro blob,
-    // que puede ser de otra cuenta: el CAS es un arbol comun.
+    // The bytes served are those the **row** references, not those
+    // the URL names. The URL's digest says **what** is requested; the row
+    // says **what** there is. If those of the URL's digest were served, a
+    // row that only names a path would serve another blob's content,
+    // which may belong to another account: the CAS is a shared tree.
     //
-    // Por eso la respuesta lleva el digest de lo que se sirve, y por eso
-    // un digest pedido que no es el referenciado es un BLOB_UNKNOWN, no
+    // That is why the response carries the digest of what is served, and why
+    // a requested digest that is not the referenced one is a BLOB_UNKNOWN, not
     // bytes.
     if asset.digest.value != digest {
         return Err(OciFailure::blob_unknown(format!(
@@ -267,11 +267,11 @@ async fn blob(
     ))
 }
 
-/// Un manifest del repositorio, por digest o por tag.
+/// A manifest of the repository, by digest or by tag.
 ///
-/// La etiqueta es la referencia mutable que el catálogo resuelve a las
-/// coordenadas; la identidad del contenido sigue siendo el digest del
-/// manifiesto, y la respuesta lo dice en `Docker-Content-Digest`.
+/// The tag is the mutable reference that the catalog resolves to the
+/// coordinates; the content's identity remains the manifest's
+/// digest, and the response states it in `Docker-Content-Digest`.
 async fn manifest(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -288,8 +288,8 @@ async fn manifest(
         &repository,
     )?;
 
-    // Un repositorio proxy no guarda lo que se publico en el: lo trae de
-    // un upstream, con las reglas de la distribucion por delante.
+    // A proxy repository does not store what was published in it: it fetches it from
+    // an upstream, with the distribution rules in front.
     if repository.mode == RepositoryMode::Proxy {
         return crate::oci::proxy::the_manifest(
             state,
@@ -303,10 +303,10 @@ async fn manifest(
         .await;
     }
 
-    // Un grupo no guarda lo que se publico en el: lo resuelve entre sus
-    // miembros, en el orden en que estan configurados. El manifiesto se
-    // sirve **entero** de un solo miembro, y la respuesta dice de que
-    // miembro salio.
+    // A group does not store what was published in it: it resolves it among its
+    // members, in the order they are configured. The manifest is
+    // served **whole** from a single member, and the response says which
+    // member it came from.
     if repository.mode == RepositoryMode::Group {
         let resolution =
             crate::oci::group::the_manifest(state, context, &repository, reference, headers).await;
@@ -320,9 +320,9 @@ async fn manifest(
 
     let (reader, _) = the_catalog(state)?;
 
-    // El digest del manifiesto: el que el cliente nombra, o el que la
-    // etiqueta resuelve. La etiqueta nunca se convierte en contenido: se
-    // resuelve y se olvida, y la respuesta dice el digest resuelto.
+    // The manifest's digest: the one the client names, or the one the
+    // tag resolves to. The tag never becomes content: it is
+    // resolved and forgotten, and the response states the resolved digest.
     let digest = if reference.contains(':') {
         the_digest_of_reference(reference)?
     } else {
@@ -350,16 +350,16 @@ async fn manifest(
             _other => OciFailure::unavailable("the catalog is not available"),
         })?;
 
-    // Los bytes que se sirven son los que la fila referencia, no los que
-    // dice la URL: como en los blobs, el digest pedido dice **que** se
-    // pide y la fila dice **que** hay.
+    // The bytes served are those the row references, not those the
+    // URL names: as with blobs, the requested digest says **what** is
+    // requested and the row says **what** there is.
     if asset.digest.value != digest {
         return Err(the_unknown_manifest(reference));
     }
 
-    // La etiqueta ya se resolvio a su digest destino: lo que se admite es
-    // el digest, no el nombre. Una etiqueta que se movio a otro digest no
-    // hereda la concesion del anterior.
+    // The tag was already resolved to its target digest: what is admitted is
+    // the digest, not the name. A tag that moved to another digest does not
+    // inherit the previous one's grant.
     crate::trust::admit(
         state,
         context.account().as_str(),
@@ -376,19 +376,19 @@ async fn manifest(
         OciFailure::manifest_unknown(format!("the manifest {digest} is not in the store"))
     })?;
 
-    // El tipo de medio lo dice el propio manifiesto, no el cliente: el
-    // manifiesto es la verdad de que es, y el cliente lo pide con el
-    // `Accept`, no lo decide.
+    // The media type is stated by the manifest itself, not the client: the
+    // manifest is the truth of what it is, and the client requests it with
+    // `Accept`, it does not decide it.
     //
-    // Se lee del JSON y no de `hodei_hub::oci::OciManifest::read`, que
-    // solo admite el tipo OCI: un manifiesto Docker schema2 es un
-    // manifiesto valido, y el registro lo sirve con el tipo que el
-    // manifiesto declara.
+    // It is read from the JSON and not from `hodei_hub::oci::OciManifest::read`, which
+    // only admits the OCI type: a Docker schema2 manifest is a
+    // valid manifest, and the registry serves it with the type the
+    // manifest declares.
     let media_type = the_declared_media_type(&bytes)?;
 
-    // La negociacion, con el tipo que este manifiesto declara: si el
-    // cliente no lo acepta, el error es de manifiesto desconocido y no
-    // un 200 con un tipo que no pidio.
+    // Negotiation, with the type this manifest declares: if the
+    // client does not accept it, the error is unknown manifest and not
+    // a 200 with a type it did not ask for.
     the_negotiation(headers, &media_type)?;
     debug_assert_eq!(
         bytes.len() as u64,
@@ -399,20 +399,20 @@ async fn manifest(
     Ok(oci_bytes_response(bytes, &media_type, &digest, head))
 }
 
-/// El 404 de un manifiesto, con la referencia que el cliente escribio.
+/// The 404 of a manifest, with the reference the client wrote.
 ///
-/// Es el mismo para lo que no existe, lo que esta en cuarentena y una
-/// etiqueta que no apunta a nada: el mensaje nunca nombra el digest
-/// resuelto, que diria que el contenido esta ahi.
+/// It is the same for what does not exist, what is in quarantine and a
+/// tag that points to nothing: the message never names the resolved
+/// digest, which would say the content is there.
 fn the_unknown_manifest(reference: &str) -> OciFailure {
     OciFailure::manifest_unknown(format!("the manifest {reference:?} is unknown"))
 }
 
-/// Lo que se responde cuando la compuerta de confianza no admite.
+/// What is answered when the trust gate does not admit.
 ///
-/// Lo no admitido responde con el mismo error OCI que lo que no existe
-/// (`unknown`), para que la respuesta no diga que el contenido esta ahi.
-/// Un libro que no responde es un 503: lo desconocido no se sirve.
+/// What is not admitted answers with the same OCI error as what does not exist
+/// (`unknown`), so that the response does not say the content is there.
+/// A ledger that does not respond is a 503: the unknown is not served.
 fn the_admission_failure(
     admission: crate::trust::Admission,
     unknown: impl FnOnce(&str) -> OciFailure,
@@ -426,11 +426,11 @@ fn the_admission_failure(
     }
 }
 
-/// El tipo de medio que el manifiesto declara.
+/// The media type the manifest declares.
 ///
-/// El manifiesto es la verdad de que es: si declara un tipo que este
-/// registro no sirve, la peticion falla con el error OCI de manifiesto
-/// desconocido, y no con un 200 que finge ser lo que el cliente pidio.
+/// The manifest is the truth of what it is: if it declares a type this
+/// registry does not serve, the request fails with the OCI unknown-manifest
+/// error, and not with a 200 pretending to be what the client asked for.
 pub(crate) fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure> {
     let declared = serde_json::from_slice::<serde_json::Value>(bytes)
         .ok()
@@ -442,25 +442,25 @@ pub(crate) fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure
         });
     match declared {
         Some(media_type) if SUPPORTED_MANIFESTS.contains(&media_type.as_str()) => Ok(media_type),
-        // Un tipo que este registro NO sirve no se reetiqueta con otro:
-        // servirlo con un tipo distinto es un 200 que finge ser lo que el
-        // cliente pidio, y el cliente que lo pidio no lo recibio.
+        // A type this registry does NOT serve is not relabeled with another:
+        // serving it with a different type is a 200 pretending to be what the
+        // client asked for, and the client that asked for it did not receive it.
         Some(media_type) if hodei_hub::oci::UNSUPPORTED.contains(&media_type.as_str()) => Err(
             OciFailure::manifest_unknown(format!("the registry does not serve {media_type}")),
         ),
-        // Un tipo que este registro no conoce: tampoco se sirve, por el
-        // mismo motivo. Un `Content-Type` arbitrario en la respuesta es
-        // ademas un problema de seguridad: un navegador que navegue a la
-        // URL interpretaria el manifiesto como lo que declare.
+        // A type this registry does not know: it is not served either, for the
+        // same reason. An arbitrary `Content-Type` in the response is
+        // also a security problem: a browser navigating to the
+        // URL would interpret the manifest as whatever it declares.
         Some(media_type) => Err(OciFailure::manifest_unknown(format!(
             "the registry does not serve {media_type}"
         ))),
-        // Un manifiesto puede **omitir** su `mediaType`: el media-spec
-        // dice que entonces se infiere, y `helm push` lo omite. La
-        // inferencia es estructural y solo usa tipos que este registro
-        // sirve: un JSON con `manifests` es un indice, cualquier otro es
-        // un manifiesto de imagen. No hay reetiquetado de un tipo
-        // declarado: aqui no hay nada declarado que contradecir.
+        // A manifest may **omit** its `mediaType`: the media-spec
+        // says that it is then inferred, and `helm push` omits it. The
+        // inference is structural and only uses types this registry
+        // serves: a JSON with `manifests` is an index, any other is
+        // an image manifest. There is no relabeling of a declared
+        // type: here there is nothing declared to contradict.
         None => {
             let kind = serde_json::from_slice::<serde_json::Value>(bytes)
                 .ok()
@@ -480,13 +480,13 @@ pub(crate) fn the_declared_media_type(bytes: &[u8]) -> Result<String, OciFailure
     }
 }
 
-/// Que miembro de un grupo sirvio el contenido, y en que version de la
-/// configuracion del grupo se resolvio.
+/// Which member of a group served the content, and in which version of the
+/// group's configuration it was resolved.
 ///
-/// Va en `X-Hodei-Resolved-From` y `X-Hodei-Group-Version`: quien descarga
-/// sabe de que repositorio salio lo que tiene, y una resolucion distinta
-/// tras reconfigurar el grupo es visible. Es la misma convencion que usa la
-/// superficie cruda.
+/// It goes in `X-Hodei-Resolved-From` and `X-Hodei-Group-Version`: whoever downloads
+/// knows which repository what they have came from, and a different resolution
+/// after reconfiguring the group is visible. It is the same convention the
+/// raw surface uses.
 fn the_group_headers(
     response: &mut Response,
     group: &hodei_catalog::RepositoryDescriptor,
@@ -506,8 +506,8 @@ fn the_group_headers(
     }
 }
 
-/// La respuesta de bytes de la distribución: las cabeceras OCI y, en un
-/// HEAD, nada de cuerpo.
+/// The distribution's bytes response: the OCI headers and, on a
+/// HEAD, no body.
 fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool) -> Response {
     let length = bytes.len().to_string();
     let mut response = if head {
@@ -533,8 +533,8 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
         "Docker-Content-Digest",
         HeaderValue::from_str(&format!("sha256:{digest}")).expect("the digest is a header value"),
     );
-    // Un manifiesto es JSON. Sin esto, un navegador que navegue a la
-    // URL interpretaria la respuesta como lo que el manifiesto declare.
+    // A manifest is JSON. Without this, a browser navigating to the
+    // URL would interpret the response as whatever the manifest declares.
     headers.insert(
         "X-Content-Type-Options",
         HeaderValue::from_static("nosniff"),
@@ -542,24 +542,24 @@ fn oci_bytes_response(bytes: Vec<u8>, media_type: &str, digest: &str, head: bool
     response
 }
 
-/// La negociacion del `Accept`.
+/// The negotiation of `Accept`.
 ///
-/// Un cliente que no nombra tipos (`*/*`, `application/*` o nada) acepta
-/// lo que haya. Uno que solo nombra tipos que este registro no sirve
-/// recibe el error OCI de manifiesto desconocido, no una respuesta que
-/// finge ser lo que pidió.
+/// A client that names no types (`*/*`, `application/*` or nothing) accepts
+/// whatever there is. One that only names types this registry does not serve
+/// receives the OCI unknown-manifest error, not a response that
+/// pretends to be what it asked for.
 ///
-/// El `Accept` se lee **entero**: un cliente puede mandar el tipo que
-/// acepta en **varias cabeceras**, y cada cabecera puede traer una lista
-/// separada por comas. Leer solo la primera cabecera--que es lo que hace
-/// un `get`--deja fuera los tipos que el cliente sí acepta, y un cliente
-/// de verdad (la CLI de Docker manda dos: la de indice y la de imagen)
-/// se queda sin manifiesto.
+/// The `Accept` is read **whole**: a client may send the type it
+/// accepts in **several headers**, and each header may carry a list
+/// separated by commas. Reading only the first header--which is what
+/// a `get` does--leaves out the types the client does accept, and a real client
+/// (the Docker CLI sends two: the index one and the image one)
+/// is left without a manifest.
 ///
-/// Y el peso se respeta: un `q=0` dice que el tipo **no** se acepta
-/// (RFC 9110, seccion 12.5.1), y un tipo rechazado es un tipo que no se
-/// puede servir. Sin esto, un `Accept: */*;q=0`--que es un "no acepto
-/// nada"--serviria cualquier manifiesto.
+/// And the weight is respected: a `q=0` says the type is **not** accepted
+/// (RFC 9110, section 12.5.1), and a rejected type is a type that cannot
+/// be served. Without this, an `Accept: */*;q=0`--which is a "I accept
+/// nothing"--would serve any manifest.
 pub(crate) fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), OciFailure> {
     let mut there_is_an_accept = false;
     let mut asked: Vec<&str> = Vec::new();
@@ -574,8 +574,8 @@ pub(crate) fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), O
             if media.is_empty() {
                 continue;
             }
-            // El peso `q=0` es un rechazo: el tipo esta en la lista, pero
-            // el cliente dice que no lo quiere.
+            // A `q=0` weight is a rejection: the type is in the list, but
+            // the client says it does not want it.
             if pieces.any(the_weight_is_zero) {
                 continue;
             }
@@ -583,22 +583,22 @@ pub(crate) fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), O
         }
     }
     if !there_is_an_accept {
-        // Sin `Accept` el cliente acepta lo que haya: es lo que dice el
-        // protocolo, y el tipo que se sirve lo declara el manifiesto.
+        // Without `Accept` the client accepts whatever there is: that is what the
+        // protocol says, and the type served is declared by the manifest.
         return Ok(());
     }
     if asked.is_empty() {
-        // El cliente ha nombrado tipos y los ha rechazado **todos**: no
-        // acepta ninguno. Servirle lo nuestro seria responder con algo
-        // que ha dicho que no quiere.
+        // The client has named types and has rejected **all** of them: it
+        // accepts none. Serving it ours would be answering with something
+        // it said it does not want.
         return Err(OciFailure::manifest_unknown(format!(
             "the client accepts none of the media types this registry serves: {served}"
         )));
     }
-    // El cliente acepta cualquier cosa (`*/*`, `application/*`) o acepta
-    // el tipo que se va a servir. Lo que NO se acepta es un cliente que
-    // solo nombra otros tipos: servirle el nuestro seria responder con
-    // algo que no pidio.
+    // The client accepts anything (`*/*`, `application/*`) or accepts
+    // the type about to be served. What is NOT accepted is a client that
+    // only names other types: serving it ours would be answering with
+    // something it did not ask for.
     let accepts = asked
         .iter()
         .any(|media| *media == "*/*" || *media == "application/*" || *media == served);
@@ -611,10 +611,10 @@ pub(crate) fn the_negotiation(headers: &HeaderMap, served: &str) -> Result<(), O
     )))
 }
 
-/// Si un parametro del `Accept` es un peso `q=0`.
+/// Whether an `Accept` parameter is a `q=0` weight.
 ///
-/// El peso se escribe `q=0` o `q=0.0`: las dos formas dicen lo mismo, y
-/// un peso que no se puede leer no es un rechazo.
+/// The weight is written `q=0` or `q=0.0`: both forms say the same thing, and
+/// a weight that cannot be read is not a rejection.
 fn the_weight_is_zero(parameter: &str) -> bool {
     let parameter = parameter.trim();
     let Some(weight) = parameter.strip_prefix("q=") else {
@@ -632,7 +632,7 @@ mod tests {
 
     const THE_SERVED: &str = "application/vnd.oci.image.manifest.v1+json";
 
-    /// Las cabeceras de una peticion con un `Accept`.
+    /// The headers of a request with an `Accept`.
     fn with_accept(values: &[&str]) -> HeaderMap {
         let mut headers = HeaderMap::new();
         for value in values {
@@ -644,72 +644,72 @@ mod tests {
         headers
     }
 
-    /// Sin `Accept` se sirve lo que haya.
+    /// Without `Accept`, whatever there is is served.
     #[test]
     fn without_accept_the_registry_serves_what_it_has() {
         assert!(the_negotiation(&HeaderMap::new(), THE_SERVED).is_ok());
     }
 
-    /// El cliente que acepta cualquier cosa recibe lo que haya.
+    /// A client that accepts anything receives whatever there is.
     #[test]
     fn a_client_that_accepts_anything_is_served() {
         assert!(the_negotiation(&with_accept(&["*/*"]), THE_SERVED).is_ok());
         assert!(the_negotiation(&with_accept(&["application/*"]), THE_SERVED).is_ok());
     }
 
-    /// El cliente que nombra el tipo que se sirve recibe el manifiesto.
+    /// A client that names the type being served receives the manifest.
     #[test]
     fn a_client_that_accepts_the_served_type_is_served() {
         assert!(the_negotiation(&with_accept(&[THE_SERVED]), THE_SERVED).is_ok());
     }
 
-    /// Un cliente que solo nombra otros tipos recibe el error del
-    /// protocolo, no un manifiesto que no pidio.
+    /// A client that only names other types receives the protocol
+    /// error, not a manifest it did not ask for.
     #[test]
     fn a_client_that_accepts_another_type_is_refused() {
         let headers = with_accept(&["application/vnd.oci.image.index.v1+json"]);
         assert!(the_negotiation(&headers, THE_SERVED).is_err());
     }
 
-    /// La lista separada por comas se lee entera.
+    /// The comma-separated list is read whole.
     #[test]
     fn a_comma_separated_list_is_read_whole() {
         let headers = with_accept(&["application/vnd.oci.image.index.v1+json, image/png"]);
         assert!(the_negotiation(&headers, "image/png").is_ok());
     }
 
-    /// **Varias** cabeceras se leen enteras: la CLI de Docker manda la del
-    /// indice y la de la imagen, y con una sola cabecera el cliente se
-    /// queda sin manifiesto.
+    /// **Several** headers are read whole: the Docker CLI sends the index
+    /// one and the image one, and with a single header the client is
+    /// left without a manifest.
     #[test]
     fn several_accept_headers_are_read_whole() {
         let headers = with_accept(&["application/vnd.oci.image.index.v1+json", THE_SERVED]);
         assert!(the_negotiation(&headers, THE_SERVED).is_ok());
     }
 
-    /// Un peso `q=0` es un rechazo: el tipo no se acepta.
+    /// A `q=0` weight is a rejection: the type is not accepted.
     #[test]
     fn a_zero_weight_is_a_rejection() {
         let headers = with_accept(&["application/vnd.oci.image.index.v1+json;q=0"]);
         assert!(the_negotiation(&headers, THE_SERVED).is_err());
     }
 
-    /// Y un `*/*` con peso cero no acepta cualquier cosa.
+    /// And a `*/*` with zero weight does not accept anything.
     #[test]
     fn a_zero_weight_on_everything_refuses_everything() {
         let headers = with_accept(&["*/*;q=0"]);
         assert!(the_negotiation(&headers, THE_SERVED).is_err());
     }
 
-    /// Un peso que no es cero es una preferencia, no un rechazo.
+    /// A weight that is not zero is a preference, not a rejection.
     #[test]
     fn a_positive_weight_is_a_preference() {
         let headers = with_accept(&["application/vnd.oci.image.index.v1+json;q=0.8", THE_SERVED]);
         assert!(the_negotiation(&headers, THE_SERVED).is_ok());
     }
 
-    /// Los parametros que no son el peso no pesan: el tipo sigue siendo el
-    /// que se compara.
+    /// Parameters other than the weight do not weigh: the type remains the
+    /// one that is compared.
     #[test]
     fn a_parameter_is_not_a_weight() {
         let headers = with_accept(&["application/vnd.oci.image.manifest.v1+json;charset=utf-8"]);

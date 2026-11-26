@@ -1,35 +1,35 @@
-//! Las concesiones de confianza: que digest puede servir el canal trusted.
+//! Trust grants: which digest the trusted channel may serve.
 //!
-//! Un repositorio sirve su contenido por uno de dos canales:
+//! A repository serves its content through one of two channels:
 //!
-//! - **`open`** (por defecto): lo publicado se sirve a quien Cedar deje
-//!   leer. Es el canal de cuarentena: el contenido existe y se puede
-//!   consultar, pero nadie ha dicho que sea de fiar.
-//! - **`trusted`**: solo se sirve un digest que tiene una **concesion
-//!   activa**, es decir, una decision de promocion que avanzo y que nadie
-//!   ha revocado despues. Lo demas responde como si no existiera.
+//! - **`open`** (default): what is published is served to whoever Cedar lets
+//!   read. It is the quarantine channel: the content exists and can be
+//!   queried, but nobody has said it is trustworthy.
+//! - **`trusted`**: only a digest that has an **active grant**
+//!   is served, that is, a promotion decision that advanced and that nobody
+//!   has revoked afterwards. Everything else responds as if it did not exist.
 //!
-//! La concesion es **por digest**, no por nombre. Una etiqueta que se
-//! mueve apunta a otro digest, y ese digest no hereda nada: la decision de
-//! ayer sobre `sha256:X` no dice nada sobre `sha256:Y`.
+//! The grant is **per digest**, not per name. A tag that
+//! moves points to another digest, and that digest inherits nothing: yesterday's decision
+//! about `sha256:X` says nothing about `sha256:Y`.
 //!
-//! # Que dice una concesion de si misma
+//! # What a grant says about itself
 //!
-//! Cada concesion nueva lleva la **vigencia** con la que nacio: el sujeto
-//! evaluado, la version de la politica que decidio, el hash de la capsula
-//! de evidencia y la version del riesgo que se consultaron, y el momento
-//! hasta el que es digna de fe (`valid_until`). Con eso una concesion se
-//! puede auditar y revalidar sin volver a preguntar al pasado; sin eso
-//! **no es activa**: las filas escritas antes de este contrato siguen en
-//! la base como historia, pero el canal trusted no las sirve hasta que una
-//! promocion nueva las revalide. Fallar cerrado es la migracion.
+//! Each new grant carries the **validity** it was born with: the evaluated
+//! subject, the version of the policy that decided, the hash of the evidence
+//! capsule and the version of the risk that were consulted, and the moment
+//! until which it is trustworthy (`valid_until`). With that a grant can
+//! be audited and revalidated without asking the past again; without that
+//! it is **not active**: the rows written before this contract remain in
+//! the database as history, but the trusted channel does not serve them until a new
+//! promotion revalidates them. Failing closed is the migration.
 //!
-//! # Por que se lee en vivo
+//! # Why it is read live
 //!
-//! Cada peticion al canal trusted pregunta al libro **con el reloj de
-//! ahora**: una revocacion tiene efecto en la peticion siguiente, una
-//! vigencia caducada deja de servir sin que nadie la revoque, y cualquier
-//! error del libro es un error: **nunca** se convierte en un permiso.
+//! Every request to the trusted channel asks the ledger **with the clock of
+//! now**: a revocation takes effect on the next request, an
+//! expired validity stops serving without anyone revoking it, and any
+//! ledger error is an error: it is **never** turned into a permission.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -38,23 +38,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CatalogError, RepositoryConfig};
 
-/// El canal por el que un repositorio sirve su contenido.
+/// The channel through which a repository serves its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ServeChannel {
-    /// Se sirve lo publicado, con independencia de la confianza.
+    /// What is published is served, regardless of trust.
     Open,
-    /// Solo se sirve un digest con una concesion activa.
+    /// Only a digest with an active grant is served.
     Trusted,
 }
 
 impl ServeChannel {
-    /// El canal que declara la configuracion de un repositorio.
+    /// The channel a repository's configuration declares.
     ///
-    /// Se lee de `config_settings.trust.serve`. Un repositorio sin la
-    /// clave `trust` es abierto. Una clave `trust` que existe pero no se
-    /// entiende (otro tipo, otro valor) es **trusted**: un ajuste de
-    /// seguridad ilegible falla del lado cerrado, no del abierto.
+    /// It is read from `config_settings.trust.serve`. A repository without the
+    /// `trust` key is open. A `trust` key that exists but is not
+    /// understood (another type, another value) is **trusted**: an unreadable
+    /// security setting fails on the closed side, not the open one.
     pub fn of(config: &RepositoryConfig) -> Self {
         let Some(trust) = config.config_settings.get("trust") else {
             return Self::Open;
@@ -65,7 +65,7 @@ impl ServeChannel {
         }
     }
 
-    /// El nombre estable del canal, tal y como va en la configuracion.
+    /// The stable name of the channel, as it goes in the configuration.
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Open => "open",
@@ -88,64 +88,64 @@ impl ServeChannel {
     }
 }
 
-/// La concesion de un digest dentro de un repositorio, por una decision.
+/// The grant of a digest within a repository, by a decision.
 ///
-/// La concesion **no duplica** a la decision: la nombra con su
-/// `decision_id` y conserva solo los cinco datos que hacen falta para
-/// juzgar su vigencia hoy. Todo lo demas —los motivos, los requisitos, el
-/// desenlace— se lee de la decision persistida.
+/// The grant **does not duplicate** the decision: it names it with its
+/// `decision_id` and keeps only the five data that are needed to
+/// judge its validity today. Everything else --the reasons, the requirements, the
+/// outcome-- is read from the persisted decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrustGrant {
-    /// La cuenta propietaria del repositorio.
+    /// The account that owns the repository.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// El contenido concedido.
+    /// The granted content.
     pub digest: ContentDigest,
-    /// La decision de promocion que lo concedio.
+    /// The promotion decision that granted it.
     pub decision_id: String,
-    /// Quien promovio.
+    /// Who promoted.
     pub actor: String,
-    /// Cuando se concedio.
+    /// When it was granted.
     pub granted_at: DateTime<Utc>,
-    /// Cuando se revoco, si se revoco.
+    /// When it was revoked, if it was revoked.
     pub revoked_at: Option<DateTime<Utc>>,
-    /// Quien revoco.
+    /// Who revoked.
     pub revoked_by: Option<String>,
-    /// Por que se revoco.
+    /// Why it was revoked.
     pub revoke_reason: Option<String>,
-    /// El sujeto (HRN) que la decision evaluo, si la concesion lleva
-    /// vigencia. Una concesion anterior a este contrato no lo lleva.
+    /// The subject (HRN) the decision evaluated, if the grant carries
+    /// validity. A grant prior to this contract does not carry it.
     #[serde(default)]
     pub subject: Option<String>,
-    /// La version de la politica con la que se decidio, si la concesion
-    /// lleva vigencia.
+    /// The version of the policy it was decided with, if the grant
+    /// carries validity.
     #[serde(default)]
     pub policy_version: Option<String>,
-    /// El hash de la capsula de evidencia consultada, si la decision la
-    /// tuvo. Identifica la evidencia sin duplicarla: el detalle vive en la
-    /// decision persistida.
+    /// The hash of the evidence capsule consulted, if the decision had
+    /// one. It identifies the evidence without duplicating it: the detail lives in the
+    /// persisted decision.
     #[serde(default)]
     pub capsule_hash: Option<String>,
-    /// La version del registro de riesgo que se consulto, si se consulto
-    /// con vigencia. Cero es un valor honesto: el registro de nadie.
+    /// The version of the risk registry that was consulted, if it was consulted
+    /// with validity. Zero is an honest value: nobody's registry.
     #[serde(default)]
     pub risk_version: Option<u64>,
-    /// Hasta cuando es digna de fe esta concesion, si la lleva. Sin
-    /// vigencia declarada no hay concesion activa: es el lado cerrado de
-    /// la migracion.
+    /// Until when this grant is trustworthy, if it carries one. Without a
+    /// declared validity there is no active grant: it is the closed side of
+    /// the migration.
     #[serde(default)]
     pub valid_until: Option<DateTime<Utc>>,
 }
 
 impl TrustGrant {
-    /// Si la concesion sigue en vigor **a las `now`**.
+    /// Whether the grant is still in force **at `now`**.
     ///
-    /// Tres condiciones y ninguna caridad: no estar revocada, llevar la
-    /// vigencia completa (la version de la politica que decidio) y no
-    /// haber caducado. Una concesion sin vigencia —escrita antes de este
-    /// contrato o a medias— no es activa: sin prueba de vigencia no se
-    /// sirve, y revalidarla es promocionar de nuevo.
+    /// Three conditions and no charity: not being revoked, carrying the
+    /// complete validity (the version of the policy that decided) and not having
+    /// expired. A grant without validity --written before this
+    /// contract or half-written-- is not active: without proof of validity it is not
+    /// served, and revalidating it means promoting again.
     pub fn is_active_at(&self, now: DateTime<Utc>) -> bool {
         self.revoked_at.is_none()
             && self.policy_version.is_some()
@@ -153,22 +153,22 @@ impl TrustGrant {
     }
 }
 
-/// El libro de las concesiones.
+/// The grant ledger.
 ///
-/// No autoriza: quien decide si una persona puede promover o revocar es la
-/// compuerta del servicio, antes de llegar aqui.
+/// It does not authorize: whoever decides whether a person can promote or revoke is the
+/// service's gate, before getting here.
 #[async_trait]
 pub trait TrustLedger: Send + Sync {
-    /// Escribe las concesiones de una decision, todas o ninguna.
+    /// Writes the grants of a decision, all or none.
     ///
-    /// Repetir una concesion (misma cuenta, repositorio, digest y
-    /// decision) la deja como estaba: la operacion es idempotente, y una
-    /// concesion revocada **no** se reactiva por repetirla; para volver a
-    /// conceder hace falta una decision nueva.
+    /// Repeating a grant (same account, repository, digest and
+    /// decision) leaves it as it was: the operation is idempotent, and a
+    /// revoked grant is **not** reactivated by repeating it; to grant again
+    /// a new decision is needed.
     async fn grant(&self, grants: &[TrustGrant]) -> Result<(), CatalogError>;
 
-    /// Revoca todas las concesiones de una decision. Devuelve cuantas
-    /// estaban activas.
+    /// Revokes all the grants of a decision. Returns how many
+    /// were active.
     async fn revoke_decision(
         &self,
         account: &str,
@@ -179,13 +179,13 @@ pub trait TrustLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError>;
 
-    /// Revoca todas las concesiones de una decision en toda la cuenta,
-    /// sin saber en que repositorio viven.
+    /// Revokes all the grants of a decision across the whole account,
+    /// without knowing in which repository they live.
     ///
-    /// Es la revocacion que pide la reevaluacion: la verdad del riesgo
-    /// cambio y la decision que concedio ya no vale, pero quien reevalua
-    /// nombra al sujeto y a su cuenta, no a los repositorios donde aquella
-    /// decision promovio. Devuelve cuantas estaban activas.
+    /// It is the revocation that re-evaluation asks for: the truth about the risk
+    /// changed and the decision that granted no longer holds, but whoever re-evaluates
+    /// names the subject and its account, not the repositories where that
+    /// decision promoted. Returns how many were active.
     async fn revoke_decision_for_account(
         &self,
         account: &str,
@@ -195,8 +195,8 @@ pub trait TrustLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError>;
 
-    /// Revoca todas las concesiones de un digest, sea cual sea la decision
-    /// que las concedio. Devuelve cuantas estaban activas.
+    /// Revokes all the grants of a digest, whichever decision
+    /// granted them. Returns how many were active.
     async fn revoke_digest(
         &self,
         account: &str,
@@ -207,12 +207,12 @@ pub trait TrustLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<u64, CatalogError>;
 
-    /// Una concesion activa de ese digest en ese repositorio **a las
-    /// `at`**, si la hay.
+    /// An active grant of that digest in that repository **at
+    /// `at`**, if there is one.
     ///
-    /// La hora es un parametro, no una trampa interna: quien pregunta
-    /// decide cual es el ahora, y asi el reloj se puede inyectar en una
-    /// prueba. El libro sin filtros responde la vigencia como la guarda.
+    /// The time is a parameter, not an internal trap: whoever asks
+    /// decides what now is, and so the clock can be injected in
+    /// a test. The unfiltered ledger answers validity as the guard does.
     async fn active_grant(
         &self,
         account: &str,
@@ -221,7 +221,7 @@ pub trait TrustLedger: Send + Sync {
         at: DateTime<Utc>,
     ) -> Result<Option<TrustGrant>, CatalogError>;
 
-    /// Todas las concesiones de un repositorio, activas o revocadas.
+    /// All the grants of a repository, active or revoked.
     async fn grants_of(
         &self,
         account: &str,
@@ -344,9 +344,9 @@ mod tests {
         assert!(!grant.is_active_at(now));
     }
 
-    /// AC de migracion: la vigencia no se presume. Sin version de politica
-    /// o sin `valid_until` no hay concesion activa, por muy limpia que
-    /// este el resto de la fila.
+    /// Migration AC: validity is not presumed. Without a policy version
+    /// or without `valid_until` there is no active grant, however clean
+    /// the rest of the row is.
     #[test]
     fn a_grant_without_declared_validity_is_never_active() {
         let now = Utc::now();

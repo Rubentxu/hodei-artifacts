@@ -1,31 +1,31 @@
-//! HSP-196: proxy, grupos virtuales y provenance sobre el motor Dgraph real.
+//! HSP-196: proxy, virtual groups and provenance over the real Dgraph engine.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como todos los IT del stack (TLS +
-//! ACL, el servidor vivo h186). Lo que prueba, contra el motor de verdad:
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like all the stack's ITs (TLS +
+//! ACL, the live h186 server). What it tests, against the real engine:
 //!
-//! - **AC1** el flujo proxy real (miss → hit → offline → grupo virtual)
-//!   sobre el catálogo Dgraph y el libro de procedencia Dgraph
-//!   (`src/proxy/dgraph_ledger.rs`), con un upstream local controlado:
-//!   la primera lectura baja, verifica y deja UN recibo; la segunda sirve
-//!   como propio sin molestar al upstream; offline solo sirve lo verificado
-//!   y no toca la red; el grupo virtual recorre los miembros en orden y
-//!   gana el hosted, sin ampliar permisos ni cambiar la resolución (la
-//!   salida a hosts no autorizados sigue denegada, el scope del upstream
-//!   sigue acotado).
-//! - **AC2** el recibo con su digest sobrevive al reinicio del proceso
-//!   (cliente, plano de proxy y CAS recreados sobre el MISMO grafo y los
-//!   MISMOs bytes): tras el reinicio la ruta se sirve como hit sin salir a
-//!   la red y el recibo sigue ahí, idéntico; `record` repetido del mismo
-//!   id es replay sin duplicar; la clave lleva la cuenta, así que dos
-//!   cuentas con el mismo id no comparten fila (sin duplicidad entre
+//! - **AC1** the real proxy flow (miss → hit → offline → virtual group)
+//!   over the Dgraph catalog and the Dgraph provenance ledger
+//!   (`src/proxy/dgraph_ledger.rs`), with a controlled local upstream:
+//!   the first read downloads, verifies and leaves ONE receipt; the second serves
+//!   as its own without bothering the upstream; offline only serves what is verified
+//!   and does not touch the network; the virtual group walks the members in order and
+//!   the hosted wins, without widening permissions or changing resolution (egress
+//!   to unauthorized hosts remains denied, the upstream's scope
+//!   remains bounded).
+//! - **AC2** the receipt with its digest survives a process restart
+//!   (client, proxy plane and CAS recreated over the SAME graph and the
+//!   SAME bytes): after the restart the path is served as a hit without going out to
+//!   the network and the receipt is still there, identical; a repeated `record` of the same
+//!   id is a replay without duplicating; the key carries the account, so two
+//!   accounts with the same id do not share a row (no duplication across
 //!   repos).
 //!
-//! El censo es SIEMPRE por membresía de claves propias (índice exacto por
-//! `subject`/`key` con el tenant de la prueba): nunca globales, porque el
-//! alpha se comparte con otros carriles (HSP-192, HSP-201).
+//! The census is ALWAYS by membership of own keys (exact index by
+//! `subject`/`key` with the test's tenant): never global, because the
+//! alpha is shared with other lanes (HSP-192, HSP-201).
 //!
-//! Suite SERIALIZADA (`--test-threads=1`): la apertura bajo carga es el
-//! flake conocido del stack (HSP-219) y cada prueba abre su propio rig.
+//! SERIALIZED suite (`--test-threads=1`): opening under load is the
+//! stack's known flake (HSP-219) and each test opens its own rig.
 
 use std::io::{Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
@@ -63,12 +63,12 @@ use serde_json::json;
 use tempfile::{TempDir, tempdir};
 use tower::ServiceExt;
 
-/// El cuerpo que vive en el upstream para `pkg/lib.bin`.
+/// The body that lives on the upstream for `pkg/lib.bin`.
 const BODY: &[u8] = b"content that lives upstream";
-/// El cuerpo de la ruta compartida hosted+proxy (gana el hosted).
+/// The body of the shared hosted+proxy path (the hosted wins).
 const SHARED: &[u8] = b"shared content with two possible homes";
 
-/// El entorno del grafo, o `None` con el IT saltado (gated como el stack).
+/// The graph environment, or `None` with the IT skipped (gated like the stack).
 fn config_from_env() -> Option<GraphClientConfig> {
     let endpoint = std::env::var("HODEI_GRAPH_IT_ENDPOINT").ok()?;
     let ca = std::env::var("HODEI_GRAPH_IT_CA").unwrap_or_default();
@@ -90,7 +90,7 @@ fn config_from_env() -> Option<GraphClientConfig> {
     Some(GraphClientConfig::from_toml_str(&text).expect("the IT configuration validates"))
 }
 
-/// Un cliente nuevo: el IT simula el reinicio del proceso re-conectando.
+/// A new client: the IT simulates the process restart by reconnecting.
 async fn fresh_client() -> Option<Arc<GraphClient>> {
     let Some(config) = config_from_env() else {
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
@@ -117,7 +117,7 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     panic!("Dgraph did not open after 3 attempts: {last}");
 }
 
-/// La cola del reloj: separa dos ejecuciones de la misma prueba.
+/// The clock's tail: separates two runs of the same test.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -126,19 +126,19 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Una cuenta por prueba y por ejecución: `hsp196_<tag>_<cola>`, el
-/// baseline por tenant que exige el encargo. Ninguna prueba se encuentra
-/// con lo que otra dejó, y el censo va solo por sus claves.
+/// One account per test and per run: `hsp196_<tag>_<cola>`, the
+/// per-tenant baseline the brief requires. No test runs into
+/// what another left behind, and the census goes only by its keys.
 fn account(tag: &str) -> String {
     format!("hsp196_{tag}_{}", &nonce()[4..])
 }
 
 // ---------------------------------------------------------------------------
-// El upstream controlado: un servidor HTTP plano con respuestas escritas.
+// The controlled upstream: a plain HTTP server with written responses.
 // ---------------------------------------------------------------------------
 
-/// Un upstream local: sirve las rutas sembradas, 404 el resto, y guarda
-/// cuántas veces vio cada una.
+/// A local upstream: serves the seeded paths, 404 for the rest, and records
+/// how many times it saw each one.
 struct Upstream {
     port: u16,
     seen: Arc<Mutex<Vec<String>>>,
@@ -205,7 +205,7 @@ fn serve(mut stream: TcpStream, table: &[(String, Vec<u8>)], log: &Mutex<Vec<Str
 }
 
 // ---------------------------------------------------------------------------
-// El vertical: catálogo Dgraph + libro Dgraph + plano de proxy + router.
+// The vertical: Dgraph catalog + Dgraph ledger + proxy plane + router.
 // ---------------------------------------------------------------------------
 
 struct ContractAuthenticator {
@@ -228,8 +228,8 @@ impl PrincipalAuthenticator for ContractAuthenticator {
     }
 }
 
-/// Cedar: `alice` descarga y publica en CADA repositorio del despliegue.
-/// El grupo no da permisos: la política por miembro es lo que se prueba.
+/// Cedar: `alice` downloads and publishes in EVERY repository of the deployment.
+/// The group grants no permissions: the per-member policy is what is tested.
 fn cedar_for(account: &str, repos: &[&str]) -> Arc<dyn AuthorizerPort> {
     let mut policy = String::new();
     for repo in repos {
@@ -288,20 +288,20 @@ fn upstream_of(id: &str, url: &str, scopes: &[&str]) -> serde_json::Value {
     })
 }
 
-/// El grafo y el CAS que todas las vidas del servicio comparten: es el
-/// estado durable que sobrevive al reinicio.
+/// The graph and the CAS that all the service's lives share: it is the
+/// durable state that survives the restart.
 struct Shared {
     tmp: TempDir,
     client: Arc<GraphClient>,
     store: Arc<DgraphCatalogStore>,
 }
 
-/// Una instancia del servicio: plano de proxy sobre el libro Dgraph.
+/// An instance of the service: proxy plane over the Dgraph ledger.
 ///
-/// `rocksdb` vive en su propio subdirectorio: dos instancias abiertas a la
-/// vez no pelean por el lock, y el estado durable del proxy es TODO: el
-/// grafo y el CAS, que es lo que se quiere poner a prueba. Un `open` nuevo
-/// con el mismo grafo y el mismo CAS es el reinicio del proceso.
+/// `rocksdb` lives in its own subdirectory: two instances open at the
+/// same time do not fight over the lock, and the proxy's durable state is ALL: the
+/// graph and the CAS, which is what is to be put to the test. A new `open`
+/// with the same graph and the same CAS is the process restart.
 struct Instance {
     app: Router,
     ledger: Arc<DgraphProvenanceLedger>,
@@ -310,8 +310,8 @@ struct Instance {
 }
 
 impl Instance {
-    /// Abre una vida del servicio sobre el rig compartido. `offline=true`
-    /// es el interruptor del operador (`HODEI_PROXY__OFFLINE`).
+    /// Opens a service life over the shared rig. `offline=true`
+    /// is the operator's switch (`HODEI_PROXY__OFFLINE`).
     async fn open(shared: &Shared, account: &str, offline: bool) -> Self {
         let local = tempdir().expect("the local dir");
         let ledger = Arc::new(
@@ -386,8 +386,8 @@ impl Instance {
     }
 }
 
-/// El upstream de la corrida: una sola instancia, sembrada y con su
-/// contador de peticiones. La egress lo autoriza por puerto exacto.
+/// The run's upstream: a single instance, seeded and with its
+/// request counter. Egress authorizes it by exact port.
 mod shared_lab {
     use super::*;
     static LAB: std::sync::OnceLock<Upstream> = std::sync::OnceLock::new();
@@ -412,7 +412,7 @@ mod shared_lab {
 }
 
 // ---------------------------------------------------------------------------
-// HTTP del vertical.
+// The vertical's HTTP surface.
 // ---------------------------------------------------------------------------
 
 struct Answer {
@@ -472,8 +472,8 @@ async fn provenance(app: &Router, repository: &str, path: &str) -> serde_json::V
     serde_json::from_slice(&answer.body).expect("json")
 }
 
-/// El rig completo: grafo, CAS y upstream compartidos entre la primera
-/// vida del servicio y sus reinicios.
+/// The complete rig: graph, CAS and upstream shared between the first
+/// life of the service and its restarts.
 struct Rig {
     account: String,
     shared: Shared,
@@ -538,14 +538,14 @@ impl Rig {
 }
 
 // ---------------------------------------------------------------------------
-// AC1 — miss / hit / offline y grupo virtual sobre Dgraph.
+// AC1 -- miss / hit / offline and virtual group over Dgraph.
 // ---------------------------------------------------------------------------
 
-/// La primera lectura baja del upstream y deja UN recibo; la segunda se
-/// sirve como propia sin salir; el reinicio en modo offline sirve lo
-/// verificado y rechaza lo desconocido sin tocar la red. La egress y el
-/// scope no cambian: el host no autorizado sigue siendo 502 y la ruta
-/// fuera de scope sigue siendo 404 sin preguntar al upstream.
+/// The first read downloads from the upstream and leaves ONE receipt; the second is
+/// served as its own without going out; the restart in offline mode serves what is
+/// verified and rejects the unknown without touching the network. Egress and
+/// scope do not change: the unauthorized host is still 502 and the path
+/// out of scope is still 404 without asking the upstream.
 #[tokio::test]
 async fn proxy_miss_then_hit_and_offline_over_dgraph() {
     let Some(rig) = Rig::mount("ac1").await else {
@@ -553,7 +553,7 @@ async fn proxy_miss_then_hit_and_offline_over_dgraph() {
     };
     let instance = rig.instance(false).await;
 
-    // Miss: baja del upstream, se verifica, se publica y queda su recibo.
+    // Miss: downloads from the upstream, is verified, published and its receipt remains.
     let before = shared_lab::total();
     let answer = get(&instance.app, "pxy", "pkg/lib.bin").await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.body);
@@ -572,21 +572,21 @@ async fn proxy_miss_then_hit_and_offline_over_dgraph() {
         format!("sha256:{}", ContentDigest::of_bytes(BODY).value)
     );
 
-    // Hit: la segunda lectura no sale a la red.
+    // Hit: the second read does not go out to the network.
     let before = shared_lab::total();
     let answer = get(&instance.app, "pxy", "pkg/lib.bin").await;
     assert_eq!(answer.status, StatusCode::OK);
     assert_eq!(answer.header("x-hodei-cache"), Some("hit"));
     assert_eq!(shared_lab::total(), before);
 
-    // La egress sigue igual: `localhost` no está en la allow-list, aunque
-    // apunte al mismo puerto; el upstream nunca ve esa petición.
+    // Egress stays the same: `localhost` is not in the allow-list, even though
+    // it points to the same port; the upstream never sees that request.
     let before = shared_lab::total();
     let answer = get(&instance.app, "pxy-ghost", "pkg/lib.bin").await;
     assert_eq!(answer.status, StatusCode::BAD_GATEWAY, "{:?}", answer.body);
     assert_eq!(shared_lab::total(), before);
 
-    // El scope sigue acotado: fuera de `ok/` es 404 sin preguntar.
+    // The scope remains bounded: outside `ok/` it is a 404 without asking.
     let before = shared_lab::total();
     let answer = get(&instance.app, "pxy-scoped", "other/nope.txt").await;
     assert_eq!(answer.status, StatusCode::NOT_FOUND);
@@ -595,9 +595,9 @@ async fn proxy_miss_then_hit_and_offline_over_dgraph() {
     assert_eq!(answer.status, StatusCode::OK);
     assert_eq!(answer.header("x-hodei-cache"), Some("miss"));
 
-    // Reinicio en modo offline: la cache de proceso es nueva, el estado
-    // durable (grafo + CAS) no. Lo verificado se sirve; lo desconocido es
-    // 503; y la red no se toca.
+    // Restart in offline mode: the process cache is new, the durable
+    // state (graph + CAS) is not. What is verified is served; the unknown is
+    // 503; and the network is not touched.
     drop(instance);
     let offline = rig.instance(true).await;
     let before = shared_lab::total();
@@ -614,14 +614,14 @@ async fn proxy_miss_then_hit_and_offline_over_dgraph() {
     );
     assert_eq!(shared_lab::total(), before);
 
-    // El recibo de la ruta escopetada también quedó en el libro.
+    // The scoped path's receipt also remained in the ledger.
     let found = provenance(&offline.app, "pxy-scoped", "ok/inside.txt").await;
     assert_eq!(found["receipts"].as_array().expect("receipts").len(), 1);
 }
 
-/// El grupo virtual recorre los miembros en orden: gana el hosted cuando
-/// los dos tienen la ruta, y el proxy sirve lo que el hosted no tiene. La
-/// resolución no se amplía: el grupo no da permisos propios.
+/// The virtual group walks the members in order: the hosted wins when
+/// both have the path, and the proxy serves what the hosted does not have. The
+/// resolution is not widened: the group grants no permissions of its own.
 #[tokio::test]
 async fn the_virtual_group_resolves_by_precedence_over_dgraph() {
     let Some(rig) = Rig::mount("grp").await else {
@@ -629,7 +629,7 @@ async fn the_virtual_group_resolves_by_precedence_over_dgraph() {
     };
     let instance = rig.instance(false).await;
 
-    // El hosted no tiene la ruta: el miembro proxy la baja del upstream.
+    // The hosted does not have the path: the proxy member downloads it from the upstream.
     let before = shared_lab::total();
     let answer = get(&instance.app, "grp", "pkg/lib.bin").await;
     assert_eq!(answer.status, StatusCode::OK, "{:?}", answer.body);
@@ -637,9 +637,9 @@ async fn the_virtual_group_resolves_by_precedence_over_dgraph() {
     assert_eq!(answer.header("x-hodei-resolved-from"), Some("pxy"));
     assert_eq!(shared_lab::total(), before + 1);
 
-    // Se publica la misma ruta en el hosted (precisamente la que también
-    // sirve el upstream): a partir de aquí gana el hosted y el upstream
-    // deja de verse molestado por esa ruta.
+    // The same path is published on the hosted (precisely the one the
+    // upstream also serves): from here on the hosted wins and the upstream
+    // is no longer bothered for that path.
     let published = send(
         &instance.app,
         Method::PUT,
@@ -663,11 +663,11 @@ async fn the_virtual_group_resolves_by_precedence_over_dgraph() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2 — el recibo y su digest sobreviven al reinicio; no hay duplicidad.
+// AC2 -- the receipt and its digest survive the restart; no duplication.
 // ---------------------------------------------------------------------------
 
-/// Cuántos nodos hay bajo una clave de recibo: el censo es solo por las
-/// claves propias de la prueba, nunca global (el alpha se comparte).
+/// How many nodes there are under a receipt key: the census is only by the
+/// test's own keys, never global (the alpha is shared).
 async fn receipt_copies(client: &GraphClient, key: &str) -> usize {
     let query = format!(
         "{{ q(func: eq(hodei.proxy.receipt.key, {key})) {{ uid }} }}",
@@ -688,7 +688,7 @@ async fn the_receipt_and_digest_survive_a_restart_without_duplication() {
         return;
     };
 
-    // Vida uno: un miss normal deja el recibo en el grafo.
+    // Life one: a normal miss leaves the receipt in the graph.
     let first = rig.instance(false).await;
     let answer = get(&first.app, "pxy", "pkg/lib.bin").await;
     assert_eq!(answer.status, StatusCode::OK);
@@ -698,8 +698,8 @@ async fn the_receipt_and_digest_survive_a_restart_without_duplication() {
     let id = receipts[0]["id"].as_str().expect("id").to_string();
     let digest = receipts[0]["digest"].as_str().expect("digest").to_string();
 
-    // El reinicio: cliente, plano y CAS locales nuevos sobre el MISMO
-    // grafo y el MISMO CAS compartido.
+    // The restart: new local client, plane and CAS over the SAME
+    // graph and the SAME shared CAS.
     drop(first);
     let second = rig.instance(false).await;
     let before = shared_lab::total();
@@ -715,7 +715,7 @@ async fn the_receipt_and_digest_survive_a_restart_without_duplication() {
     assert_eq!(after[0]["id"], id.as_str());
     assert_eq!(after[0]["digest"], digest.as_str());
 
-    // `record` repetido del mismo recibo es replay: Ok y una sola fila.
+    // A repeated `record` of the same receipt is a replay: Ok and a single row.
     let durable = second
         .ledger
         .receipts_of(&rig.account, "pxy", "pkg/lib.bin")
@@ -738,8 +738,8 @@ async fn the_receipt_and_digest_survive_a_restart_without_duplication() {
         1
     );
 
-    // Mismo id en otra cuenta: la clave lleva la cuenta, así que no hay
-    // colisión ni duplicidad entre repos de tenants distintos.
+    // Same id in another account: the key carries the account, so there is no
+    // collision or duplication between repos of different tenants.
     let other = {
         let mut receipt = durable[0].clone();
         receipt.account = format!("hsp196_peer_{}", &nonce()[4..]);
@@ -777,8 +777,8 @@ async fn the_receipt_and_digest_survive_a_restart_without_duplication() {
         1
     );
 
-    // El baseline por tenant: el sujeto de la ruta sigue con UNA fila,
-    // la del recibo original.
+    // The per-tenant baseline: the path's subject still has ONE row,
+    // that of the original receipt.
     let subject = format!("{}/{}/{}", rig.account, "pxy", "pkg/lib.bin");
     let query = format!(
         "{{ q(func: eq(hodei.proxy.receipt.subject, {s})) {{ uid }} }}",

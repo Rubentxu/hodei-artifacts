@@ -58,8 +58,8 @@ impl GraphProjector for EvidenceGraphProjector {
         if !event.event_type().mutates_graph() {
             return Ok(changes);
         }
-        // A superseded evidence WITHDRAWS its support: una revision dice
-        // que el apoyo anterior se va, uno, y los demas se quedan. The
+        // A superseded evidence WITHDRAWS its support: a revision says
+        // that the previous support goes away, one, and the others stay. The
         // withdrawal needs to know WHICH support it withdraws: without
         // the claim and without the superseded evidence, the event says
         // nothing about the graph.

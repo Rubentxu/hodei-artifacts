@@ -1,7 +1,7 @@
-//! El ledger de cuotas es admision, no contabilidad posterior: la
-//! decision de admitir y la reserva del tamano declarado son **el mismo
-//! paso atomico**, la cancelacion devuelve lo reservado, y lo que entra
-//! por un stream sin tamano declarado se ancla trozo a trozo.
+//! The quota ledger is admission, not after-the-fact accounting: the
+//! decision to admit and the reservation of the declared size are **the same
+//! atomic step**, cancellation returns what was reserved, and what comes in
+//! through a stream without a declared size is anchored chunk by chunk.
 
 use std::sync::Arc;
 
@@ -15,10 +15,10 @@ fn limits(max_bytes: u64, max_uploads: usize) -> QuotaLimits {
     }
 }
 
-/// AC1: dos uploads concurrentes que juntos pasan la cuota no caben
-/// los dos. La unica decision atomicos es check+reserve bajo la misma
-/// llave; aqui se comprueba que no hay ventana: pase lo que pase con
-/// el orden, el admitido mas el reservado jamas supera el limite.
+/// AC1: two concurrent uploads that together exceed the quota do not both
+/// fit. The only atomic decision is check+reserve under the same
+/// key; here it is checked that there is no window: whatever happens with
+/// the order, admitted plus reserved never exceeds the limit.
 #[test]
 fn two_concurrent_uploads_that_do_not_both_fit_never_both_reserve() {
     for _ in 0..64 {
@@ -43,9 +43,9 @@ fn two_concurrent_uploads_that_do_not_both_fit_never_both_reserve() {
     }
 }
 
-/// AC2: la negativa dice cual de las dos puertas es y cuanto hay que
-/// esperar. La de bytes no se quita reintentando; la de concurrencia
-/// lleva el hint.
+/// AC2: the refusal says which of the two gates it is and how long to
+/// wait. The bytes one is not removed by retrying; the concurrency one
+/// carries the hint.
 #[test]
 fn each_refusal_says_which_gate_it_is() {
     let ledger = QuotaLedger::new(limits(100, 1));
@@ -66,22 +66,22 @@ fn each_refusal_says_which_gate_it_is() {
             retry_after_secs: 3
         }
     );
-    // Otra cuenta no padece la saturacion de esta.
+    // Another account does not suffer this one's saturation.
     let other = ledger
         .begin("globex", Some(40))
         .expect("another account is its own budget");
     drop(other);
     drop(first);
-    // Y con el ticket cerrado, la misma cuenta vuelve a caber.
+    // And with the ticket closed, the same account fits again.
     let again = ledger
         .begin("acme", Some(10))
         .expect("the gate opens when the upload ends");
     drop(again);
 }
 
-/// AC3: la cancelacion libera. Un ticket abandonado a medias (el
-/// cliente cuelga, el servidor aborta) devuelve la reserva y el hueco
-/// de concurrencia: exactamente lo que paga el settle, pero en cero.
+/// AC3: cancellation releases. A ticket abandoned halfway (the
+/// client hangs, the server aborts) returns the reservation and the concurrency
+/// slot: exactly what settle pays, but at zero.
 #[test]
 fn an_abandoned_ticket_returns_everything_it_held() {
     let ledger = QuotaLedger::new(limits(100, 1));
@@ -104,8 +104,8 @@ fn an_abandoned_ticket_returns_everything_it_held() {
     );
 }
 
-/// Un stream sin Content-Length se ancla trozo a trozo: la cuota se
-/// aplica **mientras** entran los bytes, no cuando ya todos estan.
+/// A stream without Content-Length is anchored chunk by chunk: the quota is
+/// applied **while** the bytes come in, not when they are all there.
 #[test]
 fn an_undeclared_stream_is_pinned_chunk_by_chunk() {
     let ledger = QuotaLedger::new(limits(100, 4));
@@ -122,7 +122,7 @@ fn an_undeclared_stream_is_pinned_chunk_by_chunk() {
         total += chunk;
         ticket.admit(total).expect("90 still fits");
     }
-    // 30+30+30 = 90: cabe. El siguiente trozo de 20 no.
+    // 30+30+30 = 90: it fits. The next chunk of 20 does not.
     let over = ticket
         .admit(total + 20)
         .expect_err("110 does not fit in 100");
@@ -132,8 +132,8 @@ fn an_undeclared_stream_is_pinned_chunk_by_chunk() {
             retry_after_secs: 3
         }
     );
-    // El rechazo reserva nada mas y, ademas, suelta lo anclado en el mismo
-    // paso atomico: un ticket rechazado ya no es una subida viva.
+    // The rejection reserves nothing more and, in addition, releases what was anchored in the same
+    // atomic step: a rejected ticket is no longer a live upload.
     let usage = ledger.usage("acme");
     assert_eq!(
         (usage.in_flight_bytes, usage.active_uploads),
@@ -148,12 +148,12 @@ fn an_undeclared_stream_is_pinned_chunk_by_chunk() {
     );
 }
 
-/// HSP-314 P4: dos subidas en streaming que juntas pasan la cuota. La que
-/// cruza el limite es rechazada y su reserva vuelve en ESE mismo paso: la
-/// otra, que llega un instante despues -- antes de que el manejador de la
-/// primera haya soltado el ticket --, no puede ver la reserva de una subida
-/// que ya murio. Antes el rechazo dejaba la reserva viva hasta el `drop` y
-/// las dos subidas eran rechazadas (`[413, 413]`).
+/// HSP-314 P4: two streaming uploads that together exceed the quota. The one that
+/// crosses the limit is rejected and its reservation returns in THAT same step: the
+/// other, which arrives an instant later -- before the first one's handler
+/// has released the ticket --, cannot see the reservation of an upload
+/// that is already dead. Before, the rejection left the reservation alive until the `drop` and
+/// both uploads were rejected (`[413, 413]`).
 #[test]
 fn a_refused_ticket_does_not_starve_the_upload_that_follows() {
     let ledger = QuotaLedger::new(limits(1000, 8));
@@ -181,8 +181,8 @@ fn a_refused_ticket_does_not_starve_the_upload_that_follows() {
     );
 }
 
-/// El settle convierte reserva en almacenado, y lo que el almacen ya
-/// tenia (contenido repetido) no cuenta dos veces.
+/// Settle turns a reservation into stored, and what the store already
+/// had (repeated content) does not count twice.
 #[test]
 fn settling_moves_the_reservation_into_stored_bytes() {
     let ledger = QuotaLedger::new(limits(100, 4));
@@ -201,8 +201,8 @@ fn settling_moves_the_reservation_into_stored_bytes() {
             retry_after_secs: 3
         }
     ));
-    // Publicar contenido que el almacen ya tiene no anade bytes: el
-    // settle con cero deja la cuenta exactamente como estaba.
+    // Publishing content the store already has adds no bytes: the
+    // settle with zero leaves the account exactly as it was.
     let mut same = ledger
         .begin("acme", Some(40))
         .expect("40 is exactly the headroom");
@@ -223,8 +223,8 @@ fn the_usage_of_one_account_never_names_another() {
     assert_eq!(fresh.active_uploads, 0);
 }
 
-/// Un despliegue que no dice nada no limita nada: el limite que no se
-/// escribe es un limite que no se aplica, y eso debe ser el default.
+/// A deployment that says nothing limits nothing: a limit that is not
+/// written is a limit that is not applied, and that must be the default.
 #[test]
 fn an_undeployed_quota_admits_everything() {
     let ledger = QuotaLedger::new(QuotaLimits::default());

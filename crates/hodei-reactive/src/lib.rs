@@ -1,27 +1,27 @@
-//! El runtime de las reacciones de seguridad de Hodei.
+//! The runtime of Hodei's security reactions.
 //!
-//! Cuando un riesgo nuevo toca un artefacto desplegado, la decision de
-//! confianza tiene que cambiar **sin que nadie la pida**. Este crate es
-//! la parte del sistema que se entera solo.
+//! When a new risk touches a deployed artifact, the trust decision
+//! has to change **without anybody asking for it**. This crate is
+//! the part of the system that finds out on its own.
 //!
-//! # Lo que el runtime hace, y nada mas
+//! # What the runtime does, and nothing more
 //!
-//! - **Suscribir**: un registro de comportamientos, cada uno con lo que
-//!   le interesa.
-//! - **Guardar**: la condicion se comprueba; si no se cumple, la reaccion
-//!   no corre y el motivo queda en la traza.
-//! - **Registrar**: la ejecucion es durable, con su cadena de causalidad,
-//!   su numero de intentos y su traza.
-//! - **Acotar**: un presupuesto corta la cadena cuando se excede, y el
-//!   corte queda en la traza.
+//! - **Subscribe**: a registry of behaviours, each with what
+//!   interests it.
+//! - **Guard**: the condition is checked; if it does not hold, the reaction
+//!   does not run and the reason stays in the trace.
+//! - **Record**: the execution is durable, with its causation chain,
+//!   its attempt count and its trace.
+//! - **Bound**: a budget cuts the chain when it is exceeded, and the
+//!   cut stays in the trace.
 //!
-//! # Lo que un manejador de eventos ordinario no tiene
+//! # What an ordinary event handler does not have
 //!
-//! La idempotencia por clave, el presupuesto de bucles, la traza durable
-//! y la reconstruccion sin repetir los efectos externos. Un manejador
-//! ordinario es una llamada a una funcion: no tiene clave, ni presupuesto,
-//! ni traza que sobreviva a un reinicio. Y la exit gate del hito lo pide
-//! literal: **observable, acotado, idempotente y reconstruible**.
+//! Idempotency by key, the loop budget, the durable trace
+//! and reconstruction without repeating external effects. An ordinary
+//! handler is a function call: it has no key, no budget,
+//! and no trace that survives a restart. And the milestone's exit gate asks for it
+//! literally: **observable, bounded, idempotent and reconstructible**.
 
 #![forbid(unsafe_code)]
 

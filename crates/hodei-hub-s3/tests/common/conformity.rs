@@ -1,9 +1,9 @@
-//! La conformidad de HSP-139, escrita una vez y corrida contra cada
-//! servidor: la misma batería de concurrencia, condicion real, segado
-//! del staging e informe de capacidades se aplica al emulador
-//! (LocalStack) y al servidor S3 real (RustFS). Los veredictos del
-//! informe llevan la nota de versión del banco que los produjo: un
-//! informe sin "contra qué" no es un informe.
+//! The HSP-139 conformance, written once and run against each
+//! server: the same battery of concurrency, real conditional write, staging
+//! reaping and capabilities report applies to the emulator
+//! (LocalStack) and to the real S3 server (RustFS). The verdicts of the
+//! report carry the version note of the bench that produced them: a
+//! report without "against what" is not a report.
 
 use std::time::Duration;
 
@@ -15,17 +15,17 @@ use hodei_evidence::ContentDigest;
 use hodei_hub::blob::{BlobError, BlobStore, CommitExpectation};
 use hodei_hub_s3::{S3BlobConfig, S3BlobStore};
 
-/// El cuerpo de las pruebas de frontera: determinista, para que su
-/// digest sea el mismo en cualquier banco.
+/// The body of the boundary tests: deterministic, so that its
+/// digest is the same on any bench.
 pub fn the_bulk(seed: u8, len: usize) -> Vec<u8> {
     (0..len)
         .map(|i| (i as u8).wrapping_mul(31).wrapping_add(seed))
         .collect()
 }
 
-/// Un almacén con trozos de 5 MiB y dos en vuelo: el mínimo S3 y un
-/// presupuesto pequeño, para que las fronteras se crucen con cuerpos
-/// que caben en memoria sin engañar al servidor.
+/// A store with 5 MiB parts and two in flight: the S3 minimum and a
+/// small budget, so that the boundaries are crossed with bodies
+/// that fit in memory without deceiving the server.
 pub async fn a_store_with_parts(client: &Client, bucket: &str, part_size: usize) -> S3BlobStore {
     S3BlobStore::new(
         client.clone(),
@@ -38,16 +38,16 @@ pub async fn a_store_with_parts(client: &Client, bucket: &str, part_size: usize)
     .expect("el almacen abre")
 }
 
-/// AC1: N publicadores concurrentes del mismo contenido convergen a un
-/// objeto íntegro y a una sola referencia por digest, sobre el multipart
-/// real: dos uploads a la vez contra la misma clave de destino.
+/// AC1: N concurrent publishers of the same content converge to one
+/// intact object and a single reference per digest, over the real
+/// multipart: two uploads at once against the same destination key.
 ///
-/// Cada publicador trae su **propio almacén**, no uno compartido: el
-/// semáforo de memoria vive en el almacén, y si todos usáramos el mismo
-/// la concurrencia real se colapsaría en una fila ordenada por ese
-/// semáforo. Dos almacenes sobre el mismo cliente son dos procesos que
-/// publican a la vez sin coordinación ninguna entre ellos —que es
-/// exactamente lo que se quiere medir.
+/// Each publisher brings its **own store**, not a shared one: the memory
+/// semaphore lives in the store, and if we all used the same one
+/// the real concurrency would collapse into a queue ordered by that
+/// semaphore. Two stores over the same client are two processes that
+/// publish at once without any coordination between them --which is
+/// exactly what is to be measured.
 pub async fn ac1_concurrent_publishers(client: &Client, bucket: &str) {
     let bytes = the_bulk(7, 13 * 1024 * 1024);
     let expectation = CommitExpectation::of(&bytes);
@@ -95,18 +95,18 @@ pub async fn ac1_concurrent_publishers(client: &Client, bucket: &str) {
     );
 }
 
-/// AC1 (mitad de reintento): publicar el mismo contenido tres veces
-/// seguidas deja UN objeto con SUS bytes, existiera ya o no.
+/// AC1 (retry half): publishing the same content three times
+/// in a row leaves ONE object with ITS bytes, whether it already existed or not.
 ///
-/// Lo que este test **no** hace, dicho con todas las letras: no
-/// inyecta la perdida del `complete` en la red. La respuesta perdida
-/// del enunciado se modela por su efecto observable —un llamante que
-/// reintenta sin saber—, y lo que se prueba es la idempotencia del
-/// reintento sobre la clave de destino. La carrera real la mide el
-/// test de concurrencia de arriba; aqui lo que se fija es que el
-/// tercer intento sobre un objeto ya sellado no escribe una segunda
-/// referencia ni toca la primera. Un fallo del servidor inyectado por
-/// proxy es deuda registrada, no una garantia que este test prometa.
+/// What this test does **not** do, stated plainly: it does not
+/// inject the loss of `complete` in the network. The lost response
+/// of the statement is modeled by its observable effect --a caller that
+/// retries without knowing--, and what is tested is the idempotency of the
+/// retry over the destination key. The real race is measured by the
+/// concurrency test above; here what is pinned is that the
+/// third attempt on an already sealed object does not write a second
+/// reference nor touch the first. A server failure injected by
+/// proxy is recorded debt, not a guarantee this test promises.
 pub async fn ac1_lost_ack_retry(client: &Client, bucket: &str) {
     let store = a_store_with_parts(client, bucket, 5 * 1024 * 1024).await;
     let bytes = the_bulk(31, 6 * 1024 * 1024);
@@ -140,10 +140,10 @@ pub async fn ac1_lost_ack_retry(client: &Client, bucket: &str) {
     );
 }
 
-/// AC2: la honestidad del dedupe condicionado. Se planta un cuerpo
-/// ajeno sin sello en la clave de un digest; `verify` lo llama
-/// corrupto, `put` lo repara, y la segunda publicación del contenido
-/// bueno deduplica de verdad sobre el objeto ya sellado.
+/// AC2: the honesty of the conditional dedupe. A foreign body without a seal
+/// is planted at the key of a digest; `verify` calls it
+/// corrupt, `put` repairs it, and the second publication of the good
+/// content really deduplicates over the already sealed object.
 pub async fn ac2_corrupt_is_never_dedupe(client: &Client, bucket: &str) {
     let store = S3BlobStore::new(client.clone(), S3BlobConfig::new(bucket)).expect("abre");
     let bytes = the_bulk(11, 4096);
@@ -188,11 +188,11 @@ pub async fn ac2_corrupt_is_never_dedupe(client: &Client, bucket: &str) {
         "AC2: la segunda publicacion no escribio otra cosa"
     );
 
-    // La rama vacía del publish, comprobada igual que la demás. El
-    // contenido vacío no sube multipart, asi que su publicacion es un
-    // PUT condicionado y su 412 tiene que pasar por el mismo criterio
-    // honesto: si en la clave del digest vacío hay otra cosa, eso no
-    // es el vacío y se repara —no se da por publicado.
+    // The empty branch of the publish, checked the same as the rest. The
+    // empty content does not upload multipart, so its publication is a
+    // conditional PUT and its 412 has to go through the same honest
+    // criterion: if at the key of the empty digest there is something else, that is not
+    // the empty one and it is repaired --it is not considered published.
     let empty = ContentDigest::of_bytes(b"");
     let empty_key = store.the_key_of(&empty);
     client
@@ -215,8 +215,8 @@ pub async fn ac2_corrupt_is_never_dedupe(client: &Client, bucket: &str) {
     );
 }
 
-/// AC2 (mitad de sesión): el publish condicionado de la sesión sobre
-/// una clave que ya tiene un objeto bueno deduplica sin tocarlo.
+/// AC2 (session half): the conditional publish of the session on
+/// a key that already has a good object deduplicates without touching it.
 pub async fn ac2_session_dedupes(client: &Client, bucket: &str) {
     let store = a_store_with_parts(client, bucket, 5 * 1024 * 1024).await;
     let bytes = the_bulk(13, 12 * 1024 * 1024);
@@ -248,10 +248,10 @@ pub async fn ac2_session_dedupes(client: &Client, bucket: &str) {
     );
 }
 
-/// AC3: multipart en frontera y abort limpio. 11 MiB = 5+5+1 con
-/// trozos de 5 MiB (el último bajo el mínimo, la frontera que S3
-/// permite) viaja y vuelve byte a byte; una sesión abortada no deja ni
-/// objeto ni upload; el presupuesto de memoria es el declarado.
+/// AC3: multipart at the boundary and clean abort. 11 MiB = 5+5+1 with
+/// 5 MiB parts (the last below the minimum, the boundary that S3
+/// allows) travels and comes back byte for byte; an aborted session leaves neither
+/// object nor upload; the memory budget is the declared one.
 pub async fn ac3_multipart_and_abort(client: &Client, bucket: &str) {
     let part = 5 * 1024 * 1024;
     let store = a_store_with_parts(client, bucket, part).await;
@@ -314,10 +314,10 @@ pub async fn ac3_multipart_and_abort(client: &Client, bucket: &str) {
     );
 }
 
-/// AC3 (mitad de GC): el segado del staging huérfano. Una subida con
-/// clave propia abandonada sin abortar se aborta; un objeto de staging
-/// viejo se borra; una clave **ajena** bajo el prefijo no se toca (el
-/// GC discrimina); y una subida joven se declara viva y se respeta.
+/// AC3 (GC half): the reaping of orphaned staging. An upload with its
+/// own key abandoned without aborting is aborted; an old staging object
+/// is deleted; a **foreign** key under the prefix is not touched (the
+/// GC discriminates); and a young upload is declared alive and respected.
 pub async fn ac3_staging_reaper(client: &Client, bucket: &str) {
     let store = a_store_with_parts(client, bucket, 5 * 1024 * 1024).await;
 
@@ -355,8 +355,8 @@ pub async fn ac3_staging_reaper(client: &Client, bucket: &str) {
         .await
         .expect("el objeto de staging entra");
 
-    // Con max_age cero todo lo encontrado es mayor de edad; en un cubo
-    // exclusivo de esta prueba no hay ninguna sesion viva que proteger.
+    // With max_age zero everything found is of age; in a bucket
+    // exclusive to this test there is no live session to protect.
     let cleanup = store
         .clean_staging(Duration::ZERO)
         .await
@@ -423,17 +423,17 @@ pub async fn ac3_staging_reaper(client: &Client, bucket: &str) {
         .await;
 }
 
-/// AC4: el informe de capacidades, medido contra este banco y esta
-/// versión. Cada línea es una llamada real; las aserciones fijan lo que
-/// el producto necesita de él. Devuelve el informe para que el llamante
-/// lo imprima con la nota de versión del servidor.
+/// AC4: the capabilities report, measured against this bench and this
+/// version. Each line is a real call; the assertions pin what
+/// the product needs from it. Returns the report so that the caller
+/// prints it with the version note of the server.
 pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String> {
     let mut report = Vec::new();
     let key = "blobs/informe/capacidad";
     let body = b"capacidad".to_vec();
 
-    // Escritura condicional (If-None-Match: *): el mecanismo del AC2,
-    // medido como capacidad del backend, no como promesa del SDK.
+    // Conditional write (If-None-Match: *): the AC2 mechanism,
+    // measured as a backend capability, not as an SDK promise.
     let first = client
         .put_object()
         .bucket(bucket)
@@ -459,9 +459,9 @@ pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String>
         "if-none-match-estrella: soportado={conditional} rechaza-duplicado={refused}"
     ));
 
-    // Checksum del objeto: si el servidor lo calcula y lo sirve, el
-    // cliente podría apoyarse; si no, la verificación es por digest
-    // recalculado —que es lo que el producto hace.
+    // Object checksum: if the server computes it and serves it, the
+    // client could rely on it; if not, verification is by recomputed
+    // digest --which is what the product does.
     let with_checksum = client
         .put_object()
         .bucket(bucket)
@@ -485,8 +485,8 @@ pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String>
         with_checksum.is_ok()
     ));
 
-    // El ETag de un multipart NO es el sha256 del cuerpo: la lección
-    // del enunciado ("no asumir ETag=SHA256"), medida contra el banco.
+    // The ETag of a multipart is NOT the sha256 of the body: the lesson
+    // of the statement ("do not assume ETag=SHA256"), measured against the bench.
     let multipart_body = the_bulk(41, 5 * 1024 * 1024);
     let multipart_etag = {
         let created = client
@@ -534,9 +534,9 @@ pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String>
         multipart_etag.trim_matches('"') == sha_of_body
     ));
 
-    // Versionado: si el cubo lo admite, un borrado deja marcador; si
-    // no, el GC no puede apoyarse en versiones y su palabra es la
-    // clave. Se mide, no se supone.
+    // Versioning: if the bucket supports it, a delete leaves a marker; if
+    // not, the GC cannot rely on versions and its word is the
+    // key. It is measured, not assumed.
     let versioning = client
         .get_bucket_versioning()
         .bucket(bucket)
@@ -546,7 +546,7 @@ pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String>
         .unwrap_or_else(|error| format!("no disponible: {error}"));
     report.push(format!("versionado: {versioning}"));
 
-    // Rango: GET con Range, el camino de `read_range` sin traer el todo.
+    // Range: GET with Range, the path of `read_range` without fetching the whole.
     let ranged = client
         .get_object()
         .bucket(bucket)
@@ -565,9 +565,9 @@ pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String>
     };
     report.push(format!("rango: servido={range_bytes:?} esperado=4"));
 
-    // La copia server-side del publish sobre un cuerpo frontera; el
-    // límite simple de 5 GiB lo declara el código y no se mide aquí:
-    // excede la mesa de esta máquina con holgura.
+    // The server-side copy of the publish over a boundary body; the
+    // simple 5 GiB limit is declared by the code and is not measured here:
+    // it exceeds this machine's bench with room to spare.
     let store = a_store_with_parts(client, bucket, 5 * 1024 * 1024).await;
     let boundary = the_bulk(43, 11 * 1024 * 1024);
     let mut session = store.begin().await.expect("la sesion abre");
@@ -583,7 +583,7 @@ pub async fn ac4_capability_report(client: &Client, bucket: &str) -> Vec<String>
             .to_string(),
     );
 
-    // Lo que el producto necesita queda afirmación, no solo informe.
+    // What the product needs becomes an assertion, not just a report.
     assert!(
         conditional && refused,
         "AC4: el backend debe soportar If-None-Match medido: {report:?}"

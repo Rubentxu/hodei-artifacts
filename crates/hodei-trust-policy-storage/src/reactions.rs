@@ -80,10 +80,10 @@ impl PromotionDecisionRequester {
 
     /// The account of a subject.
     ///
-    /// The subject is an HRN and the HRN lleva la cuenta, asi que el
-    /// adaptador no la inventa ni la busca a cuchillo: la lee del parser
-    /// canonico. Un split de cadena es otro parser, y otro parser es otra
-    /// gramatica que nadie acordo.
+    /// The subject is an HRN and the HRN carries the account, so the
+    /// adapter does not invent it or look for it by hand: it reads it from the canonical
+    /// parser. A string split is another parser, and another parser is another
+    /// grammar that nobody agreed on.
     fn the_account_of(subject: &str) -> Result<String, String> {
         kernel::Hrn::from_string(subject)
             .map(|one| one.account_id().to_string())
@@ -107,9 +107,9 @@ impl DecisionRequester for PromotionDecisionRequester {
             .await?;
 
         // The context is about THE SUBJECT of the reevaluation, and not
-        // about the one the source felt like answering: si el contexto no
-        // nombra al sujeto, la reevaluacion decide sobre otro, y una
-        // decision sobre otro no es una decision.
+        // about the one the source felt like answering: if the context does not
+        // name the subject, the reevaluation decides about another, and a
+        // decision about another is not a decision.
         if context.subject.hrn != request.subject {
             return Err(format!(
                 "the context returned is for {} and not for the subject {}",
@@ -118,8 +118,8 @@ impl DecisionRequester for PromotionDecisionRequester {
         }
 
         // The decision that is replaced, if there was one. The new
-        // decision says which one it replaces: sin eso, una decision que
-        // pasa de ALLOW a DENY no se puede explicar.
+        // decision says which one it replaces: without that, a decision that
+        // goes from ALLOW to DENY cannot be explained.
         let previous = self
             .store
             .list_for_subject(&account, &request.subject)
@@ -239,7 +239,7 @@ impl ReasonLabel for Reevaluation {
 /// The context of a subject that has no capsule.
 ///
 /// It is the honest answer when there is no evidence: a context with no
-/// dimensions and the facts del riesgo. The policy that requires
+/// dimensions and the facts of the risk. The policy that requires
 /// dimensions will say that they are missing, and the decision will be
 /// the one that says so.
 pub struct EmptyContextSource;
@@ -280,7 +280,7 @@ impl TrustContextSource for EmptyContextSource {
 mod the_account_of_tests {
     use super::PromotionDecisionRequester;
 
-    /// Un HRN canonico v2, con region, dice la cuenta en su sitio.
+    /// A canonical HRN v2, with region, says the account in its place.
     #[test]
     fn a_canonical_hrn_with_region_says_its_account() {
         let account = PromotionDecisionRequester::the_account_of(
@@ -290,7 +290,7 @@ mod the_account_of_tests {
         assert_eq!(account, "acme");
     }
 
-    /// Un alias v1, sin region, es el mismo HRN y dice la misma cuenta.
+    /// A v1 alias, without region, is the same HRN and says the same account.
     #[test]
     fn a_v1_alias_without_region_says_its_account_too() {
         let account = PromotionDecisionRequester::the_account_of(
@@ -300,8 +300,8 @@ mod the_account_of_tests {
         assert_eq!(account, "acme");
     }
 
-    /// Lo que no es un HRN canonico no dice cuenta alguna: es un error,
-    /// no una cadena vacia que el flujo ignora.
+    /// What is not a canonical HRN says no account at all: it is an error,
+    /// not an empty string that the flow ignores.
     #[test]
     fn a_subject_that_is_not_an_hrn_is_an_error() {
         for impostor in ["", "app-1.0.0", "hrn:", "hrn:hodei"] {

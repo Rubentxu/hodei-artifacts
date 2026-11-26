@@ -1,46 +1,46 @@
-//! El perfil de arranque sobre la autoridad única del grafo (HSP-209).
+//! The boot profile over the single authority of the graph (HSP-209).
 //!
-//! Este módulo es la costura que faltaba entre las piezas ya construidas:
-//! cada tienda vertical del grafo (`DgraphCatalogStore`, `DgraphIamAdapter`,
+//! This module is the seam that was missing between the pieces already built:
+//! each vertical store of the graph (`DgraphCatalogStore`, `DgraphIamAdapter`,
 //! `DgraphTrustStore`, `DgraphDecisionStore`, `DgraphProvenanceLedger`,
-//! `DgraphJournal`) existe y está probada de forma aislada contra un alpha
-//! real. Aquí se ensamblan **todas contra el mismo cliente conectado**, en
-//! el orden que las dependencias imponen, y se obtiene el `AppState` del
-//! despliegue productivo: Dgraph para el metadato, S3 para el byte, Cedar
-//! para la decisión. No hay un segundo almacén de metadato en ningún sitio:
-//! el grafo es el único perfil (la validación de la configuración exige
-//! `[graph]`, [`crate::config::AppConfig::validate`]) — si el perfil no puede
-//! montarse, el arranque muere con el error de la pieza concreta en vez de
-//! degradar.
+//! `DgraphJournal`) exists and is tested in isolation against a real alpha.
+//! Here **all of them are assembled against the same connected client**, in
+//! the order the dependencies impose, and the production deployment's
+//! `AppState` is obtained: Dgraph for metadata, S3 for bytes, Cedar
+//! for decisions. There is no second metadata store anywhere:
+//! the graph is the only profile (configuration validation requires
+//! `[graph]`, [`crate::config::AppConfig::validate`]) -- if the profile cannot be
+//! assembled, boot dies with the error of the specific piece instead of
+//! degrading.
 //!
-//! La composición es intencionadamente **fallida-antes-que-degradada**: la
-//! guarda del esquema versionado (`ensure_ready`, v7) es la primera puerta
-//! y la ejecuta el adapter IAM —ninguna tienda existe sobre un servidor que
-//! el binario no entiende—, y cada apertura posterior propaga su error
-//! tipado. Un alpha inalcanzable, un esquema incompatible o un bucket
-//! declarado inalcanzable producen el mismo resultado: el servicio no
-//! arranca.
+//! The composition is intentionally **fail-before-degrade**: the versioned-schema
+//! guard (`ensure_ready`, v7) is the first gate
+//! and is run by the IAM adapter --no store exists over a server the
+//! binary does not understand--, and each later open propagates its typed
+//! error. An unreachable alpha, an incompatible schema or a bucket
+//! declared unreachable produce the same result: the service does not
+//! start.
 //!
-//! Superficies deliberadamente **no cableadas** en este perfil (bloqueadores
-//! registrados en `target/uat/hsp209/evidencia.md`, no degradaciones):
+//! Surfaces deliberately **not wired** in this profile (blockers
+//! recorded in `target/uat/hsp209/evidencia.md`, not degradations):
 //!
-//! - Persistencia del esquema Cedar: la implementa `DgraphSchemaStore`
-//!   (HSP-314 P2), un tenant del mismo grafo. El esquema del bundle y el
-//!   del registro IAM sobreviven al reinicio y las políticas se validan
-//!   contra él.
-//! - Registro `/repositories` (superficie `RepositoryReader/Writer`):
-//!   sin implementación sobre Dgraph (registro en memoria). El
-//!   repositorio del catálogo (`/catalog/repositories`) sí está cableado,
-//!   que es el que usan las modalidades verticales.
-//! - Evidencia, cápsulas e investigación sobre el grafo: los almacenes
-//!   existen (`hodei-evidence-storage`, `src/bundles/capsule_dgraph.rs`)
-//!   pero los wrappers de lectura del servicio están genéricos sobre el
-//!   motor embebido o sin adaptador de handler; el perfil responde con el
-//!   comportamiento por defecto (503/404 honestos).
-//! - Cuotas durables: `DgraphQuotaStore` existe (HSP-198) sin consumidor en
-//!   producción; el perfil usa el ledger de memoria que usa hoy el
-//!   despliegue embebido — mismo comportamiento, cero degradación de
-//!   autoridad (los contadores no son metadato de contenido).
+//! - Cedar schema persistence: implemented by `DgraphSchemaStore`
+//!   (HSP-314 P2), a tenant of the same graph. The bundle schema and the
+//!   IAM registry schema survive restarts and policies are validated
+//!   against it.
+//! - `/repositories` registry (`RepositoryReader/Writer` surface):
+//!   no implementation over Dgraph (in-memory registry). The
+//!   catalog repository (`/catalog/repositories`) is wired,
+//!   and it is the one the vertical modalities use.
+//! - Evidence, capsules and investigation over the graph: the stores
+//!   exist (`hodei-evidence-storage`, `src/bundles/capsule_dgraph.rs`)
+//!   but the service's read wrappers are generic over the embedded
+//!   engine or have no handler adapter; the profile answers with the
+//!   default behavior (honest 503/404).
+//! - Durable quotas: `DgraphQuotaStore` exists (HSP-198) with no consumer in
+//!   production; the profile uses the in-memory ledger the embedded
+//!   deployment uses today -- same behavior, zero degradation of
+//!   authority (the counters are not content metadata).
 
 use std::sync::Arc;
 
@@ -60,10 +60,10 @@ use crate::oci::session_journal::DgraphJournal;
 use crate::proxy::dgraph_ledger::DgraphProvenanceLedger;
 use crate::trust::cache::CachedTrustLedger;
 
-/// El grafo del perfil: un solo cliente conectado, autenticado, con la
-/// guarda del esquema versionado ya pasada, compartido por todas las
-/// tiendas. Dos clientes serían dos sesiones contra el mismo alpha; el
-/// perfil habla con uno.
+/// The profile's graph: a single connected, authenticated client, with the
+/// versioned-schema guard already passed, shared by all the
+/// stores. Two clients would be two sessions against the same alpha; the
+/// profile talks to one.
 pub struct GraphAuthority {
     /// The shared connected client every store of the profile is opened on.
     pub client: Arc<GraphClient>,
@@ -74,11 +74,11 @@ pub struct GraphAuthority {
 }
 
 impl GraphAuthority {
-    /// Abre la autoridad del perfil: conexión real (TLS con el CA y el
-    /// server name declarados), login ACL con las credenciales declaradas,
-    /// y —dentro del open del adapter IAM— la guarda del esquema v7. Cada
-    /// paso es una puerta: ninguno degrada al siguiente ni al motor
-    /// embebido.
+    /// Opens the profile's authority: real connection (TLS with the declared CA and
+    /// server name), ACL login with the declared credentials,
+    /// and --inside the IAM adapter's open-- the v7 schema guard. Each
+    /// step is a gate: none degrades to the next one or to the embedded
+    /// engine.
     pub async fn connect(config: &AppConfig) -> Result<Self, BootstrapError> {
         let graph_config = config
             .graph
@@ -102,10 +102,10 @@ impl GraphAuthority {
                 "the Dgraph alpha at {endpoint} refused the login: {error}"
             ))
         })?;
-        // La puerta del esquema vive en el open del adapter: ensure_ready
-        // (v7) decide si este binario puede escribir en ese servidor. Un
-        // alpha compatible pero esquema viejísimo o nuevo de más devuelve
-        // el error tipado y el arranque muere ahí, sin tocar nada local.
+        // The schema gate lives in the adapter's open: ensure_ready
+        // (v7) decides whether this binary can write to that server. An
+        // alpha that is compatible but has a very old or too new schema returns
+        // the typed error and boot dies there, without touching anything local.
         let iam = Arc::new(
             DgraphIamAdapter::open(Arc::new(client))
                 .await
@@ -116,10 +116,10 @@ impl GraphAuthority {
                 })?,
         );
         let client = iam.client().clone();
-        // El tenant durables del perfil es el namespace del login: la
-        // convención de quien escribe, no una segunda autoridad. (El
-        // namespace de ACL es numérico por diseño; los tenants de llave del
-        // grafo son texto y aquí se nombra por ese número.)
+        // The profile's durable tenant is the login namespace: the
+        // convention of whoever writes, not a second authority. (The ACL
+        // namespace is numeric by design; the graph's key tenants are
+        // text and here it is named by that number.)
         let namespace = graph_config.namespace.to_string();
         let tenant = Tenant::new(&namespace).map_err(|error| {
             BootstrapError::Initialization(format!(
@@ -134,27 +134,27 @@ impl GraphAuthority {
     }
 }
 
-/// Ensambla el `AppState` del perfil productivo sobre la autoridad única.
+/// Assembles the production profile's `AppState` over the single authority.
 ///
-/// El orden no es decorativo:
+/// The order is not decorative:
 ///
-/// 1. `GraphAuthority::connect` — un solo cliente, un solo login, la guarda
-///    v7 ya pasada (lo hace el bootstrap antes de llamar aquí).
-/// 2. El almacén de contenido llega abierto desde el bootstrap: el CAS de
-///    bytes se abre antes que el catálogo porque la sonda de integridad que
-///    el catálogo recibe depende de él.
-/// 3. `DgraphCatalogStore::open` + `with_probe`: repositorios del catálogo,
-///    assets, versiones, etiquetas, búsqueda, ledger de contenido y libro
-///    de la GC coordinada, todo sobre el grafo.
-/// 4. `DgraphTrustStore` (con la caché TTL del perfil embebido encima) y
-///    `DgraphDecisionStore`: el plano de promoción con las decisiones sobre
-///    la misma autoridad.
-/// 5. `DgraphProvenanceLedger` + `ProxyPlane`: el libro de procedencia del
-///    proxy remoto sobre el grafo.
-/// 6. `DgraphJournal` + `UploadRegistry::with_journal`: sesiones OCI
-///    reanudables cuya autoridad es el grafo, no la memoria del proceso.
+/// 1. `GraphAuthority::connect` -- one client, one login, the v7 guard
+///    already passed (the bootstrap does it before calling here).
+/// 2. The content store arrives already open from the bootstrap: the byte CAS
+///    is opened before the catalog because the integrity probe that
+///    the catalog receives depends on it.
+/// 3. `DgraphCatalogStore::open` + `with_probe`: catalog repositories,
+///    assets, versions, tags, search, content ledger and the coordinated
+///    GC ledger, all over the graph.
+/// 4. `DgraphTrustStore` (with the embedded profile's TTL cache on top) and
+///    `DgraphDecisionStore`: the promotion plane with the decisions over
+///    the same authority.
+/// 5. `DgraphProvenanceLedger` + `ProxyPlane`: the remote proxy's provenance
+///    ledger over the graph.
+/// 6. `DgraphJournal` + `UploadRegistry::with_journal`: resumable OCI sessions
+///    whose authority is the graph, not process memory.
 ///
-/// Cualquier fallo es terminal: no hay una rama que "siga sin el grafo".
+/// Any failure is terminal: there is no branch that "continues without the graph".
 pub async fn assemble_graph_profile(
     state: AppState,
     config: &AppConfig,
@@ -168,10 +168,10 @@ pub async fn assemble_graph_profile(
         .map(|g| g.endpoint.clone())
         .unwrap_or_default();
 
-    // 3a. El libro de confianza: las concesiones viven en la misma autoridad
-    //    que el catálogo que las menciona. Se abre antes del catálogo porque
-    //    la búsqueda lo lee. Encima, la misma caché TTL de lectura que usa
-    //    el perfil embebido.
+    // 3a. The trust ledger: grants live in the same authority
+    //    as the catalog that mentions them. It is opened before the catalog because
+    //    search reads it. On top, the same read TTL cache the embedded
+    //    profile uses.
     let trust: Arc<dyn hodei_catalog::TrustLedger> = Arc::new(
         DgraphTrustStore::open(client.clone(), graph.tenant.clone())
             .await
@@ -184,9 +184,9 @@ pub async fn assemble_graph_profile(
     let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> =
         Arc::new(CachedTrustLedger::with_default_ttl(trust));
 
-    // 3. El catálogo sobre el grafo. El autorizador es el de paso: la
-    //    decisión real la toma el borde con Cedar, igual que en el perfil
-    //    embebido; la sonda de integridad viene del CAS abierto antes.
+    // 3. The catalog over the graph. The authorizer is the pass-through one: the
+    //    real decision is taken at the edge with Cedar, as in the embedded
+    //    profile; the integrity probe comes from the CAS opened earlier.
     let catalog = Arc::new(
         hodei_catalog_storage::DgraphCatalogStore::open(
             client.clone(),
@@ -208,10 +208,10 @@ pub async fn assemble_graph_profile(
     let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
     let ledger: Arc<dyn hodei_catalog::ContentLedger> = catalog.clone();
 
-    // Las piezas del plano de promoción: el libro de decisiones sobre el
-    // grafo y la política que el despliegue declara. Igual que en el
-    // embebido: una política declarada e ilegible detiene el arranque; no
-    // declarada deja toda promoción rechazada con decisión registrada.
+    // The pieces of the promotion plane: the decision ledger over the
+    // graph and the policy the deployment declares. As in the
+    // embedded one: a declared but unreadable policy stops boot; an
+    // undeclared one leaves every promotion rejected with a recorded decision.
     let policies = crate::trust::promotion::registry_from(
         config.trust.policy_file.as_deref(),
         &config.trust.policy_id,
@@ -235,7 +235,7 @@ pub async fn assemble_graph_profile(
         )),
     ));
 
-    // 5. La procedencia del proxy remoto: el libro durable sobre el grafo.
+    // 5. The remote proxy's provenance: the durable ledger over the graph.
     let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = Arc::new(
         DgraphProvenanceLedger::open(client.clone())
             .await
@@ -245,8 +245,8 @@ pub async fn assemble_graph_profile(
                 ))
             })?,
     );
-    // El plano del proxy: el mismo cable que el perfil embebido, con el
-    // libro del grafo.
+    // The proxy plane: the same wiring as the embedded profile, with the
+    // graph's ledger.
     let egress = crate::proxy::egress::EgressPolicy::new(config.proxy.allowed_hosts.clone())
         .map_err(|error| BootstrapError::Initialization(error.to_string()))?;
     for name in &config.proxy.allowed_credentials {
@@ -266,8 +266,8 @@ pub async fn assemble_graph_profile(
     .with_offline(config.proxy.offline);
     let proxy_plane = Arc::new(crate::proxy::ProxyPlane::new(fetcher, provenance_ledger));
 
-    // GC y scrub: leen las raíces del mismo catálogo del grafo y reclaman
-    // del mismo CAS; es lo único que borra bytes.
+    // GC and scrub: they read the roots of the same graph catalog and reclaim
+    // from the same CAS; it is the only thing that deletes bytes.
     let scrub = crate::recovery::Scrubber::new(
         ledger.clone(),
         content.clone(),
@@ -279,8 +279,8 @@ pub async fn assemble_graph_profile(
         std::time::Duration::from_secs(config.content.gc_grace_secs),
     );
 
-    // 6. Las sesiones OCI reanudables: el journal durable sobre el grafo
-    //    en lugar del registro de memoria.
+    // 6. Resumable OCI sessions: the durable journal over the graph
+    //    instead of the in-memory registry.
     let journal = Arc::new(
         DgraphJournal::open(client.clone(), graph.tenant.as_str())
             .await
@@ -296,15 +296,15 @@ pub async fn assemble_graph_profile(
         journal,
     );
 
-    // La auditoría del perfil: el mismo sink de diagnóstico (tracing) y el
-    // outbox durable sobre el grafo (el libro por el que HSP-190/220
-    // dreinan). El dispatcher del outbox se deja cableado en el perfil
-    // embebido como en él: la superficie HTTP registra, el outbox guarda,
-    // el drenaje lo prueba su IT propia.
+    // The profile's audit: the same diagnostic sink (tracing) and the
+    // durable outbox over the graph (the ledger HSP-190/220
+    // drain). The outbox dispatcher is left wired in the embedded
+    // profile as in it: the HTTP surface records, the outbox stores,
+    // the drain is proven by its own IT.
     let outbox = Arc::new(hodei_catalog_storage::DgraphAuditOutbox::new(client));
-    // `outbox` queda disponible para el drenaje; el sink del servicio sigue
-    // siendo el de trazas mientras no exista un consumidor HTTP del
-    // dispatcher en producción (mismo estado que el perfil embebido).
+    // `outbox` stays available for the drain; the service's sink remains
+    // the tracing one while there is no HTTP consumer of the
+    // dispatcher in production (same state as the embedded profile).
     let _ = &outbox;
 
     let state = state
@@ -316,9 +316,9 @@ pub async fn assemble_graph_profile(
         .with_trust_plane(plane)
         .with_content_store(content)
         .with_uploads(Arc::new(uploads));
-    // GC y scrub abren o avisan, igual que en el perfil embebido: una
-    // superficie de borrado que no puede comprobar qué está vivo es una
-    // superficie que debe permanecer cerrada, no una que borre a ciegas.
+    // GC and scrub open or warn, as in the embedded profile: a
+    // deletion surface that cannot check what is alive is a
+    // surface that must remain closed, not one that deletes blindly.
     let state = match scrub {
         Ok(scrub) => state.with_scrub(Arc::new(scrub)),
         Err(error) => {
@@ -343,9 +343,9 @@ pub async fn assemble_graph_profile(
     Ok(state)
 }
 
-/// El grafo del perfil también porta las políticas IAM: la raíz de
-/// composición entra con el adapter del grafo como proveedor de los seis
-/// puertos de política y con el almacén de esquema Cedar sobre Dgraph.
+/// The profile's graph also carries the IAM policies: the composition
+/// root comes in with the graph adapter as provider of the six
+/// policy ports and with the Cedar schema store over Dgraph.
 pub fn composition_root_for_graph(
     iam: Arc<DgraphIamAdapter>,
     schema_store: Arc<DgraphSchemaStore>,
@@ -358,14 +358,14 @@ pub fn composition_root_for_graph(
     )
 }
 
-/// Rechazo explícito de un `[database]` que no declara el grafo: el único
-/// backend es Dgraph, y cualquier otro valor (el motor embebido retirado
-/// incluido) se rechaza nombrándolo.
+/// Explicit rejection of a `[database]` that does not declare the graph: the only
+/// backend is Dgraph, and any other value (the retired embedded engine
+/// included) is rejected by naming it.
 ///
-/// Existe como constante nombrada porque las pruebas de rechazo (el arranque
-/// real del binario con `HODEI_DATABASE__DB_TYPE=rocksdb`) necesitan citar el
-/// mensaje exacto con el que el perfil se niega; el camino lo recorre
-/// `AppConfig::validate`, y esta lo enuncia.
+/// It exists as a named constant because the rejection tests (the real
+/// binary boot with `HODEI_DATABASE__DB_TYPE=rocksdb`) need to quote the
+/// exact message with which the profile refuses; the path is walked by
+/// `AppConfig::validate`, and this one states it.
 pub const REFUSAL_MESSAGE: &str = crate::config::REFUSED_DATABASE_TYPE;
 
 #[cfg(test)]
@@ -376,9 +376,9 @@ mod tests {
 
     #[test]
     fn the_refusal_names_the_backend_it_refuses() {
-        // El mensaje por el que la prueba de rechazo busca es el mismo que
-        // enuncia la validación: si uno cambia sin el otro, el arranque
-        // negaría con un texto que nadie espera.
+        // The message the rejection test looks for is the same one
+        // the validation states: if one changes without the other, boot
+        // would refuse with a text nobody expects.
         let database = DatabaseConfig {
             db_type: "rocksdb".to_string(),
         };

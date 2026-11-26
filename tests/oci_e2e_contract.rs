@@ -1,20 +1,20 @@
-//! La compatibilidad OCI con clientes reales (HSP-103 / HAR-09).
+//! OCI compatibility with real clients (HSP-103 / HAR-09).
 //!
-//! Todo lo anterior ha hablado el protocolo con un `curl` y con el `oras`.
-//! Esto habla el protocolo con **los clientes de verdad**: el `podman`, el
-//! `docker` de la CLI y el `oras`, contra el servicio de verdad, en un
-//! puerto de verdad.
+//! Everything before has spoken the protocol with a `curl` and with `oras`.
+//! This speaks the protocol with **the real clients**: `podman`, the
+//! `docker` CLI and `oras`, against the real service, on a
+//! real port.
 //!
-//! Y no es lo mismo. Un `curl` que abide la especificación demuestra que
-//! el registro *puede* hablar el protocolo; un `podman push` que termina
-//! en `exit 0` demuestra que el registro *habla* el protocolo, porque el
-//! cliente hace cosas que un `curl` no hace: pide token, negocia el tipo
-//! de medio, comprueba el digest de lo que baja, y se da cuenta si el
-//! registro miente.
+//! And it is not the same. A `curl` that abides by the specification shows that
+//! the registry *can* speak the protocol; a `podman push` that ends
+//! in `exit 0` shows that the registry *speaks* the protocol, because the
+//! client does things a `curl` does not: it asks for a token, negotiates the media
+//! type, checks the digest of what it downloads, and notices if the
+//! registry lies.
 //!
-//! Los clientes de verdad son los que dicen si el registro sirve. Un
-//! registro que solo se ha probado con `curl` puede tener el camino feliz
-//! y ningun otro, y el camino feliz es el que nadie usa.
+//! The real clients are the ones that say whether the registry works. A
+//! registry that has only been tested with `curl` may have the happy path
+//! and no other, and the happy path is the one nobody uses.
 
 mod support;
 
@@ -23,46 +23,46 @@ use std::process::{Child, Command, Stdio};
 
 use support::{Deployment, FIRST_ACCOUNT, FIRST_ONLY_REPOSITORY, FIRST_REPOSITORY, SECOND_ACCOUNT};
 
-/// La primera persona de la primera cuenta.
+/// The first person of the first account.
 const ALICE: &str = "alice";
 
-/// El primer repositorio que usa la suite oficial de conformidad.
+/// The first repository used by the official conformance suite.
 const CONFORMANCE_REPOSITORY: &str = "conformance/repo1";
 
-/// El segundo repositorio que usa la suite oficial de conformidad.
+/// The second repository used by the official conformance suite.
 ///
-/// La suite usa dos porque hay pruebas que empujan a uno y leen del otro:
-/// el montaje entre repositorios, por ejemplo.
+/// The suite uses two because some tests push to one and read from the other:
+/// cross-repository mounting, for example.
 const CONFORMANCE_REPOSITORY_TWO: &str = "conformance/repo2";
 
-/// El repositorio **con niveles** que se publica en el caso de la
-/// jerarquia.
+/// The repository **with levels** that is published in the
+/// hierarchy case.
 ///
-/// Un nombre con niveles es el que hace que el motor de autorizacion
-/// declare un padre--`team`-- y el que el esquema tiene que dejar.
+/// A name with levels is what makes the authorization engine
+/// declare a parent--`team`-- and the one the schema has to allow.
 const THE_NESTED_REPOSITORY: &str = "team/demo";
 
-/// El tipo de medio del SBOM que cuelga del artefacto.
+/// The media type of the SBOM that hangs from the artifact.
 const SBOM_TYPE: &str = "application/vnd.hodei.sbom.v1";
 
-/// El contenido del fichero que va dentro de la imagen.
+/// The content of the file that goes inside the image.
 ///
-/// Es pequeño a proposito: lo que se prueba es el protocolo, no el
-/// tamano de la imagen.
+/// It is small on purpose: what is tested is the protocol, not the
+/// size of the image.
 const THE_FILE: &str = "hodei e2e\n";
 
-/// Un despliegue limpio con el catalogo sembrado.
+/// A clean deployment with the catalog seeded.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed();
     deployment
 }
 
-/// El caso del informe, antes de ejecutarlo.
+/// The report case, before running it.
 ///
-/// Se anota dos veces: al principio, con lo que se espera, y al final,
-/// con lo que se ha medido. Si la prueba se muere entre medias, el
-/// informe se queda con la primera anotacion, que dice `FALLO`.
+/// It is recorded twice: at the start, with what is expected, and at the end,
+/// with what was measured. If the test dies in between, the
+/// report keeps the first record, which says `FAILURE`.
 fn the_case(id: &str, given: &str, when: &str, command: &str) -> support::Case {
     support::Case {
         id: id.to_string(),
@@ -74,18 +74,18 @@ fn the_case(id: &str, given: &str, when: &str, command: &str) -> support::Case {
     }
 }
 
-/// Lo que devuelve un comando de cliente.
+/// What a client command returns.
 struct Outcome {
-    /// El codigo de salida.
+    /// The exit code.
     status: i32,
-    /// Lo que dijo por la salida estandar.
+    /// What it said on standard output.
     stdout: String,
-    /// Lo que dijo por la salida de error.
+    /// What it said on standard error.
     stderr: String,
 }
 
 impl Outcome {
-    /// Lo que dijo, de las dos salidas.
+    /// What it said, from both outputs.
     fn said(&self) -> String {
         let mut text = self.stdout.clone();
         if !self.stderr.trim().is_empty() {
@@ -98,40 +98,40 @@ impl Outcome {
     }
 }
 
-/// La casa de un cliente: donde vive su configuracion, sus credenciales y
-/// su almacen.
+/// A client's home: where its configuration, its credentials and
+/// its store live.
 ///
-/// Es un directorio **temporal**, y por eso la prueba no deja nada en la
-/// maquina de quien la ejecuta. El `oras login` escribe un fichero de
-/// credenciales donde el cliente guarda su configuracion, y un `login` que
-/// deja la credencial de la prueba en la casa de la persona es una
-/// credencial en un fichero de la persona. Y el `HOME` decide tambien donde
-/// vive el almacen de imagenes del `podman`: con la casa temporal, las
-/// imagenes que construye la prueba no se quedan en el almacen de quien
-/// la ejecuta.
+/// It is a **temporary** directory, and that is why the test leaves nothing on the
+/// machine of whoever runs it. `oras login` writes a credentials
+/// file where the client keeps its configuration, and a `login` that
+/// leaves the test's credential in the person's home is a
+/// credential in a file of the person's. And `HOME` also decides where
+/// `podman`'s image store lives: with the temporary home, the
+/// images the test builds do not stay in the store of whoever
+/// runs it.
 struct Home {
     directory: tempfile::TempDir,
 }
 
 impl Home {
-    /// Una casa vacia.
+    /// An empty home.
     fn new() -> Self {
         let directory = tempfile::tempdir().expect("a temp dir");
         std::fs::create_dir_all(directory.path().join("config")).expect("the config directory");
         Self { directory }
     }
 
-    /// La ruta de la casa.
+    /// The home's path.
     fn path(&self) -> &std::path::Path {
         self.directory.path()
     }
 }
 
-/// Un comando de cliente, ejecutado **en una casa**.
+/// A client command, executed **in a home**.
 ///
-/// El `HOME` y el `DOCKER_CONFIG` apuntan a la casa: lo que el cliente
-/// escriba --su configuracion, sus credenciales, su almacen-- se queda
-/// dentro de la casa y desaparece con ella.
+/// `HOME` and `DOCKER_CONFIG` point at the home: whatever the client
+/// writes --its configuration, its credentials, its store-- stays
+/// inside the home and disappears with it.
 fn run_in(home: &Home, program: &str, args: &[&str]) -> Outcome {
     let output = Command::new(program)
         .args(args)
@@ -146,17 +146,17 @@ fn run_in(home: &Home, program: &str, args: &[&str]) -> Outcome {
     }
 }
 
-/// Un comando de cliente, ejecutado **en una casa** y **en un directorio**.
+/// A client command, executed **in a home** and **in a directory**.
 ///
-/// El directorio de trabajo no es un detalle: el `oras` toma el nombre del
-/// fichero del argumento **tal cual**, y ese nombre es el titulo del
-/// artefacto. Un titulo con una ruta absoluta no se puede bajar dentro de
-/// un directorio--el cliente no se deja salir de el, y tiene razon--, asi
-/// que un artefacto se publica con el nombre que tendria dentro del
-/// directorio de trabajo.
+/// The working directory is not a detail: `oras` takes the file name from the
+/// argument **as is**, and that name is the artifact's title. A title with an
+/// absolute path cannot be downloaded inside a directory--the client does not
+/// let itself out of it, and it is right--, so an artifact is published
+/// with the name it would have inside the working
+/// directory.
 ///
-/// Es la proteccion de recorrido de rutas del propio cliente, no una
-/// limitacion del registro.
+/// It is the client's own path traversal protection, not a
+/// limitation of the registry.
 fn run_in_dir(home: &Home, program: &str, args: &[&str], directory: &std::path::Path) -> Outcome {
     let output = Command::new(program)
         .args(args)
@@ -172,12 +172,12 @@ fn run_in_dir(home: &Home, program: &str, args: &[&str], directory: &std::path::
     }
 }
 
-/// El `login` del `oras`, con la credencial por la entrada estandar.
+/// `oras`'s `login`, with the credential on standard input.
 ///
-/// La credencial en la linea de comandos se ve en el `ps` de toda la
-/// maquina, y el fichero donde el `oras` la guarda--la configuracion del
-/// cliente-- esta en la casa temporal del caso: la credencial se va con
-/// la prueba.
+/// A credential on the command line is visible in the machine's whole `ps`,
+/// and the file where `oras` stores it--the client's
+/// configuration-- is in the case's temporary home: the credential goes away with
+/// the test.
 fn oras_login(home: &Home, oras: &str, registry: &str, token: &str) -> Outcome {
     let mut command = Command::new(oras);
     command.args([
@@ -210,27 +210,27 @@ fn oras_login(home: &Home, oras: &str, registry: &str, token: &str) -> Outcome {
     }
 }
 
-/// La direccion del registro, tal y como la ven los clientes.
+/// The registry's address, as the clients see it.
 ///
-/// El nombre es `localhost` y no una direccion: el demonio que hay detras
-/// de la CLI de Docker solo relaja la verificacion del TLS cuando el
-/// registro se llama `localhost`, y el registro de la prueba habla HTTP.
-/// Con una direccion `127.0.0.1` el demonio conversa con el en HTTPS, y
-/// el cliente se queda sin imagen.
+/// The name is `localhost` and not an address: the daemon behind
+/// the Docker CLI only relaxes TLS verification when the
+/// registry is called `localhost`, and the test registry speaks HTTP.
+/// With a `127.0.0.1` address the daemon talks to it over HTTPS, and
+/// the client is left without an image.
 fn the_registry(port: u16) -> String {
     format!("localhost:{port}")
 }
 
-/// El fichero de credenciales del cliente.
+/// The client's credentials file.
 ///
-/// El token viaja en el **fichero** y no en la linea de comandos: una
-/// linea de comandos se ve en el `ps` de toda la maquina, y una
-/// credencial en la linea de comandos es una credencial en la maquina.
-/// El fichero vive en la casa del cliente, que es temporal, asi que la
-/// credencial se va con la prueba.
+/// The token travels in the **file** and not on the command line: a
+/// command line is visible in the machine's whole `ps`, and a
+/// credential on the command line is a credential on the machine.
+/// The file lives in the client's home, which is temporary, so the
+/// credential goes away with the test.
 ///
-/// El formato es el de `containers/image`: el par `usuario:contrasena`
-/// en base64, por repositorio.
+/// The format is that of `containers/image`: the `user:password` pair
+/// in base64, per repository.
 fn the_auth_file(home: &Home, registry: &str, user: &str, token: &str) -> PathBuf {
     use base64::Engine;
     let encoded = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{token}"));
@@ -243,24 +243,24 @@ fn the_auth_file(home: &Home, registry: &str, user: &str, token: &str) -> PathBu
     path
 }
 
-/// El seeder del catalogo (repositorios por cuenta).
+/// The catalog seeder (repositories per account).
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El podman: push, tag y pull de una imagen.
+// The podman: push, tag and pull of an image.
 // ---------------------------------------------------------------------------
 
-/// El `podman` sube una imagen, la etiqueta con otra etiqueta, y la vuelve
-/// a bajar.
+/// `podman` pushes an image, tags it with another tag, and pulls it
+/// back down.
 ///
-/// Lo que se mide es que el cliente termina en `exit 0` y que lo que vuelve
-/// es **el mismo contenido**: el digest del manifiesto que se sube y el
-/// digest del manifiesto que se baja son el mismo. Un cliente que baja otra
-/// cosa no ha bajado la imagen: ha bajado lo que el registro le ha dado, y
-/// eso es justo lo que hay que mirar.
+/// What is measured is that the client ends in `exit 0` and that what comes back
+/// is **the same content**: the digest of the manifest that is pushed and the
+/// digest of the manifest that is pulled are the same. A client that pulls something
+/// else has not pulled the image: it has pulled what the registry gave it, and
+/// that is exactly what must be looked at.
 #[test]
 fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
     let mut case = the_case(
@@ -271,8 +271,8 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
     );
     support::record_oci_e2e(case.clone());
 
-    // La casa del cliente: temporal, para que ni la credencial ni las
-    // imagenes de la prueba se queden en la maquina de quien la ejecuta.
+    // The client's home: temporary, so that neither the credential nor the
+    // test's images stay on the machine of whoever runs it.
     let home = Home::new();
     let deployment = a_deployment();
     let service = deployment.start(&[]);
@@ -294,16 +294,16 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
         built.said()
     );
 
-    // El digest de lo que hay en local, antes de tocar el registro: es la
-    // referencia contra la que se mira lo que vuelve.
+    // The digest of what is local, before touching the registry: it is the
+    // reference against which what comes back is checked.
     let before = the_digest_of(&home, &local);
     assert!(
         before.starts_with("sha256:"),
         "the local image has no digest: {before}"
     );
 
-    // El digest de lo que se empuja: el cliente lo escribe en un fichero,
-    // y es el digest del manifiesto tal y como viaja al registro.
+    // The digest of what is pushed: the client writes it to a file,
+    // and it is the digest of the manifest as it travels to the registry.
     let digests = tempfile::tempdir().expect("a temp dir");
     let digest_file = digests.path().join("digest");
     let pushed = run_in(
@@ -335,9 +335,9 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
         "the pushed image has no digest: {pushed_digest}"
     );
 
-    // La etiqueta es del cliente, no del registro: el `podman tag` nombra
-    // la imagen en local y el `push` de ese nombre es el que decide que
-    // etiqueta se publica.
+    // The tag is the client's, not the registry's: `podman tag` names
+    // the image locally and the `push` of that name is what decides which
+    // tag is published.
     let tagged = run_in(
         &home,
         &support::the_podman(),
@@ -369,8 +369,8 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
         pushed_v2.said()
     );
 
-    // Se borra la imagen local: lo que se baja tiene que venir del
-    // registro, no de lo que ya estaba en la maquina.
+    // The local image is deleted: what is pulled has to come from the
+    // registry, not from what was already on the machine.
     let removed = run_in(&home, &support::the_podman(), &["rmi", &local]);
     assert_eq!(
         removed.status,
@@ -397,25 +397,25 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
         pulled.said()
     );
 
-    // Lo que vuelve tiene que ser **lo mismo** que lo que subio: el
-    // digest que el cliente calculo al empujar y el que calcula al
-    // bajar son el digest del mismo manifiesto.
+    // What comes back has to be **the same** as what went up: the
+    // digest the client computed when pushing and the one it computes when
+    // pulling are the digest of the same manifest.
     let after = the_digest_of(&home, &format!("{registry}/{FIRST_REPOSITORY}:v1"));
     assert_eq!(
         after, pushed_digest,
         "what came back is not what went up: {after} != {pushed_digest}"
     );
 
-    // Y el registro dice lo mismo: lo que publica y lo que el cliente
-    // recibio es el mismo manifiesto.
+    // And the registry says the same: what it publishes and what the client
+    // received is the same manifest.
     let published = the_published_digest(service.port, FIRST_REPOSITORY, "v1", &token);
     assert_eq!(
         published, pushed_digest,
         "what the registry published is not what went up: {published} != {pushed_digest}"
     );
 
-    // Y la segunda etiqueta tambien se baja, que es lo que significa que
-    // las dos etiquetas existen en el registro.
+    // And the second tag is pulled too, which is what it means for
+    // both tags to exist in the registry.
     let pulled_v2 = run_in(
         &home,
         &support::the_podman(),
@@ -434,8 +434,8 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
         pulled_v2.said()
     );
 
-    // La maquina queda como estaba: las imagenes que se han hecho para la
-    // prueba no se quedan en el almacen de la persona.
+    // The machine is left as it was: the images made for the
+    // test do not stay in the person's store.
     let _ = run_in(
         &home,
         &support::the_podman(),
@@ -447,12 +447,12 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
         &["rmi", &format!("{registry}/{FIRST_REPOSITORY}:v2")],
     );
 
-    // Lo que se escribe en el informe es el digest **publicado**, que es el
-    // que vuelve intacto. Y el digest local se dice **como es**: si
-    // coinciden, se dice que coinciden; si no, se dice que el manifiesto
-    // local y el publicado son dos manifiestos distintos con el mismo
-    // contenido--el cliente anade la anotacion de creacion al empujar--.
-    // Un informe que dice siempre lo mismo no dice nada.
+    // What is written to the report is the **published** digest, which is the
+    // one that comes back intact. And the local digest is stated **as it is**: if
+    // they match, it says they match; if not, it says that the local manifest
+    // and the published one are two distinct manifests with the same
+    // content--the client adds the creation annotation when pushing--.
+    // A report that always says the same thing says nothing.
     case.outcome = if before == after {
         format!(
             "push y pull en exit 0, y el digest vuelve intacto: {after} \
@@ -471,10 +471,10 @@ fn podman_pushes_an_image_tags_it_and_pulls_it_back() {
     support::record_oci_e2e(case);
 }
 
-/// El digest de una imagen local.
+/// The digest of a local image.
 ///
-/// El cliente lo dice con su propio formato, y el formato que usa es el
-/// digest del manifiesto: el mismo que el registro publica.
+/// The client says it in its own format, and the format it uses is the
+/// digest of the manifest: the same one the registry publishes.
 fn the_digest_of(home: &Home, reference: &str) -> String {
     let outcome = run_in(
         home,
@@ -490,11 +490,11 @@ fn the_digest_of(home: &Home, reference: &str) -> String {
     outcome.stdout.trim().to_string()
 }
 
-/// El contexto de construccion de la imagen de prueba.
+/// The build context of the test image.
 ///
-/// Es un `Containerfile` minimo sobre `scratch`: la imagen se construye
-/// **sin red**, y lo que se prueba es el protocolo del registro, no la
-/// capacidad de la maquina de bajar una imagen base.
+/// It is a minimal `Containerfile` over `scratch`: the image is built
+/// **without network**, and what is tested is the registry's protocol, not
+/// the machine's ability to download a base image.
 fn a_build_context() -> tempfile::TempDir {
     let context = tempfile::tempdir().expect("a temp dir");
     std::fs::write(context.path().join("file.txt"), THE_FILE).expect("the file is written");
@@ -506,19 +506,19 @@ fn a_build_context() -> tempfile::TempDir {
     context
 }
 
-/// Construye la imagen de la prueba, con el **cerrojo** de las
-/// construcciones.
+/// Builds the test image, with the **lock** of the
+/// builds.
 ///
-/// Dos `podman build` a la vez en la misma maquina se pelean por el
-/// `fuse-overlayfs`: el desmontaje se queda esperando a que termine la
-/// escritura, el proceso **no termina**, y la maquina se queda con
-/// gigas de paginas sucias y con procesos que no se pueden matar. Es un
-/// problema del entorno y no del registro, pero cuelga la suite, y una
-/// suite que cuelga la maquina no se puede ejecutar en paralelo.
+/// Two `podman build`s at once on the same machine fight over
+/// `fuse-overlayfs`: the unmount waits for the write to finish,
+/// the process **does not terminate**, and the machine is left with
+/// gigabytes of dirty pages and processes that cannot be killed. It is an
+/// environment problem and not the registry's, but it hangs the suite, and a
+/// suite that hangs the machine cannot be run in parallel.
 ///
-/// El cerrojo es un `flock` sobre un fichero del `target`: serializa las
-/// construcciones **entre casos y entre procesos**, no solo entre hilos,
-/// y lo suelta el sistema cuando el proceso muere.
+/// The lock is a `flock` on a file in `target`: it serializes the
+/// builds **between cases and between processes**, not just between threads,
+/// and the system releases it when the process dies.
 fn the_built_image(
     home: &Home,
     name: &str,
@@ -538,10 +538,10 @@ fn the_built_image(
     run_in(home, &support::the_podman(), &borrowed)
 }
 
-/// El cerrojo de las construcciones de imagen.
+/// The image builds' lock.
 ///
-/// El fichero esta en el `target`: es estado de la ejecucion, no del
-/// repositorio, y no se versiona.
+/// The file is in `target`: it is execution state, not the
+/// repository's, and it is not versioned.
 fn the_build_lock() -> std::fs::File {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
@@ -560,13 +560,13 @@ fn the_build_lock() -> std::fs::File {
     file
 }
 
-/// La imagen local, en un tar que el demonio puede leer.
+/// The local image, in a tar the daemon can read.
 ///
-/// La CLI de Docker empuja lo que el **demonio** tiene, y el demonio no
-/// ve el almacen del cliente que la construyo: la imagen viaja en un tar,
-/// que es el formato con el que los dos se entienden. El tar se queda en
-/// el directorio que se devuelve, y ese directorio vive lo que viva el
-/// caso.
+/// The Docker CLI pushes what the **daemon** has, and the daemon does not
+/// see the store of the client that built it: the image travels in a tar,
+/// which is the format both understand. The tar stays in
+/// the directory that is returned, and that directory lives as long as the
+/// case does.
 fn the_saved_image(home: &Home, image: &str) -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().expect("a temp dir");
     let tar = directory.path().join("image.tar");
@@ -590,36 +590,36 @@ fn the_saved_image(home: &Home, image: &str) -> (tempfile::TempDir, PathBuf) {
 }
 
 // ---------------------------------------------------------------------------
-// El docker de la CLI: push y pull de una imagen y de un indice.
+// The CLI's docker: push and pull of an image and of an index.
 // ---------------------------------------------------------------------------
 
-/// El demonio que hay detras del `docker` de la CLI.
+/// The daemon behind the CLI's `docker`.
 ///
-/// La CLI de Docker no habla con un registro: habla con un **demonio**, y
-/// es el demonio el que habla con el registro. El demonio que hay en esta
-/// maquina es el `podman`, que expone la API de Docker por un socket unix.
+/// The Docker CLI does not talk to a registry: it talks to a **daemon**, and
+/// it is the daemon that talks to the registry. The daemon on this
+/// machine is `podman`, which exposes the Docker API over a unix socket.
 ///
-/// Y el socket se enciende con una configuracion propia, que es la que
-/// dice que el registro de la prueba es de los que se hablan **sin TLS**:
-/// el registro de la prueba habla HTTP, y una direccion se puede marcar
-/// como insegura en la configuracion del cliente.
+/// And the socket is started with its own configuration, which is the one that
+/// says the test registry is one of those spoken to **without TLS**:
+/// the test registry speaks HTTP, and an address can be marked
+/// as insecure in the client's configuration.
 struct Engine {
-    /// El proceso del demonio.
+    /// The daemon's process.
     child: Child,
-    /// La casa donde vive lo de la CLI (la configuracion y las
-    /// credenciales): es temporal, y la credencial no se queda en la
-    /// maquina de quien ejecuta la prueba.
+    /// The home where the CLI's things live (the configuration and the
+    /// credentials): it is temporary, and the credential does not stay on the
+    /// machine of whoever runs the test.
     home: Home,
-    /// El socket del demonio.
+    /// The daemon's socket.
     socket: PathBuf,
 }
 
 impl Drop for Engine {
-    /// El demonio se apaga con el prueba.
+    /// The daemon shuts down with the test.
     ///
-    /// Un demonio que se queda escuchando en un socket del sistema es un
-    /// demonio que se queda para siempre, y la maquina de quien ejecuta
-    /// la prueba no es el sitio donde dejarlo.
+    /// A daemon that is left listening on a system socket is a
+    /// daemon that stays forever, and the machine of whoever runs
+    /// the test is not the place to leave it.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -627,11 +627,11 @@ impl Drop for Engine {
 }
 
 impl Engine {
-    /// El entorno que necesitan los comandos del cliente.
+    /// The environment the client's commands need.
     ///
-    /// El `HOME` es el del demonio: es donde esta la configuracion de
-    /// clientes que dice que el registro de la prueba se habla sin TLS,
-    /// y sin ella el `docker` no baja ni sube nada.
+    /// `HOME` is the daemon's: it is where the clients' configuration is,
+    /// which says the test registry is spoken to without TLS,
+    /// and without it `docker` neither pulls nor pushes anything.
     fn environment(&self) -> Vec<(String, String)> {
         vec![
             (
@@ -654,17 +654,17 @@ impl Engine {
     }
 }
 
-/// Enciende el demonio y espera a que su socket exista.
+/// Starts the daemon and waits for its socket to exist.
 ///
-/// El socket es la prueba de que el demonio esta listening: aparece
-/// cuando esta, y no antes.
+/// The socket is the proof that the daemon is listening: it appears
+/// when it is, and not before.
 ///
-/// La configuracion de clientes se pone en el **HOME** del demonio, y no
-/// en una variable: la libreria de clientes lee
-/// `$HOME/.config/containers/registries.conf`, y ese fichero tiene
-/// prioridad sobre el del sistema. Sin el, el demonio intenta hablar
-/// **HTTPS** con un registro que habla HTTP, y el cliente se queda sin
-/// imagen.
+/// The clients' configuration goes in the daemon's **HOME**, and not
+/// in a variable: the clients library reads
+/// `$HOME/.config/containers/registries.conf`, and that file takes
+/// priority over the system's. Without it, the daemon tries to talk
+/// **HTTPS** to a registry that speaks HTTP, and the client is left without an
+/// image.
 fn an_engine(port: u16) -> Engine {
     let home = Home::new();
     let socket = home.path().join("engine.sock");
@@ -698,9 +698,9 @@ fn an_engine(port: u16) -> Engine {
         .spawn()
         .expect("the engine starts");
 
-    // El demonio entra en la `Engine` antes de esperar: asi su apagado es
-    // cosa de su `Drop`, que lo mata y lo espera, y no de este camino. Un
-    // demonio al que la prueba abandona se queda escuchando.
+    // The daemon goes into the `Engine` before waiting: that way its shutdown is
+    // the business of its `Drop`, which kills it and waits for it, and not of this path. A
+    // daemon the test abandons stays listening.
     let engine = Engine {
         child,
         home,
@@ -709,10 +709,10 @@ fn an_engine(port: u16) -> Engine {
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
-        // El socket **conectado** es la prueba de que el demonio sirve:
-        // el fichero puede existir antes de que el demonio atienda, y un
-        // demonio que muere despues deja el fichero ahi. Con la conexion,
-        // lo que se mide es lo que el cliente va a encontrar.
+        // The **connected** socket is the proof that the daemon serves:
+        // the file may exist before the daemon is serving, and a
+        // daemon that dies afterwards leaves the file there. With the connection,
+        // what is measured is what the client is going to find.
         if engine.socket.exists() && std::os::unix::net::UnixStream::connect(&engine.socket).is_ok()
         {
             return engine;
@@ -723,11 +723,11 @@ fn an_engine(port: u16) -> Engine {
     panic!("the engine did not open its socket");
 }
 
-/// Un comando del `docker` de la CLI.
+/// A command of the CLI's `docker`.
 ///
-/// El cliente lee sus credenciales de su configuracion, que esta en un
-/// directorio temporal: la credencial de la prueba no se escribe en la
-/// configuracion de la maquina de quien la ejecuta.
+/// The client reads its credentials from its configuration, which is in a
+/// temporary directory: the test's credential is not written to the
+/// configuration of the machine of whoever runs it.
 fn docker(engine: &Engine, args: &[&str]) -> Outcome {
     let mut command = Command::new(support::the_docker());
     command.args(args);
@@ -744,11 +744,11 @@ fn docker(engine: &Engine, args: &[&str]) -> Outcome {
     }
 }
 
-/// El `docker login` de la prueba.
+/// The test's `docker login`.
 ///
-/// La credencial va por la entrada estandar, que es la unica via que no
-/// la deja en la linea de comandos: una linea de comandos se ve en el
-/// historial y en el informe.
+/// The credential goes on standard input, which is the only path that does not
+/// leave it on the command line: a command line is visible in the
+/// history and in the report.
 fn docker_login(engine: &Engine, registry: &str, token: &str) -> Outcome {
     let mut child = Command::new(support::the_docker());
     child.args(["login", "--username", ALICE, "--password-stdin", registry]);
@@ -775,16 +775,16 @@ fn docker_login(engine: &Engine, registry: &str, token: &str) -> Outcome {
     }
 }
 
-/// El entorno de un comando, una entrada.
+/// A command's environment, one entry.
 fn command_env(command: &mut Command, name: String, value: String) {
     command.env(name, value);
 }
 
-/// El `docker` de la CLI empuja y baja una imagen de una sola arquitectura.
+/// The CLI's `docker` pushes and pulls a single-architecture image.
 ///
-/// Lo que se mide es que el cliente termina en `exit 0` y que lo que
-/// vuelve es el mismo contenido: el digest que el registro publico es el
-/// digest que el demonio deja anotado.
+/// What is measured is that the client ends in `exit 0` and that what
+/// comes back is the same content: the digest the registry publishes is the
+/// digest the daemon leaves recorded.
 #[test]
 fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
     let mut case = the_case(
@@ -795,8 +795,8 @@ fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
     );
     support::record_oci_e2e(case.clone());
 
-    // La casa del cliente: temporal, para que ni la credencial ni las
-    // imagenes de la prueba se queden en la maquina de quien la ejecuta.
+    // The client's home: temporary, so that neither the credential nor the
+    // test's images stay on the machine of whoever runs it.
     let home = Home::new();
     let deployment = a_deployment();
     let service = deployment.start(&[]);
@@ -808,9 +808,9 @@ fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
     let login = docker_login(&engine, &registry, &token);
     assert_eq!(login.status, 0, "the login failed:\n{}", login.said());
 
-    // La imagen tiene que estar en el almacen del demonio con el nombre
-    // del destino: el cliente pide al demonio que empuje "esto", y "esto"
-    // se busca por nombre.
+    // The image has to be in the daemon's store under the destination's
+    // name: the client asks the daemon to push "this", and "this"
+    // is looked up by name.
     let context = a_build_context();
     let local = format!("localhost/hsp103-e2e-{port}:v1", port = service.port);
     let built = the_built_image(&home, &local, None, context.path());
@@ -821,7 +821,7 @@ fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
         built.said()
     );
 
-    // La imagen pasa al demonio en un tar: es lo que el demonio conoce.
+    // The image goes to the daemon in a tar: it is what the daemon knows.
     let (_tar_directory, tar) = the_saved_image(&home, &local);
     let loaded = docker(
         &engine,
@@ -854,15 +854,15 @@ fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
         pushed.said()
     );
 
-    // El digest que el registro publica: el del manifiesto que tiene, no
-    // el que el demonio calcula en su maquina.
+    // The digest the registry publishes: that of the manifest it has, not
+    // the one the daemon computes on its machine.
     let published = the_published_digest(service.port, FIRST_REPOSITORY, "v1", &token);
     assert!(
         published.starts_with("sha256:"),
         "the pushed image has no digest: {published}"
     );
 
-    // Se borra del demonio: lo que se baja tiene que venir del registro.
+    // It is deleted from the daemon: what is pulled has to come from the registry.
     let removed = docker(&engine, &["rmi", &reference]);
     assert_eq!(
         removed.status,
@@ -879,16 +879,16 @@ fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
         pulled.said()
     );
 
-    // Lo que vuelve tiene que ser **el mismo contenido**, y el contenido
-    // se identifica por su digest. Se comparan tres cosas: el digest que
-    // el registro publica antes y despues de la ida y vuelta, y el digest
-    // que el cliente se anota.
+    // What comes back has to be **the same content**, and content
+    // is identified by its digest. Three things are compared: the digest that
+    // the registry publishes before and after the round trip, and the digest
+    // the client records.
     //
-    // Y aqui hay que mirar el digest del **registro**, no el primero que
-    // el demonio tenga anotado: la imagen entra en el demonio por un tar,
-    // con el manifiesto de su formato local, y sale por otro, con el
-    // manifiesto que el registro publico. Los dos son reales y ninguno es
-    // el otro, y el orden en que el demonio los lista no es un contrato.
+    // And here the **registry's** digest has to be looked at, not the first one
+    // the daemon has recorded: the image enters the daemon through a tar,
+    // with the manifest of its local format, and leaves through another, with the
+    // manifest the registry publishes. Both are real and neither is
+    // the other, and the order in which the daemon lists them is not a contract.
     let after = the_published_digest(service.port, FIRST_REPOSITORY, "v1", &token);
     assert_eq!(
         after, published,
@@ -911,11 +911,11 @@ fn the_docker_cli_pushes_and_pulls_a_single_architecture_image() {
     support::record_oci_e2e(case);
 }
 
-/// El digest que el registro publica para una etiqueta.
+/// The digest the registry publishes for a tag.
 ///
-/// Lo dice la cabecera `Docker-Content-Digest` de la respuesta: es el
-/// digest del manifiesto que el registro tiene, no el que el cliente
-/// calculo en su maquina.
+/// It is stated by the `Docker-Content-Digest` header of the response: it is the
+/// digest of the manifest the registry has, not the one the client
+/// computed on its machine.
 fn the_published_digest(port: u16, name: &str, tag: &str, token: &str) -> String {
     let answer = support::curl_describe(port, &format!("/v2/{name}/manifests/{tag}"), token);
     assert_eq!(
@@ -929,13 +929,13 @@ fn the_published_digest(port: u16, name: &str, tag: &str, token: &str) -> String
         .expect("the digest of the manifest")
 }
 
-/// Los digests con los que el demonio tiene la imagen.
+/// The digests under which the daemon has the image.
 ///
-/// El demonio puede tener **mas de uno**: la imagen entra por un tar--con
-/// el manifiesto de su formato local-- y sale por otro--con el manifiesto
-/// que el registro publico--. Los dos son reales y el orden en que el
-/// demonio los lista no es un contrato, asi que se devuelven **todos** y
-/// quien compara busca el que le importa.
+/// The daemon may have **more than one**: the image enters through a tar--with
+/// the manifest of its local format-- and leaves through another--with the manifest
+/// the registry publishes--. Both are real and the order in which the
+/// daemon lists them is not a contract, so **all** are returned and
+/// whoever compares looks for the one that matters to them.
 fn the_repo_digests(engine: &Engine, reference: &str) -> Vec<String> {
     let outcome = docker(
         engine,
@@ -964,11 +964,11 @@ fn the_repo_digests(engine: &Engine, reference: &str) -> Vec<String> {
         .collect()
 }
 
-/// El nombre del repositorio de una referencia.
+/// The repository name of a reference.
 ///
-/// La referencia es `nombre:etiqueta`, y el nombre puede tener puertos y
-/// niveles: el separador es el **ultimo** dos puntos, y solo si lo que
-/// sigue no tiene barras.
+/// The reference is `name:tag`, and the name may have ports and
+/// levels: the separator is the **last** colon, and only if what
+/// follows has no slashes.
 fn the_repository_of(reference: &str) -> String {
     match reference.rsplit_once(':') {
         Some((name, tag)) if !tag.contains('/') => name.to_string(),
@@ -976,13 +976,13 @@ fn the_repository_of(reference: &str) -> String {
     }
 }
 
-/// El `docker` de la CLI empuja un indice de dos plataformas.
+/// The CLI's `docker` pushes an index of two platforms.
 ///
-/// El indice lo arma **la CLI**: `docker manifest create` y `docker manifest
-/// add` son codigo del cliente, y `docker manifest push` empuja el indice y
-/// sus hijos al registro sin pasar por el demonio. Es el camino que usa un
-/// cliente de verdad para publicar una imagen multi-plataforma, y es el
-/// que dice si el registro sabe recibir un indice.
+/// The index is assembled **by the CLI**: `docker manifest create` and `docker manifest
+/// add` are client code, and `docker manifest push` pushes the index and
+/// its children to the registry without going through the daemon. It is the path a
+/// real client uses to publish a multi-platform image, and it is
+/// the one that says whether the registry knows how to receive an index.
 #[test]
 fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
     let mut case = the_case(
@@ -993,8 +993,8 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
     );
     support::record_oci_e2e(case.clone());
 
-    // La casa del cliente: temporal, para que ni la credencial ni las
-    // imagenes de la prueba se queden en la maquina de quien la ejecuta.
+    // The client's home: temporary, so that neither the credential nor the
+    // test's images stay on the machine of whoever runs it.
     let home = Home::new();
     let deployment = a_deployment();
     let service = deployment.start(&[]);
@@ -1006,8 +1006,8 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
     let login = docker_login(&engine, &registry, &token);
     assert_eq!(login.status, 0, "the login failed:\n{}", login.said());
 
-    // Una imagen por plataforma: el indice tiene que traer imagenes
-    // distintas, y una imagen se distingue de otra por su arquitectura.
+    // One image per platform: the index has to carry different
+    // images, and one image is distinguished from another by its architecture.
     let context = a_build_context();
     let mut children = Vec::new();
     for architecture in ["amd64", "arm64"] {
@@ -1039,8 +1039,8 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
             loaded.said()
         );
 
-        // Cada imagen se empuja con su propia etiqueta: el indice las
-        // nombra, y el registro tiene que tener las dos.
+        // Each image is pushed with its own tag: the index names
+        // them, and the registry has to have both.
         let reference = format!("{registry}/{FIRST_REPOSITORY}:v1-{architecture}");
         let tagged = docker(&engine, &["tag", &local, &reference]);
         assert_eq!(
@@ -1059,14 +1059,14 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
         children.push(reference);
     }
 
-    // El indice lo arma **la CLI**: `docker manifest create` y `docker
-    // manifest push` son codigo del cliente, y empujan el indice y sus
-    // hijos al registro sin pasar por el demonio. Es el camino que usa un
-    // cliente de verdad para publicar una imagen multi-plataforma.
+    // The index is assembled **by the CLI**: `docker manifest create` and `docker
+    // manifest push` are client code, and they push the index and its
+    // children to the registry without going through the daemon. It is the path a
+    // real client uses to publish a multi-platform image.
     //
-    // La CLI habla con el registro **por su cuenta**, y lo hace con TLS
-    // salvo que se le diga que no: `--insecure` es lo que le dice que el
-    // registro de la prueba habla HTTP.
+    // The CLI talks to the registry **on its own**, and does so with TLS
+    // unless told otherwise: `--insecure` is what tells it that the
+    // test registry speaks HTTP.
     let created = docker(
         &engine,
         &[
@@ -1093,16 +1093,16 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
         pushed.said()
     );
 
-    // El digest que el registro publica para el indice: es lo que se
-    // compara despues de la ida y vuelta.
+    // The digest the registry publishes for the index: it is what is
+    // compared after the round trip.
     let published = the_published_digest(service.port, FIRST_REPOSITORY, "multi", &token);
     assert!(
         published.starts_with("sha256:"),
         "the pushed index has no digest: {published}"
     );
 
-    // El indice se mira **desde el cliente**, sin demonio: es la CLI la que
-    // habla con el registro, y lo que ve es lo que el registro publico.
+    // The index is looked at **from the client**, without a daemon: it is the CLI that
+    // talks to the registry, and what it sees is what the registry published.
     let inspected = docker(&engine, &["manifest", "inspect", "--insecure", &index]);
     assert_eq!(
         inspected.status,
@@ -1116,8 +1116,8 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
         inspected.stdout
     );
 
-    // Y el demonio lo baja: el indice se resuelve a una plataforma y la
-    // imagen vuelve.
+    // And the daemon pulls it: the index resolves to a platform and the
+    // image comes back.
     let pulled = docker(&engine, &["pull", &index]);
     assert_eq!(
         pulled.status,
@@ -1126,8 +1126,8 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
         pulled.said()
     );
 
-    // Y lo que se baja es **lo mismo** que se publico: el digest del
-    // indice, antes y despues de la ida y vuelta.
+    // And what is pulled is **the same** as what was published: the digest of the
+    // index, before and after the round trip.
     let after = the_published_digest(service.port, FIRST_REPOSITORY, "multi", &token);
     assert_eq!(
         after, published,
@@ -1146,16 +1146,16 @@ fn the_docker_cli_pushes_and_pulls_a_multi_architecture_image() {
 }
 
 // ---------------------------------------------------------------------------
-// El `oras`: un artefacto, un SBOM colgado y los referrers.
+// The `oras`: an artifact, a hanging SBOM and the referrers.
 // ---------------------------------------------------------------------------
 
-/// El `oras` empuja un artefacto, le cuelga un SBOM y descubre los referrers.
+/// `oras` pushes an artifact, hangs an SBOM from it and discovers the referrers.
 ///
-/// Lo que se mide es el camino que usan las herramientas de la cadena de
-/// suministro: el artefacto se publica con su tipo, el SBOM se publica
-/// **colgado** del artefacto--con el `subject` que lo liga-- y el
-/// referrers se descubre por la API de referrers. Un SBOM publicado y no
-/// descubrir es un SBOM que no sirve de nada.
+/// What is measured is the path used by supply chain
+/// tools: the artifact is published with its type, the SBOM is published
+/// **hanging** from the artifact--with the `subject` that links it-- and the
+/// referrers are discovered through the referrers API. An SBOM that is published and
+/// cannot be discovered is an SBOM that is of no use.
 #[test]
 fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
     let mut case = the_case(
@@ -1166,8 +1166,8 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
     );
     support::record_oci_e2e(case.clone());
 
-    // La casa del cliente: temporal, para que ni la credencial ni las
-    // imagenes de la prueba se queden en la maquina de quien la ejecuta.
+    // The client's home: temporary, so that neither the credential nor the
+    // test's images stay on the machine of whoever runs it.
     let home = Home::new();
     let deployment = a_deployment();
     let service = deployment.start(&[]);
@@ -1176,9 +1176,9 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
     let reference = format!("{registry}/{FIRST_REPOSITORY}:v1");
     let oras = support::the_oras();
 
-    // La credencial va por la entrada estandar, que es la unica via que
-    // no la deja en la linea de comandos: una linea de comandos se ve en
-    // el `ps` de toda la maquina.
+    // The credential goes on standard input, which is the only path that
+    // does not leave it on the command line: a command line is visible in
+    // the machine's whole `ps`.
     let logged = oras_login(&home, &oras, &registry, &token);
     assert_eq!(
         logged.status,
@@ -1187,10 +1187,10 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
         logged.said()
     );
 
-    // El artefacto: un fichero con su tipo de medio. Se publica con el
-    // nombre que tiene **dentro del directorio de trabajo**, porque ese
-    // nombre es el titulo del artefacto y un titulo con una ruta
-    // absoluta no se puede bajar dentro de un directorio.
+    // The artifact: a file with its media type. It is published under the
+    // name it has **inside the working directory**, because that
+    // name is the artifact's title and a title with an absolute
+    // path cannot be downloaded inside a directory.
     let files = tempfile::tempdir().expect("a temp dir");
     let artifact = files.path().join("artifact.txt");
     std::fs::write(&artifact, THE_FILE).expect("the artifact is written");
@@ -1213,9 +1213,9 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
         pushed.said()
     );
 
-    // Y el artefacto se vuelve a bajar: lo que se publico tiene que poder
-    // bajar con sus bytes y con su tipo. Un artefacto que solo se puede
-    // publicar es un artefacto que no se puede usar.
+    // And the artifact is pulled again: what was published has to be able to be
+    // pulled with its bytes and its type. An artifact that can only be
+    // published is an artifact that cannot be used.
     let pulled = tempfile::tempdir().expect("a temp dir");
     let pulled_artifact = run_in(
         &home,
@@ -1241,7 +1241,7 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
         "what came back is not what went up"
     );
 
-    // El SBOM: cuelga del artefacto con su `subject`.
+    // The SBOM: hangs from the artifact with its `subject`.
     let sbom = files.path().join("sbom.json");
     std::fs::write(
         &sbom,
@@ -1269,7 +1269,7 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
         attached.said()
     );
 
-    // Y los referrers se descubren: el SBOM colgado tiene que aparecer.
+    // And the referrers are discovered: the hanging SBOM has to show up.
     let discovered = run_in(
         &home,
         &oras,
@@ -1303,16 +1303,16 @@ fn the_oras_pushes_an_artifact_attaches_a_sbom_and_discovers_the_referrers() {
 }
 
 // ---------------------------------------------------------------------------
-// Los fallos, con clientes de verdad.
+// The failures, with real clients.
 // ---------------------------------------------------------------------------
 
-/// El `podman` de otra cuenta no puede publicar en el repositorio de la
-/// primera.
+/// Another account's `podman` cannot publish to the first
+/// account's repository.
 ///
-/// Lo que se mide es que el cliente **falla**: un repositorio de otra
-/// cuenta no existe para esta, y el cliente se queda sin imagen. Y que
-/// la cuenta que puede, sigue pudiendo: el aislamiento no es una puerta
-/// que se cierra para todos.
+/// What is measured is that the client **fails**: another account's repository
+/// does not exist for this one, and the client is left without an image. And that
+/// the account that can, still can: isolation is not a door
+/// that closes for everyone.
 #[test]
 fn the_tenant_of_another_account_cannot_publish_in_the_repository_of_the_first() {
     let mut case = the_case(
@@ -1323,8 +1323,8 @@ fn the_tenant_of_another_account_cannot_publish_in_the_repository_of_the_first()
     );
     support::record_oci_e2e(case.clone());
 
-    // La casa del cliente: temporal, para que ni la credencial ni las
-    // imagenes de la prueba se queden en la maquina de quien la ejecuta.
+    // The client's home: temporary, so that neither the credential nor the
+    // test's images stay on the machine of whoever runs it.
     let home = Home::new();
     let deployment = a_deployment();
     let service = deployment.start(&[]);
@@ -1340,7 +1340,7 @@ fn the_tenant_of_another_account_cannot_publish_in_the_repository_of_the_first()
         built.said()
     );
 
-    // Cada cuenta tiene su credencial, y cada una en su fichero.
+    // Each account has its credential, and each in its own file.
     let alice_token = support::token(FIRST_ACCOUNT, ALICE);
     let bob = support::token(SECOND_ACCOUNT, "bob");
     let auth_alice = the_auth_file(&home, &registry, ALICE, &alice_token);
@@ -1372,8 +1372,8 @@ fn the_tenant_of_another_account_cannot_publish_in_the_repository_of_the_first()
         refused.said()
     );
 
-    // Y la primera cuenta sigue pudiendo: el aislamiento es de la cuenta,
-    // no una puerta que se cierra para todos.
+    // And the first account can still: isolation is per account,
+    // not a door that closes for everyone.
     let allowed = run_in(
         &home,
         &support::the_podman(),
@@ -1398,13 +1398,13 @@ fn the_tenant_of_another_account_cannot_publish_in_the_repository_of_the_first()
     support::record_oci_e2e(case);
 }
 
-/// Publicar dos veces es publicar una.
+/// Publishing twice is publishing once.
 ///
-/// Lo que se mide es que el cliente puede **reintentar**: el segundo
-/// `push` del mismo contenido termina en verde y el registro sigue
-/// publicando el mismo digest. Un cliente que reintenta--por un corte de
-/// red, por un timeout--no puede dejar el repositorio a medias ni
-/// cambiar lo que habia publicado.
+/// What is measured is that the client can **retry**: the second
+/// `push` of the same content ends green and the registry keeps
+/// publishing the same digest. A client that retries--because of a network
+/// outage, a timeout--cannot leave the repository halfway or
+/// change what had been published.
 #[test]
 fn the_publication_is_idempotent_when_the_client_retries() {
     let mut case = the_case(
@@ -1415,8 +1415,8 @@ fn the_publication_is_idempotent_when_the_client_retries() {
     );
     support::record_oci_e2e(case.clone());
 
-    // La casa del cliente: temporal, para que ni la credencial ni las
-    // imagenes de la prueba se queden en la maquina de quien la ejecuta.
+    // The client's home: temporary, so that neither the credential nor the
+    // test's images stay on the machine of whoever runs it.
     let home = Home::new();
     let deployment = a_deployment();
     let service = deployment.start(&[]);
@@ -1466,7 +1466,7 @@ fn the_publication_is_idempotent_when_the_client_retries() {
         .trim()
         .to_string();
 
-    // El reintento: el mismo contenido, la misma etiqueta.
+    // The retry: the same content, the same tag.
     let second = run_in(
         &home,
         &support::the_podman(),
@@ -1497,13 +1497,13 @@ fn the_publication_is_idempotent_when_the_client_retries() {
     support::record_oci_e2e(case);
 }
 
-/// El contenido publicado sobrevive a un reinicio del servicio.
+/// Published content survives a restart of the service.
 ///
-/// Lo que se mide es que el contenido sigue ahi **despues** de que el
-/// servicio muere de golpe y vuelve a encender en el **mismo** puerto:
-/// el cliente que vuelve a mirar a la misma direccion encuentra lo que
-/// habia publicado. Un reinicio que pierde el catalogo o el almacen
-/// convierte la publicacion en un cuento.
+/// What is measured is that the content is still there **after** the
+/// service dies abruptly and comes back up on the **same** port:
+/// the client that looks at the same address again finds what it
+/// had published. A restart that loses the catalog or the store
+/// turns publication into a tall tale.
 #[test]
 fn the_published_content_survives_a_restart_of_the_service_on_the_same_port() {
     let mut case = the_case(
@@ -1555,9 +1555,9 @@ fn the_published_content_survives_a_restart_of_the_service_on_the_same_port() {
         "the image could not be pushed:\n{}",
         pushed.said()
     );
-    // Lo que el registro publica: se baja y se mira el digest que
-    // vuelve. Ese digest es la referencia contra la que se mide lo que
-    // vuelve **despues** del reinicio.
+    // What the registry publishes: it is pulled and the digest that
+    // comes back is looked at. That digest is the reference against which what
+    // comes back **after** the restart is measured.
     let first = run_in(
         &home,
         &support::the_podman(),
@@ -1577,15 +1577,15 @@ fn the_published_content_survives_a_restart_of_the_service_on_the_same_port() {
     );
     let digest = the_digest_of(&home, &published);
 
-    // El servicio se apaga **de golpe**: un `SIGKILL` es lo que pasa
-    // cuando la maquina se apaga, y no deja tiempo para limpiar nada.
+    // The service is shut down **abruptly**: a `SIGKILL` is what happens
+    // when the machine is switched off, and it leaves no time to clean up anything.
     support::kill(&mut service);
 
-    // Y vuelve en el **mismo** puerto: el cliente ya sabe a donde mira.
+    // And it comes back on the **same** port: the client already knows where it is looking.
     let _service = deployment.start_on(port, &[]);
 
-    // Se borra la imagen local: lo que se baja tiene que venir del
-    // registro, no de lo que ya estaba en la maquina.
+    // The local image is deleted: what is pulled has to come from the
+    // registry, not from what was already on the machine.
     let removed = run_in(&home, &support::the_podman(), &["rmi", &local]);
     assert_eq!(
         removed.status,
@@ -1623,20 +1623,20 @@ fn the_published_content_survives_a_restart_of_the_service_on_the_same_port() {
 }
 
 // ---------------------------------------------------------------------------
-// El repositorio con niveles.
+// The repository with levels.
 // ---------------------------------------------------------------------------
 
-/// Un repositorio **con niveles** se publica con su cliente.
+/// A repository **with levels** is published with its client.
 ///
-/// El nombre con niveles--`team/demo`-- es el caso que el esquema de
-/// autorizacion no entendia: el motor de autorizacion declaraba el padre
-/// del repositorio--`team`-- y el esquema no permitia que un
-/// `Repository` fuera miembro de otro `Repository`, asi que el motor
-/// fallaba cerrado y el repositorio se respondia con un `403 DENIED`.
+/// The name with levels--`team/demo`-- is the case the authorization
+/// schema did not understand: the authorization engine declared the repository's
+/// parent--`team`-- and the schema did not allow a
+/// `Repository` to be a member of another `Repository`, so the engine
+/// failed closed and the repository was answered with a `403 DENIED`.
 ///
-/// Lo que se mide es que el cliente **real** publica en el y que lo que
-/// publica se puede volver a bajar: sin este caso, la correccion del
-/// esquema no la comprueba nadie con un cliente de verdad.
+/// What is measured is that the **real** client publishes to it and that what it
+/// publishes can be pulled again: without this case, nobody checks the
+/// schema fix with a real client.
 #[test]
 fn the_repository_with_levels_is_published_by_its_own_account() {
     let mut case = the_case(
@@ -1689,8 +1689,8 @@ fn the_repository_with_levels_is_published_by_its_own_account() {
         pushed.said()
     );
 
-    // Y lo que se publico se puede volver a bajar: el `403` que sufria
-    // este repositorio era de autorizacion, y no de protocolo.
+    // And what was published can be pulled again: the `403` this
+    // repository suffered was an authorization one, not a protocol one.
     let removed = run_in(&home, &support::the_podman(), &["rmi", &local]);
     assert_eq!(
         removed.status,
@@ -1732,13 +1732,13 @@ fn the_repository_with_levels_is_published_by_its_own_account() {
 }
 
 // ---------------------------------------------------------------------------
-// La suite oficial de conformidad.
+// The official conformance suite.
 // ---------------------------------------------------------------------------
-/// El binario de la suite oficial de conformidad.
+/// The official conformance suite's binary.
 ///
-/// Lo compila `scripts/oci-conformance.sh`, que lo deja en `target/`. Si no
-/// esta, la suite oficial **no** se ha ejecutado: y una suite que no se ha
-/// ejecutado no es una suite que pasa, es una suite que no se ha mirado.
+/// It is compiled by `scripts/oci-conformance.sh`, which leaves it in `target/`. If it is not
+/// there, the official suite has **not** been run: and a suite that has not been
+/// run is not a suite that passes, it is a suite that has not been looked at.
 fn the_conformance_binary() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
@@ -1746,11 +1746,11 @@ fn the_conformance_binary() -> PathBuf {
         .join("oci-conformance")
 }
 
-/// Donde la suite deja sus resultados.
+/// Where the suite leaves its results.
 ///
-/// No es un directorio temporal: los resultados de la suite oficial son la
-/// **evidencia** de la declaracion de compatibilidad, y una evidencia que se
-/// borra al terminar la prueba no se puede archivar ni revisar.
+/// It is not a temporary directory: the official suite's results are the
+/// **evidence** of the compatibility declaration, and evidence that is
+/// deleted when the test ends cannot be archived or reviewed.
 fn the_conformance_results() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target")
@@ -1758,11 +1758,11 @@ fn the_conformance_results() -> PathBuf {
         .join("oci-conformance")
 }
 
-/// Las categorias de la suite oficial, con su estado.
+/// The official suite's categories, with their status.
 ///
-/// La suite imprime dos listas--una de **API** y otra de **datos**-- y cada
-/// linea es el nombre de la categoria y su estado, con puntos de relleno
-/// entre medias.
+/// The suite prints two lists--an **API** one and a **data** one-- and each
+/// line is the category's name and its status, with filler dots
+/// in between.
 fn the_categories(stdout: &str, section: &str) -> Vec<(String, String)> {
     let mut categories = Vec::new();
     let mut inside = false;
@@ -1786,11 +1786,11 @@ fn the_categories(stdout: &str, section: &str) -> Vec<(String, String)> {
     categories
 }
 
-/// La suite oficial de conformidad se ejecuta contra el registro.
+/// The official conformance suite is run against the registry.
 ///
-/// Lo que se declara es lo que se ha ejecutado: las categorias que la
-/// suite marca como conformes, con su nombre. Las que fallan se anotan con
-/// su motivo y su accion, y **no** se declaran: declararlas seria
+/// What is declared is what has been run: the categories the
+/// suite marks as conformant, by name. Those that fail are noted with
+/// their reason and their action, and are **not** declared: declaring them would be
 /// propaganda.
 #[test]
 fn the_official_conformance_suite_runs_the_declared_categories() {
@@ -1835,11 +1835,11 @@ fn the_official_conformance_suite_runs_the_declared_categories() {
     println!("{stdout}");
     println!("{stderr}");
 
-    // El codigo de salida de la suite es el **todo** de la ejecucion: la
-    // suite sale con 1 en cuanto una categoria--declarada o no-- falla o
-    // da error, porque su estado global es el peor de sus categorias. Sin
-    // esta comprobacion, un fallo en una categoria que no se declara
-    // dejaba la pipeline en verde con un "0 en rojo" que nadie miraba.
+    // The suite's exit code is the **whole** of the run: the
+    // suite exits with 1 as soon as a category--declared or not-- fails or
+    // errors, because its overall status is the worst of its categories. Without
+    // this check, a failure in a category that is not declared
+    // left the pipeline green with a "0 red" that nobody looked at.
     assert!(
         output.status.success(),
         "the conformance suite reported a failure:\n{stdout}\n{stderr}"
@@ -1860,8 +1860,8 @@ fn the_official_conformance_suite_runs_the_declared_categories() {
         println!("{name}: {status}");
     }
 
-    // Lo declarado se comprueba: cada categoria declarada tiene que
-    // estar en verde, con el nombre que dice la declaracion.
+    // What is declared is checked: each declared category has to
+    // be green, under the name the declaration gives.
     for (declared, reported) in DECLARED_API
         .iter()
         .map(|name| (name, api.iter().find(|(reported, _)| reported == name)))
@@ -1880,9 +1880,9 @@ fn the_official_conformance_suite_runs_the_declared_categories() {
         );
     }
 
-    // Y lo que no se declara no se reclama: las demas categorias se
-    // anotan con su estado, para que el informe diga tambien lo que el
-    // registro **no** es.
+    // And what is not declared is not claimed: the other categories are
+    // noted with their status, so that the report also says what the
+    // registry is **not**.
     let others: Vec<String> = api
         .iter()
         .chain(data.iter())
@@ -1892,8 +1892,8 @@ fn the_official_conformance_suite_runs_the_declared_categories() {
         .map(|(name, status)| format!("{name}: {status}"))
         .collect();
 
-    // Los numeros van al informe **medidos**, no escritos: los cuenta la
-    // suite en su informe de JUnit, que es lo que se archiva.
+    // The numbers go to the report **measured**, not written: the
+    // suite counts them in its JUnit report, which is what is archived.
     let totals = the_totals(&results.join("junit.xml"));
     case.outcome = format!(
         "{} categorias declaradas en verde; {} pruebas en total: {} en verde, {} omitidas, \
@@ -1909,12 +1909,12 @@ fn the_official_conformance_suite_runs_the_declared_categories() {
     support::record_oci_e2e(case);
 }
 
-/// Los numeros que la suite cuenta en su informe de JUnit.
+/// The numbers the suite counts in its JUnit report.
 ///
-/// Son `(pruebas, en verde, omitidas, fallos, errores)`, y son los
-/// numeros que el contrato de compatibilidad declara: leerlos del
-/// informe de la ejecucion es lo que hace que no sean un numero escrito
-/// a mano.
+/// They are `(tests, green, skipped, failures, errors)`, and they are the
+/// numbers the compatibility contract declares: reading them from the
+/// run's report is what keeps them from being a hand-written
+/// number.
 fn the_totals(report: &std::path::Path) -> (usize, usize, usize, usize, usize) {
     let text = std::fs::read_to_string(report).expect("the junit report is there");
     let number = |name: &str| -> usize {
@@ -1935,12 +1935,12 @@ fn the_totals(report: &std::path::Path) -> (usize, usize, usize, usize, usize) {
     )
 }
 
-/// Las categorias de **API** que el registro declara.
+/// The **API** categories the registry declares.
 ///
-/// Lo declarado es lo que se ha ejecutado y ha salido en verde. Una
-/// categoria que no esta aqui no se declara: declararla seria
-/// propaganda, y el contrato de compatibilidad dice tambien lo que el
-/// registro **no** es.
+/// What is declared is what has been run and came out green. A
+/// category that is not here is not declared: declaring it would be
+/// propaganda, and the compatibility contract also says what the
+/// registry is **not**.
 const DECLARED_API: [&str; 19] = [
     "Ping",
     "Tag listing",
@@ -1963,12 +1963,12 @@ const DECLARED_API: [&str; 19] = [
     "Referrers",
 ];
 
-/// Las categorias de **datos** que el registro declara.
+/// The **data** categories the registry declares.
 ///
-/// El conjunto de datos `sha512` queda **fuera**: el digest del
-/// contenido es `sha256` y solo `sha256`, y la suite no se ejecuta con
-/// un algoritmo que este registro no habla. El motivo y la accion estan
-/// en el contrato de compatibilidad.
+/// The `sha512` data set is left **out**: the content digest
+/// is `sha256` and only `sha256`, and the suite is not run with
+/// an algorithm this registry does not speak. The reason and the action are
+/// in the compatibility contract.
 const DECLARED_DATA: [&str; 19] = [
     "Image",
     "Image Uncompressed",

@@ -1,11 +1,11 @@
-//! La fidelidad del servidor S3 de pruebas para las operaciones que el
-//! puerto BlobStore necesita.
+//! The fidelity of the test S3 server for the operations the
+//! BlobStore port needs.
 //!
-//! No es un test del backend —lo es `hsp116_s3_contract`—: es la
-//! comprobación de que el servidor que pisa el arnes sirve exactamente
-//! las llamadas sobre las que se apoya `S3BlobStore`. Si alguna de estas
-//! garantías falta, el diseño del backend cambia antes de fiar nada de
-//! él.
+//! It is not a test of the backend --that is `hsp116_s3_contract`--: it is the
+//! check that the server the harness stands up serves exactly
+//! the calls `S3BlobStore` relies on. If any of these
+//! guarantees is missing, the backend's design changes before trusting anything
+//! on it.
 
 mod common;
 
@@ -21,7 +21,7 @@ async fn a_bucket(name: &str) -> (aws_sdk_s3::Client, String) {
     (client, bucket)
 }
 
-/// put/get/head/delete/list: la superficie minima del CAS.
+/// put/get/head/delete/list: the minimal surface of the CAS.
 #[tokio::test]
 async fn the_server_serves_the_basic_object_operations() {
     let (client, bucket) = a_bucket("basic").await;
@@ -97,7 +97,7 @@ async fn the_server_serves_the_basic_object_operations() {
     );
 }
 
-/// Range reads: la via del `read_range` del puerto.
+/// Range reads: the path of the port's `read_range`.
 #[tokio::test]
 async fn the_server_serves_byte_ranges() {
     let (client, bucket) = a_bucket("range").await;
@@ -122,7 +122,7 @@ async fn the_server_serves_byte_ranges() {
         .expect("el tramo se sirve");
     assert_eq!(got.body.collect().await.unwrap().to_vec(), bytes[10..15]);
 
-    // Un tramo que asoma del final: S3 devuelve lo que hay, truncado.
+    // A range that sticks out past the end: S3 returns what there is, truncated.
     let short = client
         .get_object()
         .bucket(&bucket)
@@ -137,7 +137,7 @@ async fn the_server_serves_byte_ranges() {
         "S3 recorta el tramo, no lo inventa"
     );
 
-    // Un offset pasado el final: InvalidRange.
+    // An offset past the end: InvalidRange.
     let error = client
         .get_object()
         .bucket(&bucket)
@@ -152,8 +152,8 @@ async fn the_server_serves_byte_ranges() {
     );
 }
 
-/// Multipart completo: crear, subir trozos con su Content-MD5, listarlos
-/// y completar: el camino entero de una sesion de escritura.
+/// Full multipart: create, upload parts with their Content-MD5, list them
+/// and complete: the whole path of a write session.
 #[tokio::test]
 async fn the_server_serves_multipart_uploads() {
     let (client, bucket) = a_bucket("multipart").await;
@@ -167,8 +167,8 @@ async fn the_server_serves_multipart_uploads() {
         .expect("la subida multiple se crea");
     let upload_id = created.upload_id().expect("un id de subida").to_string();
 
-    // S3 exige que todos los trozos menos el ultimo tengan >= 5 MiB,
-    // incluido el minimo que el propio backend configura.
+    // S3 requires all parts but the last to be >= 5 MiB,
+    // including the minimum the backend itself configures.
     let part_one = vec![7u8; S3BlobConfig::new("x").part_size];
     let part_two = b"the tail".to_vec();
     let mut parts = Vec::new();
@@ -234,8 +234,8 @@ async fn the_server_serves_multipart_uploads() {
     );
 }
 
-/// Un MD5 mentiroso en un trozo: la condicion de integridad server-side
-/// existe y se llama BadDigest.
+/// A lying MD5 on a part: the server-side integrity condition
+/// exists and is called BadDigest.
 #[tokio::test]
 async fn the_server_checks_part_content_md5() {
     let (client, bucket) = a_bucket("md5").await;
@@ -266,8 +266,8 @@ async fn the_server_checks_part_content_md5() {
     );
 }
 
-/// Abort de una subida multiple: el staging caducado tambien hay que
-/// tirarlo, y abortar no publica.
+/// Abort of a multipart upload: the expired staging also has to be
+/// thrown away, and aborting does not publish.
 #[tokio::test]
 async fn the_server_aborts_multipart_uploads() {
     let (client, bucket) = a_bucket("abort").await;
@@ -299,8 +299,8 @@ async fn the_server_aborts_multipart_uploads() {
         .expect_err("abortar no publica");
 }
 
-/// La publicacion del commit es una copia server-side dentro del mismo
-/// cubo: si eso no funciona, el diseno del staging se cae.
+/// The commit's publication is a server-side copy within the same
+/// bucket: if that does not work, the staging design falls apart.
 #[tokio::test]
 async fn the_server_copies_server_side() {
     let (client, bucket) = a_bucket("copy").await;
@@ -333,9 +333,9 @@ async fn the_server_copies_server_side() {
     assert_eq!(got.body.collect().await.unwrap().to_vec(), b"copied bytes");
 }
 
-/// Doble publicacion del mismo contenido: en un CAS el ultimo escribe los
-/// mismos bytes; lo que no puede pasar es que quede un intermedio con
-/// otra longitud.
+/// Double publication of the same content: in a CAS the last one writes the
+/// same bytes; what cannot happen is an intermediate one being left with
+/// another length.
 #[tokio::test]
 async fn the_server_tolerates_double_publishing_of_same_key() {
     let (client, bucket) = a_bucket("double").await;
@@ -361,8 +361,8 @@ async fn the_server_tolerates_double_publishing_of_same_key() {
     assert_eq!(head.content_length.unwrap(), bytes.len() as i64);
 }
 
-/// El listado paginado con continuation token: la vista sobre la que el
-/// reclaimer recorre el prefijo de blobs.
+/// The paginated listing with a continuation token: the view over which the
+/// reclaimer walks the blob prefix.
 #[tokio::test]
 async fn the_server_lists_with_paging() {
     let (client, bucket) = a_bucket("list").await;
@@ -406,10 +406,10 @@ async fn the_server_lists_with_paging() {
     assert_eq!(listed.contents().len() + more.contents().len(), 12);
 }
 
-/// If-None-Match: la condicion de escritura condicional, que el backend
-/// probea pero no usa. Lo que se afirma aqui es el CONTRATO de la
-/// respuesta, no su bondad: si el servidor la soporta, publicar sobre un
-/// objeto existente debe fallar con 412.
+/// If-None-Match: the conditional write condition, which the backend
+/// probes but does not use. What is asserted here is the CONTRACT of the
+/// response, not its goodness: if the server supports it, publishing over an
+/// existing object must fail with 412.
 #[tokio::test]
 async fn the_server_conditional_publishing_contract() {
     let (client, bucket) = a_bucket("conditional").await;
@@ -439,8 +439,8 @@ async fn the_server_conditional_publishing_contract() {
             "el rechazo condicional es un 412: {error}"
         );
     } else {
-        // El servidor no lo soporta: el backend no lo usara, y eso es
-        // exactamente lo que el diseno declara (idempotencia del CAS).
+        // The server does not support it: the backend will not use it, and that is
+        // exactly what the design declares (idempotency of the CAS).
         println!(
             "el servidor de pruebas no sirve If-None-Match; el backend vive de la idempotencia del CAS"
         );

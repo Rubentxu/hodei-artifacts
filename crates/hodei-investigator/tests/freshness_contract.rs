@@ -1,30 +1,30 @@
-//! El contrato de la frescura de una investigacion entregada.
+//! The contract for the freshness of a delivered investigation.
 //!
-//! Un informe dice que leyo, con su manifiesto: los sellos de lo que leyo
-//! y la version del mundo en que lo leyo. Ese informe es una afirmacion
-//! con fecha, y la pregunta es si sigue siendo cierta.
+//! A report says what it read, with its manifest: the stamps of what it read
+//! and the world version in which it read it. That report is a dated
+//! claim, and the question is whether it is still true.
 //!
-//! La respuesta es de TRES, y estas seis cosas se prometen y se comprueban:
+//! The answer is one of THREE, and these six things are promised and checked:
 //!
-//! - Un informe cuyo mundo no se movio **sigue vigente**.
-//! - Un cambio de la relacion que el informe sostiene lo hace **obsoleto**,
-//!   y dice **cual** fue la referencia que cambio.
-//! - Un cambio **ajeno** al read-set NO invalida el informe: lo que no se
-//!   leyo no puede caducar lo que se leyo.
-//! - Una fuente que **no se puede consultar** devuelve `Unknown`: nunca un
-//!   `Current` inventado.
-//! - Un informe que **no dice de que mundo hablo** no puede comprobarse, y
-//!   dice que no se sabe.
-//! - La evidencia que **cambio de digest** o **ya no esta** hace obsoleto
-//!   el informe.
+//! - A report whose world did not move **remains current**.
+//! - A change to the relation the report supports makes it **stale**,
+//!   and says **which** reference changed.
+//! - A change **foreign** to the read-set does NOT invalidate the report: what was not
+//!   read cannot expire what was read.
+//! - A source that **cannot be queried** returns `Unknown`: never an invented
+//!   `Current`.
+//! - A report that **does not say which world it spoke of** cannot be checked, and
+//!   says that it is not known.
+//! - Evidence that **changed digest** or **is no longer there** makes the
+//!   report stale.
 
 use hodei_investigator::freshness::{
     ChangeKind, ChangedReference, CurrentWorld, EVIDENCE_SOURCE, Freshness, GRAPH_SOURCE, judge,
 };
 use hodei_investigator::{ReadKind, ReadSet, ReadStamp};
 
-/// El manifiesto de una lectura: la version del grafo que se leyo, una
-/// relacion y la evidencia que la sostiene.
+/// A read's manifest: the graph version that was read, a
+/// relation and the evidence that supports it.
 fn the_report() -> ReadSet {
     let mut read_set = ReadSet::empty();
     read_set.generation(GRAPH_SOURCE, 12);
@@ -33,7 +33,7 @@ fn the_report() -> ReadSet {
     read_set
 }
 
-/// El mundo de ahora: el grafo no se movio y la evidencia sigue igual.
+/// The world as of now: the graph did not move and the evidence is unchanged.
 fn the_world() -> CurrentWorld {
     CurrentWorld {
         generations: vec![(GRAPH_SOURCE.to_string(), 12)],
@@ -43,7 +43,7 @@ fn the_world() -> CurrentWorld {
     }
 }
 
-/// El mundo en el que el grafo se movio y una relacion cambio.
+/// The world in which the graph moved and a relation changed.
 fn the_moved_world() -> CurrentWorld {
     CurrentWorld {
         generations: vec![(GRAPH_SOURCE.to_string(), 13)],
@@ -59,14 +59,14 @@ fn the_moved_world() -> CurrentWorld {
     }
 }
 
-/// Un informe cuyo mundo no se movio SIGUE VIGENTE.
+/// A report whose world did not move REMAINS CURRENT.
 #[test]
 fn a_report_whose_world_did_not_move_is_still_current() {
     assert_eq!(judge(&the_report(), &the_world()), Freshness::Current);
 }
 
-/// Un cambio de la relacion que el informe sostiene lo hace OBSOLETO, y
-/// dice cual fue la referencia que cambio.
+/// A change to the relation the report supports makes it STALE, and
+/// says which reference changed.
 #[test]
 fn a_change_of_the_relation_the_report_rests_on_makes_it_stale() {
     match judge(&the_report(), &the_moved_world()) {
@@ -80,8 +80,8 @@ fn a_change_of_the_relation_the_report_rests_on_makes_it_stale() {
     }
 }
 
-/// Un cambio AJENO al read-set no invalida el informe: lo que no se leyo
-/// no puede caducar lo que se leyo.
+/// A change FOREIGN to the read-set does not invalidate the report: what was not read
+/// cannot expire what was read.
 #[test]
 fn a_change_away_from_the_read_set_does_not_invalidate_the_report() {
     let mut world = the_moved_world();
@@ -96,8 +96,8 @@ fn a_change_away_from_the_read_set_does_not_invalidate_the_report() {
     assert_eq!(judge(&the_report(), &world), Freshness::Current);
 }
 
-/// El mismo cambio en la MISMA relacion, pero de otro apoyo, tampoco
-/// invalida: el apoyo que el informe leyo sigue ahi.
+/// The same change on the SAME relation, but from another support, does not
+/// invalidate either: the support the report read is still there.
 #[test]
 fn another_support_of_the_same_relation_does_not_invalidate_the_report() {
     let mut world = the_moved_world();
@@ -112,8 +112,8 @@ fn another_support_of_the_same_relation_does_not_invalidate_the_report() {
     assert_eq!(judge(&the_report(), &world), Freshness::Current);
 }
 
-/// Una fuente que no se puede consultar dice que NO SE SABE: nunca un
-/// `Current` inventado.
+/// A source that cannot be queried says it is NOT KNOWN: never an invented
+/// `Current`.
 #[test]
 fn a_source_that_cannot_be_consulted_says_that_it_is_not_known() {
     let mut world = the_world();
@@ -129,7 +129,7 @@ fn a_source_that_cannot_be_consulted_says_that_it_is_not_known() {
     }
 }
 
-/// La evidencia que no se pudo consultar tampoco se invierte: es `Unknown`.
+/// Evidence that could not be queried is not inverted either: it is `Unknown`.
 #[test]
 fn evidence_that_cannot_be_consulted_is_unknown_and_not_gone() {
     let mut world = the_world();
@@ -142,8 +142,8 @@ fn evidence_that_cannot_be_consulted_is_unknown_and_not_gone() {
     }
 }
 
-/// Un informe que no dice de que mundo hablo NO se puede comprobar, y lo
-/// dice: no se sabe, y no "sigue vigente".
+/// A report that does not say which world it spoke of CANNOT be checked, and it
+/// says so: not known, and not "remains current".
 #[test]
 fn a_report_without_a_version_cannot_be_checked() {
     let mut read_set = ReadSet::empty();
@@ -155,8 +155,8 @@ fn a_report_without_a_version_cannot_be_checked() {
     }
 }
 
-/// La evidencia que cambio de digest hace obsoleto el informe: lo que se
-/// leyo no es lo que hay.
+/// Evidence that changed digest makes the report stale: what was
+/// read is not what is there.
 #[test]
 fn evidence_whose_digest_changed_makes_the_report_stale() {
     let mut world = the_world();
@@ -173,8 +173,8 @@ fn evidence_whose_digest_changed_makes_the_report_stale() {
     }
 }
 
-/// La evidencia que ya no esta hace obsoleto el informe: el informe se
-/// apoya en algo que no existe.
+/// Evidence that is no longer there makes the report stale: the report
+/// relies on something that does not exist.
 #[test]
 fn evidence_that_is_gone_makes_the_report_stale() {
     let mut world = the_world();
@@ -191,8 +191,8 @@ fn evidence_that_is_gone_makes_the_report_stale() {
     }
 }
 
-/// El verificador es PURO: el mismo manifiesto y el mismo mundo dan el
-/// mismo veredicto, siempre.
+/// The verifier is PURE: the same manifest and the same world give the
+/// same verdict, always.
 #[test]
 fn the_verdict_is_the_same_every_time() {
     let first = judge(&the_report(), &the_moved_world());

@@ -1,27 +1,27 @@
-//! El recuperador real: el subgrafo del sujeto, con su evidencia y sus
-//! caminos.
+//! The real retriever: the subject's subgraph, with its evidence and its
+//! paths.
 //!
-//! El recuperador lee **tres** cosas del sujeto, y las tres son evidencia
-//! con su identificador:
+//! The retriever reads **three** things about the subject, and all three are evidence
+//! with its identifier:
 //!
-//! - las **piezas de evidencia** del sujeto, con su contenido real (que
-//!   es texto de un tercero, y por tanto dato);
-//! - las **relaciones del grafo** que lo tocan, con el camino;
-//! - y la **evidencia de alcanzabilidad**, si la hay.
+//! - the subject's **evidence pieces**, with their real content (which
+//!   is third-party text, and therefore data);
+//! - the **graph relations** that touch it, with the path;
+//! - and the **reachability evidence**, if there is any.
 //!
-//! Y todo lo que devuelve cabe en el alcance: si no cabe, el
-//! investigador lo rechaza antes de preguntarle al modelo.
+//! And everything it returns fits in the scope: if it does not fit, the
+//! investigator rejects it before asking the model.
 //!
-//! # La fuente es un puerto, no un almacen
+//! # The source is a port, not a store
 //!
-//! El nucleo del recuperador ([`InvestigationRetriever`]) pregunta a una
-//! [`GraphSource`] la generacion del mundo y las relaciones del sujeto;
-//! no sabe que almacen hay detras. Eso es lo que hace
-//! **reproducible** el read-set: dos lecturas contra la misma watermark
-//! de la historia de deltas sellan el mismo manifiesto, porque el
-//! manifiesto es funcion del estado y de las claves estables --el
-//! identificador de la evidencia y la identidad de la relacion--, nunca
-//! del orden en que el almacen respondio.
+//! The retriever core ([`InvestigationRetriever`]) asks a
+//! [`GraphSource`] for the world generation and the subject's relations;
+//! it does not know what store is behind. That is what makes the read-set
+//! **reproducible**: two reads against the same watermark
+//! of the delta history seal the same manifest, because the
+//! manifest is a function of the state and of the stable keys (the
+//! evidence identifier and the relation identity), never
+//! of the order in which the store responded.
 
 pub mod freshness;
 
@@ -41,33 +41,33 @@ use hodei_investigator::scope::{
 use kernel::Hrn;
 use kernel::application::ports::{EvaluationDecision, EvaluationRequest, IamPolicyEvaluator};
 
-/// El recuperador sobre la autoridad del grafo.
+/// The retriever over the graph authority.
 ///
-/// Es el puerto Dgraph del read-set de investigacion (HSP-206): el
-/// nucleo --la misma autorizacion previa, el mismo
-/// presupuesto, las mismas claves estables del manifiesto-- contra el
-/// grafo nativo y su historia de deltas. La generacion con la que se
-/// sella la lectura es la watermark de los deltas del tenant, el cursor
-/// que la comprobacion de frescura vuelve a preguntar: por eso dos
-/// lecturas a la misma watermark reproducen el read-set byte a byte.
+/// It is the Dgraph port of the investigation read-set (HSP-206): the
+/// core (the same prior authorization, the same
+/// budget, the same stable manifest keys) against the
+/// native graph and its delta history. The generation with which the
+/// read is sealed is the watermark of the tenant's deltas, the cursor
+/// that the freshness check asks again: that is why two
+/// reads at the same watermark reproduce the read-set byte for byte.
 pub struct DgraphEvidenceRetriever {
     inner: InvestigationRetriever<DgraphSource>,
 }
 
-/// La fuente Dgraph: el grafo nativo, con su generacion leida de la
-/// historia de deltas que la frontera proyecto. La historia es el MISMO
-/// puerto que consulta el comprobador de frescura ([`freshness::LedgerFreshness`]):
-/// la watermark con la que se sella el read-set y la watermark contra la
-/// que se comprueba son la misma pregunta al mismo material, y por eso
-/// un retiro de apoyo se ve como stale y no como current falseado.
+/// The Dgraph source: the native graph, with its generation read from the
+/// delta history that the boundary projected. The history is the SAME
+/// port that the freshness checker queries ([`freshness::LedgerFreshness`]):
+/// the watermark with which the read-set is sealed and the watermark against
+/// which it is checked are the same question to the same material, and therefore
+/// a support withdrawal is seen as stale and not as a falsified current.
 pub struct DgraphSource {
     graph: Arc<DgraphGraphStore>,
     deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
 }
 
 impl DgraphSource {
-    /// La fuente sobre el grafo y la historia de deltas de una conexion
-    /// validada.
+    /// The source over the graph and the delta history of a validated
+    /// connection.
     pub fn new(
         graph: Arc<DgraphGraphStore>,
         deltas: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
@@ -96,8 +96,8 @@ impl GraphSource for DgraphSource {
 }
 
 impl DgraphEvidenceRetriever {
-    /// El recuperador sobre la evidencia, el contenido, el grafo nativo
-    /// y su historia de deltas, con el Authorizer compartido.
+    /// The retriever over the evidence, the content, the native graph
+    /// and its delta history, with the shared Authorizer.
     pub fn new(
         evidence: Arc<dyn EvidenceStore>,
         content: Arc<dyn ContentStore>,
@@ -117,7 +117,7 @@ impl DgraphEvidenceRetriever {
         }
     }
 
-    /// El recuperador que tambien sabe de alcanzabilidad.
+    /// The retriever that also knows about reachability.
     pub fn with_reachability(mut self, reachability: Arc<dyn ReachabilityFacts>) -> Self {
         self.inner = self.inner.with_reachability(reachability);
         self
@@ -131,32 +131,32 @@ impl EvidenceRetriever for DgraphEvidenceRetriever {
     }
 }
 
-/// Las dos preguntas del read-set al grafo, dicho como puerto.
+/// The two read-set questions to the graph, stated as a port.
 ///
-/// Un adaptador que no puede contestarlas cierra la lectura: la
-/// generacion que falta no se inventa con cero, y las relaciones que
-/// fallan no se entregan como ausencia. Eso es lo que separa un grafo
-/// mudo de un grafo que declara no tener nada que decir.
+/// An adapter that cannot answer them closes the read: the
+/// missing generation is not invented as zero, and the relations that
+/// fail are not handed over as absence. That is what separates a mute
+/// graph from a graph that declares it has nothing to say.
 #[async_trait]
 pub trait GraphSource: Send + Sync {
-    /// La version de la historia de deltas del tenant: la watermark
-    /// contra la que se sella y se reproduce el read-set.
+    /// The version of the tenant's delta history: the watermark
+    /// against which the read-set is sealed and reproduced.
     async fn generation(&self, tenant: &Hrn) -> Result<u64, String>;
 
-    /// Las relaciones que empiezan en el nodo, de la cuenta.
+    /// The relations that start at the node, for the account.
     async fn relations_from(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String>;
 
-    /// Las relaciones que terminan en el nodo, de la cuenta.
+    /// The relations that end at the node, for the account.
     async fn relations_to(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String>;
 }
 
-/// El nucleo del recuperador: la lectura sellada sobre una fuente.
+/// The retriever core: the sealed read over a source.
 ///
-/// Vive separado del adaptador porque la garantida que importa --la
-/// reproduccion del read-set a la misma watermark, el presupuesto
-/// declarado y la puerta cerrada ante el fallo-- es del procedimiento,
-/// no del almacen. Surreal y Dgraph son dos materiales del mismo
-/// procedimiento.
+/// It lives apart from the adapter because the guarantee that matters (the
+/// reproduction of the read-set at the same watermark, the declared
+/// budget and the door closed on failure) belongs to the procedure,
+/// not to the store. Surreal and Dgraph are two materials of the same
+/// procedure.
 pub struct InvestigationRetriever<G: GraphSource> {
     evidence: Arc<dyn EvidenceStore>,
     content: Arc<dyn ContentStore>,
@@ -167,7 +167,7 @@ pub struct InvestigationRetriever<G: GraphSource> {
 }
 
 impl<G: GraphSource> InvestigationRetriever<G> {
-    /// El nucleo sobre una fuente del grafo y el Authorizer compartido.
+    /// The core over a graph source and the shared Authorizer.
     pub fn new(
         evidence: Arc<dyn EvidenceStore>,
         content: Arc<dyn ContentStore>,
@@ -185,25 +185,25 @@ impl<G: GraphSource> InvestigationRetriever<G> {
         }
     }
 
-    /// El recuperador que tambien sabe de alcanzabilidad.
+    /// The retriever that also knows about reachability.
     pub fn with_reachability(mut self, reachability: Arc<dyn ReachabilityFacts>) -> Self {
         self.reachability = Some(reachability);
         self
     }
 
-    /// Las piezas de evidencia del sujeto, con su contenido real, dentro
-    /// del presupuesto.
+    /// The subject's evidence pieces, with their real content, within
+    /// the budget.
     ///
-    /// El orden es una CLAVE ESTABLE --el identificador de la evidencia--
-    /// y no el orden del almacen: dos recuperaciones del mismo snapshot
-    /// y los mismos limites entregan la MISMA seleccion. El presupuesto
-    /// se aplica ANTES de leer el contenido: se pregunta el tamaño y un
-    /// blob que no cabe NO se baja para truncarlo despues.
+    /// The order is a STABLE KEY (the evidence identifier)
+    /// and not the store's order: two retrievals of the same snapshot
+    /// and the same limits deliver the SAME selection. The budget
+    /// is applied BEFORE reading the content: the size is asked and a
+    /// blob that does not fit is NOT downloaded to be truncated afterwards.
     ///
-    /// Y las ausencias son tipadas, no inventadas: un contenido que no
-    /// esta es `Missing`, uno que no se puede decodificar es
-    /// `Undecodable`, uno que el almacen no entrego es `Unavailable`, y
-    /// ninguno de ellos lleva texto inventado.
+    /// And absences are typed, not invented: content that is not
+    /// there is `Missing`, content that cannot be decoded is
+    /// `Undecodable`, content that the store did not deliver is `Unavailable`, and
+    /// none of them carries invented text.
     async fn the_evidence(
         &self,
         scope: &RetrievalScope,
@@ -226,8 +226,8 @@ impl<G: GraphSource> InvestigationRetriever<G> {
         let mut loaded = 0usize;
         for record in records {
             if loaded >= budget {
-                // El presupuesto de objetos se gasto: la evidencia se
-                // DECLARA como omitida, y su contenido NO se baja.
+                // The object budget is spent: the evidence is
+                // DECLARED as omitted, and its content is NOT downloaded.
                 *omitted += 1;
                 facts.push(ScopedFact {
                     evidence_id: record.id().to_string(),
@@ -240,9 +240,9 @@ impl<G: GraphSource> InvestigationRetriever<G> {
                 continue;
             }
 
-            // El sello de la lectura: el digest del contenido es lo que
-            // permite comprobar el origen, y lo lleva el registro, sin
-            // importar si el contenido llego a leerse.
+            // The read seal: the content digest is what
+            // allows the origin to be checked, and the record carries it,
+            // regardless of whether the content was read.
             read_set.read(ReadStamp::evidence(
                 record.id().to_string(),
                 record.content().digest.to_string(),
@@ -258,9 +258,9 @@ impl<G: GraphSource> InvestigationRetriever<G> {
                 None => false,
             };
             if size.is_some() && !fits {
-                // El blob NO cabe en el presupuesto de bytes: se declara
-                // la omision y el contenido no se baja, porque no se baja
-                // un blob entero para truncarlo despues.
+                // The blob does NOT fit in the byte budget: the omission is declared
+                // and the content is not downloaded, because a whole
+                // blob is not downloaded to be truncated afterwards.
                 *omitted += 1;
                 facts.push(ScopedFact {
                     evidence_id: record.id().to_string(),
@@ -321,11 +321,11 @@ impl<G: GraphSource> InvestigationRetriever<G> {
         Ok(facts)
     }
 
-    /// Las relaciones del grafo que tocan al sujeto, con su camino,
-    /// dentro del presupuesto de relaciones.
+    /// The graph relations that touch the subject, with their path,
+    /// within the relations budget.
     ///
-    /// El orden es la identidad de la relacion, una clave estable: la
-    /// misma vista del mismo grafo da la misma lista.
+    /// The order is the relation identity, a stable key: the
+    /// same view of the same graph gives the same list.
     async fn the_relations(
         &self,
         subject: &Hrn,
@@ -342,14 +342,14 @@ impl<G: GraphSource> InvestigationRetriever<G> {
                 .await
                 .map_err(|error| error.to_string())?,
         );
-        // La clave estable: la identidad de la relacion, que no depende
-        // del orden en que el grafo la dio.
+        // The stable key: the relation identity, which does not depend
+        // on the order in which the graph gave it.
         relations.sort_by_key(|relation| format!("{:?}", relation.identity()));
 
         let mut kept = 0usize;
         for relation in relations {
-            // El sello de la relacion: su identidad y la evidencia que
-            // la sostiene, que es lo que permite comprobar el origen.
+            // The relation seal: its identity and the evidence that
+            // supports it, which is what allows the origin to be checked.
             read_set.read(ReadStamp::relation(
                 relation.identity(),
                 relation.evidence_id.to_string(),
@@ -393,10 +393,10 @@ impl<G: GraphSource> InvestigationRetriever<G> {
 #[async_trait]
 impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
     async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
-        // La autorizacion va ANTES de cualquier lectura: quien pregunta
-        // tiene que poder leer el sujeto, y una denegacion o un error
-        // del Authorizer es una puerta cerrada. La cuenta del sujeto NO
-        // se infiere del texto del alcance: es su componente canonico.
+        // Authorization goes BEFORE any read: whoever asks
+        // must be able to read the subject, and a denial or an error
+        // from the Authorizer is a closed door. The subject's account is NOT
+        // inferred from the scope text: it is its canonical component.
         self.authorizer
             .can_read(&scope.actor, &scope.subject)
             .await
@@ -405,12 +405,12 @@ impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
                 resource: format!("{} ({reason})", scope.subject),
             })?;
 
-        // La generacion del mundo ANTES de leer: la comprobacion de
-        // consistencia la repite al final, y un mundo que cambio
-        // mientras se leia NO se presenta como snapshot coherente.
-        // La generacion es de la CUENTA (el tenant del grafo), no del
-        // sujeto: es la historia de deltas de la cuenta la que dice si
-        // el mundo avanzo.
+        // The world generation BEFORE reading: the consistency check
+        // repeats it at the end, and a world that changed
+        // while being read is NOT presented as a coherent snapshot.
+        // The generation belongs to the ACCOUNT (the graph's tenant), not to the
+        // subject: it is the account's delta history that says whether
+        // the world advanced.
         let generation_before = self
             .graph
             .generation(&self.tenant)
@@ -444,10 +444,10 @@ impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
             );
         }
 
-        // Los caminos que tocan un recurso de OTRA cuenta no se
-        // entregan: el que pregunta no los recibe, aunque el grafo los
-        // tenga. La comprobacion del investigador queda como ultima
-        // linea: un hecho que se cuele aqui no pasa.
+        // Paths that touch a resource of ANOTHER account are not
+        // delivered: the asker does not receive them, even if the graph
+        // has them. The investigator's check remains as the last
+        // line: a fact that slips in here does not pass.
         let account = scope.subject.account_id().to_string();
         facts.retain(|fact| {
             fact.path
@@ -455,14 +455,14 @@ impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
                 .all(|node| node.account_id() == account.as_str())
         });
 
-        // Y el alcance se respeta aqui tambien: un recuperador que
-        // devuelve de mas no puede colar nada, porque el investigador lo
-        // comprueba otra vez.
+        // And the scope is respected here too: a retriever that
+        // returns too much cannot slip anything through, because the investigator
+        // checks it again.
         facts.truncate(scope.max_nodes);
 
-        // La consistencia se comprueba CONTRA EL MUNDO: si la generacion
-        // del grafo cambio mientras se leia, no hay snapshot coherente
-        // que presentar, y la lectura se dice obsoleta.
+        // Consistency is checked AGAINST THE WORLD: if the graph
+        // generation changed while being read, there is no coherent snapshot
+        // to present, and the read is declared obsolete.
         let generation_after = self
             .graph
             .generation(&self.tenant)
@@ -476,9 +476,9 @@ impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
             });
         }
 
-        // La cobertura se DECLARA: lo que no entro por el presupuesto no
-        // se esconde. Un scope conocido pero incompleto no se presenta
-        // como respuesta exhaustiva.
+        // Coverage is DECLARED: what did not fit in the budget is not
+        // hidden. A known but incomplete scope is not presented
+        // as an exhaustive answer.
         let coverage = if omitted == 0 {
             Coverage::Complete
         } else {
@@ -492,18 +492,18 @@ impl<G: GraphSource> EvidenceRetriever for InvestigationRetriever<G> {
     }
 }
 
-/// El Authorizer compartido, por su puerto del kernel.
+/// The shared Authorizer, through the kernel's port.
 ///
-/// La decision la toma el motor de politicas determinista --el mismo
-/// que autoriza el resto del sistema--, no el texto del alcance y no el
-/// modelo. Un error de evaluacion cierra: si no se pudo comprobar el
-/// permiso, no se lee.
+/// The decision is taken by the deterministic policy engine (the same one
+/// that authorizes the rest of the system), not the scope text and not the
+/// model. An evaluation error closes: if the
+/// permission could not be checked, it is not read.
 pub struct EvaluatorReadAuthorizer<E: IamPolicyEvaluator> {
     evaluator: Arc<E>,
 }
 
 impl<E: IamPolicyEvaluator> EvaluatorReadAuthorizer<E> {
-    /// El autorizador sobre un evaluador de politicas IAM.
+    /// The authorizer over an IAM policy evaluator.
     pub fn new(evaluator: Arc<E>) -> Self {
         Self { evaluator }
     }

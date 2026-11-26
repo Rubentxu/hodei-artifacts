@@ -1,31 +1,31 @@
-//! HSP-237: la readiness y la liveness son dos preguntas distintas.
+//! HSP-237: readiness and liveness are two different questions.
 //!
-//! Lo que se demuestra aqui:
+//! What is demonstrated here:
 //!
-//! - contra el **servicio de verdad**: el despliegue arrancado de verdad
-//!   dice `200` en `/health/ready` y en `/health/live`; al desconectar en
-//!   caliente el almacen de contenido que el perfil exige, `/health/ready`
-//!   pasa a `503` **sin** decir donde esta el almacen, `/health/live`
-//!   sigue diciendo `200`, y al devolver el almacen la readiness vuelve a
+//! - against the **real service**: the really started deployment
+//!   says `200` on `/health/ready` and on `/health/live`; when the content
+//!   store the profile requires is hot-disconnected, `/health/ready`
+//!   turns `503` **without** saying where the store is, `/health/live`
+//!   keeps saying `200`, and when the store is put back readiness returns to
 //!   `200`;
-//! - contra el **probe**: una dependencia que el perfil no exige no se
-//!   comprueba y no puede hacer fallar el readiness; una dependencia que
-//!   no contesta produce `timeout` y un `503` sin colgarse; el probe
-//!   comprueba cada dependencia una vez y cachea su veredicto un segundo,
-//!   de manera que dos sondeos seguidos no gastan el presupuesto dos
-//!   veces; y el camino de los datos no pasa por el probe.
+//! - against the **probe**: a dependency the profile does not require is not
+//!   checked and cannot make readiness fail; a dependency that
+//!   does not answer produces `timeout` and a `503` without hanging; the probe
+//!   checks each dependency once and caches its verdict for a second,
+//!   so that two consecutive probes do not spend the budget twice;
+//!   and the data path does not go through the probe.
 //!
-//! El despliegue de esta suite corre en el **perfil de grafo**: el catalogo
-//! es un namespace de un Dgraph real y el contenido esta en un directorio
-//! del despliegue. El perfil exige dos dependencias, `graph` y
-//! `content_store`, y la suite desconecta **en caliente** las dos: el
-//! directorio de contenido (se mueve) y el alpha (se corta el relay por el
-//! que el servicio lo alcanza). En los dos casos la readiness pasa a `503`
-//! sin decir donde esta el almacen, la liveness sigue en `200`, y al
-//! devolverlo la readiness vuelve.
+//! This suite's deployment runs in the **graph profile**: the catalog
+//! is a namespace of a real Dgraph and the content is in a directory
+//! of the deployment. The profile requires two dependencies, `graph` and
+//! `content_store`, and the suite **hot-disconnects** both: the
+//! content directory (it is moved) and the alpha (the relay through
+//! which the service reaches it is cut). In both cases readiness turns `503`
+//! without saying where the store is, liveness stays at `200`, and when
+//! it is put back readiness returns.
 //!
-//! Lo que **no** se demuestra aqui: el perfil con S3 externo; el contenido
-//! de este despliegue es el directorio, no un bucket.
+//! What is **not** demonstrated here: the profile with external S3; this
+//! deployment's content is the directory, not a bucket.
 
 mod support;
 
@@ -59,47 +59,47 @@ mod graph_profile;
 use graph_profile::Workdir;
 use tower::ServiceExt;
 
-/// El caso: con el almacen exigido ahi, la readiness dice que se puede
-/// servir.
+/// The case: with the required store there, readiness says it can
+/// serve.
 const AC1_READY_200: &str = "ac1-the-readiness-is-200-when-the-required-storage-is-there";
-/// El caso: al desconectar el almacen exigido, la readiness deja de ser
+/// The case: when the required store is disconnected, readiness stops being
 /// `200`.
 const AC1_READY_503: &str = "ac1-the-readiness-is-not-200-when-the-required-storage-is-gone";
-/// El caso: el proceso vive aunque el almacen no este.
+/// The case: the process lives even if the store is not there.
 const AC1_LIVE_200: &str = "ac1-the-liveness-is-200-when-the-required-storage-is-gone";
-/// El caso: devolver el almacen devuelve la readiness.
+/// The case: putting the store back restores readiness.
 const AC1_READY_BACK: &str = "ac1-the-readiness-comes-back-when-the-required-storage-returns";
-/// El caso: al cortar el alpha en caliente, la readiness deja de ser `200`
-/// y no dice donde esta el alpha.
+/// The case: when the alpha is cut hot, readiness stops being `200`
+/// and does not say where the alpha is.
 const AC1_GRAPH_503: &str = "ac1-the-readiness-is-not-200-when-the-graph-is-cut";
-/// El caso: el proceso vive aunque el alpha este cortado.
+/// The case: the process lives even if the alpha is cut.
 const AC1_GRAPH_LIVE: &str = "ac1-the-liveness-is-200-when-the-graph-is-cut";
-/// El caso: devolver el alpha devuelve la readiness.
+/// The case: putting the alpha back restores readiness.
 const AC1_GRAPH_BACK: &str = "ac1-the-readiness-comes-back-when-the-graph-returns";
-/// El caso: el perfil de grafo con su contenido esta listo y exige el
-/// alpha y el almacen de contenido.
+/// The case: the graph profile with its content is ready and requires the
+/// alpha and the content store.
 const AC2_STANDALONE: &str = "ac2-the-graph-profile-is-ready";
-/// El caso: el cuerpo de la salud no dice donde esta el despliegue.
+/// The case: the health body does not say where the deployment is.
 const AC2_NO_LEAK: &str = "ac2-the-body-of-the-health-endpoints-does-not-carry-the-deployment";
-/// El caso: una dependencia que el perfil no exige no puede fallar el
-/// readiness.
+/// The case: a dependency the profile does not require cannot make
+/// readiness fail.
 const AC2_OPTIONAL: &str =
     "ac2-a-dependency-that-the-profile-does-not-require-cannot-fail-the-readiness";
-/// El caso: una dependencia que no contesta produce un `timeout` y un
-/// `503`, y no cuelga la peticion.
+/// The case: a dependency that does not answer produces a `timeout` and a
+/// `503`, and does not hang the request.
 const AC2_TIMEOUT: &str = "ac2-a-dependency-that-does-not-answer-produces-a-timeout-and-a-503";
-/// El caso: el probe comprueba cada dependencia exigida una vez.
+/// The case: the probe checks each required dependency once.
 const AC3_BOUNDED: &str = "ac3-the-probe-checks-every-required-dependency-once";
-/// El caso: dos sondeos seguidos comparten el veredicto.
+/// The case: two consecutive probes share the verdict.
 const AC3_CACHE: &str = "ac3-two-readiness-in-a-row-share-the-verdict";
-/// El caso: el camino de los datos no pasa por el probe.
+/// The case: the data path does not go through the probe.
 const AC3_DATA_PATH: &str = "ac3-the-data-path-does-not-go-through-the-readiness-probe";
 
-/// Los casos que una ejecucion completa tiene que ejecutar.
+/// The cases a full run has to execute.
 ///
-/// Se declaran **antes** de correr: una ejecucion que solo llego a algunos
-/// dice cuales no corrieron, y un informe con un caso que no corrio nunca es
-/// verde.
+/// They are declared **before** running: a run that only reached some
+/// says which ones did not run, and a report with a case that did not run is never
+/// green.
 const THE_CASES: &[(&str, &str)] = &[
     (
         AC1_READY_200,
@@ -159,11 +159,11 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Un probe de mentira: cuenta las comprobaciones y responde lo que se le
-/// dice.
+/// A fake probe: counts the checks and answers what it is
+/// told.
 ///
-/// El binario real no admite un probe de mentira --el suyo lo decide el
-/// perfil--, asi que el arnes de esta suite lo inyecta en el proceso.
+/// The real binary does not admit a fake probe -- its own is decided by the
+/// profile --, so this suite's harness injects it into the process.
 struct Counting {
     required: Vec<Dependency>,
     checks: AtomicUsize,
@@ -179,7 +179,7 @@ impl Counting {
         }
     }
 
-    /// Cuantas comprobaciones se han hecho.
+    /// How many checks have been made.
     fn checks(&self) -> usize {
         self.checks.load(Ordering::Relaxed)
     }
@@ -197,7 +197,7 @@ impl ReadinessProbe for Counting {
     }
 }
 
-/// Un probe que no contesta nunca.
+/// A probe that never answers.
 struct Silent;
 
 #[async_trait]
@@ -212,10 +212,10 @@ impl ReadinessProbe for Silent {
     }
 }
 
-/// Un relay hacia el alpha que el test puede cortar: cortarlo suelta todas
-/// las conexiones abiertas y deja de escuchar, de modo que la siguiente
-/// llamada del servicio falla de verdad. Se puede levantar de nuevo en la
-/// misma direccion.
+/// A relay to the alpha that the test can cut: cutting it drops all
+/// open connections and stops listening, so that the service's next
+/// call really fails. It can be brought up again at the
+/// same address.
 struct Relay {
     address: String,
     target: String,
@@ -266,9 +266,9 @@ impl Relay {
     }
 }
 
-/// Una credencial de mentira: la cuenta `acme` y la persona `alice`.
+/// A fake credential: the `acme` account and the `alice` person.
 ///
-/// El caso no mide la autenticacion: mide el camino del probe.
+/// The case does not measure authentication: it measures the probe's path.
 struct Alice;
 
 #[async_trait]
@@ -284,7 +284,7 @@ impl PrincipalAuthenticator for Alice {
     }
 }
 
-/// Un autorizador que lo permite todo: el caso no mide la autorizacion.
+/// An authorizer that permits everything: the case does not measure authorization.
 struct AllowAll;
 
 impl AuthorizerPort for AllowAll {
@@ -293,10 +293,10 @@ impl AuthorizerPort for AllowAll {
     }
 }
 
-/// La aplicacion en proceso, con el probe que se le dice.
+/// The in-process application, with the probe it is told.
 ///
-/// El catalogo es un namespace del Dgraph y es lo que lee el camino de los
-/// datos: sin el, la superficie de contenido no tendria nada que leer.
+/// The catalog is a Dgraph namespace and is what the data path reads:
+/// without it, the content surface would have nothing to read.
 async fn the_app(probe: Arc<dyn ReadinessProbe>) -> (Router, Workdir) {
     let tmp = Workdir::new();
     let mut config = AppConfig::default();
@@ -320,7 +320,7 @@ async fn the_app(probe: Arc<dyn ReadinessProbe>) -> (Router, Workdir) {
     (build_router(state, &config), tmp)
 }
 
-/// Una peticion al router en proceso, con su codigo y su cuerpo.
+/// A request to the in-process router, with its code and body.
 async fn request(app: &Router, uri: &str) -> (StatusCode, String) {
     let request = Request::builder()
         .method(Method::GET)
@@ -340,18 +340,18 @@ async fn request(app: &Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// Un fichero para el cuerpo de una respuesta.
+/// A file for a response body.
 fn next(name: &str) -> std::path::PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let number = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("{name}-{number}"))
 }
 
-/// Una peticion al servicio de verdad, con su cuerpo y con el comando
-/// que la hizo.
+/// A request to the real service, with its body and with the command
+/// that made it.
 ///
-/// El comando que se escribe en el informe es el que se ejecuto: un
-/// informe que dice otra cosa es una opinion.
+/// The command written in the report is the one that was executed: a
+/// report that says otherwise is an opinion.
 fn call(port: u16, path: &str) -> (Answer, String) {
     let into = next("answer");
     let curl = Curl::call(port, "GET", path, "", None, None, Some(&into));
@@ -359,20 +359,20 @@ fn call(port: u16, path: &str) -> (Answer, String) {
     (curl.run(), shown)
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// El tiempo que hay que esperar para que el cache corto expire.
+/// The time to wait for the short cache to expire.
 ///
-/// El veredicto se cachea un segundo: comprobarlo antes de que expire
-/// mediria el cache, no el despliegue.
+/// The verdict is cached for a second: checking before it expires
+/// would measure the cache, not the deployment.
 fn the_cache_is_gone() -> Duration {
     VERDICT_TTL + Duration::from_millis(500)
 }
 
-/// Corre un caso del laboratorio.
+/// Runs a laboratory case.
 fn a_case(
     id: &str,
     title: &str,
@@ -400,14 +400,14 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         .build()
         .expect("the runtime");
 
-    // ---- El despliegue de verdad, alcanzando el alpha por un relay.
+    // ---- The real deployment, reaching the alpha through a relay.
     let deployment = Deployment::new();
     let tenant = deployment.graph.as_ref().expect("the graph profile");
     let mut relay = runtime.block_on(Relay::to(tenant.endpoint.clone()));
     let service = deployment.start(&[("HODEI_GRAPH__ENDPOINT", relay.address.as_str())]);
     let port = service.port;
 
-    // ---- AC1: con el almacen ahi, se puede servir.
+    // ---- AC1: with the store there, it can serve.
     a_case(
         AC1_READY_200,
         "con el almacen exigido ahi, la readiness dice que se puede servir",
@@ -447,15 +447,15 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- El almacen exigido se desconecta **en caliente**. No se borra
-    // antes de arrancar: un almacen que no esta al arrancar es otro
-    // escenario, y este es el que se quiere medir.
+    // ---- The required store is disconnected **hot**. It is not deleted
+    // before starting: a store that is not there at startup is another
+    // scenario, and this is the one to be measured.
     let cas = std::path::PathBuf::from(&deployment.cas);
     let away = deployment.directory.path().join("cas-away");
     std::fs::rename(&cas, &away).expect("the store is moved away");
     std::thread::sleep(the_cache_is_gone());
 
-    // ---- AC1: la readiness deja de ser 200.
+    // ---- AC1: readiness stops being 200.
     a_case(
         AC1_READY_503,
         "al desconectar el almacen exigido, la readiness deja de ser 200",
@@ -491,7 +491,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- AC1: el proceso vive.
+    // ---- AC1: the process lives.
     a_case(
         AC1_LIVE_200,
         "el proceso vive aunque el almacen exigido no este",
@@ -519,7 +519,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- AC2: el cuerpo no lleva nada del despliegue.
+    // ---- AC2: the body carries nothing of the deployment.
     a_case(
         AC2_NO_LEAK,
         "el cuerpo de la salud no dice donde esta el despliegue",
@@ -562,7 +562,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- AC1: el almacen vuelve.
+    // ---- AC1: the store comes back.
     std::fs::rename(&away, &cas).expect("the store is moved back");
     std::thread::sleep(the_cache_is_gone());
 
@@ -593,8 +593,8 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- El alpha se corta **en caliente**: el servicio ya arranco contra
-    // el, y de pronto no contesta.
+    // ---- The alpha is cut **hot**: the service already started against
+    // it, and suddenly it does not answer.
     runtime.block_on(relay.cut());
     std::thread::sleep(the_cache_is_gone());
 
@@ -671,7 +671,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- AC2: el perfil standalone.
+    // ---- AC2: the standalone profile.
     a_case(
         AC2_STANDALONE,
         "el perfil de grafo esta listo y exige el alpha y el contenido",
@@ -701,9 +701,9 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                         .collect()
                 })
                 .unwrap_or_default();
-            // El perfil de este despliegue exige el alpha y el almacen de
-            // contenido. No exige la politica de confianza: se carga en
-            // memoria al arrancar y no se puede perder en caliente.
+            // This deployment's profile requires the alpha and the content
+            // store. It does not require the trust policy: it is loaded into
+            // memory at startup and cannot be lost hot.
             if names != vec!["graph".to_string(), "content_store".to_string()] {
                 return LabCase::new(
                     AC2_STANDALONE,
@@ -720,10 +720,10 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
-    // ---- El resto, en proceso: el binario real decide su probe y no
-    // admite otro, asi que el arnes inyecta uno de mentira.
+    // ---- The rest, in-process: the real binary decides its probe and does not
+    // admit another, so the harness injects a fake one.
     runtime.block_on(async {
-        // ---- AC2: una dependencia que el perfil no exige.
+        // ---- AC2: a dependency the profile does not require.
         let probe = Arc::new(Counting::new(
             vec![Dependency::Graph],
             Err(DependencyFailure::Unreachable),
@@ -741,8 +741,8 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                         "the readiness is ready although the catalog is not there".to_string(),
                     );
                 }
-                // La dependencia que no se exige no aparece en el veredicto
-                // y no se comprueba: no puede hacer fallar el readiness.
+                // The dependency that is not required does not appear in the verdict
+                // and is not checked: it cannot make readiness fail.
                 if report.failing != vec![(Dependency::Graph, DependencyFailure::Unreachable)] {
                     return LabCase::new(AC2_OPTIONAL, "una dependencia que el perfil no exige no puede fallar el readiness").failed(format!(
                         "the verdict names {:?}",
@@ -760,7 +760,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
             },
         );
 
-        // ---- AC2: una dependencia que no contesta.
+        // ---- AC2: a dependency that does not answer.
         let (app, _tmp) = the_app(Arc::new(CachedProbe::new(Arc::new(Silent)))).await;
         let started = Instant::now();
         let (status, body) = request(&app, "/health/ready").await;
@@ -781,9 +781,9 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                         "the body does not name the timeout: {body}"
                     ));
                 }
-                // El presupuesto es de un segundo por dependencia: la
-                // peticion no cuelga, y no espera a que la dependencia
-                // conteste.
+                // The budget is one second per dependency: the
+                // request does not hang, and does not wait for the dependency
+                // to answer.
                 if elapsed > Duration::from_secs(5) {
                     return LabCase::new(AC2_TIMEOUT, "una dependencia que no contesta produce un timeout y un 503, y no cuelga").failed(format!(
                         "the readiness took {elapsed:?}"
@@ -795,7 +795,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
             },
         );
 
-        // ---- AC3: una comprobacion por dependencia.
+        // ---- AC3: one check per dependency.
         let probe = Arc::new(Counting::new(
             vec![Dependency::Graph, Dependency::ContentStore],
             Ok(()),
@@ -824,7 +824,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
             },
         );
 
-        // ---- AC3: el cache corto.
+        // ---- AC3: the short cache.
         let probe = Arc::new(Counting::new(vec![Dependency::ContentStore], Ok(())));
         let (app, _tmp) = the_app(Arc::new(CachedProbe::new(probe.clone()))).await;
         let (first, _) = request(&app, "/health/ready").await;
@@ -852,18 +852,18 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
             },
         );
 
-        // ---- AC3: el camino de los datos.
+        // ---- AC3: the data path.
         let probe = Arc::new(Counting::new(
             vec![Dependency::ContentStore],
             Err(DependencyFailure::Unreachable),
         ));
         let (app, _tmp) = the_app(Arc::new(CachedProbe::new(probe.clone()))).await;
-        // La readiness corre el probe y falla: el perfil exige una
-        // dependencia que no esta.
+        // Readiness runs the probe and fails: the profile requires a
+        // dependency that is not there.
         let (ready, _) = request(&app, "/health/ready").await;
         let checks_after_the_readiness = probe.checks();
-        // Y ahora una peticion del camino de los datos: la superficie de
-        // contenido, que es la que lee el catalogo.
+        // And now a data-path request: the content surface,
+        // which is the one that reads the catalog.
         let (data, data_body) = request(&app, "/repository/releases/nothing.txt").await;
         let checks_after_the_data = probe.checks();
         a_case(
@@ -882,10 +882,10 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                         "the data path answered 503: the probe is in the data path".to_string(),
                     );
                 }
-                // El cuerpo no esta vacio: la respuesta la escribio el
-                // handler de la superficie y no el router. Sin esto, un
-                // `404` del router seria indistinguible de un `404` del
-                // catalogo, y el caso no mediria nada.
+                // The body is not empty: the response was written by the
+                // surface's handler and not by the router. Without this, a
+                // router `404` would be indistinguishable from a catalog
+                // `404`, and the case would measure nothing.
                 if data_body.is_empty() {
                     return LabCase::new(AC3_DATA_PATH, "el camino de los datos no pasa por el probe de readiness").failed(
                         "the data path did not answer with a body: the route did not reach the handler".to_string(),

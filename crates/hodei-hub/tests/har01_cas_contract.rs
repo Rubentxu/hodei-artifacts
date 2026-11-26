@@ -1,16 +1,16 @@
-//! El contrato del CAS de produccion: HAR-01.
+//! The contract of the production CAS: HAR-01.
 //!
-//! El CAS de M9 era correcto en su garantia central — el mismo contenido
-//! no se guarda dos veces y lo que sale por el digest es lo que entro —
-//! pero no era operable con bytes de clientes reales. Estos cinco criterios
-//! son los que lo hacen:
+//! The M9 CAS was correct in its central guarantee — the same content
+//! is not stored twice and what comes out by the digest is what went in —
+//! but it was not operable with real client bytes. These five criteria
+//! are the ones that make it so:
 //!
-//! 1. La subida **fluye**: el contenido no cabe entero en memoria.
-//! 2. Dos productores del mismo contenido **no se pisen**.
-//! 3. El commit **valida** lo que publica, y si no cuadra, no publica.
-//! 4. La lectura **distingue** lo que falta de lo que esta roto, y el
-//!    staging caducado se limpia.
-//! 5. El almacen **aguanta** un error de disco y la muerte de un proceso.
+//! 1. The upload **streams**: the content does not fit entirely in memory.
+//! 2. Two producers of the same content **do not step on each other**.
+//! 3. The commit **validates** what it publishes, and if it does not add up, it does not publish.
+//! 4. The read **distinguishes** what is missing from what is broken, and
+//!    expired staging is cleaned up.
+//! 5. The store **withstands** a disk error and the death of a process.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -21,13 +21,13 @@ use hodei_hub::blob::{
 };
 use sha2::{Digest, Sha256};
 
-// ───────────────────────────── utilidades ─────────────────────────────
+// ───────────────────────────── utilities ─────────────────────────────
 
-/// Un directorio temporal para las pruebas.
+/// A temporary directory for the tests.
 ///
-/// El contenido grande va al directorio del target, que esta en disco: en
-/// `/tmp` se iria a un tmpfs, ocuparia memoria del sistema y falsearia la
-/// medida de memoria del proceso.
+/// Large content goes to the target directory, which is on disk: in
+/// `/tmp` it would go to a tmpfs, take up system memory and falsify the
+/// process memory measurement.
 fn a_temp_dir(prefix: &str) -> tempfile::TempDir {
     match option_env!("CARGO_TARGET_TMPDIR") {
         Some(path) => tempfile::Builder::new()
@@ -41,10 +41,10 @@ fn a_temp_dir(prefix: &str) -> tempfile::TempDir {
     }
 }
 
-/// La memoria residente del proceso, en bytes.
+/// The resident memory of the process, in bytes.
 ///
-/// Es la medida que dice si el proceso **guarda** el contenido o si lo
-/// **hace pasar**. Solo tiene sentido en Linux.
+/// It is the measure that says whether the process **keeps** the content or
+/// **lets it pass through**. It only makes sense on Linux.
 #[cfg(target_os = "linux")]
 fn rss_bytes() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
@@ -62,7 +62,7 @@ fn rss_bytes() -> Option<u64> {
     None
 }
 
-/// El hexadecimal de los bytes.
+/// The hexadecimal of the bytes.
 fn hex_of(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 2);
@@ -72,10 +72,10 @@ fn hex_of(bytes: &[u8]) -> String {
     out
 }
 
-/// El bloque base: se genera una vez y se copia para cada trozo.
+/// The base block: generated once and copied for each part.
 ///
-/// Generarlo por cada trozo costaba mas que todo el test, y aqui no hay
-/// nada que depurar.
+/// Generating it for each part cost more than the whole test, and there is
+/// nothing to debug here.
 fn base_block() -> &'static Vec<u8> {
     static BASE: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     BASE.get_or_init(|| {
@@ -89,11 +89,11 @@ fn base_block() -> &'static Vec<u8> {
     })
 }
 
-/// Un bloque determinista, distinto en cada indice.
+/// A deterministic block, different at each index.
 ///
-/// El contenido es siempre el mismo para el mismo indice, para que el
-/// digest esperado se pueda calcular, y distinto entre indices, para que
-/// un blob sea un blob y no mil copias del mismo.
+/// The content is always the same for the same index, so that the
+/// expected digest can be computed, and different between indices, so that
+/// a blob is a blob and not a thousand copies of the same one.
 fn a_block(index: u64, size: usize) -> Vec<u8> {
     let base = base_block();
     let mut block = Vec::with_capacity(size);
@@ -101,7 +101,7 @@ fn a_block(index: u64, size: usize) -> Vec<u8> {
         let remaining = size - block.len();
         block.extend_from_slice(&base[..remaining.min(base.len())]);
     }
-    // Y el indice lo hace distinto en cada bloque.
+    // And the index makes it different in each block.
     let key = (index as u32).wrapping_mul(0x9E37_79B9);
     for (position, byte) in block[..size.min(256)].iter_mut().enumerate() {
         *byte ^= (key >> ((position % 4) * 8)) as u8 ^ (position as u8);
@@ -109,11 +109,11 @@ fn a_block(index: u64, size: usize) -> Vec<u8> {
     block
 }
 
-/// El digest de un fichero, leido a trozos.
+/// The digest of a file, read in parts.
 ///
-/// Verifica el contenido **sin** cargarlo entero en memoria: si la
-/// verificacion necesitara un buffer del tamaño del blob, no serviria
-/// para probar que el almacen no bufferiza.
+/// It verifies the content **without** loading it whole in memory: if the
+/// verification needed a buffer the size of the blob, it would not serve
+/// to prove that the store does not buffer.
 fn digest_of_file(path: &Path) -> String {
     use std::io::Read;
     let mut file = std::fs::File::open(path).expect("el blob se abre");
@@ -130,7 +130,7 @@ fn digest_of_file(path: &Path) -> String {
     hex_of(&hasher.finalize())
 }
 
-/// La fecha de modificacion de un fichero, para simular un staging viejo.
+/// The modification date of a file, to simulate an old staging.
 fn set_modified(path: &Path, when: SystemTime) {
     let file = std::fs::OpenOptions::new()
         .write(true)
@@ -140,7 +140,7 @@ fn set_modified(path: &Path, when: SystemTime) {
         .expect("la fecha se pone");
 }
 
-/// Los ficheros que hay en un directorio, ordenados.
+/// The files in a directory, sorted.
 fn the_files_in(dir: &Path) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .expect("el directorio se lee")
@@ -152,11 +152,11 @@ fn the_files_in(dir: &Path) -> Vec<PathBuf> {
 
 // ───────────────────────────── AC1 ─────────────────────────────
 
-/// AC1 La subida fluye: el contenido no cabe entero en memoria.
+/// AC1 The upload streams: the content does not fit entirely in memory.
 ///
-/// Given un contenido de 1 GiB, when se sube a trozos, then la memoria
-/// del proceso no crece con el tamano del artefacto y lo que se publica
-/// es exactamente lo que se subio.
+/// Given a 1 GiB content, when it is uploaded in parts, then the process
+/// memory does not grow with the size of the artifact and what is published
+/// is exactly what was uploaded.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn har01_ac1_the_upload_does_not_buffer_the_whole_content() {
     const TOTAL: u64 = 1024 * 1024 * 1024;
@@ -197,9 +197,9 @@ async fn har01_ac1_the_upload_does_not_buffer_the_whole_content() {
 
     if let Some(baseline) = baseline {
         let growth = peak.saturating_sub(baseline);
-        // El limite es una octava parte del blob: bufferizar el
-        // contenido entero lo reventaria de largo, y el margen deja
-        // sitio al resto de pruebas que corren en paralelo.
+        // The limit is an eighth of the blob: buffering the whole
+        // content would blow far past it, and the margin leaves
+        // room for the rest of the tests running in parallel.
         let limit = TOTAL / 8;
         println!(
             "AC1: la memoria residente crecio {growth} bytes ({} MiB) para un blob de {} MiB; el limite es {} MiB",
@@ -213,7 +213,7 @@ async fn har01_ac1_the_upload_does_not_buffer_the_whole_content() {
         );
     }
 
-    // Y lo que esta en disco es lo que se subio, sin cargarlo entero.
+    // And what is on disk is what was uploaded, without loading it whole.
     let path = store.the_path_of(&digest);
     assert_eq!(
         std::fs::metadata(&path).expect("el blob esta").len(),
@@ -229,11 +229,11 @@ async fn har01_ac1_the_upload_does_not_buffer_the_whole_content() {
 
 // ───────────────────────────── AC2 ─────────────────────────────
 
-/// AC2 Dos productores del mismo contenido no se pisen.
+/// AC2 Two producers of the same content do not step on each other.
 ///
-/// Given varios productores concurrentes del mismo contenido, when
-/// escriben a la vez, then cada uno tiene su staging, solo queda un blob
-/// y su contenido es el correcto.
+/// Given several concurrent producers of the same content, when
+/// they write at once, then each has its own staging, only one blob remains
+/// and its content is the correct one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn har01_ac2_concurrent_producers_never_share_the_staging() {
     const WRITERS: usize = 16;
@@ -244,8 +244,8 @@ async fn har01_ac2_concurrent_producers_never_share_the_staging() {
     let content = std::sync::Arc::new(a_block(1, SIZE));
     let expected = ContentDigest::of_bytes(&content);
 
-    // Todos escriben el mismo contenido, a la vez, por trozos: para que
-    // las escrituras se solapen en el tiempo y no solo en el codigo.
+    // All write the same content, at once, in parts: so that
+    // the writes overlap in time and not just in code.
     let mut handles = Vec::new();
     for _ in 0..WRITERS {
         let store = std::sync::Arc::clone(&store);
@@ -278,7 +278,7 @@ async fn har01_ac2_concurrent_producers_never_share_the_staging() {
         }
     }
 
-    // Cada escritura en curso tenia su propio fichero: nadie comparte.
+    // Each write in progress had its own file: nobody shares.
     let unique: std::collections::BTreeSet<&PathBuf> = stagings.iter().collect();
     assert_eq!(
         unique.len(),
@@ -286,7 +286,7 @@ async fn har01_ac2_concurrent_producers_never_share_the_staging() {
         "dos escrituras en curso compartian fichero de staging"
     );
 
-    // Y solo queda un blob, con el contenido correcto.
+    // And only one blob remains, with the correct content.
     let path = store.the_path_of(&expected);
     assert!(path.exists(), "el blob esta en su sitio");
     assert_eq!(
@@ -302,7 +302,7 @@ async fn har01_ac2_concurrent_producers_never_share_the_staging() {
         "no queda staging: cada commit limpio el suyo"
     );
 
-    // Y lo mismo cuando los contenidos son distintos.
+    // And the same when the contents are different.
     let mut handles = Vec::new();
     for index in 0..WRITERS as u64 {
         let store = std::sync::Arc::clone(&store);
@@ -334,11 +334,11 @@ async fn har01_ac2_concurrent_producers_never_share_the_staging() {
 
 // ───────────────────────────── AC3 ─────────────────────────────
 
-/// AC3 El commit valida lo que publica.
+/// AC3 The commit validates what it publishes.
 ///
-/// Given un commit que declara un digest, una longitud o un algoritmo que
-/// no son los del contenido, when se intenta publicar, then se rechaza,
-/// el staging desaparece y no queda ninguna referencia visible.
+/// Given a commit that declares a digest, a length or an algorithm that
+/// are not those of the content, when publishing is attempted, then it is rejected,
+/// the staging disappears and no visible reference remains.
 #[tokio::test]
 async fn har01_ac3_the_commit_validates_algorithm_length_and_digest() {
     let tmp = a_temp_dir("har01-ac3-");
@@ -346,7 +346,7 @@ async fn har01_ac3_the_commit_validates_algorithm_length_and_digest() {
     let content = b"the bytes of the artefact".to_vec();
     let real = ContentDigest::of_bytes(&content);
 
-    // El digest no es el del contenido.
+    // The digest is not the content's.
     let mut session = store.begin().await.expect("la sesion abre");
     session.append(&content).await.expect("el trozo entra");
     let declared = ContentDigest::sha256("0".repeat(64));
@@ -373,7 +373,7 @@ async fn har01_ac3_the_commit_validates_algorithm_length_and_digest() {
         "y el staging se elimina"
     );
 
-    // La longitud no es la del contenido.
+    // The length is not the content's.
     let mut session = store.begin().await.expect("la sesion abre");
     session.append(&content).await.expect("el trozo entra");
     let error = session
@@ -392,7 +392,7 @@ async fn har01_ac3_the_commit_validates_algorithm_length_and_digest() {
         "no queda ninguna referencia visible"
     );
 
-    // El algoritmo no es uno que el almacen sepa calcular.
+    // The algorithm is not one the store knows how to compute.
     let mut session = store.begin().await.expect("la sesion abre");
     session.append(&content).await.expect("el trozo entra");
     let sha512 = ContentDigest {
@@ -418,7 +418,7 @@ async fn har01_ac3_the_commit_validates_algorithm_length_and_digest() {
         "y el staging se elimina"
     );
 
-    // Y lo que si cuadra, se publica.
+    // And what does add up is published.
     let mut session = store.begin().await.expect("la sesion abre");
     session.append(&content).await.expect("el trozo entra");
     let digest = session
@@ -434,17 +434,17 @@ async fn har01_ac3_the_commit_validates_algorithm_length_and_digest() {
 
 // ───────────────────────────── AC4 ─────────────────────────────
 
-/// AC4 La lectura distingue lo que falta de lo que esta roto.
+/// AC4 The read distinguishes what is missing from what is broken.
 ///
-/// Given un digest que no esta, un blob corrupto y algo que no se puede
-/// leer, when se leen, then cada fallo es un fallo distinto y la politica
-/// de lectura es explicita.
+/// Given a digest that is not there, a corrupt blob and something that cannot be
+/// read, when they are read, then each failure is a distinct failure and the read
+/// policy is explicit.
 #[tokio::test]
 async fn har01_ac4_the_read_tells_missing_corrupted_and_unreadable_apart() {
     let tmp = a_temp_dir("har01-ac4-");
     let store = FileBlobStore::new(tmp.path()).expect("el almacen abre");
 
-    // Lo que no esta, no esta.
+    // What is not there, is not there.
     let missing = ContentDigest::of_bytes(b"nothing was ever stored here");
     assert_eq!(
         store
@@ -461,7 +461,7 @@ async fn har01_ac4_the_read_tells_missing_corrupted_and_unreadable_apart() {
         BlobError::NotFound
     );
 
-    // Lo que esta corrupto, esta corrupto: no se confunde con que falte.
+    // What is corrupt, is corrupt: it is not confused with being missing.
     let digest = store
         .put(b"the bytes")
         .await
@@ -486,13 +486,13 @@ async fn har01_ac4_the_read_tells_missing_corrupted_and_unreadable_apart() {
         "y la verificacion lo dice tambien"
     );
 
-    // Y `exists` sigue diciendo que esta: no afirma integridad.
+    // And `exists` still says it is there: it does not assert integrity.
     assert!(
         store.exists(&digest).await.expect("el almacen responde"),
         "exists dice que esta, no que este bien"
     );
 
-    // Y lo que no se puede leer no es "no esta".
+    // And what cannot be read is not "not there".
     let unreadable = ContentDigest::of_bytes(b"this one is a directory");
     std::fs::create_dir_all(store.the_path_of(&unreadable)).expect("el directorio se crea");
     let error = store
@@ -504,7 +504,7 @@ async fn har01_ac4_the_read_tells_missing_corrupted_and_unreadable_apart() {
         "el error dice que no se pudo leer: {error:?}"
     );
 
-    // Y la politica de lectura es explicita: la de confianza no comprueba.
+    // And the read policy is explicit: the trust one does not check.
     let unchecked = store
         .get_with(&digest, ReadPolicy::Trust)
         .await
@@ -515,12 +515,12 @@ async fn har01_ac4_the_read_tells_missing_corrupted_and_unreadable_apart() {
     );
 }
 
-/// AC4 El staging caducado se limpia y el vivo no se toca.
+/// AC4 Expired staging is cleaned up and live staging is not touched.
 ///
-/// Given un staging viejo de un proceso que se cae, otro vivo que esta
-/// escribiendo ahora mismo y un fichero que no es nuestro, when el
-/// proceso se reinicia y limpia, then solo desaparece el viejo, el vivo
-/// se respeta y lo que no es nuestro no se toca.
+/// Given an old staging of a process that crashes, another live one that is
+/// being written right now and a file that is not ours, when the
+/// process restarts and cleans up, then only the old one disappears, the live one
+/// is respected and what is not ours is not touched.
 #[tokio::test]
 async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
     let tmp = a_temp_dir("har01-ac4-staging-");
@@ -530,36 +530,36 @@ async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
         .await
         .expect("el contenido se guarda");
 
-    // Un staging viejo, como el que deja un proceso que se cae: con el
-    // nombre que pone el almacen y sin nadie escribiendolo.
+    // An old staging, like the one a crashing process leaves: with the
+    // name the store gives and with nobody writing it.
     let staging_dir = store.the_staging_dir();
     std::fs::create_dir_all(&staging_dir).expect("el staging se crea");
     let old = staging_dir.join(a_staging_name());
     std::fs::write(&old, b"half written").expect("el staging se escribe");
     set_modified(&old, SystemTime::now() - Duration::from_secs(3600));
 
-    // Y uno vivo, que puede ser de otro proceso que esta subiendo: con
-    // el nombre que pone el almacen y **bloqueado**, que es lo que dice
-    // que alguien lo esta escribiendo ahora mismo.
+    // And a live one, which may belong to another process that is uploading: with
+    // the name the store gives and **locked**, which is what says
+    // that someone is writing it right now.
     //
-    // Y **caducado**, a proposito: si solo lo protegiera su fecha, el
-    // arranque se lo llevaria, y lo que lo protege es el bloqueo.
+    // And **expired**, on purpose: if only its date protected it, the
+    // startup would take it away, and what protects it is the lock.
     let live = staging_dir.join(a_staging_name());
     let live_file = std::fs::File::create(&live).expect("el staging vivo se escribe");
     live_file.try_lock().expect("el staging vivo se bloquea");
     set_modified(&live, SystemTime::now() - Duration::from_secs(3600));
 
-    // Y un fichero que no es nuestro: el directorio del staging es una
-    // convencion, y lo que hay ahi puede ser de otra cosa.
+    // And a file that is not ours: the staging directory is a
+    // convention, and what is there may belong to something else.
     let foreign = staging_dir.join("not-ours.txt");
     std::fs::write(&foreign, b"de otra cosa").expect("el fichero se escribe");
 
-    // Y un directorio con nuestro nombre, que no se puede borrar: un
-    // problema de disco no puede impedir que el almacen siga sirviendo.
+    // And a directory with our name, which cannot be deleted: a
+    // disk problem cannot prevent the store from continuing to serve.
     let stuck = staging_dir.join(a_staging_name());
     std::fs::create_dir(&stuck).expect("el directorio se crea");
 
-    // El proceso se reinicia: un almacen nuevo sobre el mismo directorio.
+    // The process restarts: a new store over the same directory.
     let restarted = FileBlobStore::new(tmp.path()).expect("el almacen abre");
     let cleanup = restarted
         .clean_expired_staging(Duration::from_secs(60))
@@ -575,8 +575,8 @@ async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
     assert!(live.exists(), "el staging vivo no se toca");
     assert!(foreign.exists(), "un fichero que no es nuestro no se toca");
 
-    // Y lo que no se puede borrar no es un fallo: se cuenta y el almacen
-    // sigue sirviendo.
+    // And what cannot be deleted is not a failure: it is counted and the store
+    // keeps serving.
     let cleanup = restarted
         .clean_expired_staging(Duration::ZERO)
         .expect("la limpieza se hace");
@@ -589,8 +589,8 @@ async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
     );
     assert!(stuck.exists(), "el directorio se queda");
 
-    // Y lo que estaba publicado sigue ahi: limpiar staging no publica ni
-    // borra nada.
+    // And what was published is still there: cleaning staging neither publishes nor
+    // deletes anything.
     assert!(
         restarted
             .exists(&digest)
@@ -603,12 +603,12 @@ async fn har01_ac4_the_expired_staging_is_cleaned_and_the_live_one_is_not() {
     );
 }
 
-/// El nombre que el almacen le pone a una escritura en curso.
+/// The name the store gives to a write in progress.
 ///
-/// `<pid>-<nanos:x>-<counter:x>.part`. El arnés lo copia porque lo que
-/// quiere es un staging de verdad, con el nombre que el almacen
-/// reconoce: un fichero con otro nombre no es una escritura en curso, y
-/// el almacen no lo toca.
+/// `<pid>-<nanos:x>-<counter:x>.part`. The harness copies it because what it
+/// wants is a real staging, with the name the store
+/// recognizes: a file with another name is not a write in progress, and
+/// the store does not touch it.
 fn a_staging_name() -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -622,14 +622,14 @@ fn a_staging_name() -> std::path::PathBuf {
 
 // ───────────────────────────── AC5 ─────────────────────────────
 
-/// AC5 El almacen aguanta un error de disco y la muerte de un proceso.
+/// AC5 The store withstands a disk error and the death of a process.
 ///
-/// Given un staging que no es un directorio y un proceso que se cae a
-/// mitad de una subida, when se usa el almacen, then el error de disco es
-/// un error de disco y no se publica nada a medias.
+/// Given a staging that is not a directory and a process that crashes
+/// halfway through an upload, when the store is used, then the disk error is
+/// a disk error and nothing is published halfway.
 #[tokio::test]
 async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
-    // El error de disco: el staging no es un directorio.
+    // The disk error: the staging is not a directory.
     let broken_root = a_temp_dir("har01-ac5-broken-");
     let broken = broken_root.path().join("store");
     std::fs::create_dir_all(&broken).expect("el directorio se crea");
@@ -644,7 +644,7 @@ async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
         "el error dice que el almacen no esta disponible: {error:?}"
     );
 
-    // El proceso se cae a mitad de una subida.
+    // The process crashes halfway through an upload.
     let tmp = a_temp_dir("har01-ac5-");
     let store = FileBlobStore::new(tmp.path()).expect("el almacen abre");
     {
@@ -653,7 +653,7 @@ async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
             .append(b"half of the content")
             .await
             .expect("el trozo entra");
-        // La sesion se abandona sin commit: un error, un `?` o un panic.
+        // The session is abandoned without commit: an error, a `?` or a panic.
     }
     assert!(
         store
@@ -662,8 +662,8 @@ async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
             .is_empty(),
         "una sesion abandonada no deja staging"
     );
-    // Y no se publico nada a medias: en la raiz del almacen solo esta el
-    // directorio de staging, ningun blob.
+    // And nothing was published halfway: at the root of the store only the
+    // staging directory is there, no blob.
     let entries = the_files_in(tmp.path());
     assert_eq!(
         entries.len(),
@@ -672,8 +672,8 @@ async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
     );
     assert_eq!(entries[0].file_name().unwrap(), "staging");
 
-    // Un proceso muerto de verdad no ejecuta su `Drop`: su staging se
-    // queda. El reinicio lo limpia cuando caduca.
+    // A truly dead process does not run its `Drop`: its staging
+    // stays. The restart cleans it up when it expires.
     let staging_dir = store.the_staging_dir();
     std::fs::create_dir_all(&staging_dir).expect("el staging se crea");
     let orphan = staging_dir.join(a_staging_name());
@@ -691,12 +691,12 @@ async fn har01_ac5_the_store_survives_a_disk_error_and_a_dead_process() {
     assert!(!orphan.exists(), "y ya no esta");
 }
 
-// ───────────────────── el contrato es el mismo ─────────────────────
+// ───────────────────── the contract is the same ─────────────────────
 
-/// El contrato de la sesion es el mismo en los dos almacenes.
+/// The session contract is the same in both stores.
 ///
-/// El streaming tiene que **guardar**: una sesion que valida el digest y
-/// no deja el contenido en el almacen es un digest de nada.
+/// Streaming has to **keep**: a session that validates the digest and
+/// does not leave the content in the store is a digest of nothing.
 #[tokio::test]
 async fn har01_the_in_memory_store_streams_and_saves_the_same_way() {
     let store = InMemoryBlobStore::empty();
@@ -727,7 +727,7 @@ async fn har01_the_in_memory_store_streams_and_saves_the_same_way() {
     );
 }
 
-/// Y lo que no cuadra, en el almacen en memoria tampoco se guarda.
+/// And what does not add up is not kept in the in-memory store either.
 #[tokio::test]
 async fn har01_the_in_memory_store_does_not_save_what_does_not_match() {
     let store = InMemoryBlobStore::empty();

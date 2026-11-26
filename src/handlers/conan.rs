@@ -1,30 +1,30 @@
-//! La superficie **conan**: `conan upload` y la resolución de
-//! `conan install` de un cliente Conan 2 contra un repositorio de Hodei
-//! usado como remote.
+//! The **conan** surface: `conan upload` and the resolution of
+//! `conan install` from a Conan 2 client against a Hodei repository
+//! used as a remote.
 //!
-//! Vive en `/conan/{repositorio}/...` y habla el dialecto del remote de
-//! Conan 2 con revisiones: la tabla de rutas y los documentos los fija
-//! `hodei_catalog::conan` (pura, contrastada con el cliente 2.20.1), y
-//! aquí solo hay efectos.
+//! Lives at `/conan/{repository}/...` and speaks the Conan 2 remote
+//! dialect with revisions: the route table and the documents are fixed by
+//! `hodei_catalog::conan` (pure, checked against client 2.20.1), and
+//! here there are only effects.
 //!
-//! Cada fichero que sube el cliente deja **un asset inmutable** cuya ruta
-//! lleva su recipe revision, su `package_id` y su package revision:
-//! `recipes/{n}/{v}/{u}/{c}/{rrev}/{file}` y
-//! `packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`. Los binarios de
-//! dos `package_id` del mismo recipe viven bajo prefijos distintos, y las
-//! revisiones son identificadores versionados que el servidor conserva
-//! opacos: nada deriva `package_id` del nombre ni iguala versión con
-//! binario.
+//! Each file the client uploads leaves **one immutable asset** whose path
+//! carries its recipe revision, its `package_id` and its package revision:
+//! `recipes/{n}/{v}/{u}/{c}/{rrev}/{file}` and
+//! `packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`. The binaries of
+//! two `package_id`s of the same recipe live under different prefixes, and the
+//! revisions are versioned identifiers that the server keeps
+//! opaque: nothing derives `package_id` from the name or equates version with
+//! binary.
 //!
-//! La modalidad servida hoy es **hosted**: el proxy de conan necesita un
-//! upstream validado con cliente real antes de poder declararse, y un
-//! repositorio cuyo modo no se sirve no se puede ni crear.
+//! The mode served today is **hosted**: the conan proxy needs an
+//! upstream validated with a real client before it can be declared, and a
+//! repository whose mode is not served cannot even be created.
 //!
-//! La autenticación es la del hub: el cliente pide token con Basic en
-//! `/v2/users/authenticate`, y el hub verifica la contraseña **como
-//! credencial bearer** y la devuelve como token. El token que el cliente
-//! guarda y manda como `Bearer` es una credencial verificable del
-//! principal, así que el scoping por cuenta es el del hub, no uno propio.
+//! Authentication is the hub's: the client requests a token with Basic at
+//! `/v2/users/authenticate`, and the hub verifies the password **as a
+//! bearer credential** and returns it as the token. The token the client
+//! stores and sends as `Bearer` is a verifiable credential of the
+//! principal, so per-account scoping is the hub's, not its own.
 
 use axum::{
     body::Body,
@@ -51,12 +51,12 @@ use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
 
-/// Lo que pasa con una petición que no se puede servir.
+/// What happens to a request that cannot be served.
 #[derive(Debug)]
 pub enum Failure {
-    /// Un error de la superficie compartida.
+    /// An error from the shared surface.
     Raw(RawApiError),
-    /// Un estado y un motivo.
+    /// A status and a reason.
     Plain(StatusCode, String),
 }
 
@@ -82,16 +82,16 @@ impl IntoResponse for Failure {
     }
 }
 
-/// La cabecera de capacidades: lo único que el cliente lee del ping.
+/// The capabilities header: the only thing the client reads from the ping.
 ///
-/// El dialecto lo fija el cliente: sin la cabecera, el remote "no parece
-/// un Conan remote" y el cliente se niega. `checksum_deploy` no se
-/// promete: la deduplicación de Artifactory es otro dialecto de subida
-/// que aquí no se habla.
+/// The dialect is fixed by the client: without the header, the remote "does not look like
+/// a Conan remote" and the client refuses. `checksum_deploy` is not
+/// promised: Artifactory's deduplication is another upload dialect
+/// that is not spoken here.
 const CAPABILITIES: &str = "revisions";
 
-/// El resto de la ruta de `/conan/{repositorio}/{resto}`, sin decodificar:
-/// las reglas del protocolo son las únicas que pueden interpretar un `%2f`.
+/// The rest of the path of `/conan/{repository}/{rest}`, undecoded:
+/// the protocol rules are the only ones that may interpret a `%2f`.
 fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
@@ -104,7 +104,7 @@ fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     Ok((repository.to_string(), rest.to_string()))
 }
 
-/// Cualquier petición de `/conan/{repositorio}/...`.
+/// Any request to `/conan/{repository}/...`.
 pub async fn handle(
     State(state): State<AppState>,
     method: Method,
@@ -118,15 +118,15 @@ pub async fn handle(
         return Err(RawApiError::NotFound.into());
     };
 
-    // El ping no tiene recurso ni cuenta: es la presentación del remote, y
-    // el cliente la pide antes de tener token. Sin él no hay remote.
+    // The ping has no resource or account: it is the remote's introduction, and
+    // the client requests it before having a token. Without it there is no remote.
     if route == Route::Ping {
         return Ok(ping_response(&correlation));
     }
 
-    // La autenticación es del remote, no de un repositorio: el cliente
-    // cambia su contraseña por un token antes de saber qué repositorios
-    // existen, y el check_credentials comprueba un token, no un recurso.
+    // Authentication belongs to the remote, not to a repository: the client
+    // exchanges its password for a token before knowing which repositories
+    // exist, and check_credentials verifies a token, not a resource.
     match route {
         Route::Authenticate => return the_token(&state, &headers, &correlation).await,
         Route::CheckCredentials => {
@@ -204,7 +204,7 @@ pub async fn handle(
     }
 }
 
-/// El ping: el cliente lee las capacidades de la cabecera y no otra cosa.
+/// The ping: the client reads the capabilities from the header and nothing else.
 fn ping_response(correlation: &str) -> Response {
     let mut response = (StatusCode::OK, Body::from("ping")).into_response();
     response.headers_mut().insert(
@@ -215,15 +215,15 @@ fn ping_response(correlation: &str) -> Response {
     response
 }
 
-/// El cambio de contraseña por token.
+/// The password-for-token exchange.
 ///
-/// El cliente manda Basic `{user}:{password}`; el hub verifica la
-/// contraseña **como credencial bearer** del principal y la devuelve como
-/// el token que el cliente guardará y mandará como `Bearer`. Un token que
-/// el hub puede verificar es una credencial verificable: el scoping por
-/// cuenta no se inventa aquí, lo pone el principal dentro del token. El
-/// usuario del Basic es decorativo: la identidad vive en el token, y una
-/// identidad que se declara sin verificarla no es una identidad.
+/// The client sends Basic `{user}:{password}`; the hub verifies the
+/// password **as the principal's bearer credential** and returns it as
+/// the token the client will store and send as `Bearer`. A token that
+/// the hub can verify is a verifiable credential: per-account
+/// scoping is not invented here, the principal puts it inside the token. The
+/// Basic user is decorative: the identity lives in the token, and an
+/// identity that is declared without being verified is not an identity.
 async fn the_token(
     state: &AppState,
     headers: &HeaderMap,
@@ -261,8 +261,8 @@ async fn the_token(
     }
 }
 
-/// Una respuesta de texto plano: el dialecto del authenticate y del
-/// check_credentials es texto, no JSON.
+/// A plain-text response: the dialect of authenticate and of
+/// check_credentials is text, not JSON.
 fn text_response(status: StatusCode, body: &str, correlation: &str) -> Response {
     let mut response = (status, Body::from(body.to_string())).into_response();
     response.headers_mut().insert(
@@ -280,7 +280,7 @@ fn json_response(status: StatusCode, value: &Value, correlation: &str) -> Respon
 }
 
 // ---------------------------------------------------------------------------
-// Lectura
+// Reads
 // ---------------------------------------------------------------------------
 
 async fn read_route(
@@ -430,18 +430,18 @@ async fn read_route(
     }
 }
 
-/// El segmento `index` de una ruta de asset, si es de la forma que el
-/// protocolo escribe.
+/// The `index` segment of an asset path, if it has the form the
+/// protocol writes.
 ///
-/// `recipes/{n}/{v}/{u}/{c}/{rrev}/{file}` y
-/// `packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`: la posición es
-/// del protocolo, no de la cadena, y un path que no la tiene no es una
-/// referencia de este dialecto.
+/// `recipes/{n}/{v}/{u}/{c}/{rrev}/{file}` and
+/// `packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`: the position belongs
+/// to the protocol, not to the string, and a path that lacks it is not a
+/// reference of this dialect.
 fn the_segment(path: &str, index: usize) -> Option<String> {
     path.split('/').nth(index).map(str::to_string)
 }
 
-/// La referencia de un recipe desde su ruta de asset.
+/// The reference of a recipe from its asset path.
 fn the_recipe_of(path: &str) -> Option<RecipeRef> {
     let parts: Vec<&str> = path.split('/').collect();
     if parts.len() < 6 || parts[0] != "recipes" {
@@ -455,7 +455,7 @@ fn the_recipe_of(path: &str) -> Option<RecipeRef> {
     })
 }
 
-/// Los assets bajo un prefijo, en la cuenta del principal.
+/// The assets under a prefix, in the principal's account.
 async fn assets_under(
     state: &AppState,
     context: &VerifiedContext,
@@ -480,11 +480,11 @@ async fn assets_under(
         .map_err(Failure::from)
 }
 
-/// Las recipe revisions de un recipe, con el tiempo de su primera subida.
+/// The recipe revisions of a recipe, with the time of their first upload.
 ///
-/// Una revisión es la suma de sus ficheros, y el tiempo que la identifica
-/// es el del primero que llegó: un listado de revisiones no reescribe la
-/// historia, la ordena.
+/// A revision is the sum of its files, and the time that identifies it
+/// is that of the first one to arrive: a revision listing does not rewrite
+/// history, it orders it.
 async fn recipe_revisions(
     state: &AppState,
     context: &VerifiedContext,
@@ -495,8 +495,8 @@ async fn recipe_revisions(
     Ok(the_revisions_of(&records, 5))
 }
 
-/// Las package revisions de un `package_id`, con el tiempo de su primera
-/// subida.
+/// The package revisions of a `package_id`, with the time of their first
+/// upload.
 async fn package_revisions(
     state: &AppState,
     context: &VerifiedContext,
@@ -515,7 +515,7 @@ async fn package_revisions(
     Ok(the_revisions_of(&records, 7))
 }
 
-/// Agrupa los assets por su segmento de revisión y ordena por tiempo.
+/// Groups the assets by their revision segment and orders by time.
 fn the_revisions_of(
     records: &[AssetRecord],
     revision_index: usize,
@@ -534,7 +534,7 @@ fn the_revisions_of(
     revisions
 }
 
-/// Los ficheros de una revisión del recipe: la ruta relativa y su tamaño.
+/// The files of a recipe revision: the relative path and its size.
 async fn recipe_files(
     state: &AppState,
     context: &VerifiedContext,
@@ -546,7 +546,7 @@ async fn recipe_files(
     the_files_under(state, context, repository, &prefix).await
 }
 
-/// Los ficheros de una revisión de package: la ruta relativa y su tamaño.
+/// The files of a package revision: the relative path and its size.
 async fn package_files(
     state: &AppState,
     context: &VerifiedContext,
@@ -560,7 +560,7 @@ async fn package_files(
     the_files_under(state, context, repository, &prefix).await
 }
 
-/// Los ficheros bajo un prefijo, con su ruta relativa al prefijo.
+/// The files under a prefix, with their path relative to the prefix.
 async fn the_files_under(
     state: &AppState,
     context: &VerifiedContext,
@@ -578,7 +578,7 @@ async fn the_files_under(
         .collect())
 }
 
-/// Los bytes de un asset, verificados contra su fila del catálogo.
+/// The bytes of an asset, verified against its catalog row.
 async fn read_asset(
     state: &AppState,
     context: &VerifiedContext,
@@ -638,17 +638,17 @@ fn body_response(status: StatusCode, body: Vec<u8>, etag: &str, correlation: &st
 }
 
 // ---------------------------------------------------------------------------
-// Escritura
+// Writes
 // ---------------------------------------------------------------------------
 
-/// Las coordenadas del catalogo para UN fichero conan.
+/// The catalog coordinates for ONE conan file.
 ///
-/// El catálogo identifica el contenido por (nombre, versión) y esa
-/// identidad es inmutable: cada fichero del dialecto es su propio
-/// contenido, así que su versión lleva toda su identidad conan —la
-/// revisión, el `package_id` y la revisión de package cuando la
-/// lleva—. El nombre sigue siendo el del recipe conan: es lo que el
-/// formato llama paquete.
+/// The catalog identifies content by (name, version) and that
+/// identity is immutable: each file of the dialect is its own
+/// content, so its version carries its whole conan identity --the
+/// revision, the `package_id` and the package revision when it
+/// has one--. The name remains that of the conan recipe: it is what the
+/// format calls a package.
 fn the_file_coordinates(
     reference: &RecipeRef,
     revision: &str,
@@ -674,14 +674,14 @@ fn the_file_coordinates(
     }
 }
 
-/// La subida de un fichero: la ruta la determina la revisión que el
-/// cliente declara, y el contenido es inmutable.
+/// The upload of a file: the path is determined by the revision the
+/// client declares, and the content is immutable.
 ///
-/// Reenviar lo mismo es un eco de una subida interrumpida, no una
-/// reescritura: el mismo digest en la misma dirección es un sí. Otro
-/// contenido en la misma dirección es un no, porque las revisiones son
-/// identificadores versionados: un `rrev`/`prev` que cambia de bytes no
-/// es una revisión, es otra.
+/// Resending the same thing is an echo of an interrupted upload, not a
+/// rewrite: the same digest at the same address is a yes. Different
+/// content at the same address is a no, because revisions are
+/// versioned identifiers: an `rrev`/`prev` that changes bytes is not
+/// a revision, it is another one.
 async fn put_file(
     state: &AppState,
     context: &VerifiedContext,

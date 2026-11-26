@@ -1,18 +1,18 @@
-//! El investigador: el que pregunta, comprueba y publica.
+//! The investigator: the one that asks, checks and publishes.
 //!
-//! El recorrido es el de una investigacion que se puede auditar:
+//! The flow is that of an investigation that can be audited:
 //!
-//! 1. Se **recupera** dentro de un alcance, y lo que se recupera se
-//!    **comprueba** contra el alcance otra vez, porque un recuperador que
-//!    se equivoca no puede meter nada.
-//! 2. Se **pregunta** al modelo con el contexto delimitado y declarado
-//!    como dato.
-//! 3. La respuesta se **valida**: tiene que ser estructurada, y cada
-//!    afirmacion tiene que citar evidencia que se resolvió de verdad.
-//! 4. Una afirmacion que no vale **no se publica**: se rechaza la
-//!    respuesta entera, porque una respuesta a medias es peor que ninguna.
-//! 5. Lo que el modelo propone **no se ejecuta**: se registra y espera la
-//!    aprobacion de una persona.
+//! 1. It **retrieves** within a scope, and what is retrieved is
+//!    **checked** against the scope again, because a retriever that
+//!    makes a mistake cannot let anything in.
+//! 2. It **asks** the model with the delimited context, declared
+//!    as data.
+//! 3. The answer is **validated**: it must be structured, and each
+//!    claim must cite evidence that really resolved.
+//! 4. A claim that is not valid is **not published**: the entire
+//!    answer is rejected, because a half answer is worse than none.
+//! 5. What the model proposes is **not executed**: it is recorded and waits for the
+//!    approval of a person.
 
 use std::sync::Arc;
 
@@ -27,45 +27,45 @@ use crate::scope::{
     RetrievalError, RetrievalScope, RetrievedContext, ScopeViolation, ScopedFact, check_the_scope,
 };
 
-/// De donde se recupera la evidencia.
+/// Where the evidence is retrieved from.
 ///
-/// El recuperador es el BORDE de autorizacion: autoriza ANTES de leer,
-/// y una denegacion es explicita, no una respuesta vacia.
+/// The retriever is the authorization BORDER: it authorizes BEFORE reading,
+/// and a denial is explicit, not an empty answer.
 #[async_trait::async_trait]
 pub trait EvidenceRetriever: Send + Sync {
-    /// El subgrafo del sujeto, dentro del alcance y del presupuesto, con
-    /// su cobertura: cuanto de lo que hay se entrego.
+    /// The subject's subgraph, within the scope and the budget, with
+    /// its coverage: how much of what exists was delivered.
     async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError>;
 }
 
-/// De donde salen las afirmaciones de alcanzabilidad.
+/// Where the reachability claims come from.
 ///
-/// La alcanzabilidad es un hecho del grafo de codigo, y llega por su
-/// propio camino: no es evidencia del artefacto, es evidencia del simbolo.
-/// Por eso tiene su puerto, y por eso el investigador puede investigar un
-/// caso sin alcanzabilidad (y entonces no dice nada de ella).
+/// Reachability is a fact of the code graph, and arrives by its
+/// own path: it is not artifact evidence, it is symbol evidence.
+/// That is why it has its own port, and why the investigator can investigate a
+/// case without reachability (and then says nothing about it).
 #[async_trait::async_trait]
 pub trait ReachabilityFacts: Send + Sync {
-    /// Los hechos de alcanzabilidad del sujeto.
+    /// The reachability facts of the subject.
     async fn facts_of(&self, subject: &Hrn) -> Result<Vec<ScopedFact>, String>;
 }
 
-/// Por que la investigacion no se pudo hacer.
+/// Why the investigation could not be carried out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvestigationError {
-    /// Quien pregunta no puede leer lo que pide. La puerta esta cerrada
-    /// ANTES de recuperar nada.
+    /// The asker cannot read what they request. The door is closed
+    /// BEFORE retrieving anything.
     NotAuthorized { actor: String, resource: String },
-    /// El mundo cambio mientras se leia: la lectura es obsoleta y no se
-    /// presenta como snapshot consistente.
+    /// The world changed while being read: the read is obsolete and is not
+    /// presented as a consistent snapshot.
     Stale(String),
-    /// La recuperacion se salio del alcance.
+    /// The retrieval went outside the scope.
     OutOfScope(ScopeViolation),
-    /// La respuesta del modelo no se pudo leer.
+    /// The model's answer could not be read.
     Unreadable(String),
-    /// Una afirmacion no valido.
+    /// A claim was not valid.
     InvalidClaim(ClaimError),
-    /// El modelo no contesto.
+    /// The model did not answer.
     NoAnswer(String),
 }
 
@@ -90,29 +90,29 @@ impl std::fmt::Display for InvestigationError {
     }
 }
 
-/// Lo que salio de una investigacion.
+/// What came out of an investigation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Investigation {
-    /// Las afirmaciones validas.
+    /// The valid claims.
     pub claims: Vec<AIClaim>,
-    /// La traza: quien, con que prompt, sobre que contexto y cuando.
+    /// The trace: who, with what prompt, over what context and when.
     pub trace: InvestigationTrace,
-    /// El informe verificable: las clases de finding, su estado de
-    /// verificacion, el read-set y la cobertura.
+    /// The verifiable report: the finding classes, their verification
+    /// status, the read-set and the coverage.
     pub report: InvestigationReport,
 }
 
-/// El investigador.
+/// The investigator.
 pub struct Investigator {
     retriever: Arc<dyn EvidenceRetriever>,
-    /// El modelo es **opcional**: hay despliegues sin modelo, y en ellos la
-    /// investigacion es la de las herramientas.
+    /// The model is **optional**: there are deployments without a model, and in them the
+    /// investigation is the tools' one.
     model: Option<Arc<dyn ModelProvider>>,
     guard: Arc<std::sync::Mutex<CapabilityGuard>>,
 }
 
 impl Investigator {
-    /// El investigador con su recuperador, su modelo y su guardia.
+    /// The investigator with its retriever, its model and its guard.
     pub fn new(
         retriever: Arc<dyn EvidenceRetriever>,
         model: Arc<dyn ModelProvider>,
@@ -125,12 +125,12 @@ impl Investigator {
         }
     }
 
-    /// El investigador **sin modelo**: el que no pregunta a nadie.
+    /// The investigator **without a model**: the one that asks nobody.
     ///
-    /// Su investigacion es la de las herramientas: los hechos que
-    /// calcularon y las incertidumbres que se declaran. La guardia sigue
-    /// estando: las acciones que se propongan esperan aprobacion de una
-    /// persona, tambien aqui.
+    /// Its investigation is the tools' one: the facts they
+    /// computed and the uncertainties that are declared. The guard remains
+    /// in place: the actions that are proposed wait for the approval of a
+    /// person, here too.
     pub fn without_a_model(retriever: Arc<dyn EvidenceRetriever>, guard: CapabilityGuard) -> Self {
         Self {
             retriever,
@@ -139,15 +139,15 @@ impl Investigator {
         }
     }
 
-    /// Investiga una pregunta sobre un sujeto.
+    /// Investigates a question about a subject.
     ///
-    /// Devuelve las afirmaciones **validas** y la traza. Si alguna
-    /// afirmacion no vale, **no** devuelve nada: una respuesta con una
-    /// afirmacion fabricada dentro es una respuesta en la que no se puede
-    /// apoyar nada.
+    /// Returns the **valid** claims and the trace. If any
+    /// claim is not valid, it returns **nothing**: an answer with a
+    /// fabricated claim inside is an answer on which nothing can
+    /// be relied.
     ///
-    /// Sin modelo no hay quien pregunte: la investigacion se dice que no
-    /// se pudo hacer, y no se devuelve una respuesta a medias.
+    /// Without a model there is nobody to ask: the investigation is declared as not
+    /// possible, and a half answer is not returned.
     pub async fn investigate(
         &self,
         investigation: &str,
@@ -159,30 +159,30 @@ impl Investigator {
             InvestigationError::NoAnswer("there is no model in this deployment".to_string())
         })?;
 
-        // 1. La recuperacion, y su comprobacion.
+        // 1. The retrieval, and its check.
         let context = self.the_context(scope).await?;
         let facts = &context.facts;
 
-        // 2. La pregunta, con el contexto delimitado.
+        // 2. The question, with the delimited context.
         let request = the_prompt(question, facts);
         let response = model
             .complete(&request)
             .await
             .map_err(InvestigationError::NoAnswer)?;
 
-        // 3. La validacion de la respuesta estructurada.
+        // 3. The validation of the structured answer.
         let claims = the_claims(&response.text)?;
 
-        // Y de cada afirmacion, que las citas resuelvan de verdad.
+        // And for each claim, that the citations really resolve.
         let known: Vec<String> = facts.iter().map(|fact| fact.evidence_id.clone()).collect();
         for claim in &claims {
             check_the_claim(claim, &known, the_allowed_kinds())
                 .map_err(InvestigationError::InvalidClaim)?;
         }
 
-        // Las tres listas del manifiesto: lo que se leyo, lo que se le
-        // dio al modelo y lo que las afirmaciones aceptadas citaron. Son
-        // tres cosas distintas y la traza las distingue.
+        // The three manifest lists: what was read, what was
+        // given to the model and what the accepted claims cited. They are
+        // three different things and the trace distinguishes them.
         let sent_to_model: Vec<String> =
             facts.iter().map(|fact| fact.evidence_id.clone()).collect();
         let mut cited: Vec<String> = claims
@@ -192,14 +192,14 @@ impl Investigator {
         cited.sort();
         cited.dedup();
 
-        // 4. El informe, ANTES de mover el read-set a la traza: las
-        // clases de finding, con su estado de verificacion determinista,
-        // su origen y sus limites. Los mismos claims y el mismo
-        // read-set dan el mismo informe.
+        // 4. The report, BEFORE moving the read-set to the trace: the
+        // finding classes, with their deterministic verification status,
+        // their origin and their limits. The same claims and the same
+        // read-set give the same report.
         let report = build_report(&scope.subject, &claims, &context.read_set, context.coverage);
 
-        // 5. La traza, con la cobertura: cuanto de lo que hay se le dio
-        // al modelo. Un contexto parcial se declara, nunca se esconde.
+        // 5. The trace, with the coverage: how much of what exists was given
+        // to the model. A partial context is declared, never hidden.
         let trace = InvestigationTrace::new(
             investigation,
             response.provider,
@@ -221,14 +221,14 @@ impl Investigator {
         })
     }
 
-    /// La investigacion **sin modelo**: la de las herramientas.
+    /// The investigation **without a model**: the tools' one.
     ///
-    /// Es la misma operacion, con la misma recuperacion y el mismo control
-    /// de alcance, pero sin la pregunta al modelo: lo que se entrega son
-    /// los hechos que las herramientas calcularon y las incertidumbres que
-    /// se declaran. La pregunta se declara **sin responder**, porque sin
-    /// modelo nadie la responde, y una respuesta que finge haberla
-    ///respondido es una fabricacion.
+    /// It is the same operation, with the same retrieval and the same scope
+    /// control, but without the question to the model: what is delivered is
+    /// the facts the tools computed and the uncertainties that
+    /// are declared. The question is declared **unanswered**, because without a
+    /// model nobody answers it, and an answer that pretends to have
+    ///answered it is a fabrication.
     pub async fn investigate_without_a_model(
         &self,
         investigation: &str,
@@ -239,14 +239,14 @@ impl Investigator {
         let context = self.the_context(scope).await?;
         let facts = &context.facts;
 
-        // Las afirmaciones que las herramientas calculan, y la
-        // incertidumbre que declara los limites de una respuesta sin
-        // modelo.
+        // The claims that the tools compute, and the
+        // uncertainty that declares the limits of an answer without a
+        // model.
         let mut claims = crate::deterministic::the_computed_claims(facts);
         claims.push(crate::deterministic::the_uncertainty_of_a_model_less_answer(question));
 
-        // Lo que las afirmaciones citaron. Sin modelo no se le dio nada a
-        // nadie: lo que se leyo es el contexto, y el manifiesto lo dice.
+        // What the claims cited. Without a model nothing was given to
+        // anybody: what was read is the context, and the manifest says so.
         let known: Vec<String> = facts.iter().map(|fact| fact.evidence_id.clone()).collect();
         let mut cited: Vec<String> = claims
             .iter()
@@ -278,13 +278,13 @@ impl Investigator {
         })
     }
 
-    /// La recuperacion dentro del alcance, y su comprobacion.
+    /// The retrieval within the scope, and its check.
     ///
-    /// La recuperacion se **comprueba** contra el alcance otra vez, porque
-    /// un recuperador que se equivoca no puede meter nada. Y el alcance
-    /// que cruza cuentas se cierra ANTES de pedir nada: un actor de cuenta
-    /// A y un sujeto de cuenta B no forman una investigacion, y el
-    /// rechazo sale antes de recuperar.
+    /// The retrieval is **checked** against the scope again, because
+    /// a retriever that makes a mistake cannot let anything in. And a scope
+    /// that crosses accounts is closed BEFORE asking for anything: an actor of account
+    /// A and a subject of account B do not form an investigation, and the
+    /// rejection comes before retrieving.
     async fn the_context(
         &self,
         scope: &RetrievalScope,
@@ -318,26 +318,26 @@ impl Investigator {
         Ok(context)
     }
 
-    /// Registra una accion que el investigador quiere hacer.
+    /// Records an action the investigator wants to take.
     ///
-    /// No la ejecuta: la deja esperando la aprobacion de una persona, y
-    /// eso es todo lo que puede hacer.
+    /// It does not execute it: it leaves it waiting for the approval of a person, and
+    /// that is all it can do.
     pub fn propose(&self, action: ProposedAction) -> crate::guard::TracedAction {
         let mut guard = self.guard.lock().expect("la guardia no esta envenenada");
         guard.propose(action).clone()
     }
 
-    /// La guardia.
+    /// The guard.
     pub fn guard(&self) -> &Arc<std::sync::Mutex<CapabilityGuard>> {
         &self.guard
     }
 }
 
-/// Los tipos de afirmacion que se admiten.
+/// The claim types that are admitted.
 ///
-/// Los cuatro del dominio. La restriccion no es de los tipos sino de lo
-/// que se hace con ellos: los hechos se comprueban contra las
-/// herramientas, y las inferencias se declaran como tales.
+/// The four of the domain. The restriction is not on the types but on what
+/// is done with them: facts are checked against the
+/// tools, and inferences are declared as such.
 fn the_allowed_kinds() -> &'static [ClaimKind] {
     &[
         ClaimKind::Fact,
@@ -347,9 +347,9 @@ fn the_allowed_kinds() -> &'static [ClaimKind] {
     ]
 }
 
-/// Lee la respuesta estructurada del modelo.
+/// Reads the model's structured answer.
 ///
-/// Si no se puede leer, **no** se publica nada.
+/// If it cannot be read, **nothing** is published.
 fn the_claims(text: &str) -> Result<Vec<AIClaim>, InvestigationError> {
     let parsed: serde_json::Value = serde_json::from_str(text.trim())
         .map_err(|error| InvestigationError::Unreadable(error.to_string()))?;
@@ -363,7 +363,7 @@ fn the_claims(text: &str) -> Result<Vec<AIClaim>, InvestigationError> {
     Ok(claims)
 }
 
-/// La accion de leer, que no necesita aprobacion.
+/// The read action, which needs no approval.
 pub fn a_read(subject: impl Into<String>, requested_by: impl Into<String>) -> ProposedAction {
     ProposedAction {
         kind: ActionKind::Read,

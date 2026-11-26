@@ -1,13 +1,13 @@
-//! APT hosted de HSP-122, lado RPM/yum, a nivel HTTP.
+//! Hosted APT of HSP-122, RPM/yum side, at the HTTP level.
 //!
-//! Se prueba: la subida de un `.rpm` con la gramatica del pool dictada
-//! por su header, el ensamblado del indice `primary.xml.gz` por
-//! contenido, el `repomd.xml` reproducible que fija la suma exacta del
-//! gz servido, su firma `repomd.xml.asc` verificada contra la `key.asc`
-//! con el **oraculo `gpgv`**, el ETag de las lecturas condicionales y
-//! la inmutabilidad de la version.
+//! What is tested: the upload of a `.rpm` with the pool grammar dictated
+//! by its header, the assembly of the `primary.xml.gz` index by
+//! content, the reproducible `repomd.xml` that fixes the exact sum of the
+//! served gz, its `repomd.xml.asc` signature verified against the `key.asc`
+//! with the **`gpgv` oracle**, the ETag of conditional reads and
+//! the immutability of the version.
 //!
-//! El cliente real (`dnf`) vive en `hsp122_yum_client.rs`.
+//! The real client (`dnf`) lives in `hsp122_yum_client.rs`.
 
 mod support;
 
@@ -77,10 +77,10 @@ fn text_of(answer: &Answer) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Un .rpm minimo pero fiel al formato: lead de 96, header de firma
-// vacio alineado a 8 y header principal con el index y el store. La
-// estructura es la que escribe rpm-build; cambia solo que el payload
-// no exista: aqui lo que se indexa es el header.
+// A minimal .rpm, but faithful to the format: 96-byte lead, empty signature
+// header aligned to 8 and main header with the index and the store. The
+// structure is what rpm-build writes; only the payload
+// is absent: here what is indexed is the header.
 // ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
@@ -123,7 +123,7 @@ fn build_rpm(fields: &[(i32, Field)]) -> Vec<u8> {
     let mut lead = vec![0u8; 96];
     lead[0..4].copy_from_slice(b"\xed\xab\xee\xdb");
     let mut rpm = lead;
-    // Header de firma vacio.
+    // Empty signature header.
     rpm.extend_from_slice(&[0x8e, 0xad, 0xe8, 1]);
     rpm.extend_from_slice(&[0u8; 4]);
     rpm.extend_from_slice(&0u32.to_be_bytes());
@@ -175,7 +175,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     let hello = hello_rpm();
     let hello_sha = sha256_hex(&hello);
 
-    // La ruta la dicta el header: subir al sitio que apetezca es un no.
+    // The path is dictated by the header: uploading wherever one pleases is a no.
     let misplaced = call(
         port,
         "PUT",
@@ -191,7 +191,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
         text_of(&misplaced)
     );
 
-    // Un cuerpo que no es un `.rpm` no entra en el pool.
+    // A body that is not a `.rpm` does not enter the pool.
     let junk = call(
         port,
         "PUT",
@@ -212,7 +212,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // El binario se sirve byte a byte por la ruta del indice.
+    // The binary is served byte for byte through the index path.
     let download = call(
         port,
         "GET",
@@ -224,7 +224,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     assert_eq!(download.status, 200, "{}", text_of(&download));
     assert_eq!(download.body, hello);
 
-    // El repomd fija el primary con la suma exacta del gz que se sirve.
+    // The repomd fixes the primary with the exact sum of the gz that is served.
     let repomd = call(
         port,
         "GET",
@@ -238,7 +238,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     assert!(repomd_text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<repomd xmlns=\"http://linux.duke.edu/metadata/repo\""));
     assert!(repomd_text.contains("<revision>"));
 
-    // La ruta del primary es su propio digest: se pide la del repomd.
+    // The primary's path is its own digest: the repomd's is requested.
     let location = repomd_text
         .split("<location href=\"")
         .nth(1)
@@ -269,8 +269,8 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert!(repomd_text.contains(&format!("<size>{}</size>", primary.body.len())));
 
-    // El texto detras del gzip describe el paquete con la suma y el
-    // tamano que dnf verificara tras la descarga.
+    // The text behind the gzip describes the package with the sum and the
+    // size that dnf will verify after the download.
     let mut xml = String::new();
     GzDecoder::new(&primary.body[..])
         .read_to_string(&mut xml)
@@ -291,7 +291,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     assert!(xml.contains("<rpm:license>MIT</rpm:license>"));
     assert!(xml.ends_with("</metadata>\n"));
 
-    // Reproducible: la misma metadata, dos lecturas, mismos bytes.
+    // Reproducible: the same metadata, two reads, same bytes.
     let again = call(
         port,
         "GET",
@@ -303,7 +303,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     assert_eq!(again.body, repomd.body, "repomd must not drift");
     let etag = again.header("etag").expect("the repomd carries an etag");
 
-    // Y condicional: si no cambio, 304.
+    // And conditional: if it did not change, 304.
     let not_modified = call(
         port,
         "GET",
@@ -314,7 +314,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(not_modified.status, 304);
 
-    // Una ruta primary con otro digest no existe: el nombre manda.
+    // A primary path with another digest does not exist: the name rules.
     let wrong = call(
         port,
         "GET",
@@ -328,8 +328,8 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(wrong.status, 404);
 
-    // La clave publica y la firma: `gpgv`, el verificador tras gpgme,
-    // abre repomd.xml.asc contra la key.asc servida.
+    // The public key and the signature: `gpgv`, the verifier behind gpgme,
+    // opens repomd.xml.asc against the served key.asc.
     if which("gpgv").is_none() {
         eprintln!("skipping the signature check: gpgv is not installed");
     } else {
@@ -367,7 +367,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
             "gpgv said: {stderr}"
         );
 
-        // La firma no abre un repomd alterado: es firma de estos bytes.
+        // The signature does not open a tampered repomd: it is a signature of these bytes.
         std::fs::write(dir.join("tampered"), b"<repomd/>\n").expect("write tampered");
         let tampered = std::process::Command::new("gpgv")
             .arg("--keyring")
@@ -380,7 +380,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
         assert!(!tampered.status.success(), "a forged repomd must not open");
     }
 
-    // Inmutabilidad: otros bytes en la misma ruta son un no con motivo.
+    // Immutability: other bytes at the same path are a no with a reason.
     let other = build_rpm(&[
         (1000, Field::Str("hello-hodei")),
         (1001, Field::Str("1.0.0")),
@@ -401,7 +401,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(conflict.status, 409, "{}", text_of(&conflict));
 
-    // La republicacion identica es el eco: 200 sin tocar nada.
+    // The identical republication is the echo: 200 without touching anything.
     let echo = call(
         port,
         "PUT",
@@ -412,8 +412,8 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(echo.status, 200, "{}", text_of(&echo));
 
-    // Una publicacion nueva mueve el indice y, con el, el repomd: el
-    // noarch entra y el contador de paquetes sube.
+    // A new publication moves the index and, with it, the repomd: the
+    // noarch gets in and the package counter goes up.
     let tools = tools_rpm();
     let published_tools = call(
         port,
@@ -457,7 +457,7 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
         .expect("the index is gzip");
     assert!(xml_after.contains("packages=\"2\""));
     assert!(xml_after.contains("<name>hodei-tools</name>"));
-    // El orden es el de ruta: dos lecturas del mismo estado, mismos bytes.
+    // The order is by path: two reads of the same state, same bytes.
     let primary_again = call(
         port,
         "GET",
@@ -469,8 +469,8 @@ fn an_rpm_is_published_indexed_and_its_metadata_signature_verifies() {
     assert_eq!(primary_again.body, primary_after.body);
 }
 
-/// El contenido binario de un bloque armor OpenPGP: las lineas base64
-/// entre los marcadores, sin la linea CRC que `gpg` escribe y nadie lee.
+/// The binary content of an OpenPGP armor block: the base64 lines
+/// between the markers, without the CRC line that `gpg` writes and nobody reads.
 fn dearmor(armored: &str) -> Vec<u8> {
     let body: String = armored
         .lines()

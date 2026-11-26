@@ -1,25 +1,25 @@
-//! HSP-187: el catálogo durable sobre el motor Dgraph real — el slice Raw.
+//! HSP-187: the durable catalog over the real Dgraph engine -- the Raw slice.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como todos los IT del stack. Lo que
-//! prueba, contra el motor de verdad (TLS + ACL, el servidor vivo h186):
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like all the stack's ITs. What it
+//! tests, against the real engine (TLS + ACL, the live h186 server):
 //!
-//! - **AC1** el flujo Raw real (publish → GET/HEAD/Range) sobre el
-//!   catálogo Dgraph sirve el mismo digest y la misma cuenta; el commit
-//!   del catálogo y el evento de auditoría son **una transacción** (la
-//!   frontera de HSP-199): el evento está si y solo si el asset está, y
-//!   una fila de evento ya dicha con otro hecho impide la publicación
-//!   entera;
-//! - **AC2** dos escritores dejan un asset y un evento únicos (la guarda
-//!   de la ruta + el índice `@upsert` + el marcador de operación
-//!   once-only deciden en el servidor); el reintento tras el commit no
-//!   duplica nada; un blob del CAS sin metadata de catálogo queda
-//!   **huérfano seguro**: detectable por censo, y el catálogo sigue
-//!   sirviendo lo que sí tiene;
-//! - las lecturas del estado publicado dicen lo que el contrato del catálogo
-//!   dice (repository, asset, versión, referencia y etiqueta).
+//! - **AC1** the real Raw flow (publish → GET/HEAD/Range) over the
+//!   Dgraph catalog serves the same digest and the same count; the catalog
+//!   commit and the audit event are **one transaction** (the
+//!   HSP-199 boundary): the event is there if and only if the asset is, and
+//!   an event row already stated with another fact blocks the entire
+//!   publication;
+//! - **AC2** two writers leave a single asset and a single event (the
+//!   path guard + the `@upsert` index + the once-only operation marker
+//!   decide on the server); a retry after the commit does not
+//!   duplicate anything; a CAS blob without catalog metadata is left a
+//!   **safe orphan**: detectable by census, and the catalog keeps
+//!   serving what it does have;
+//! - reads of the published state say what the catalog contract
+//!   says (repository, asset, version, reference and tag).
 //!
-//! El slice es Raw: Repository, Asset, Version, BlobReference y outbox.
-//! Los demás formatos no están migrados.
+//! The slice is Raw: Repository, Asset, Version, BlobReference and outbox.
+//! The other formats are not migrated.
 
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -54,14 +54,14 @@ use kernel::application::ports::clock::{CountingIdGenerator, FixedClock, Identit
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// La correlación de las publicaciones. El outbox vive en un servidor
-/// compartido entre ejecuciones: cada ejecución lleva su correlación, y
-/// el censo de eventos cuenta la suya.
+/// The correlation of the publications. The outbox lives on a server
+/// shared across runs: each run carries its own correlation, and
+/// the event census counts its own.
 fn correlation_of(account: &str) -> String {
     format!("corr-hsp187-{account}")
 }
 
-/// El actor que publica.
+/// The actor that publishes.
 fn actor(account: &str) -> String {
     format!("hrn:hodei:iam:{account}:User/alice")
 }
@@ -87,8 +87,8 @@ fn config_from_env() -> Option<GraphClientConfig> {
     Some(GraphClientConfig::from_toml_str(&text).expect("the IT configuration validates"))
 }
 
-/// Una conexión nueva, autenticada y con el arranque versionado validado:
-/// un reinicio de verdad re-entra al grafo por aquí.
+/// A new connection, authenticated and with the versioned startup validated:
+/// a real restart re-enters the graph through here.
 async fn fresh_client() -> Option<Arc<GraphClient>> {
     let Some(config) = config_from_env() else {
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
@@ -99,8 +99,8 @@ async fn fresh_client() -> Option<Arc<GraphClient>> {
     Some(Arc::new(client))
 }
 
-/// La cola del reloj, que apenas se mueve entre ejecuciones: la cola es
-/// la que separa dos ejecuciones de la misma prueba.
+/// The clock's tail, which barely moves between runs: the tail is
+/// what separates two runs of the same test.
 fn nonce() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -109,24 +109,24 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Una cuenta por prueba y por ejecución: ninguna prueba se encuentra con
-/// lo que otra dejó.
+/// One account per test and per run: no test runs into
+/// what another left behind.
 fn account(tag: &str) -> String {
     format!("it187{}{}", tag, &nonce()[8..])
 }
 
-// El almacén Dgraph del catálogo: la apertura condicionada que comparten
-// las suites gated del stack (HSP-219). `DgraphCatalogStore::open` declara
-// su DDL con dos `alter` y Dgraph rechaza los `alter` concurrentes con
-// `errIndexingInProgress` durante la ventana de reindexado: el helper abre
-// de uno en uno dentro del proceso y reintenta lo transitorio con backoff.
-// **Carril recomendado**: este binario con los threads por defecto, pero
-// solo —sin otra suite gated contra el mismo alpha a la vez—; si se
-// lanzan dos juntas, el retry acotado absorbe la ventana pero el carril
-// seguro sigue siendo de una en una (lección HSP-190).
+// The catalog's Dgraph store: the conditioned opening shared by
+// the stack's gated suites (HSP-219). `DgraphCatalogStore::open` declares
+// its DDL with two `alter`s and Dgraph rejects concurrent `alter`s with
+// `errIndexingInProgress` during the reindexing window: the helper opens
+// one at a time within the process and retries the transient case with backoff.
+// **Recommended lane**: this binary with the default threads, but
+// alone -- no other gated suite against the same alpha at once --; if
+// two are launched together, the bounded retry absorbs the window but the
+// safe lane remains one at a time (HSP-190 lesson).
 include!("support/hsp219_concurrent_open.rs");
 
-/// Un descriptor de repositorio raw hosted.
+/// A raw hosted repository descriptor.
 fn a_descriptor(account: &str, repo_key: &str) -> RepositoryDescriptor {
     RepositoryDescriptor {
         hrn: repository_hrn("hodei", "artifacts", "eu", account, repo_key),
@@ -140,7 +140,7 @@ fn a_descriptor(account: &str, repo_key: &str) -> RepositoryDescriptor {
     }
 }
 
-/// Una publicación, con las coordenadas que se le piden.
+/// A publication, with the coordinates requested.
 fn a_publication_at(
     account: &str,
     repository: &str,
@@ -166,13 +166,13 @@ fn a_publication_at(
     }
 }
 
-/// Una publicación, en la versión por defecto del fixture.
+/// A publication, at the fixture's default version.
 fn a_publication(account: &str, repository: &str, asset_path: &str, content: &[u8]) -> Publication {
     a_publication_at(account, repository, asset_path, "1.0.0", content)
 }
 
-/// Un hecho del outbox, dicho como lo graba el outbox atómico: los campos
-/// del `AuditEvent` que las aserciones miran.
+/// An outbox fact, stated the way the atomic outbox records it: the fields
+/// of the `AuditEvent` that the assertions look at.
 #[derive(Debug)]
 struct OutboxFact {
     correlation_id: String,
@@ -183,15 +183,15 @@ struct OutboxFact {
     digest: String,
 }
 
-/// Los hechos del outbox de ESTA cuenta, dichos por su clave de tenant.
+/// The outbox facts of THIS account, stated by its tenant key.
 ///
-/// El censo va POR TENANT (índice exacto), no por el `pending()` global:
-/// el outbox del servidor compartido acumula los hechos de TODAS las
-/// corridas —ninguna prueba los marca entregados— y su respuesta llegó a
-/// desbordar el límite de mensaje gRPC (4 MiB; hallazgo de HSP-194,
-/// drenado y documentado por HSP-220). La cuenta es única por corrida,
-/// así que la raíz `eq(tenant)` trae por índice solo los hechos de ESTA
-/// prueba, y el filtro fino (la correlación) va en el adaptador.
+/// The census goes PER TENANT (exact index), not through the global `pending()`:
+/// the shared server's outbox accumulates the facts of ALL
+/// runs -- no test marks them delivered -- and its response came to
+/// overflow the gRPC message limit (4 MiB; finding of HSP-194,
+/// drained and documented by HSP-220). The account is unique per run,
+/// so the `eq(tenant)` root brings through the index only the facts of THIS
+/// test, and the fine filter (the correlation) goes in the adapter.
 async fn the_events_of(client: &GraphClient, tenant: &str) -> Vec<OutboxFact> {
     let escaped = tenant.replace('\\', "\\\\").replace('"', "\\\"");
     let response = client
@@ -222,7 +222,7 @@ async fn the_events_of(client: &GraphClient, tenant: &str) -> Vec<OutboxFact> {
         .collect()
 }
 
-/// Un campo del hecho dicho por el grafo, o vacío cuando no está.
+/// A field of the fact stated by the graph, or empty when absent.
 fn the_fact_field(node: &serde_json::Value, field: &str) -> String {
     node.get(field)
         .and_then(serde_json::Value::as_str)
@@ -230,8 +230,8 @@ fn the_fact_field(node: &serde_json::Value, field: &str) -> String {
         .to_string()
 }
 
-/// Cuántos eventos pendientes hay de ESTA ejecución: el censo va por
-/// tenant y la correlación propia filtra en el adaptador.
+/// How many pending events there are from THIS run: the census goes by
+/// tenant and the own correlation filters in the adapter.
 async fn the_event_count(client: &GraphClient, account: &str) -> usize {
     the_events_of(client, account)
         .await
@@ -241,7 +241,7 @@ async fn the_event_count(client: &GraphClient, account: &str) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// El vertical HTTP: el router del hub sobre el catálogo Dgraph.
+// The HTTP vertical: the hub router over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
 struct ContractAuthenticator {
@@ -264,7 +264,7 @@ impl PrincipalAuthenticator for ContractAuthenticator {
     }
 }
 
-/// La Cedar bundle: solo `alice` de esta cuenta publica y descarga.
+/// The Cedar bundle: only `alice` of this account publishes and downloads.
 fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     let policy = format!(
         r#"permit(
@@ -288,8 +288,8 @@ fn cedar_for(account: &str, repo_key: &str) -> Arc<dyn AuthorizerPort> {
     )))
 }
 
-/// El vertical montado: el router del hub con el catálogo Dgraph y el CAS
-/// de ficheros de verdad.
+/// The mounted vertical: the hub router with the Dgraph catalog and the real
+/// file-based CAS.
 struct Vertical {
     app: Router,
     reader: Arc<dyn CatalogReader>,
@@ -351,7 +351,7 @@ impl Vertical {
     }
 }
 
-/// La respuesta de una petición.
+/// The response to a request.
 struct Answer {
     status: StatusCode,
     headers: HeaderMap,
@@ -400,12 +400,12 @@ async fn send(
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el flujo Raw real sobre el catálogo Dgraph.
+// AC1: the real Raw flow over the Dgraph catalog.
 // ---------------------------------------------------------------------------
 
-/// El flujo Raw real: publish → GET/HEAD/Range contra el router del hub,
-/// con el catálogo Dgraph y el CAS de ficheros de verdad. El mismo digest
-/// que se publica es el que se sirve, y la cuenta es la que se cuenta.
+/// The real Raw flow: publish → GET/HEAD/Range against the hub router,
+/// with the Dgraph catalog and the real file-based CAS. The same digest
+/// that is published is the one that is served, and the count is the one counted.
 #[tokio::test]
 async fn the_raw_flow_serves_the_same_digest_and_count_over_dgraph() {
     let Some(_) = config_from_env() else {
@@ -434,7 +434,7 @@ async fn the_raw_flow_serves_the_same_digest_and_count_over_dgraph() {
 
     let digest = ContentDigest::of_bytes(content);
 
-    // GET: los bytes que se publicaron son los que se sirven.
+    // GET: the bytes that were published are the ones served.
     let downloaded = send(
         &vertical.app,
         Method::GET,
@@ -452,7 +452,7 @@ async fn the_raw_flow_serves_the_same_digest_and_count_over_dgraph() {
         "the served digest is the published one"
     );
 
-    // HEAD: la cuenta que se sirve es la que se publicó.
+    // HEAD: the count that is served is the one that was published.
     let described = send(
         &vertical.app,
         Method::HEAD,
@@ -468,7 +468,7 @@ async fn the_raw_flow_serves_the_same_digest_and_count_over_dgraph() {
         Some(content.len().to_string().as_str())
     );
 
-    // Range: un trozo del contenido, no todo.
+    // Range: a piece of the content, not all of it.
     let ranged = send(
         &vertical.app,
         Method::GET,
@@ -481,7 +481,7 @@ async fn the_raw_flow_serves_the_same_digest_and_count_over_dgraph() {
     assert_eq!(ranged.status, StatusCode::PARTIAL_CONTENT);
     assert_eq!(ranged.body, &content[0..10]);
 
-    // Y el catálogo dice lo mismo que se sirvió.
+    // And the catalog says the same as what was served.
     let asset = vertical
         .reader
         .asset(&account, "releases", "their/app.bin")
@@ -498,8 +498,8 @@ async fn the_raw_flow_serves_the_same_digest_and_count_over_dgraph() {
     assert_eq!(reference.scope, DigestScope::Global);
 }
 
-/// El commit del catálogo y el evento de auditoría son UNA transacción:
-/// el evento está si y solo si el asset está, y dice el hecho de ESTE
+/// The catalog commit and the audit event are ONE transaction:
+/// the event is there if and only if the asset is, and it states the fact of THIS
 /// asset.
 #[tokio::test]
 async fn the_publish_commit_and_its_audit_event_are_one_transaction() {
@@ -524,9 +524,9 @@ async fn the_publish_commit_and_its_audit_event_are_one_transaction() {
         .await
         .expect("the publication");
 
-    // El asset está y el evento también, con el mismo digest. El censo va
-    // por tenant (la cuenta es única por corrida) y la correlación propia
-    // filtra en el adaptador.
+    // The asset is there and so is the event, with the same digest. The census goes
+    // per tenant (the account is unique per run) and the own correlation
+    // filters in the adapter.
     let asset = store
         .asset(&account, "raw", "app/one.bin")
         .await
@@ -553,9 +553,9 @@ async fn the_publish_commit_and_its_audit_event_are_one_transaction() {
     assert_eq!(asset.digest, ContentDigest::of_bytes(content));
 }
 
-/// Una fila de evento ya dicha con OTRO contenido impide la publicación
-/// entera: el asset no se publica sin su evento, y la referencia al blob
-/// tampoco queda.
+/// An event row already stated with OTHER content blocks the entire
+/// publication: the asset is not published without its event, and the blob
+/// reference is not left behind either.
 #[tokio::test]
 async fn an_event_id_already_said_with_another_fact_blocks_the_publication() {
     let Some(_) = config_from_env() else {
@@ -564,9 +564,9 @@ async fn an_event_id_already_said_with_another_fact_blocks_the_publication() {
     };
     let account = account("contra");
     let client = fresh_client().await.expect("the client connects");
-    // El generador cuenta, así que el identificador del evento se sabe
-    // antes de publicar; el prefijo lleva la cuenta de la ejecución para
-    // que ningún evento de otra ejecución choque con el suyo.
+    // The generator counts, so the event identifier is known
+    // before publishing; the prefix carries the run's account so
+    // that no event from another run collides with its own.
     let identity = Identity::new(
         Arc::new(FixedClock::at("2026-11-20T00:00:00Z").expect("the moment")),
         Arc::new(CountingIdGenerator::with_prefix(format!(
@@ -580,8 +580,8 @@ async fn an_event_id_already_said_with_another_fact_blocks_the_publication() {
         .expect("the repository");
     let outbox = DgraphAuditOutbox::new(client);
 
-    // La fila del evento que la publicación va a escribir ya está dicha
-    // con otro digest: la escritura del evento va a chocar.
+    // The event row that the publication is going to write is already stated
+    // with another digest: the event write is going to collide.
     let seeded = AuditEvent::new(
         format!("event-{account}-0"),
         AuditContext::new(actor(&account), account.clone(), correlation_of(&account)),
@@ -611,8 +611,8 @@ async fn an_event_id_already_said_with_another_fact_blocks_the_publication() {
         missing.is_err(),
         "the asset should not be there without its event: {missing:?}"
     );
-    // El evento sigue siendo el que se dijo antes: la publicación no
-    // escribió una contradicción encima.
+    // The event is still the one stated before: the publication did not
+    // write a contradiction on top.
     let entry = outbox
         .entry(&format!("event-{account}-0"))
         .await
@@ -621,8 +621,8 @@ async fn an_event_id_already_said_with_another_fact_blocks_the_publication() {
     assert_eq!(entry.event.digest.as_deref(), Some("sha256:0000"));
 }
 
-/// Republicar lo mismo no es un error ni una escritura: un solo asset, un
-/// solo evento. Y una publicación que choca deja un evento de conflicto.
+/// Republishing the same thing is neither an error nor a write: a single asset, a
+/// single event. And a publication that collides leaves a conflict event.
 #[tokio::test]
 async fn a_republication_writes_nothing_and_a_conflict_says_a_conflict_event() {
     let Some(_) = config_from_env() else {
@@ -661,7 +661,7 @@ async fn a_republication_writes_nothing_and_a_conflict_says_a_conflict_event() {
         "no new fact was said"
     );
 
-    // La misma ruta con otro contenido: conflicto, y el conflicto se dice.
+    // The same path with other content: conflict, and the conflict is stated.
     let refused = store
         .publish(
             &account,
@@ -692,11 +692,11 @@ async fn a_republication_writes_nothing_and_a_conflict_says_a_conflict_event() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: dos escritores, el reintento y el huérfano seguro.
+// AC2: two writers, the retry and the safe orphan.
 // ---------------------------------------------------------------------------
 
-/// Dos escritores publicando LO MISMO a la vez dejan un asset y un evento:
-/// la guarda de la ruta y el marcador once-only deciden en el servidor.
+/// Two writers publishing THE SAME THING at once leave one asset and one event:
+/// the path guard and the once-only marker decide on the server.
 #[tokio::test]
 async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
     let Some(_) = config_from_env() else {
@@ -711,8 +711,8 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
         .await
         .expect("the repository");
 
-    // Dos clientes, el MISMO contenido, la MISMA ruta: una creación y una
-    // constatación, no dos assets.
+    // Two clients, the SAME content, the SAME path: one creation and one
+    // acknowledgement, not two assets.
     let same_left = left.publish(
         &account,
         a_publication(&account, "releases", "app.bin", b"the same content"),
@@ -739,12 +739,12 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
         "one fact was said"
     );
 
-    // Ahora dos clientes publican CONTENIDO DISTINTO en la misma ruta: el
-    // que pierde recibe un conflicto, no una sobrescritura, y no deja su
-    // versión a medias.
-    // Coordenadas distintas a propósito: cada uno tiene su propia versión,
-    // y el que pierde se encuentra con que la versión se puede escribir
-    // pero el asset de la ruta ya es del otro.
+    // Now two clients publish DIFFERENT CONTENT at the same path: the
+    // one that loses receives a conflict, not an overwrite, and does not leave its
+    // version half-written.
+    // Different coordinates on purpose: each has its own version,
+    // and the loser finds that the version can be written
+    // but the path's asset already belongs to the other.
     let conflict_left = left.publish(
         &account,
         a_publication_at(
@@ -780,8 +780,8 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
     assert_eq!(winners, 1, "one client won the race");
     assert_eq!(conflicts, 1, "the other got a conflict, not an overwrite");
 
-    // Lo que quedó es lo que el ganador publicó, y el perdedor no dejó su
-    // versión detrás.
+    // What remained is what the winner published, and the loser did not leave its
+    // version behind.
     let asset = left
         .asset(&account, "releases", "other.bin")
         .await
@@ -803,13 +803,13 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
             package_version: "2.0.0".to_string(),
         }
     };
-    // La versión del perdedor no está: su transacción se fue entera.
+    // The loser's version is not there: its transaction went away whole.
     let loser_left_behind = left.version(&account, "releases", &loser_version).await;
     assert!(
         loser_left_behind.is_err(),
         "the loser of the race left a version behind: {loser_left_behind:?}"
     );
-    // Y la versión a la que apunta el asset existe y dice lo mismo.
+    // And the version the asset points to exists and says the same.
     let version = left
         .version(&account, "releases", &asset.coordinates)
         .await
@@ -817,8 +817,8 @@ async fn two_writers_publishing_the_same_thing_leave_one_asset_and_one_event() {
     assert_eq!(version.digest, asset.digest);
 }
 
-/// El reintento tras el commit relee el resultado comprometido: un solo
-/// asset, un solo evento, ni una fila de más.
+/// The retry after the commit rereads the committed result: a single
+/// asset, a single event, not one row extra.
 #[tokio::test]
 async fn a_retry_after_the_commit_keeps_one_asset_and_one_event() {
     let Some(_) = config_from_env() else {
@@ -840,8 +840,8 @@ async fn a_retry_after_the_commit_keeps_one_asset_and_one_event() {
         .expect("the first");
     assert!(first.created);
 
-    // El reintento: la misma operación, dicho otra vez. La respuesta es
-    // la comprometida, y no se escribe nada.
+    // The retry: the same operation, stated again. The response is
+    // the committed one, and nothing is written.
     for _attempt in 0..3 {
         let retry = store
             .publish(&account, publication.clone())
@@ -864,15 +864,15 @@ async fn a_retry_after_the_commit_keeps_one_asset_and_one_event() {
     assert_eq!(asset.digest, ContentDigest::of_bytes(b"one"));
 }
 
-/// Un blob del CAS sin metadata de catálogo queda **huérfano seguro**:
-/// detectable por censo (las claves del CAS que ninguna referencia del
-/// catálogo reclama), y el catálogo sigue sirviendo lo que sí tiene.
+/// A CAS blob without catalog metadata is left a **safe orphan**:
+/// detectable by census (the CAS keys that no catalog
+/// reference claims), and the catalog keeps serving what it does have.
 ///
-/// La política de este slice: **referencia de huérfanos por censo**, no
-/// GC-aware. Un blob staged cuya publicación se cayó es reconciliable —
-/// la referencia es lo que impide que se recoja, así que un blob sin
-/// referencia no rompe nada; el censo lo nombra y la recolección (HSP-104)
-/// decide su destino.
+/// The policy of this slice: **orphan reference by census**, not
+/// GC-aware. A staged blob whose publication fell through is reconcilable --
+/// the reference is what prevents it from being collected, so a blob without a
+/// reference breaks nothing; the census names it and collection (HSP-104)
+/// decides its fate.
 #[tokio::test]
 async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
     let Some(_) = config_from_env() else {
@@ -883,7 +883,7 @@ async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
     let vertical = Vertical::mount(&account, "releases").await;
     let client = fresh_client().await.expect("the client connects");
 
-    // Un blob que entra al CAS y cuya publicación NUNCA ocurre.
+    // A blob that enters the CAS and whose publication NEVER happens.
     let orphan_bytes = b"the bytes that nobody catalogued";
     let orphan_digest = vertical
         .content
@@ -891,7 +891,7 @@ async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
         .await
         .expect("the blob is staged");
 
-    // El blob que SÍ se publica.
+    // The blob that IS published.
     let content = b"the published bytes";
     let published = send(
         &vertical.app,
@@ -904,8 +904,8 @@ async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
     .await;
     assert_eq!(published.status, StatusCode::CREATED);
 
-    // El censo: los digests que el catálogo reclama frente a los que el
-    // CAS guarda. El huérfano se nombra, el publicado no.
+    // The census: the digests the catalog claims versus the ones the
+    // CAS holds. The orphan is named, the published one is not.
     let digests_of_catalog = |account: &str| {
         let client = client.clone();
         let account = account.to_string();
@@ -955,8 +955,8 @@ async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
         "the orphan is not catalogued"
     );
 
-    // Y el huérfano no rompe nada: el catálogo sigue sirviendo lo que
-    // tiene, con el digest intacto.
+    // And the orphan breaks nothing: the catalog keeps serving what it
+    // has, with the digest intact.
     let served = send(
         &vertical.app,
         Method::GET,
@@ -976,14 +976,14 @@ async fn a_cas_blob_without_catalog_metadata_is_a_detectable_safe_orphan() {
 }
 
 // ---------------------------------------------------------------------------
-// Lo que el contrato dice de las lecturas del estado publicado.
+// What the contract says about reads of the published state.
 // ---------------------------------------------------------------------------
 
-/// Las lecturas del catálogo Dgraph devuelven exactamente lo que el contrato
-/// del catálogo dice del estado publicado: repository, asset, versión,
-/// referencia y etiqueta. (HSP-314 F4: antes se comparaban con un segundo
-/// motor; ahora cada valor esperado se deriva del descriptor y de la
-/// publicación, que es de donde el contrato lo saca.)
+/// The Dgraph catalog reads return exactly what the catalog
+/// contract says about the published state: repository, asset, version,
+/// reference and tag. (HSP-314 F4: they used to be compared against a second
+/// engine; now each expected value is derived from the descriptor and the
+/// publication, which is where the contract gets it from.)
 #[tokio::test]
 async fn the_dgraph_reads_match_the_contract_for_the_published_state() {
     let Some(_) = config_from_env() else {
@@ -1010,13 +1010,13 @@ async fn the_dgraph_reads_match_the_contract_for_the_published_state() {
         .await
         .expect("dgraph publish");
 
-    // El contenido declarado es el de la publicación.
+    // The declared content is that of the publication.
     assert_eq!(outcome.asset.digest, expected_digest);
     assert_eq!(outcome.version.digest, expected_digest);
     assert_eq!(outcome.reference.digest, expected_digest);
     assert!(outcome.created, "the first publication creates the asset");
 
-    // El repositorio se lee como se creó.
+    // The repository is read as it was created.
     let repository = dgraph
         .repository(&account, repo)
         .await
@@ -1029,8 +1029,8 @@ async fn the_dgraph_reads_match_the_contract_for_the_published_state() {
     assert_eq!(repository.config.version, 1);
     assert_eq!(repository.config.digest_scope, DigestScope::Global);
 
-    // El asset: cuenta, repositorio, ruta, coordenadas, digest y tamaño de
-    // la publicación; sin sujeto porque la publicación no declara ninguno.
+    // The asset: account, repository, path, coordinates, digest and size of
+    // the publication; without a subject because the publication declares none.
     let asset: AssetRecord = dgraph
         .asset(&account, repo, path)
         .await
@@ -1055,8 +1055,8 @@ async fn the_dgraph_reads_match_the_contract_for_the_published_state() {
     assert_eq!(version.size_bytes, content.len() as u64);
     assert_eq!(version.coordinates, coordinates);
 
-    // La referencia: un artefacto recién admitido está en cuarentena y su
-    // ámbito es el del repositorio.
+    // The reference: a newly admitted artifact is in quarantine and its
+    // scope is the repository's.
     let reference: BlobReference = dgraph
         .reference(&account, repo, path)
         .await
@@ -1069,7 +1069,7 @@ async fn the_dgraph_reads_match_the_contract_for_the_published_state() {
     assert_eq!(reference.repository, repo);
     assert_eq!(reference.asset_path, path);
 
-    // La etiqueta mutable se mueve y apunta a la versión pedida.
+    // The mutable tag moves and points to the requested version.
     let moved = dgraph
         .move_tag(&account, repo, "stable", asset.coordinates.clone())
         .await

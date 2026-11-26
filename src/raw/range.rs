@@ -1,32 +1,32 @@
-//! La petición de un tramo del contenido.
+//! The request for a span of the content.
 //!
-//! RFC 9110 define el tramado de bytes. Lo que este modulo decide es
-//! **que se sirve**: un tramo válido se sirve con 206 y su
-//! `Content-Range`, un tramo que no se puede satisfacer se dice con 416
-//! y el `Content-Range` que dice cuanto tiene el contenido, y un `Range`
-//! que no se entiende se ignora, que es lo que el RFC permite.
+//! RFC 9110 defines byte ranges. What this module decides is
+//! **what is served**: a valid range is served with 206 and its
+//! `Content-Range`, a range that cannot be satisfied is answered with 416
+//! and the `Content-Range` that says how much the content has, and a `Range`
+//! that is not understood is ignored, which is what the RFC allows.
 //!
-//! Lo que NO se hace es servir un tramo a medias: un 206 con menos
-//! bytes de los que pedia el cliente es un 206 que no significa nada.
+//! What is NOT done is serving a half range: a 206 with fewer
+//! bytes than the client asked for is a 206 that means nothing.
 
-/// Lo que el cliente pide.
+/// What the client requests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RangeRequest {
-    /// No hay tramo: se sirve el contenido entero.
+    /// There is no range: the whole content is served.
     Whole,
-    /// Un tramo, con el primer byte y el último byte **incluidos**.
+    /// A range, with the first byte and the last byte **included**.
     Single { first: u64, last: u64 },
 }
 
-/// Por que un tramo no se puede servir.
+/// Why a range cannot be served.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RangeError {
-    /// El tramo no cabe en el contenido, o no esta bien escrito.
+    /// The range does not fit in the content, or is not well written.
     Unsatisfiable,
 }
 
 impl RangeError {
-    /// Lo que se le dice al cliente.
+    /// What is told to the client.
     pub fn message(&self) -> &'static str {
         match self {
             Self::Unsatisfiable => "the requested range is not satisfiable",
@@ -34,33 +34,33 @@ impl RangeError {
     }
 }
 
-/// Que tramo pide la cabecera `Range`.
+/// Which range the `Range` header requests.
 ///
-/// El contenido entero se responde con `Whole`. Un `Range` con otra
-/// unidad, o con varios tramos, se **ignora**: RFC 9110 lo permite, y
-/// un servidor que no sabe hacer lo que le piden puede decir que no
-/// sabe, pero no puede decir una verdad a medias.
+/// The whole content is answered with `Whole`. A `Range` with another
+/// unit, or with several ranges, is **ignored**: RFC 9110 allows it, and
+/// a server that does not know how to do what it is asked can say it does
+/// not know, but cannot tell a half truth.
 pub fn the_range(header: Option<&str>, length: u64) -> Result<RangeRequest, RangeError> {
     let Some(header) = header else {
         return Ok(RangeRequest::Whole);
     };
     let header = header.trim();
-    // La unidad no distingue mayúsculas (RFC 9110): `Bytes=0-9` es un
-    // tramo, no otra unidad. Lo que se compara es el nombre de la
-    // unidad, no cómo está escrito.
+    // The unit is case-insensitive (RFC 9110): `Bytes=0-9` is a
+    // range, not another unit. What is compared is the name of the
+    // unit, not how it is written.
     let Some((unit, specification)) = header.split_once('=') else {
-        // Ni siquiera tiene la forma de una unidad: no se entiende, y lo
-        // que no se entiende se ignora.
+        // It does not even have the shape of a unit: it is not understood, and what
+        // is not understood is ignored.
         return Ok(RangeRequest::Whole);
     };
     if !unit.trim().eq_ignore_ascii_case("bytes") {
-        // Otra unidad: no se entiende, y lo que no se entiende se ignora.
+        // Another unit: not understood, and what is not understood is ignored.
         return Ok(RangeRequest::Whole);
     }
     let specification = specification.trim();
     if specification.contains(',') {
-        // Varios tramos: esta release sirve uno. Se ignora la petición y
-        // se sirve el contenido entero, que es lo que permite el RFC.
+        // Several ranges: this release serves one. The request is ignored and
+        // the whole content is served, which is what the RFC allows.
         return Ok(RangeRequest::Whole);
     }
     let Some((first, last)) = specification.split_once('-') else {
@@ -70,7 +70,7 @@ pub fn the_range(header: Option<&str>, length: u64) -> Result<RangeRequest, Rang
     let last = last.trim();
 
     if first.is_empty() {
-        // `bytes=-N`: los últimos N bytes.
+        // `bytes=-N`: the last N bytes.
         let suffix: u64 = last.parse().map_err(|_| RangeError::Unsatisfiable)?;
         if suffix == 0 || length == 0 {
             return Err(RangeError::Unsatisfiable);
@@ -84,7 +84,7 @@ pub fn the_range(header: Option<&str>, length: u64) -> Result<RangeRequest, Rang
 
     let first: u64 = first.parse().map_err(|_| RangeError::Unsatisfiable)?;
     let last: u64 = if last.is_empty() {
-        // `bytes=N-`: desde N hasta el final.
+        // `bytes=N-`: from N to the end.
         if length == 0 {
             return Err(RangeError::Unsatisfiable);
         }
@@ -94,10 +94,10 @@ pub fn the_range(header: Option<&str>, length: u64) -> Result<RangeRequest, Rang
     };
 
     if first > last || first >= length {
-        // El RFC dice que un rango invalido puede ignorarse, y uno que no
-        // se puede satisfacer se responde con 416. Los dos casos se
-        // responden igual, porque en los dos el cliente pidió algo que
-        // no existe.
+        // The RFC says an invalid range may be ignored, and one that
+        // cannot be satisfied is answered with 416. Both cases are
+        // answered the same, because in both the client asked for something that
+        // does not exist.
         return Err(RangeError::Unsatisfiable);
     }
     Ok(RangeRequest::Single {
@@ -106,13 +106,13 @@ pub fn the_range(header: Option<&str>, length: u64) -> Result<RangeRequest, Rang
     })
 }
 
-/// La cabecera `Content-Range` de un tramo.
+/// The `Content-Range` header of a range.
 pub fn the_content_range(first: u64, last: u64, length: u64) -> String {
     format!("bytes {first}-{last}/{length}")
 }
 
-/// La cabecera `Content-Range` de un contenido que no se puede servir
-/// el tramo pedido.
+/// The `Content-Range` header of a content for which the requested
+/// range cannot be served.
 pub fn the_unsatisfiable_range(length: u64) -> String {
     format!("bytes */{length}")
 }
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn the_unit_of_the_range_does_not_distinguish_capitals() {
-        // RFC 9110: los nombres de las unidades no distinguen mayúsculas.
+        // RFC 9110: unit names are case-insensitive.
         assert_eq!(
             the_range(Some("Bytes=0-9"), 100),
             Ok(RangeRequest::Single { first: 0, last: 9 })
@@ -141,7 +141,7 @@ mod tests {
             the_range(Some("BYTES=0-9"), 100),
             Ok(RangeRequest::Single { first: 0, last: 9 })
         );
-        // Pero otra unidad sigue siendo otra unidad.
+        // But another unit is still another unit.
         assert_eq!(the_range(Some("items=0-9"), 100), Ok(RangeRequest::Whole));
     }
 

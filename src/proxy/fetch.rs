@@ -1,29 +1,29 @@
-//! El cliente que sale a buscar contenido a un upstream.
+//! The client that goes out to fetch content from an upstream.
 //!
-//! Hace una sola cosa: abrir una respuesta `200` de un upstream permitido,
-//! siguiendo las redirecciones **a mano**, para decidir cada salto con la
-//! politica de salida y no con la que trae el cliente HTTP. Lo que entrega
-//! no es contenido verificado: es una respuesta abierta y un
-//! [`BodyGuard`] que comprueba, trozo a trozo y al final, que lo recibido
-//! es entero, no excede el presupuesto y coincide con lo que el upstream
-//! declaro.
+//! It does a single thing: open a `200` response from an allowed upstream,
+//! following redirects **by hand**, so each hop is decided by the egress
+//! policy and not by the one the HTTP client carries. What it delivers is
+//! not verified content: it is an open response and a
+//! [`BodyGuard`] that checks, chunk by chunk and at the end, that what was
+//! received is complete, does not exceed the budget and matches what the
+//! upstream declared.
 //!
-//! Decisiones que conviene tener a la vista:
+//! Decisions worth keeping in view:
 //!
-//! - **Sin proxies del entorno ni redirecciones automaticas.** El cliente
-//!   se construye con `no_proxy` y `Policy::none()`: ni `HTTP_PROXY` ni un
-//!   `Location` deciden a donde se va.
-//! - **Resolucion fijada.** El host se resuelve aqui, se valida y la
-//!   conexion se hace a esas mismas direcciones (`resolve_to_addrs`). El
-//!   TLS sigue verificando el nombre del host, no la IP.
-//! - **Cliente por salto.** Cada salto tiene su propia resolucion fijada,
-//!   asi que cada salto tiene su propio cliente y ninguna conexion
-//!   reutilizada puede llevar a un destino que no se valido.
-//! - **La credencial no sale de su origen.** Solo se envia al origen del
-//!   upstream configurado, nunca a otro al que una redireccion lleve.
-//! - **Sin compresion.** Se pide `identity`: un upstream que comprime de
-//!   todos modos no se acepta, porque el digest y la longitud son de los
-//!   bytes tal y como estan en disco.
+//! - **No environment proxies and no automatic redirects.** The client
+//!   is built with `no_proxy` and `Policy::none()`: neither `HTTP_PROXY` nor a
+//!   `Location` decides where to go.
+//! - **Pinned resolution.** The host is resolved here, validated, and the
+//!   connection is made to those same addresses (`resolve_to_addrs`). TLS
+//!   still verifies the host name, not the IP.
+//! - **Client per hop.** Each hop has its own pinned resolution,
+//!   so each hop has its own client and no reused connection
+//!   can lead to a destination that was not validated.
+//! - **The credential does not leave its origin.** It is only sent to the origin of the
+//!   configured upstream, never to another one a redirect leads to.
+//! - **No compression.** `identity` is requested: an upstream that compresses
+//!   anyway is not accepted, because the digest and the length refer to the
+//!   bytes exactly as they are on disk.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -40,18 +40,18 @@ use url::{Host, Url};
 
 use super::egress::{EgressDenied, EgressPolicy, HostResolver, SystemResolver};
 
-/// La cabecera donde el upstream declara el checksum del contenido.
+/// The header where the upstream declares the content checksum.
 pub const CHECKSUM_HEADER: &str = "x-checksum-sha256";
 
-/// Un secreto: se puede usar y no se puede mostrar.
+/// A secret: it can be used and cannot be displayed.
 ///
-/// No implementa `Display`, y su `Debug` lo oculta: un secreto que se
-/// puede formatear acaba en un log.
+/// It does not implement `Display`, and its `Debug` hides it: a secret that can
+/// be formatted ends up in a log.
 #[derive(Clone)]
 pub struct Secret(String);
 
 impl Secret {
-    /// Envuelve un secreto.
+    /// Wraps a secret.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
@@ -67,26 +67,26 @@ impl std::fmt::Debug for Secret {
     }
 }
 
-/// De donde salen los secretos.
+/// Where secrets come from.
 pub trait SecretSource: Send + Sync {
-    /// El secreto de una referencia, si existe.
+    /// The secret of a reference, if it exists.
     fn get(&self, reference: &CredentialRef) -> Option<Secret>;
 }
 
-/// Los secretos del entorno del proceso que el servicio ha autorizado.
+/// The process-environment secrets the service has authorized.
 ///
-/// La configuracion de un repositorio solo **nombra** una variable; que esa
-/// variable pueda salir del proceso lo decide el operador del servicio con
-/// una lista de nombres. Sin lista no se lee ninguna: un repositorio no
-/// puede apuntar su `credential_ref` a un secreto que no es de proxy (la
-/// base de datos, el token de otra cuenta) para enviarlo a un upstream.
+/// A repository's configuration only **names** a variable; whether that
+/// variable may leave the process is decided by the service operator with
+/// a list of names. Without a list none is read: a repository cannot
+/// point its `credential_ref` at a secret that is not a proxy one (the
+/// database, another account's token) to send it to an upstream.
 #[derive(Debug, Default, Clone)]
 pub struct EnvSecrets {
     allowed: std::collections::BTreeSet<String>,
 }
 
 impl EnvSecrets {
-    /// Solo estas variables pueden usarse como credencial.
+    /// Only these variables may be used as a credential.
     pub fn allowing<I, S>(names: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -110,15 +110,15 @@ impl SecretSource for EnvSecrets {
     }
 }
 
-/// Los limites de servicio de una salida.
+/// The service limits of an egress call.
 #[derive(Debug, Clone, Copy)]
 pub struct FetchLimits {
-    /// Lo que se espera para conectar y para resolver.
+    /// What is waited for connecting and resolving.
     pub connect_timeout: Duration,
-    /// Lo que dura una peticion entera, cuerpo incluido.
+    /// How long an entire request lasts, body included.
     pub total_timeout: Duration,
-    /// El techo de bytes de una respuesta. Un repositorio puede estrecharlo,
-    /// no ensancharlo.
+    /// The ceiling of bytes of a response. A repository may narrow it,
+    /// not widen it.
     pub max_bytes: u64,
 }
 
@@ -132,145 +132,145 @@ impl Default for FetchLimits {
     }
 }
 
-/// Por que no se pudo traer un contenido.
+/// Why content could not be fetched.
 ///
-/// Ningun caso lleva la URL ni la respuesta del upstream: el cliente que
-/// pide el contenido no tiene por que ver la red interna del servicio.
+/// No case carries the URL or the upstream response: the client that
+/// requests the content has no business seeing the service's internal network.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum FetchError {
-    /// La politica de salida no deja ir ahi.
+    /// The egress policy does not allow going there.
     #[error("egress denied: {0}")]
     Egress(#[from] EgressDenied),
-    /// La ruta no esta entre los alcances del upstream.
+    /// The path is not among the upstream's scopes.
     #[error("the path is outside the scopes of the upstream")]
     OutOfScope,
-    /// El upstream no tiene ese contenido.
+    /// The upstream does not have that content.
     #[error("the upstream does not have that content")]
     NotFound,
-    /// El upstream respondio con un estado que no es un contenido.
+    /// The upstream responded with a status that is not content.
     #[error("the upstream answered with status {0}")]
     Status(u16),
-    /// La redireccion no esta permitida.
+    /// The redirect is not allowed.
     #[error("redirect refused: {0}")]
     Redirect(&'static str),
-    /// El upstream no respondio a tiempo.
+    /// The upstream did not respond in time.
     #[error("the upstream timed out")]
     Timeout,
-    /// No se pudo hablar con el upstream (red, TLS, protocolo).
+    /// Could not talk to the upstream (network, TLS, protocol).
     #[error("the upstream could not be reached")]
     Unreachable,
-    /// La respuesta no es utilizable.
+    /// The response is not usable.
     #[error("the response is not usable: {0}")]
     BadResponse(&'static str),
-    /// La respuesta termino antes de lo que decia.
+    /// The response ended earlier than it said.
     #[error("the response was cut short")]
     Truncated,
-    /// La respuesta es mas grande de lo que se admite.
+    /// The response is larger than what is admitted.
     #[error("the content is larger than allowed")]
     TooLarge,
-    /// El checksum que declaro el upstream no es el del contenido.
+    /// The checksum the upstream declared is not that of the content.
     #[error("the checksum declared by the upstream does not match the content")]
     ChecksumMismatch,
-    /// El repositorio exige checksum y el upstream no lo declaro.
+    /// The repository requires a checksum and the upstream did not declare one.
     #[error("the upstream did not declare a checksum and the repository requires one")]
     ChecksumMissing,
-    /// La credencial configurada no esta disponible.
+    /// The configured credential is not available.
     #[error("the credential of the upstream is not available")]
     Credential,
-    /// El upstream pide autenticacion y el reto no se puede satisfacer.
+    /// The upstream asks for authentication and the challenge cannot be satisfied.
     ///
-    /// El reto va dentro porque es lo que dice **como** autenticarse: sin
-    /// el, quien recibe el error no puede ni mirar el realm.
+    /// The challenge is carried inside because it says **how** to authenticate: without
+    /// it, whoever receives the error cannot even look at the realm.
     #[error("the upstream asks for a credential: {0}")]
     Unauthorized(String),
-    /// Hay demasiadas salidas a la vez.
+    /// There are too many simultaneous egress calls.
     #[error("too many fetches are in flight")]
     Busy,
-    /// El servicio no sale a la red: se pidio una salida en modo offline.
+    /// The service does not go out to the network: an egress was requested in offline mode.
     #[error("the service is offline and does not reach any upstream")]
     Offline,
 }
 
-/// Los validadores con que se pregunta al upstream si un contenido que ya se
-/// tiene sigue valiendo.
+/// The validators used to ask the upstream whether content that is already
+/// held is still valid.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Validators {
-    /// Se envia como `If-None-Match`.
+    /// Sent as `If-None-Match`.
     pub etag: Option<String>,
-    /// Se envia como `If-Modified-Since`.
+    /// Sent as `If-Modified-Since`.
     pub last_modified: Option<String>,
 }
 
 impl Validators {
-    /// Si no hay ninguno que enviar.
+    /// Whether there is none to send.
     pub fn is_empty(&self) -> bool {
         self.etag.is_none() && self.last_modified.is_none()
     }
 }
 
-/// Lo que contesta el upstream a una peticion que puede ser condicional.
+/// What the upstream answers to a request that may be conditional.
 #[derive(Debug)]
 pub enum Fetched {
-    /// El upstream entrega el contenido (`200`).
+    /// The upstream delivers the content (`200`).
     Content(Box<Opened>),
-    /// El upstream confirma que el contenido que se tiene sigue valiendo
-    /// (`304`): no hay cuerpo.
+    /// The upstream confirms that the content held is still valid
+    /// (`304`): there is no body.
     NotModified(NotModified),
-    /// El upstream pide autenticacion (`401`): el reto dice como pedirla.
+    /// The upstream asks for authentication (`401`): the challenge says how to ask for it.
     ///
-    /// El reto **no** se sigue a ciegas: quien lo recibe decide si el realm
-    /// que nombra es el que la configuracion declara. Un reto que apunta a
-    /// otro sitio no recibe ninguna credencial.
+    /// The challenge is **not** followed blindly: whoever receives it decides whether the realm
+    /// it names is the one the configuration declares. A challenge that points
+    /// elsewhere receives no credential.
     Unauthorized {
-        /// El valor de la cabecera `WWW-Authenticate`, si el upstream la mando.
+        /// The value of the `WWW-Authenticate` header, if the upstream sent it.
         challenge: Option<String>,
     },
 }
 
-/// Una credencial y el origen al que puede viajar.
+/// A credential and the origin it may travel to.
 ///
-/// La credencial y su origen van juntos: una credencial sin origen es una
-/// credencial que puede acabar en cualquier sitio, y eso es exactamente lo
-/// que un redirect hostil tries.
+/// The credential and its origin go together: a credential without an origin is a
+/// credential that can end up anywhere, and that is exactly
+/// what a hostile redirect tries.
 #[derive(Debug)]
 struct TheCredential<'a> {
-    /// De que credencial se trata.
+    /// Which credential it is.
     kind: TheCredentialKind<'a>,
-    /// El origen que la puede recibir: esquema, host y puerto, exactos.
+    /// The origin that may receive it: scheme, host and port, exact.
     origin: &'a str,
 }
 
-/// De que credencial se trata.
+/// Which credential it is.
 #[derive(Debug)]
 enum TheCredentialKind<'a> {
-    /// La credencial del upstream, como `Bearer`.
+    /// The upstream's credential, as `Bearer`.
     Bearer(&'a Secret),
-    /// La credencial del upstream, como basica: la que se manda al realm
-    /// del reto.
+    /// The upstream's credential, as Basic: the one sent to the challenge's
+    /// realm.
     Basic {
-        /// El usuario, que es informativo.
+        /// The user name, which is informational.
         user: &'a str,
-        /// La contrasena.
+        /// The password.
         password: &'a Secret,
     },
-    /// Un token ya obtenido del realm del reto.
+    /// A token already obtained from the challenge's realm.
     Token(&'a str),
 }
 
-/// La confirmacion de un `304`.
+/// The confirmation of a `304`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NotModified {
-    /// De donde vino la confirmacion, tras las redirecciones, sin consulta.
+    /// Where the confirmation came from, after redirects, without query.
     pub source_url: String,
-    /// Las redirecciones que se siguieron.
+    /// The redirects that were followed.
     pub redirects: u8,
-    /// El `ETag` que declaro el `304`, si declaro alguno.
+    /// The `ETag` the `304` declared, if it declared one.
     pub etag: Option<String>,
-    /// El `Last-Modified` que declaro el `304`, si declaro alguno.
+    /// The `Last-Modified` the `304` declared, if it declared one.
     pub last_modified: Option<String>,
 }
 
-/// El cliente de salida del servicio.
+/// The service's egress client.
 #[derive(Clone)]
 pub struct ProxyFetcher {
     policy: Arc<EgressPolicy>,
@@ -292,7 +292,7 @@ impl std::fmt::Debug for ProxyFetcher {
 }
 
 impl ProxyFetcher {
-    /// Un cliente con el resolutor y los secretos del sistema.
+    /// A client with the system's resolver and secrets.
     pub fn new(policy: EgressPolicy, limits: FetchLimits, max_concurrent: usize) -> Self {
         Self {
             policy: Arc::new(policy),
@@ -304,30 +304,30 @@ impl ProxyFetcher {
         }
     }
 
-    /// Un cliente que no sale a la red: toda peticion falla con
-    /// [`FetchError::Offline`] antes de resolver un nombre.
+    /// A client that does not go out to the network: every request fails with
+    /// [`FetchError::Offline`] before resolving a name.
     ///
-    /// Es la defensa de ultima linea del modo offline: aunque la decision de
-    /// cache se equivocase, ninguna ruta de codigo llega a un upstream.
+    /// It is the last line of defense of offline mode: even if the cache decision
+    /// were wrong, no code path reaches an upstream.
     #[must_use]
     pub fn with_offline(mut self, offline: bool) -> Self {
         self.offline = offline;
         self
     }
 
-    /// Si el cliente esta en modo offline.
+    /// Whether the client is in offline mode.
     pub fn is_offline(&self) -> bool {
         self.offline
     }
 
-    /// Con otro resolutor, para probar el rebind.
+    /// With another resolver, to test rebind.
     #[must_use]
     pub fn with_resolver(mut self, resolver: Arc<dyn HostResolver>) -> Self {
         self.resolver = resolver;
         self
     }
 
-    /// Con estas variables de entorno como unicas credenciales posibles.
+    /// With these environment variables as the only possible credentials.
     #[must_use]
     pub fn with_allowed_credentials<I, S>(mut self, names: I) -> Self
     where
@@ -338,18 +338,18 @@ impl ProxyFetcher {
         self
     }
 
-    /// Con otra fuente de secretos.
+    /// With another source of secrets.
     #[must_use]
     pub fn with_secrets(mut self, secrets: Arc<dyn SecretSource>) -> Self {
         self.secrets = secrets;
         self
     }
 
-    /// Abre la respuesta del contenido de `asset_path`.
+    /// Opens the response for the content of `asset_path`.
     ///
-    /// Solo devuelve una respuesta `200` de un destino permitido en todos
-    /// sus saltos. Lo que devuelve **no esta verificado**: quien lo lee
-    /// pasa los trozos por el [`BodyGuard`].
+    /// It only returns a `200` response from a destination allowed on all
+    /// of its hops. What it returns is **not verified**: whoever reads it
+    /// passes the chunks through the [`BodyGuard`].
     pub async fn open(
         &self,
         upstream: &UpstreamConfig,
@@ -357,43 +357,43 @@ impl ProxyFetcher {
     ) -> Result<Opened, FetchError> {
         match self.open_conditional(upstream, asset_path, None).await? {
             Fetched::Content(opened) => Ok(*opened),
-            // Sin validadores no hay nada que confirmar: un `304` no
-            // solicitado es una respuesta que no es un contenido.
+            // Without validators there is nothing to confirm: an unsolicited `304`
+            // is a response that is not content.
             Fetched::NotModified(_) => Err(FetchError::Status(304)),
-            // Un reto no es un contenido: quien llama tiene que resolverlo.
+            // A challenge is not content: the caller has to resolve it.
             Fetched::Unauthorized { challenge } => {
                 Err(FetchError::Unauthorized(challenge.unwrap_or_default()))
             }
         }
     }
 
-    /// Como [`Self::open`], pero preguntando al upstream si el contenido que
-    /// ya se tiene sigue valiendo.
+    /// Like [`Self::open`], but asking the upstream whether the content
+    /// already held is still valid.
     ///
-    /// Los validadores se envian **solo al origen del upstream**, no a un
-    /// origen al que una redireccion lleve. Un `304` sin validadores
-    /// enviados no es una respuesta valida.
+    /// The validators are sent **only to the upstream's origin**, not to an
+    /// origin a redirect leads to. A `304` without validators
+    /// sent is not a valid response.
     pub async fn open_conditional(
         &self,
         upstream: &UpstreamConfig,
         asset_path: &str,
         validators: Option<&Validators>,
     ) -> Result<Fetched, FetchError> {
-        // Lo que no cae en un scope no consume ni un permiso.
+        // What does not fall within a scope does not consume even a permit.
         let url = upstream.target(asset_path).ok_or(FetchError::OutOfScope)?;
         self.open_conditional_at(upstream, url, None, validators)
             .await
     }
 
-    /// Como [`Self::open_conditional`], pero con la URL exacta y el `Accept`
-    /// que se pide.
+    /// Like [`Self::open_conditional`], but with the exact URL and the `Accept`
+    /// that is requested.
     ///
-    /// Lo usa la superficie PyPI, cuyo upstream habla JSON: la pagina de un
-    /// proyecto se pide por la URL que declara el propio upstream, y con un
-    /// `Accept` que dice que se quiere el JSON de la Simple API.
+    /// Used by the PyPI surface, whose upstream speaks JSON: a project's page
+    /// is requested at the URL the upstream itself declares, and with an
+    /// `Accept` saying the Simple API JSON is wanted.
     ///
-    /// La URL **no** se salta la politica de salida: se juzga igual que
-    /// cualquier otra, salto a salto.
+    /// The URL does **not** bypass the egress policy: it is judged like
+    /// any other, hop by hop.
     pub async fn open_conditional_at(
         &self,
         upstream: &UpstreamConfig,
@@ -405,16 +405,16 @@ impl ProxyFetcher {
             .await
     }
 
-    /// Como [`Self::open_conditional_at`], pero con un **token** que ya se
-    /// tiene.
+    /// Like [`Self::open_conditional_at`], but with a **token** that is
+    /// already held.
     ///
-    /// El token es el que el upstream pidio en su reto: viaja como `Bearer`
-    /// y **solo** al origen del upstream. Un token es una credencial, y una
-    /// credencial que viaja a un origen al que una redireccion lleva es una
-    /// credencial filtrada.
+    /// The token is the one the upstream asked for in its challenge: it travels as `Bearer`
+    /// and **only** to the upstream's origin. A token is a credential, and a
+    /// credential that travels to an origin a redirect leads to is a
+    /// leaked credential.
     ///
-    /// Sin token, la credencial que viaja es la que declara la
-    /// configuracion del upstream, tambien solo a su origen.
+    /// Without a token, the credential that travels is the one declared by the
+    /// upstream's configuration, also only to its origin.
     pub async fn open_conditional_with_token(
         &self,
         upstream: &UpstreamConfig,
@@ -432,15 +432,15 @@ impl ProxyFetcher {
             .clone()
             .try_acquire_owned()
             .map_err(|_| FetchError::Busy)?;
-        // El tope de tiempo es de la resolucion entera, no de cada salto:
-        // una cadena de redirecciones lentas no retiene el permiso mas.
+        // The time cap is for the entire resolution, not for each hop:
+        // a chain of slow redirects does not hold the permit any longer.
         let deadline = tokio::time::Instant::now() + self.limits.total_timeout;
         let budget = upstream
             .max_bytes
             .map_or(self.limits.max_bytes, |own| own.min(self.limits.max_bytes));
         let upstream_origin = upstream.origin();
-        // El token, si lo hay, manda: es la credencial que el upstream
-        // acaba de pedir. La de la configuracion es la de reserva.
+        // The token, if there is one, takes precedence: it is the credential the upstream
+        // just asked for. The configuration's is the fallback.
         let secret = match (token, upstream.credential.as_ref()) {
             (Some(_), _) | (None, None) => None,
             // A repository that names a credential the service cannot
@@ -480,16 +480,16 @@ impl ProxyFetcher {
                     return Self::accept(response, url, redirects, budget, permit)
                         .map(|opened| Fetched::Content(Box::new(opened)));
                 }
-                // Un `401` no es un contenido: es un reto. Se devuelve tal
-                // cual, con la cabecera que lo describe, y quien lo recibe
-                // decide si el realm que nombra es el declarado.
+                // A `401` is not content: it is a challenge. It is returned as
+                // is, with the header that describes it, and whoever receives it
+                // decides whether the realm it names is the declared one.
                 401 => {
                     return Ok(Fetched::Unauthorized {
                         challenge: header_text(&response, WWW_AUTHENTICATE, 512),
                     });
                 }
-                // Un `304` solo vale de quien recibio los validadores: otro
-                // origen al que llevo un redirect no sabe de que copia habla.
+                // A `304` is only valid from whoever received the validators: another
+                // origin a redirect led to does not know which copy it is talking about.
                 304 if validators.is_some() && origin_of(&url) == upstream_origin => {
                     return Ok(Fetched::NotModified(NotModified {
                         source_url: format!("{}{}", origin_of(&url), url.path()),
@@ -512,13 +512,13 @@ impl ProxyFetcher {
         }
     }
 
-    /// El secreto del upstream, si la configuracion lo declara y el
-    /// servicio lo permite salir.
+    /// The upstream's secret, if the configuration declares it and the
+    /// service allows it to leave.
     ///
-    /// Es la credencial que la configuracion nombra, no una credencial
-    /// cualquiera: el nombre sale de `credential_ref` y el secreto sale del
-    /// entorno, y el entorno solo responde a los nombres que el operador ha
-    /// autorizado.
+    /// It is the credential the configuration names, not just any credential:
+    /// the name comes from `credential_ref` and the secret comes from the
+    /// environment, and the environment only answers to the names the operator has
+    /// authorized.
     pub fn the_credential(&self, upstream: &UpstreamConfig) -> Option<Secret> {
         upstream
             .credential
@@ -526,16 +526,16 @@ impl ProxyFetcher {
             .and_then(|credential| self.secrets.get(credential))
     }
 
-    /// Abre una peticion con la credencial del upstream en forma **basica**.
+    /// Opens a request with the upstream's credential in **Basic** form.
     ///
-    /// La credencial solo viaja al origen que se le dice
-    /// (`credential_origin`), que es el que declara la configuracion: el
-    /// realm del reto. Un realm que el upstream invente no recibe la
-    /// credencial, porque quien decide el origen es la configuracion, no la
-    /// respuesta.
+    /// The credential only travels to the origin it is told
+    /// (`credential_origin`), which is the one the configuration declares: the
+    /// challenge's realm. A realm the upstream makes up does not receive the
+    /// credential, because whoever decides the origin is the configuration, not the
+    /// response.
     ///
-    /// La peticion **no** sigue redirecciones: un realm que conteste con una
-    /// redireccion a otro origen se queda sin credencial, y el error lo dice.
+    /// The request does **not** follow redirects: a realm that answers with a
+    /// redirect to another origin is left without a credential, and the error says so.
     pub async fn open_with_basic(
         &self,
         upstream: &UpstreamConfig,
@@ -598,7 +598,7 @@ impl ProxyFetcher {
         Self::accept(response, url, 0, budget, permit)
     }
 
-    /// Una peticion a un destino ya admitido por la politica.
+    /// A request to a destination already admitted by the policy.
     async fn hop(
         &self,
         upstream_origin: &str,
@@ -617,8 +617,8 @@ impl ProxyFetcher {
             .port_or_known_default()
             .ok_or(EgressDenied::PortNotAllowed)?;
 
-        // Un nombre se resuelve aqui, se valida y se fija. Una IP literal
-        // ya se valido en `check_url`.
+        // A name is resolved here, validated and pinned. A literal IP
+        // was already validated in `check_url`.
         let pinned: Option<(String, Vec<SocketAddr>)> = match url.host() {
             Some(Host::Domain(domain)) => {
                 let addresses = tokio::time::timeout(
@@ -659,10 +659,10 @@ impl ProxyFetcher {
                 accept.unwrap_or("application/octet-stream, */*;q=0.8"),
             )
             .header(ACCEPT_ENCODING, "identity");
-        // La credencial viaja **solo** al origen para el que es: el del
-        // upstream, o el del realm que la configuracion declara. Un salto a
-        // otro origen --una redireccion, un realm que el upstream invento--
-        // se queda sin credencial.
+        // The credential travels **only** to the origin it is for: the
+        // upstream's, or the realm's that the configuration declares. A hop to
+        // another origin --a redirect, a realm the upstream made up--
+        // is left without a credential.
         if let Some(credential) = credential
             && origin_of(url) == credential.origin
         {
@@ -685,9 +685,9 @@ impl ProxyFetcher {
             value.set_sensitive(true);
             request = request.header(AUTHORIZATION, value);
         }
-        // Los validadores tambien son del upstream: un origen al que lleva
-        // una redireccion no tiene por que ver cual es el estado de la
-        // copia que se tiene.
+        // The validators are also the upstream's: an origin a redirect leads
+        // to has no business seeing the state of the
+        // copy that is held.
         if let Some(validators) = validators
             && origin_of(url) == upstream_origin
         {
@@ -705,8 +705,8 @@ impl ProxyFetcher {
 
         request.send().await.map_err(|error| {
             let timed_out = error.is_timeout();
-            // El texto del error de reqwest lleva la URL: se quita antes de
-            // dejarlo en el rastro.
+            // The reqwest error text carries the URL: it is stripped before
+            // leaving it in the trace.
             tracing::warn!(
                 target: "hodei_artifacts::proxy",
                 host = url.host_str().unwrap_or(""),
@@ -721,7 +721,7 @@ impl ProxyFetcher {
         })
     }
 
-    /// A donde lleva una redireccion, si esta permitido ir.
+    /// Where a redirect leads, if going there is allowed.
     fn redirect_target(
         response: &reqwest::Response,
         from: &Url,
@@ -744,13 +744,13 @@ impl ProxyFetcher {
                 "a redirect to another origin is not allowed",
             ));
         }
-        // El destino se juzga con la politica de salida al empezar el
-        // salto siguiente; aqui solo se descarta lo que no es ni una URL
-        // que se pueda juzgar.
+        // The destination is judged with the egress policy at the start of the
+        // next hop; here only what is not even a URL that can be
+        // judged is discarded.
         Ok(next)
     }
 
-    /// Acepta una respuesta `200`, si sus cabeceras son utilizables.
+    /// Accepts a `200` response, if its headers are usable.
     fn accept(
         response: reqwest::Response,
         final_url: Url,
@@ -796,7 +796,7 @@ impl ProxyFetcher {
     }
 }
 
-/// Una respuesta `200` abierta, sin leer.
+/// An open `200` response, not yet read.
 pub struct Opened {
     response: reqwest::Response,
     final_url: Url,
@@ -810,7 +810,7 @@ pub struct Opened {
     _permit: OwnedSemaphorePermit,
 }
 
-/// El texto de una cabecera, si es texto visible y no es desmedida.
+/// The text of a header, if it is visible text and not oversized.
 fn header_text(
     response: &reqwest::Response,
     name: reqwest::header::HeaderName,
@@ -834,7 +834,7 @@ impl std::fmt::Debug for Opened {
 }
 
 impl Opened {
-    /// El guardian de los bytes que van a llegar.
+    /// The guardian of the bytes that are about to arrive.
     pub fn guard(&self, require_checksum: bool) -> BodyGuard {
         BodyGuard {
             count: 0,
@@ -845,64 +845,64 @@ impl Opened {
         }
     }
 
-    /// El siguiente trozo, o `None` al terminar.
+    /// The next chunk, or `None` at the end.
     pub async fn chunk(&mut self) -> Result<Option<bytes::Bytes>, FetchError> {
         self.response.chunk().await.map_err(|error| {
             if error.is_timeout() {
                 FetchError::Timeout
             } else {
-                // Una conexion que se corta a mitad de un cuerpo es una
-                // respuesta truncada: no se sabe cuanto faltaba.
+                // A connection that is cut mid-body is a
+                // truncated response: it is not known how much was missing.
                 FetchError::Truncated
             }
         })
     }
 
-    /// De donde vino el contenido: origen y ruta, sin credenciales ni
-    /// consulta.
+    /// Where the content came from: origin and path, without credentials or
+    /// query.
     pub fn source_url(&self) -> String {
         format!("{}{}", origin_of(&self.final_url), self.final_url.path())
     }
 
-    /// Las redirecciones que se siguieron.
+    /// The redirects that were followed.
     pub fn redirects(&self) -> u8 {
         self.redirects
     }
 
-    /// La etiqueta de entidad que declaro el upstream.
+    /// The entity tag the upstream declared.
     pub fn etag(&self) -> Option<&str> {
         self.etag.as_deref()
     }
 
-    /// El `Last-Modified` que declaro el upstream.
+    /// The `Last-Modified` the upstream declared.
     pub fn last_modified(&self) -> Option<&str> {
         self.last_modified.as_deref()
     }
 
-    /// La cabecera `Link` que declaro el upstream, si la declaro.
+    /// The `Link` header the upstream declared, if it declared one.
     ///
-    /// Es la que dice que una respuesta **paginada** tiene mas paginas: un
-    /// listado que la trae no se puede servir como si fuera la lista
-    /// entera.
+    /// It is the one that says a **paginated** response has more pages: a
+    /// listing that carries it cannot be served as if it were the
+    /// whole list.
     pub fn link(&self) -> Option<&str> {
         self.link.as_deref()
     }
 }
 
-/// Lo que se comprobo de un contenido recibido.
+/// What was checked of received content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verified {
-    /// Los bytes recibidos.
+    /// The bytes received.
     pub size_bytes: u64,
-    /// Con que se comprobo.
+    /// What it was checked with.
     pub evidence: ChecksumEvidence,
 }
 
-/// Comprueba el contenido que llega.
+/// Checks the content that arrives.
 ///
-/// No calcula el digest: lo calcula la sesion de escritura que ya lo hace
-/// mientras pasan los trozos, y aqui se le pregunta. Dos calculos del mismo
-/// contenido son dos oportunidades de discrepar.
+/// It does not compute the digest: the write session computes it
+/// while the chunks pass, and it is asked here. Two computations of the same
+/// content are two chances to disagree.
 #[derive(Debug, Clone)]
 pub struct BodyGuard {
     count: u64,
@@ -913,7 +913,7 @@ pub struct BodyGuard {
 }
 
 impl BodyGuard {
-    /// Cuenta un trozo. Falla en cuanto se pasa del presupuesto.
+    /// Counts a chunk. Fails as soon as the budget is exceeded.
     pub fn push(&mut self, chunk_len: usize) -> Result<(), FetchError> {
         self.count = self.count.saturating_add(chunk_len as u64);
         if self.count > self.budget {
@@ -922,8 +922,8 @@ impl BodyGuard {
         if let Some(expected) = self.expected_length
             && self.count > expected
         {
-            // Mas bytes de los que anuncio: el upstream no sabe lo que
-            // envia.
+            // More bytes than it announced: the upstream does not know what it
+            // is sending.
             return Err(FetchError::BadResponse(
                 "the upstream sent more bytes than it announced",
             ));
@@ -931,8 +931,8 @@ impl BodyGuard {
         Ok(())
     }
 
-    /// Cierra la comprobacion con el digest (hex, minusculas) de lo que
-    /// llego.
+    /// Closes the check with the digest (hex, lowercase) of what
+    /// arrived.
     pub fn finish(self, computed_hex: &str) -> Result<Verified, FetchError> {
         if let Some(expected) = self.expected_length
             && self.count != expected
@@ -958,9 +958,9 @@ impl BodyGuard {
     }
 }
 
-/// El sha256 que declara una cabecera: `<hex>` o `sha256:<hex>`.
+/// The sha256 a header declares: `<hex>` or `sha256:<hex>`.
 ///
-/// Devuelve el hexadecimal en minusculas, o `None` si no es un sha256.
+/// Returns the hexadecimal in lowercase, or `None` if it is not a sha256.
 pub fn parse_declared_sha256(raw: &str) -> Option<String> {
     let raw = raw.trim();
     let value = match raw.split_once(':') {
@@ -1064,7 +1064,7 @@ mod tests {
         assert_eq!(verified.evidence, ChecksumEvidence::ComputedOnly);
     }
 
-    /// Un resolutor que contesta lo que el test quiere, por nombre.
+    /// A resolver that answers what the test wants, by name.
     struct Scripted(std::collections::HashMap<&'static str, Vec<std::net::IpAddr>>);
 
     #[async_trait::async_trait]
@@ -1077,7 +1077,7 @@ mod tests {
         }
     }
 
-    /// Un servidor que contesta con una respuesta fija a cada peticion.
+    /// A server that answers with a fixed response to every request.
     async fn serve_always(answer: String) -> u16 {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -1133,9 +1133,9 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi".to_string(),
         )
         .await;
-        // `pinned.test` no existe en el DNS del sistema: solo se alcanza si
-        // la conexion usa la direccion que el resolutor dio y la politica
-        // valido -- no una segunda resolucion.
+        // `pinned.test` does not exist in the system DNS: it is only reached if
+        // the connection uses the address the resolver gave and the policy
+        // validated -- not a second resolution.
         let fetcher = fetcher_with(
             vec![entry("pinned.test", Some(port), true)],
             vec![("pinned.test", vec!["127.0.0.1".parse().unwrap()])],
@@ -1167,9 +1167,9 @@ mod tests {
             "HTTP/1.1 302 Found\r\nLocation: http://{second}/ok\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         ))
         .await;
-        // El primer salto es legitimo (loopback autorizado); el segundo
-        // nombre apunta a la red de metadatos: la politica lo ve en cuanto
-        // se resuelve, antes de conectar.
+        // The first hop is legitimate (authorized loopback); the second
+        // name points to the metadata network: the policy sees it as soon as
+        // it resolves, before connecting.
         let fetcher = fetcher_with(
             vec![
                 entry("first.test", Some(port), true),
@@ -1252,7 +1252,7 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi".to_string(),
         )
         .await;
-        // El fetcher de prueba admite dos salidas a la vez.
+        // The test fetcher allows two simultaneous egress calls.
         let fetcher = fetcher_with(vec![entry("lab.test", Some(port), true)], lab_names());
         let upstream = upstream(
             &format!("http://lab.test:{port}/"),
@@ -1262,7 +1262,7 @@ mod tests {
         let second = fetcher.open(&upstream, "acme/b").await.expect("second");
         let busy = fetcher.open(&upstream, "acme/c").await.expect_err("busy");
         assert_eq!(busy, FetchError::Busy);
-        // Fuera del scope se dice antes de pedir un permiso.
+        // Out of scope is reported before requesting a permit.
         let outside = fetcher.open(&upstream, "other/c").await.expect_err("scope");
         assert_eq!(outside, FetchError::OutOfScope);
         drop((first, second));
@@ -1279,7 +1279,7 @@ mod tests {
             .await
             .expect("bind");
         let port = listener.local_addr().expect("address").port();
-        // Un upstream que acepta y no contesta nunca.
+        // An upstream that accepts and never answers.
         tokio::spawn(async move {
             while let Ok((mut stream, _)) = listener.accept().await {
                 tokio::spawn(async move {
@@ -1308,7 +1308,7 @@ mod tests {
 
     #[test]
     fn a_variable_is_only_a_credential_if_the_operator_allowed_it() {
-        // `PATH` existe en cualquier entorno: lo que se mide es la lista.
+        // `PATH` exists in any environment: what is measured is the list.
         let reference = CredentialRef::parse("env:PATH").expect("a reference");
         assert!(EnvSecrets::default().get(&reference).is_none());
         assert!(EnvSecrets::allowing(["OTHER"]).get(&reference).is_none());
@@ -1347,7 +1347,7 @@ mod tests {
         vec![("lab.test", vec!["127.0.0.1".parse().unwrap()])]
     }
 
-    // -- Peticiones condicionales y modo offline --------------------------
+    // -- Conditional requests and offline mode --------------------------
 
     use std::io::{Read, Write};
     use std::net::TcpListener;
@@ -1355,8 +1355,8 @@ mod tests {
 
     use super::super::egress::AllowedHost;
 
-    /// Un servidor de un solo uso por conexion: guarda cada peticion
-    /// entera y contesta lo que dice `reply`.
+    /// A one-use-per-connection server: stores each whole request
+    /// and answers what `reply` says.
     fn serve(reply: impl Fn(&str) -> String + Send + 'static) -> (u16, Arc<Mutex<Vec<String>>>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("binds");
         let port = listener.local_addr().expect("address").port();
@@ -1463,7 +1463,7 @@ mod tests {
         let outcome = fetcher_for(&[port, stranger])
             .open_conditional(&upstream_at(port, true), "a.bin", Some(&validators()))
             .await;
-        // El otro origen no recibio los validadores, y su `304` no vale.
+        // The other origin did not receive the validators, and its `304` is not valid.
         assert!(
             matches!(outcome, Err(FetchError::Status(304))),
             "{outcome:?}"

@@ -1,21 +1,21 @@
-//! La reserva de namespaces de HSP-143 / HAE-10 contra el cliente real
+//! HSP-143 / HAE-10 namespace reservation against the real client
 //! (`npm`).
 //!
-//! El `npm` publica `@lab/widget` en el hosted de la casa y resuelve contra
-//! un group que tiene ese hosted y un proxy del registro de laboratorio.
-//! El upstream es el atacante de la dependency confusion: tiene
-//! `@lab/widget` con version mayor y un nombre reservado que el hosted no
-//! tiene. Lo que se mide con el cliente de verdad:
+//! `npm` publishes `@lab/widget` to the house's hosted repo and resolves against
+//! a group that has that hosted and a proxy of the lab registry.
+//! The upstream is the dependency-confusion attacker: it has
+//! `@lab/widget` with a higher version and a reserved name that the hosted does not
+//! have. What is measured with the real client:
 //!
-//! - lo interno permitido resuelve (el group sirve el hosted);
-//! - lo publico no reservado resuelve (el proxy trae del upstream);
-//! - lo reservado **nunca** sale del upstream, ni por el group ni por el
-//!   proxy directo, aunque la version publica sea mayor;
-//! - el rechazo llega al cliente como el 403 que es, no como un 404.
+//! - permitted internal content resolves (the group serves the hosted);
+//! - unreserved public content resolves (the proxy fetches from the upstream);
+//! - reserved content **never** comes from the upstream, neither through the group nor
+//!   through the direct proxy, even if the public version is higher;
+//! - the rejection reaches the client as the 403 it is, not as a 404.
 //!
-//! Hace falta `npm` en el PATH: sin el, la suite **falla** diciendo que
-//! falta. La credencial va en un `.npmrc` temporal y cada ejecucion usa su
-//! propia cache y su propio `HOME`.
+//! `npm` is required on the PATH: without it, the suite **fails** saying it
+//! is missing. The credential goes in a temporary `.npmrc` and each run uses its
+//! own cache and its own `HOME`.
 
 mod support;
 
@@ -29,7 +29,7 @@ use base64::Engine as _;
 use sha2::{Digest, Sha512};
 use support::{Deployment, FIRST_ACCOUNT};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -47,20 +47,20 @@ fn require_npm() {
     );
 }
 
-/// El resultado de una ejecucion de `npm`.
+/// The result of an `npm` run.
 struct Run {
     ok: bool,
     output: String,
 }
 
-/// Un cliente `npm` aislado: su `HOME`, su cache y su `.npmrc`.
+/// An isolated `npm` client: its `HOME`, its cache and its `.npmrc`.
 struct Client {
     root: PathBuf,
     rc: PathBuf,
 }
 
 impl Client {
-    /// Un cliente que habla con `/npm/{repositorio}/` del servicio.
+    /// A client that talks to the service's `/npm/{repository}/`.
     fn new(root: &Path, name: &str, port: u16, repository: &str, token: &str) -> Self {
         let root = root.join(name);
         std::fs::create_dir_all(root.join("home")).expect("the home");
@@ -78,7 +78,7 @@ impl Client {
         Self { root, rc }
     }
 
-    /// Ejecuta `npm` en `dir` con la cache de este cliente.
+    /// Runs `npm` in `dir` with this client's cache.
     fn run(&self, dir: &Path, args: &[&str]) -> Run {
         let output = Command::new("npm")
             .arg("--userconfig")
@@ -101,13 +101,13 @@ impl Client {
         }
     }
 
-    /// Una cache vacia: lo siguiente que se instale sale del servicio.
+    /// An empty cache: whatever is installed next comes from the service.
     fn forget_the_cache(&self) {
         let _ = std::fs::remove_dir_all(self.root.join("cache"));
     }
 }
 
-/// Un paquete en `dir` listo para publicar.
+/// A package in `dir` ready to publish.
 fn package(dir: &Path, name: &str, version: &str, body: &str) {
     std::fs::create_dir_all(dir).expect("the package directory");
     std::fs::write(
@@ -121,7 +121,7 @@ fn package(dir: &Path, name: &str, version: &str, body: &str) {
     std::fs::write(dir.join("index.js"), body).expect("index.js");
 }
 
-/// Un proyecto consumidor vacio.
+/// An empty consumer project.
 fn consumer(dir: &Path) {
     std::fs::create_dir_all(dir).expect("the consumer directory");
     std::fs::write(
@@ -138,8 +138,8 @@ fn integrity_of(bytes: &[u8]) -> String {
     )
 }
 
-/// Un registro de laboratorio: sirve lo que se le da y anota lo que le
-/// pidieron, ruta a ruta.
+/// A lab registry: serves what it is given and records what it was
+/// asked, path by path.
 struct Registry {
     port: u16,
     seen: Arc<Mutex<Vec<String>>>,
@@ -150,7 +150,7 @@ impl Registry {
         self.seen.lock().expect("the log").len()
     }
 
-    /// Si alguna peticion toco una ruta que empieza por el prefijo dado.
+    /// Whether any request touched a path starting with the given prefix.
     fn touched(&self, prefix: &str) -> bool {
         self.seen
             .lock()
@@ -218,12 +218,12 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
     let deployment = Deployment::new();
     let root = deployment.directory.path();
 
-    // El tarball que el upstream tiene del nombre reservado: la version del
-    // atacante, mayor que la interna.
+    // The tarball the upstream has for the reserved name: the attacker's
+    // version, higher than the internal one.
     let impostor_tarball = b"impostor bytes served by the public registry".to_vec();
 
-    // Se reserva el puerto del upstream para poder escribir su URL en los
-    // packuments antes de arrancarlo.
+    // The upstream's port is reserved so its URL can be written into the
+    // packuments before starting it.
     let probe = TcpListener::bind("127.0.0.1:0").expect("a port");
     let upstream_port = probe.local_addr().expect("the address").port();
     drop(probe);
@@ -257,8 +257,8 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
         } },
     });
 
-    // El paquete publico que no esta reservado: se empaqueta de verdad para
-    // que `npm install` lo construya.
+    // The public package that is not reserved: it is really packaged so
+    // `npm install` builds it.
     let source = root.join("left-pad-src");
     package(
         &source,
@@ -312,10 +312,10 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
         ("/left-pad/-/left-pad-1.3.0.tgz".to_string(), public_tarball),
     ]);
 
-    // La casa: hosted interno, proxy del registro publico y el group que
-    // reserva el alcance `@lab`. La reserva se declara en el repositorio que
-    // la aplica: en el group (para las lecturas por el group) y en el proxy
-    // (para las lecturas directas al proxy).
+    // The house: internal hosted, public registry proxy and the group that
+    // reserves the `@lab` scope. The reservation is declared on the repository that
+    // applies it: on the group (for reads through the group) and on the proxy
+    // (for direct reads to the proxy).
     deployment.seed_repositories(&[
         serde_json::json!({ "key": "npm-hosted", "format": "npm" }),
         serde_json::json!({
@@ -343,7 +343,7 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let mut service = deployment.start(&[("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())]);
 
-    // El cliente interno publica la version 1.0.0 de verdad.
+    // The internal client really publishes version 1.0.0.
     let publisher = Client::new(root, "publisher", service.port, "npm-hosted", &token);
     let widget = root.join("widget-src");
     package(
@@ -355,8 +355,8 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
     let published = publisher.run(&widget, &["publish", "--access", "public"]);
     assert!(published.ok, "npm publish failed:\n{}", published.output);
 
-    // AC#4: lo interno permitido resuelve a traves del group, y el upstream
-    // (que tiene una version mayor del mismo nombre) no se consulta.
+    // AC#4: permitted internal content resolves through the group, and the upstream
+    // (which has a higher version of the same name) is not consulted.
     let group_client = Client::new(root, "group", service.port, "npm-all", &token);
     let project = root.join("consumer-group");
     consumer(&project);
@@ -373,8 +373,8 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
         "module.exports = 'widget from the house';\n"
     );
 
-    // AC#1: un nombre reservado que solo tiene el upstream no aparece, ni
-    // por el group ni por el proxy directo. El cliente ve el 403 que es.
+    // AC#1: a reserved name that only the upstream has does not appear, neither
+    // through the group nor through the direct proxy. The client sees the 403 it is.
     let denied = group_client.run(&project, &["view", "@lab/ghost", "version"]);
     assert!(!denied.ok, "npm resolved a reserved name from the public");
     assert!(
@@ -395,8 +395,8 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
         denied_direct.output
     );
 
-    // AC#4: lo publico no reservado resuelve, por el group y por el proxy
-    // directo.
+    // AC#4: unreserved public content resolves, through the group and through the direct
+    // proxy.
     let free_group = group_client.run(&project, &["view", "left-pad", "version"]);
     assert!(
         free_group.ok && free_group.output.trim() == "1.3.0",
@@ -421,8 +421,8 @@ fn npm_resolves_the_internal_and_the_public_but_never_the_reserved_scope() {
         "module.exports = 'left-pad from upstream';\n"
     );
 
-    // El upstream sirvio lo publico, pero del reservado no tiene ni una
-    // peticion: el packument del impostor nunca fue pedido.
+    // The upstream served the public one, but for the reserved one it has not a single
+    // request: the impostor's packument was never requested.
     assert!(registry.total() > 0, "the upstream was never asked at all");
     assert!(
         !registry.touched("/@lab/"),

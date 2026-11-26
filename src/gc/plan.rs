@@ -1,23 +1,23 @@
-//! El plan de la recoleccion: el veredicto de cada blob, sin efectos.
+//! The collection plan: the verdict of each blob, without effects.
 //!
-//! Es una funcion pura: recibe lo que hay en el almacen, las raices del
-//! catalogo, las retenciones, las aristas de los manifiestos y el
-//! periodo de gracia, y devuelve el veredicto de cada blob **con su
-//! causa**. No lee ni borra nada, y por eso se prueba sin almacen y sin
-//! base. Lo que se puede *ver* en un dry-run es exactamente lo que el
-//! barrido puede *hacer*: los dos salen de aqui.
+//! It is a pure function: it receives what is in the store, the catalog
+//! roots, the retentions, the manifest edges and the
+//! grace period, and returns the verdict of each blob **with its
+//! cause**. It neither reads nor deletes anything, and so it is tested without a store and without a
+//! database. What can be *seen* in a dry-run is exactly what the
+//! sweep can *do*: both come from here.
 //!
-//! # Los veredictos
+//! # The verdicts
 //!
-//! - `Retained`: algo lo mantiene vivo. Una raiz del catalogo, un
-//!   manifiesto vivo que lo nombra, o una retencion vigente.
-//! - `InGrace`: nadie lo referencia, pero es demasiado reciente para
-//!   tocarlo. Es la barrera frente a una subida o una promocion que
-//!   todavia no llego al catalogo.
-//! - `Reclaimable`: huerfano y mas viejo que la gracia.
+//! - `Retained`: something keeps it alive. A catalog root, a live
+//!   manifest that names it, or a current retention.
+//! - `InGrace`: nobody references it, but it is too recent to
+//!   touch. It is the barrier against an upload or a promotion that
+//!   has not yet reached the catalog.
+//! - `Reclaimable`: orphaned and older than the grace period.
 //!
-//! La precedencia es esa: una retencion gana a la gracia, y la gracia
-//! gana a la reclamacion.
+//! That is the precedence: a retention beats grace, and grace
+//! beats reclamation.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::Duration;
@@ -28,116 +28,116 @@ use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_hub::StoredBlob;
 use serde::Serialize;
 
-/// Las causas que se listan por blob. Un blob compartido por mil
-/// repositorios no tiene que producir un informe de mil lineas.
+/// The causes listed per blob. A blob shared by a thousand
+/// repositories need not produce a thousand-line report.
 pub const MAX_REASONS: usize = 8;
 
-/// Por que un blob se conserva.
+/// Why a blob is kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Reason {
-    /// Una fila del catalogo lo referencia.
+    /// A catalog row references it.
     Root {
-        /// De que fila: asset, referencia, version o subject.
+        /// Which row: asset, reference, version or subject.
         root: &'static str,
-        /// La cuenta.
+        /// The account.
         account: String,
-        /// El repositorio.
+        /// The repository.
         repository: String,
-        /// La ruta o la version.
+        /// The path or the version.
         subject: String,
     },
-    /// Un manifiesto vivo lo nombra: es su configuracion, una capa o un
-    /// manifiesto hijo.
+    /// A live manifest names it: it is its config, a layer or a
+    /// child manifest.
     ReferencedBy {
-        /// El manifiesto que lo nombra.
+        /// The manifest that names it.
         manifest: String,
     },
-    /// Una retencion vigente lo alcanza.
+    /// A current retention covers it.
     Hold {
-        /// La retencion.
+        /// The retention.
         id: String,
-        /// Por que se puso.
+        /// Why it was placed.
         reason: String,
     },
 }
 
-/// Lo que el plan dice de un blob.
+/// What the plan says about a blob.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "verdict", rename_all = "snake_case")]
 pub enum Verdict {
-    /// Se conserva.
+    /// It is kept.
     Retained {
-        /// Las causas, acotadas a [`MAX_REASONS`].
+        /// The causes, bounded by [`MAX_REASONS`].
         reasons: Vec<Reason>,
-        /// Cuantas causas mas hay y no se listan.
+        /// How many more causes there are that are not listed.
         omitted: usize,
     },
-    /// Huerfano, pero dentro del periodo de gracia.
+    /// Orphaned, but within the grace period.
     InGrace {
-        /// Cuanto lleva en el almacen, en segundos.
+        /// How long it has been in the store, in seconds.
         age_secs: u64,
-        /// Cuanto falta para que sea reclamable, en segundos.
+        /// How long until it becomes reclaimable, in seconds.
         remaining_secs: u64,
     },
-    /// Huerfano y fuera de la gracia.
+    /// Orphaned and outside the grace period.
     Reclaimable {
-        /// Cuanto lleva en el almacen, en segundos.
+        /// How long it has been in the store, in seconds.
         age_secs: u64,
     },
-    /// No se pudo saber si esta vivo: el censo no cubrio su alcance, la
-    /// lectura de una raiz fallo, o el grafo dijo "paginemos y no
-    /// terminemos". **Jamais reclamable** (HSP-192, AC3): ante la duda
-    /// no se borra, y el veredicto lo dice en el tipo para que ninguna
-    /// pasada pueda interpretarlo como huerfano.
+    /// It could not be determined whether it is alive: the census did not cover its scope, the
+    /// read of a root failed, or the graph said "let's paginate and not
+    /// finish". **Never reclaimable** (HSP-192, AC3): when in doubt
+    /// nothing is deleted, and the verdict says so in the type so that no
+    /// pass can interpret it as orphaned.
     Unknown {
-        /// Por que no se sabe, dicho con la boca pequena pero dicha.
+        /// Why it is not known, said quietly but said.
         reason: String,
     },
 }
 
-/// El veredicto de un blob.
+/// The verdict of a blob.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Entry {
-    /// El contenido, como `sha256:<hex>`.
+    /// The content, as `sha256:<hex>`.
     pub digest: String,
-    /// Los bytes que ocupa.
+    /// The bytes it occupies.
     pub length: u64,
-    /// Lo que el plan dice.
+    /// What the plan says.
     #[serde(flatten)]
     pub verdict: Verdict,
 }
 
-/// El resumen de un plan.
+/// The summary of a plan.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct Summary {
-    /// Cuantos blobs hay en el almacen.
+    /// How many blobs are in the store.
     pub total: u64,
-    /// Cuantos se conservan.
+    /// How many are kept.
     pub retained: u64,
-    /// Cuantos estan en gracia.
+    /// How many are in grace.
     pub in_grace: u64,
-    /// Cuantos son reclamables.
+    /// How many are reclaimable.
     pub reclaimable: u64,
-    /// Los bytes que se liberarian.
+    /// The bytes that would be freed.
     pub reclaimable_bytes: u64,
-    /// Cuantos quedan en estado desconocido: **nunca** se borran.
+    /// How many remain in unknown state: they are **never** deleted.
     pub unknown: u64,
 }
 
-/// El plan completo.
+/// The complete plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Plan {
-    /// El periodo de gracia con el que se calculo, en segundos.
+    /// The grace period it was computed with, in seconds.
     pub grace_secs: u64,
-    /// Los totales.
+    /// The totals.
     pub summary: Summary,
-    /// El veredicto de cada blob, ordenado por digest.
+    /// The verdict of each blob, sorted by digest.
     pub entries: Vec<Entry>,
 }
 
 impl Plan {
-    /// Los blobs reclamables, con su longitud.
+    /// The reclaimable blobs, with their length.
     pub fn reclaimable(&self) -> impl Iterator<Item = &Entry> {
         self.entries
             .iter()
@@ -145,34 +145,34 @@ impl Plan {
     }
 }
 
-/// Lo que el plan necesita saber.
+/// What the plan needs to know.
 pub struct Input<'a> {
-    /// Los blobs del almacen.
+    /// The blobs in the store.
     pub blobs: &'a [StoredBlob],
-    /// Las raices del catalogo.
+    /// The catalog roots.
     pub roots: &'a [ContentRoot],
-    /// Las retenciones, vigentes o no.
+    /// The retentions, current or not.
     pub holds: &'a [ContentHold],
-    /// Las aristas de los manifiestos: de un manifiesto a lo que nombra.
+    /// The manifest edges: from a manifest to what it names.
     pub edges: &'a HashMap<ContentDigest, Vec<ContentDigest>>,
-    /// El periodo de gracia.
+    /// The grace period.
     pub grace: Duration,
-    /// El instante contra el que caducan las retenciones.
+    /// The instant against which retentions expire.
     pub now: DateTime<Utc>,
-    /// Si `roots` es el censo **completo** de raices. Con un censo por
-    /// paginas (HSP-192, AC3) cada pagina solo responde por su lote: lo
-    /// que aqui parece huerfano puede estar vivo en una pagina que aun
-    /// no se leyó. Con `false`, nada se declara reclamable por
-    /// ignorancia: el veredicto se degrada a `Unknown`, y el barrido
-    /// coordinado exige el censo completo antes de borrar.
+    /// Whether `roots` is the **complete** census of roots. With a paginated
+    /// census (HSP-192, AC3) each page only answers for its batch: what
+    /// looks orphaned here may be alive in a page that has not yet
+    /// been read. With `false`, nothing is declared reclaimable out of
+    /// ignorance: the verdict degrades to `Unknown`, and the coordinated
+    /// sweep requires the complete census before deleting.
     pub roots_are_complete: bool,
 }
 
-/// Calcula el plan.
+/// Computes the plan.
 pub fn plan(input: &Input<'_>) -> Plan {
-    // Quien es dueno de cada contenido vivo: los pares cuenta/repositorio
-    // de las raices que lo alcanzan, directa o transitivamente. Una
-    // retencion de repositorio o de cuenta se resuelve contra esto.
+    // Who owns each live content: the account/repository pairs
+    // of the roots that reach it, directly or transitively. A
+    // repository or account retention is resolved against this.
     let mut owners: HashMap<&ContentDigest, BTreeSet<(&str, &str)>> = HashMap::new();
     let mut direct: HashMap<&ContentDigest, Vec<&ContentRoot>> = HashMap::new();
     let mut work: Vec<&ContentDigest> = Vec::new();
@@ -185,9 +185,9 @@ pub fn plan(input: &Input<'_>) -> Plan {
         work.push(&root.digest);
     }
 
-    // La alcanzabilidad: un manifiesto vivo mantiene vivo lo que nombra,
-    // y lo hace con los mismos duenos. Se itera hasta que no cambia nada:
-    // un digest se visita otra vez solo si gana un dueno.
+    // Reachability: a live manifest keeps alive what it names,
+    // and does so with the same owners. It iterates until nothing changes:
+    // a digest is visited again only if it gains an owner.
     let mut parents: HashMap<&ContentDigest, Vec<&ContentDigest>> = HashMap::new();
     while let Some(parent) = work.pop() {
         let Some(children) = input.edges.get(parent) else {
@@ -310,28 +310,28 @@ pub fn plan(input: &Input<'_>) -> Plan {
     }
 }
 
-/// Por que un manifiesto no se pudo leer como grafo.
+/// Why a manifest could not be read as a graph.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EdgeError {
-    /// No es JSON.
+    /// It is not JSON.
     #[error("the manifest is not valid JSON")]
     NotJson,
-    /// No es ni una imagen ni un indice.
+    /// It is neither an image nor an index.
     #[error("the manifest is neither an image nor an index")]
     Unrecognized,
-    /// Un descriptor no nombra un digest `sha256:<hex>` bien formado.
+    /// A descriptor does not name a well-formed `sha256:<hex>` digest.
     #[error("a descriptor does not name a well formed digest")]
     BadDigest,
 }
 
-/// Lo que un manifiesto nombra.
+/// What a manifest names.
 ///
-/// Para una imagen o un artefacto: la configuracion y las capas. Para un
-/// indice: los manifiestos hijos. El `subject` **no** es una arista: un
-/// referrer no mantiene vivo su sujeto, es el sujeto el que lo hace
-/// alcanzable. Es una lectura **estricta**: un manifiesto que no se
-/// entiende es un error, porque un grafo a medias dejaria sin proteger
-/// lo que ese manifiesto nombra.
+/// For an image or an artifact: the config and the layers. For an
+/// index: the child manifests. The `subject` is **not** an edge: a
+/// referrer does not keep its subject alive, it is the subject that makes it
+/// reachable. It is a **strict** read: a manifest that is not
+/// understood is an error, because a half-built graph would leave unprotected
+/// what that manifest names.
 pub fn manifest_edges(bytes: &[u8]) -> Result<Vec<ContentDigest>, EdgeError> {
     let manifest: serde_json::Value =
         serde_json::from_slice(bytes).map_err(|_| EdgeError::NotJson)?;
@@ -357,8 +357,8 @@ pub fn manifest_edges(bytes: &[u8]) -> Result<Vec<ContentDigest>, EdgeError> {
         }
     }
     if let Some(blobs) = object.get("blobs") {
-        // El manifiesto de artefacto de la version anterior del
-        // protocolo nombra su contenido aqui.
+        // The artifact manifest of the previous protocol
+        // version names its content here.
         recognized = true;
         for blob in blobs.as_array().ok_or(EdgeError::Unrecognized)? {
             edges.push(descriptor_digest(blob)?);
@@ -443,8 +443,8 @@ mod tests {
         run_with(blobs, roots, holds, edges, true)
     }
 
-    /// El mismo plano, declarando si el censo de raices es completo o
-    /// solo un paginado parcial (HSP-192, AC3).
+    /// The same plan, declaring whether the root census is complete or
+    /// only a partial paginated one (HSP-192, AC3).
     fn run_with(
         blobs: &[StoredBlob],
         roots: &[ContentRoot],
@@ -491,9 +491,9 @@ mod tests {
 
     #[test]
     fn a_partial_root_census_never_calls_anything_reclaimable() {
-        // HSP-192, AC3: el censo paginado que aun no termino no puede
-        // declarar huerfanos. Un viejo sin raiz en esta pagina sigue
-        // siendo Unknown hasta que el paginado se complete.
+        // HSP-192, AC3: a paginated census that has not finished cannot
+        // declare orphans. An old blob with no root on this page remains
+        // Unknown until the pagination completes.
         let plan = run_with(&[blob(1, 99_999)], &[], &[], &HashMap::new(), false);
         assert!(matches!(verdict_of(&plan, 1), Verdict::Unknown { .. }));
         assert_eq!(plan.summary.reclaimable, 0);
@@ -502,8 +502,8 @@ mod tests {
 
     #[test]
     fn a_partial_census_still_honors_roots_and_holds() {
-        // Lo que SI se vio vivo, vive; lo que no se vio, se desconoce.
-        // La degradacion a Unknown no borra una retencion real.
+        // What WAS seen alive, lives; what was not seen is unknown.
+        // Degrading to Unknown does not erase a real retention.
         let roots = [root(RootKind::Asset, "app", 1)];
         let holds = [hold("h", HoldScope::Digest { digest: digest(2) }, None)];
         let plan = run_with(
@@ -573,7 +573,7 @@ mod tests {
 
     #[test]
     fn retention_is_transitive_through_an_index() {
-        // indice (1) -> manifiesto (2) -> capa (3)
+        // index (1) -> manifest (2) -> layer (3)
         let roots = [root(RootKind::Asset, "app", 1)];
         let mut edges = HashMap::new();
         edges.insert(digest(1), vec![digest(2)]);
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn a_manifest_that_is_not_alive_does_not_retain_what_it_names() {
-        // El manifiesto 1 no es raiz: sus capas no se conservan por el.
+        // Manifest 1 is not a root: its layers are not kept because of it.
         let mut edges = HashMap::new();
         edges.insert(digest(1), vec![digest(2)]);
         let plan = run(&[blob(1, 99_999), blob(2, 99_999)], &[], &[], &edges);
@@ -633,8 +633,8 @@ mod tests {
 
     #[test]
     fn a_repository_hold_reaches_what_the_repository_keeps_alive() {
-        // El manifiesto 1 esta en `app`; su capa 2 es del mismo repo.
-        // La capa 3 es de `lib` y no la alcanza.
+        // Manifest 1 is in `app`; its layer 2 is from the same repo.
+        // Layer 3 is from `lib` and does not reach it.
         let roots = [
             root(RootKind::Asset, "app", 1),
             root(RootKind::Asset, "lib", 3),

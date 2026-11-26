@@ -1,9 +1,9 @@
-//! El servicio de recoleccion, sobre un almacen real y un libro en memoria.
+//! The collection service, over a real store and an in-memory ledger.
 //!
-//! El almacen es el de ficheros de verdad --la barrera, el grace por
-//! `mtime` y el borrado son los reales--; lo unico simulado es el libro,
-//! para poder provocar los cortes entre la marca, el borrado y la
-//! confirmacion.
+//! The store is the real file-based one (the barrier, the `mtime` grace
+//! and the deletion are real); the only thing simulated is the ledger,
+//! so that cuts can be provoked between the mark, the deletion and the
+//! confirmation.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -182,8 +182,8 @@ fn manifest(config: &ContentDigest, layers: &[&ContentDigest]) -> Vec<u8> {
     .into_bytes()
 }
 
-/// GC-01: lo compartido por dos repositorios y las capas de un manifiesto
-/// no se borran; el huerfano viejo si.
+/// GC-01: what is shared by two repositories and the layers of a manifest
+/// are not deleted; the old orphan is.
 #[tokio::test]
 async fn shared_blobs_and_oci_layers_survive_and_the_orphan_goes() {
     let w = world();
@@ -217,8 +217,8 @@ async fn shared_blobs_and_oci_layers_survive_and_the_orphan_goes() {
     }
 }
 
-/// GC-02: lo reciente, lo retenido y lo que un manifiesto vivo nombra no
-/// son reclamables, y el dry-run dice por que sin borrar nada.
+/// GC-02: what is recent, what is retained and what a live manifest names are not
+/// reclaimable, and the dry-run says why without deleting anything.
 #[tokio::test]
 async fn the_dry_run_explains_and_deletes_nothing() {
     let w = world();
@@ -265,7 +265,7 @@ async fn the_dry_run_explains_and_deletes_nothing() {
     );
 }
 
-/// GC-03: el barrido borra el huerfano una sola vez y lo audita una vez.
+/// GC-03: the sweep deletes the orphan exactly once and audits it once.
 #[tokio::test]
 async fn sweeping_twice_deletes_and_audits_once() {
     let w = world();
@@ -283,8 +283,8 @@ async fn sweeping_twice_deletes_and_audits_once() {
     assert_eq!(trace.actor, "ops");
 }
 
-/// GC-04 (1/3): corte tras marcar y antes de borrar. El reinicio reanuda
-/// la pasada marcada, no abre otra.
+/// GC-04 (1/3): cut after marking and before deleting. The restart resumes
+/// the marked pass, it does not open another.
 #[tokio::test]
 async fn a_cut_after_the_mark_is_resumed() {
     let w = world();
@@ -316,8 +316,8 @@ async fn a_cut_after_the_mark_is_resumed() {
     assert!(w.ledger.pending_run().await.unwrap().is_none());
 }
 
-/// GC-04 (2/3): corte entre el borrado y la confirmacion. El reinicio ve
-/// la intencion y el blob ausente: confirma, y no borra dos veces.
+/// GC-04 (2/3): cut between the deletion and the confirmation. The restart sees
+/// the intent and the missing blob: it confirms, and does not delete twice.
 #[tokio::test]
 async fn a_cut_between_delete_and_confirm_is_confirmed_once() {
     let w = world();
@@ -353,7 +353,7 @@ async fn a_cut_between_delete_and_confirm_is_confirmed_once() {
         })
         .await
         .unwrap();
-    // El borrado ocurrio y el proceso murio antes de confirmar.
+    // The deletion happened and the process died before confirming.
     let reclaimer = w.store.reclaimer().expect("reclaimer");
     reclaimer
         .delete_if_older_than(&orphan, GRACE)
@@ -367,15 +367,15 @@ async fn a_cut_between_delete_and_confirm_is_confirmed_once() {
     assert_eq!(state.tombstones[0].state, DeletionState::Confirmed);
 }
 
-/// GC-04 (3/3): corte tras confirmar y antes de cerrar la pasada. Reanudar
-/// no repite ni el borrado ni el evento.
+/// GC-04 (3/3): cut after confirming and before closing the pass. Resuming
+/// repeats neither the deletion nor the event.
 #[tokio::test]
 async fn a_cut_after_the_confirmation_does_not_repeat_the_audit() {
     let w = world();
     let orphan = put(&w, b"orphan").await;
     age().await;
     let report = w.service.sweep("ops", "acme").await.expect("sweep");
-    // Se reabre la pasada como si el corte hubiera sido antes de cerrarla.
+    // The pass is reopened as if the cut had happened before closing it.
     {
         let mut state = w.ledger.state.lock().unwrap();
         state.runs[0].state = RunState::Marked;
@@ -387,8 +387,8 @@ async fn a_cut_after_the_confirmation_does_not_repeat_the_audit() {
     assert!(!w.store.exists(&orphan).await.unwrap());
 }
 
-/// Algo que se publico despues de marcar no se borra: el segundo escaneo
-/// lo ve vivo.
+/// Something published after marking is not deleted: the second scan
+/// sees it alive.
 #[tokio::test]
 async fn what_is_published_after_the_mark_is_not_deleted() {
     let w = world();
@@ -418,8 +418,8 @@ async fn what_is_published_after_the_mark_is_not_deleted() {
     assert!(w.store.exists(&saved).await.unwrap());
 }
 
-/// UNKNOWN: un manifiesto que no se puede leer aborta la pasada entera y
-/// no se borra nada, ni siquiera lo claramente huerfano.
+/// UNKNOWN: a manifest that cannot be read aborts the whole pass and
+/// nothing is deleted, not even what is clearly orphaned.
 #[tokio::test]
 async fn an_unreadable_manifest_aborts_without_deleting() {
     let w = world();
@@ -445,10 +445,10 @@ async fn an_unreadable_manifest_aborts_without_deleting() {
     assert!(w.ledger.state.lock().unwrap().tombstones.is_empty());
 }
 
-/// Un manifiesto que no se entiende no bloquea la recoleccion de todos: no
-/// aporta aristas, su contenido sigue protegido por su raiz y el huerfano
-/// se reclama. Un inquilino con una ruta cruda `manifests/<digest>` no
-/// puede dejar la plataforma en estado desconocido.
+/// A manifest that is not understood does not block the collection of everything: it
+/// contributes no edges, its content stays protected by its root and the orphan
+/// is reclaimed. A tenant with a raw `manifests/<digest>` path cannot
+/// leave the platform in an unknown state.
 #[tokio::test]
 async fn a_manifest_that_is_not_understood_does_not_block_the_collection() {
     let w = world();
@@ -467,8 +467,8 @@ async fn a_manifest_that_is_not_understood_does_not_block_the_collection() {
     assert!(w.store.exists(&junk).await.unwrap(), "the root keeps it");
 }
 
-/// Una ruta cruda que solo empieza por `manifests/` no es un manifiesto: ni
-/// se lee ni puede abortar la pasada.
+/// A raw path that merely starts with `manifests/` is not a manifest: it is neither
+/// read nor can it abort the pass.
 #[tokio::test]
 async fn a_raw_path_under_manifests_is_not_read_as_a_manifest() {
     let w = world();
@@ -508,9 +508,9 @@ async fn holds_validate_their_input_and_can_be_released() {
     assert!(!w.service.release_hold(&hold.id).await.unwrap());
 }
 
-/// Un manifiesto OCI corrupto o ausente no hace abortar al scrub: es
-/// exactamente lo que tiene que informar (a diferencia de la recoleccion,
-/// que ante un manifiesto ilegible no actua).
+/// A corrupt or missing OCI manifest does not make the scrub abort: it is
+/// exactly what it has to report (unlike the collection,
+/// which does not act on an unreadable manifest).
 #[tokio::test]
 async fn a_damaged_or_missing_oci_manifest_is_reported_by_the_scrub_not_fatal() {
     use hodei_artifacts_api::recovery::{Finding, Scrubber};
@@ -558,10 +558,10 @@ async fn a_damaged_or_missing_oci_manifest_is_reported_by_the_scrub_not_fatal() 
     let gone = find(&cas, &missing.value).expect("the manifest file");
     std::fs::remove_file(gone).unwrap();
 
-    // La recoleccion no actua ante un manifiesto ilegible...
+    // The collection does not act on an unreadable manifest...
     assert!(w.service.dry_run().await.is_err());
 
-    // ...y el scrub lo informa en vez de abortar.
+    // ...and the scrub reports it instead of aborting.
     let scrubber = Scrubber::new(w.ledger.clone(), w.store.clone(), GRACE).expect("scrubber");
     let report = scrubber
         .run()

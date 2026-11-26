@@ -1,18 +1,18 @@
-//! Promocion al canal trusted y su revocacion.
+//! Promotion to the trusted channel and its revocation.
 //!
-//! Dos rutas de inquilino (no de administracion de plataforma):
+//! Two tenant routes (not platform administration):
 //!
-//! - `POST /api/v1/promotions`: pide promover un digest de un repositorio.
-//!   Cedar decide **quien** (`PromoteAsset` sobre el repositorio) y la
-//!   politica de confianza decide si el **software** lo merece; solo si
-//!   las dos dicen que si se concede el digest, y se concede con el
-//!   identificador de la decision que lo avalo.
-//! - `POST /api/v1/promotions/revoke`: retira una concesion por digest o
-//!   por decision (`RevokePromotion`). Tiene efecto en la peticion
-//!   siguiente: no hay cache.
+//! - `POST /api/v1/promotions`: requests promoting a digest of a repository.
+//!   Cedar decides **who** (`PromoteAsset` on the repository) and the
+//!   trust policy decides whether the **software** deserves it; only if
+//!   both say yes is the digest granted, and it is granted with the
+//!   identifier of the decision that backed it.
+//! - `POST /api/v1/promotions/revoke`: withdraws a grant by digest or
+//!   by decision (`RevokePromotion`). It takes effect on the next
+//!   request: there is no cache.
 //!
-//! La cuenta sale siempre del principal verificado. Ningun campo del
-//! cuerpo ni cabecera confiere cuenta ni permiso.
+//! The account always comes from the verified principal. No body field
+//! or header confers an account or a permission.
 
 use axum::{
     Json,
@@ -38,7 +38,7 @@ use crate::handlers::{bearer_token, correlation_id, error_body, record_audit};
 use crate::trust::hrn::artifact_hrn;
 use crate::trust::promotion::{TRUSTED_DISTRIBUTION, digests_covered};
 
-/// El error de una peticion de promocion o revocacion.
+/// The error of a promotion or revocation request.
 #[derive(Debug)]
 pub enum PromotionApiError {
     Unauthorized,
@@ -49,8 +49,8 @@ pub enum PromotionApiError {
     NotImplemented,
     Unavailable,
     Corrupt,
-    /// La politica rechazo la promocion; lleva las razones y la version
-    /// del riesgo contra la que se midio.
+    /// The policy rejected the promotion; it carries the reasons and the risk
+    /// version against which it was measured.
     Refused(Vec<String>, u64),
 }
 
@@ -134,11 +134,11 @@ pub struct RevokeResponse {
     pub revoked: u64,
 }
 
-/// El digest `sha256:<hex>` de una peticion, o nada.
+/// The `sha256:<hex>` digest of a request, or nothing.
 ///
-/// Solo se acepta la forma canonica: minusculas y la longitud que dice el
-/// algoritmo. Un digest que no es el que el catalogo guarda no es una
-/// forma alternativa de nombrarlo, es otra cosa.
+/// Only the canonical form is accepted: lowercase and the length the
+/// algorithm dictates. A digest that is not the one the catalog stores is not an
+/// alternative way of naming it, it is something else.
 fn parse_digest(text: &str) -> Option<ContentDigest> {
     let value = text.strip_prefix("sha256:")?;
     if value.chars().any(|c| c.is_ascii_uppercase()) {
@@ -148,7 +148,7 @@ fn parse_digest(text: &str) -> Option<ContentDigest> {
     digest.is_well_formed().then_some(digest)
 }
 
-/// Un nombre de repositorio o una ruta que no desbordan lo razonable.
+/// A repository name or a path that does not exceed what is reasonable.
 fn sane(text: &str, max: usize) -> bool {
     !text.is_empty() && text.len() <= max && !text.chars().any(char::is_control)
 }
@@ -192,7 +192,7 @@ pub async fn promote(
 ) -> Result<Json<PromoteResponse>, PromotionApiError> {
     let context = authenticate(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
-    // El cuerpo se lee despues de autenticar: sin credencial es siempre 401.
+    // The body is read after authenticating: without a credential it is always 401.
     let body: PromoteRequestBody = body_of(request).await?;
     if !sane(&body.repository, 128) || !sane(&body.path, 1024) {
         return Err(PromotionApiError::BadRequest);
@@ -219,8 +219,8 @@ pub async fn promote(
     let account = context.account().as_str().to_string();
     let actor = context.principal().subject().as_str().to_string();
 
-    // Un repositorio de otra cuenta o que no existe es el mismo 404: la
-    // consulta ya va acotada a la cuenta verificada.
+    // A repository of another account or one that does not exist is the same 404: the
+    // query is already scoped to the verified account.
     let repository = reader
         .repository(&account, &body.repository)
         .await
@@ -233,13 +233,13 @@ pub async fn promote(
     ) {
         Ok(AuthorizationOutcome::Permit) => AuthorizationResult::Permit,
         Ok(AuthorizationOutcome::Deny(_)) => AuthorizationResult::Deny,
-        // Un motor que no responde no es un permiso.
+        // An engine that does not respond is not a permission.
         Ok(AuthorizationOutcome::Indeterminate(_)) | Err(_) => AuthorizationResult::Indeterminate,
     };
     let permitted = authorization == AuthorizationResult::Permit;
 
-    // Quien no puede promover no averigua si la ruta existe: sin permiso,
-    // un asset ausente o distinto responde igual que uno presente (403).
+    // Whoever cannot promote does not find out whether the path exists: without permission,
+    // an absent or different asset answers the same as a present one (403).
     let asset = match reader.asset(&account, &body.repository, &body.path).await {
         Ok(asset) => asset,
         Err(_) if !permitted => {
@@ -256,9 +256,9 @@ pub async fn promote(
         }
         Err(error) => return Err(catalog_error(&error)),
     };
-    // La promocion es de un digest, no de un nombre. Si la ruta apunta ya
-    // a otro contenido (una etiqueta que se movio), no se promueve lo que
-    // el cliente no vio.
+    // The promotion is for a digest, not a name. If the path already points
+    // to other content (a tag that moved), what the client did not see
+    // is not promoted.
     if asset.digest != digest {
         return Err(if permitted {
             PromotionApiError::Conflict
@@ -267,7 +267,7 @@ pub async fn promote(
         });
     }
 
-    // El HRN del sujeto: el que la evidencia y la capsula usan.
+    // The subject's HRN: the one that the evidence and the capsule use.
     let subject = artifact_hrn(repository.hrn.region(), &account, &body.repository, &digest);
     let evidence = state
         .evidence_reader
@@ -276,11 +276,11 @@ pub async fn promote(
         .map_err(|_| PromotionApiError::Unavailable)?;
     let now = Utc::now();
     let capsule = CapsuleAssembler::new().assemble(&subject, &evidence, now);
-    // Los hechos de riesgo salen del grafo de impacto: que alcanza a este
-    // sujeto y hasta que version del registro. Si el grafo no puede
-    // establecerlos --sin cobertura, vista atrasada, severidad desconocida
-    // o fallo de lectura-- la respuesta es UNKNOWN, y una politica que
-    // exige el riesgo no concede sobre UNKNOWN.
+    // The risk facts come from the impact graph: what reaches this
+    // subject and up to which registry version. If the graph cannot
+    // establish them --no coverage, stale view, unknown severity
+    // or read failure-- the answer is UNKNOWN, and a policy that
+    // requires the risk does not grant on UNKNOWN.
     let risk_facts = match state.investigation_limits.the_graph_tenant(&subject) {
         Some(tenant) => match state.risk_facts.risk_facts(&tenant, &subject).await {
             Ok(facts) => facts,
@@ -306,8 +306,8 @@ pub async fn promote(
         TRUSTED_DISTRIBUTION,
         now,
     );
-    // El servicio se llama **siempre**, tambien con un Deny de Cedar: la
-    // decision, la que sea, queda escrita.
+    // The service is called **always**, also with a Cedar Deny: the
+    // decision, whatever it is, is written down.
     let outcome = plane
         .service()
         .request_promotion(
@@ -369,7 +369,7 @@ pub async fn promote(
         }
     }
 
-    // Lo que abarca: el digest y lo que un manifiesto nombra.
+    // What it covers: the digest and what a manifest names.
     let covered = covered_by(
         reader.as_ref(),
         content.as_ref(),
@@ -380,13 +380,13 @@ pub async fn promote(
     )
     .await;
 
-    // AC1 y AC3: la concesion se emite desde la decision autorizada y
-    // persistida, y solo se publica si su instantanea sigue vigente. Si
-    // entre la decision y aqui se activo otra version de la politica, la
-    // decision esta obsoleta y ninguna concesion se publica. Y al
-    // emitirse desde ella, lo que el grant promete como sujeto,
-    // politica, evidencia y riesgo es lo que de verdad se decidio, no lo
-    // que trajo el cliente.
+    // AC1 and AC3: the grant is issued from the authorized and
+    // persisted decision, and is only published if its snapshot is still current. If
+    // another policy version was activated between the decision and here, the
+    // decision is stale and no grant is published. And as it is
+    // issued from it, what the grant promises as subject,
+    // policy, evidence and risk is what was actually decided, not
+    // what the client brought.
     let decision = plane
         .service()
         .decision(&decision_id)
@@ -454,7 +454,7 @@ pub async fn revoke(
     if !sane(&body.repository, 128) || !sane(&body.reason, 1024) {
         return Err(PromotionApiError::BadRequest);
     }
-    // Exactamente uno: por digest o por decision.
+    // Exactly one: by digest or by decision.
     let target = match (&body.digest, &body.decision_id) {
         (Some(digest), None) => {
             Target::Digest(parse_digest(digest).ok_or(PromotionApiError::BadRequest)?)
@@ -514,10 +514,10 @@ pub async fn revoke(
     let now = Utc::now();
     let revoked = match &target {
         Target::Digest(digest) => {
-            // Revocar un manifiesto retira lo que su promocion concedio
-            // con el: su configuracion, sus capas y los hijos de un
-            // indice. Si no, retirar la imagen dejaria sus capas
-            // sirviendose. Es la misma cuenta que al promover.
+            // Revoking a manifest withdraws what its promotion granted
+            // with it: its config, its layers and the children of an
+            // index. Otherwise, withdrawing the image would leave its layers
+            // being served. It is the same accounting as when promoting.
             let covered = match state.content_store.as_ref() {
                 Some(content) => {
                     covered_by(
@@ -583,11 +583,11 @@ pub async fn revoke(
     }
 }
 
-/// Los digests que abarca un digest del repositorio: el mismo y, si es un
-/// manifiesto, lo que nombra. Sirve igual para conceder que para retirar.
+/// The digests covered by a digest of the repository: itself and, if it is a
+/// manifest, what it names. It works equally for granting and for withdrawing.
 ///
-/// Un digest que el repositorio no tiene como manifiesto se abarca a si
-/// mismo y nada mas.
+/// A digest the repository does not have as a manifest covers itself
+/// and nothing else.
 async fn covered_by(
     reader: &dyn hodei_catalog::CatalogReader,
     content: &dyn hodei_hub::BlobStore,

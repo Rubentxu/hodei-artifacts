@@ -3,30 +3,30 @@ use std::fmt;
 
 /// Hrn (Hodei Resource Name)
 ///
-/// Formato canónico (HRN v2):
+/// Canonical format (HRN v2):
 /// `hrn:<partition>:<service>:<region>:<account_id>:<resource_type>/<resource_id>`
 ///
-/// Ejemplo:
+/// Example:
 /// `hrn:hodei:artifacts:eu-west-1:acme:repository/releases`
 ///
-/// Compatibilidad (HRN v1, alias):
+/// Compatibility (HRN v1, alias):
 /// `hrn:<partition>:<service>::<account_id>:<resource_type>/<resource_id>`
 ///
-/// El HRN v1 es exactamente un HRN v2 con la **región vacía**. Se conserva
-/// como alias: se parsea igual y se vuelve a serializar byte a byte idéntico,
-/// de modo que ningún HRN almacenado cambia de forma.
+/// The HRN v1 is exactly an HRN v2 with an **empty region**. It is kept
+/// as an alias: it parses the same and serializes back byte for byte identical,
+/// so that no stored HRN changes shape.
 ///
-/// Notas:
-/// - `partition` nunca se infiere: un valor ausente o desconocido no se rellena
-/// - `service` actúa como namespace lógico (se normaliza a lowercase)
-/// - `resource_type` puede mapear a un tipo Cedar namespaced (ServicePascalCase::Type)
+/// Notes:
+/// - `partition` is never inferred: an absent or unknown value is not filled in
+/// - `service` acts as a logical namespace (normalized to lowercase)
+/// - `resource_type` can map to a namespaced Cedar type (ServicePascalCase::Type)
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Serialize, Deserialize)]
 pub struct Hrn {
     pub partition: String,
     pub service: String,
-    /// Región del recurso. Vacía en los HRN v1 (alias) y en los recursos
-    /// globales. Su ausencia se tolera al leer para que los HRN v1 persistidos
-    /// sigan siendo legibles.
+    /// Region of the resource. Empty in HRN v1 (alias) and in global
+    /// resources. Its absence is tolerated when reading so that persisted HRN v1
+    /// remain readable.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub region: String,
     pub account_id: String,
@@ -35,52 +35,52 @@ pub struct Hrn {
 }
 
 impl Hrn {
-    /// Acceso al campo service
+    /// Access to the service field
     pub fn service(&self) -> &str {
         &self.service
     }
 
-    /// Acceso al campo resource_id
+    /// Access to the resource_id field
     pub fn resource_id(&self) -> &str {
         &self.resource_id
     }
 
-    /// Acceso al campo resource_type
+    /// Access to the resource_type field
     pub fn resource_type(&self) -> &str {
         &self.resource_type
     }
 
-    /// Acceso al campo partition
+    /// Access to the partition field
     pub fn partition(&self) -> &str {
         &self.partition
     }
 
-    /// Acceso al campo region
+    /// Access to the region field
     ///
-    /// Vacía en los HRN v1 (alias) y en los recursos globales.
+    /// Empty in HRN v1 (alias) and in global resources.
     pub fn region(&self) -> &str {
         &self.region
     }
 
-    /// Acceso al campo account_id
+    /// Access to the account_id field
     pub fn account_id(&self) -> &str {
         &self.account_id
     }
 
-    /// ¿Este HRN es un alias v1 (sin región)?
+    /// Is this HRN a v1 alias (without region)?
     ///
-    /// Un HRN v1 y un HRN v2 con la región vacía son la misma cosa: no hay
-    /// ningún otro elemento que los distinga.
+    /// An HRN v1 and an HRN v2 with an empty region are the same thing: there is
+    /// no other element that tells them apart.
     pub fn is_legacy_v1(&self) -> bool {
         self.region.is_empty()
     }
 
-    /// Convención: nombre de servicio siempre en minúsculas (puede contener dígitos y '-')
+    /// Convention: service name always lowercase (may contain digits and '-')
     fn normalize_service_name(service: &str) -> String {
         service.to_ascii_lowercase()
     }
 
-    /// Convierte 'iam' o 'my-service' a 'Iam' o 'MyService' (namespace Cedar PascalCase)
+    /// Converts 'iam' or 'my-service' to 'Iam' or 'MyService' (Cedar PascalCase namespace)
     pub fn to_pascal_case(s: &str) -> String {
         s.split(['-', '_'])
             .filter(|seg| !seg.is_empty())
@@ -97,7 +97,7 @@ impl Hrn {
             .join("")
     }
 
-    /// Construye un HRN v1 (alias): la región queda vacía.
+    /// Builds an HRN v1 (alias): the region is left empty.
     pub fn new(
         partition: String,
         service: String,
@@ -115,9 +115,9 @@ impl Hrn {
         )
     }
 
-    /// Construye un HRN v2 con región explícita.
+    /// Builds an HRN v2 with explicit region.
     ///
-    /// Una región vacía produce un HRN v1 (alias), indistinguible de él.
+    /// An empty region produces an HRN v1 (alias), indistinguishable from it.
     pub fn with_region(
         partition: String,
         service: String,
@@ -136,9 +136,9 @@ impl Hrn {
         }
     }
 
-    /// Constructor usando un tipo que implemente `HodeiEntityType` para garantizar consistencia
+    /// Constructor using a type that implements `HodeiEntityType` to guarantee consistency
     ///
-    /// # Ejemplo
+    /// # Example
     /// ```ignore
     /// let user_hrn = Hrn::for_entity_type::<UserType>(
     ///     "hodei".to_string(),
@@ -163,10 +163,10 @@ impl Hrn {
         }
     }
 
-    /// Parse HRN desde su representación en string
+    /// Parse an HRN from its string representation
     ///
-    /// Acepta tanto el HRN v2 como su alias v1 (región vacía). Cualquier otra
-    /// forma se rechaza.
+    /// Accepts both the HRN v2 and its v1 alias (empty region). Any other
+    /// form is rejected.
     pub fn from_string(hrn_str: &str) -> Option<Self> {
         // Delegate resource parsing to the single canonical contract. Keeping
         // a second, more permissive parser here let the HTTP edge accept shapes
@@ -182,23 +182,23 @@ impl Hrn {
         })
     }
 
-    /// Construye el nombre completo del tipo de entidad (Namespace::Type)
+    /// Builds the full entity type name (Namespace::Type)
     ///
-    /// Este método es útil para construir identificadores de entidad
-    /// para sistemas de políticas.
+    /// This method is useful for building entity identifiers
+    /// for policy systems.
     ///
-    /// Regla:
-    /// - Si `resource_type` ya contiene `::`, se usa tal cual.
-    /// - Sino y existe `service`, se produce `<ServicePascalCase>::<ResourceType>`
+    /// Rule:
+    /// - If `resource_type` already contains `::`, it is used as is.
+    /// - Otherwise, if `service` exists, `<ServicePascalCase>::<ResourceType>` is produced
     ///
-    /// El namespace es el **servicio** declarado por el tipo de entidad
-    /// (`HodeiEntityType::entity_type_name()` usa exactamente la misma regla:
-    /// `iam` + `User` → `Iam::User`), y el nombre del tipo es el tipo de
-    /// recurso declarado, con la primera letra en mayúscula porque Cedar exige
-    /// que un tipo de entidad empiece por letra mayúscula. Así, el tipo
-    /// derivado de un HRN coincide con el tipo que la plataforma registra en el
-    /// schema Cedar, y una política escrita contra el schema registrado nombra
-    /// a la misma entidad que evalúa el motor.
+    /// The namespace is the **service** declared by the entity type
+    /// (`HodeiEntityType::entity_type_name()` uses exactly the same rule:
+    /// `iam` + `User` → `Iam::User`), and the type name is the declared resource
+    /// type, with the first letter uppercased because Cedar requires
+    /// an entity type to start with an uppercase letter. This way, the type
+    /// derived from an HRN matches the type that the platform registers in the
+    /// Cedar schema, and a policy written against the registered schema names
+    /// the same entity that the engine evaluates.
     pub fn entity_type_name(&self) -> String {
         let namespace = Self::to_pascal_case(&self.service);
         if self.resource_type.contains("::") {
@@ -213,35 +213,35 @@ impl Hrn {
         }
     }
 
-    /// Identificador opaco y completamente cualificado del recurso
+    /// Opaque and fully qualified identifier of the resource
     ///
-    /// Es el HRN canónico completo. Dos recursos con el mismo `resource_id`
-    /// pero en cuentas, servicios, regiones o particiones distintas producen
-    /// identificadores distintos, así que no pueden confundirse aguas abajo
-    /// (por ejemplo, como identificador de entidad Cedar).
+    /// It is the full canonical HRN. Two resources with the same `resource_id`
+    /// but in different accounts, services, regions or partitions produce
+    /// different identifiers, so they cannot be confused downstream
+    /// (for example, as a Cedar entity identifier).
     ///
-    /// # Ejemplo
+    /// # Example
     /// `hrn:aws:iam::123456789012:User/alice`
     pub fn scoped_entity_id(&self) -> String {
         self.to_string()
     }
 
-    /// Construye un identificador de entidad completo en formato string
+    /// Builds a full entity identifier in string format
     ///
-    /// Formato: `<EntityTypeName>::"<scoped id>"`
-    /// Ejemplo: `Iam::User::"hrn:aws:iam::123456789012:User/alice"`
+    /// Format: `<EntityTypeName>::"<scoped id>"`
+    /// Example: `Iam::User::"hrn:aws:iam::123456789012:User/alice"`
     ///
-    /// El identificador incluye el scope completo, de modo que dos recursos
-    /// homónimos en cuentas distintas no comparten UID.
+    /// The identifier includes the full scope, so that two homonymous resources
+    /// in different accounts do not share a UID.
     pub fn entity_uid_string(&self) -> String {
         let type_name = self.entity_type_name();
         format!("{}::\"{}\"", type_name, self.escaped_scoped_entity_id())
     }
 
-    /// El identificador cualificado, escapado para la sintaxis de Cedar
+    /// The qualified identifier, escaped for Cedar syntax
     ///
-    /// Cedar escapa `\` y `"` con una barra invertida dentro de los
-    /// identificadores entrecomillados.
+    /// Cedar escapes `\` and `"` with a backslash inside
+    /// quoted identifiers.
     fn escaped_scoped_entity_id(&self) -> String {
         let mut out = String::with_capacity(self.scoped_entity_id().len());
         for ch in self.scoped_entity_id().chars() {
@@ -254,9 +254,9 @@ impl Hrn {
         out
     }
 
-    /// Normaliza un identificador para Cedar
-    /// - Primer caracter debe ser [A-Za-z_] (sino se sustituye por '_')
-    /// - El resto: alfanumérico o '_' (sino se sustituye por '_')
+    /// Normalizes an identifier for Cedar
+    /// - First character must be [A-Za-z_] (otherwise it is replaced by '_')
+    /// - The rest: alphanumeric or '_' (otherwise it is replaced by '_')
     fn normalize_ident(s: &str) -> String {
         let mut out = String::new();
         let mut chars = s.chars();
@@ -280,11 +280,11 @@ impl Hrn {
         out
     }
 
-    /// Normaliza un tipo de recurso al identificador de tipo de Cedar
+    /// Normalizes a resource type to the Cedar type identifier
     ///
-    /// Cedar exige que un tipo de entidad empiece por letra mayúscula, así
-    /// que la primera letra se eleva y el resto del nombre se conserva (un
-    /// tipo compuesto como `UserProfile` no se decompone en `Userprofile`).
+    /// Cedar requires an entity type to start with an uppercase letter, so
+    /// the first letter is raised and the rest of the name is kept (a
+    /// compound type such as `UserProfile` is not decomposed into `Userprofile`).
     fn to_cedar_type_ident(s: &str) -> String {
         let normalized = Self::normalize_ident(s);
         let mut chars = normalized.chars();
@@ -327,8 +327,8 @@ mod tests {
         assert!(rendered.contains("User/alice"));
     }
 
-    /// Un HRN v1 es un HRN v2 con la región vacía: se serializa byte a byte
-    /// idéntico, de modo que ningún HRN ya almacenado cambia de forma.
+    /// An HRN v1 is an HRN v2 with an empty region: it serializes byte for byte
+    /// identical, so that no already stored HRN changes shape.
     #[test]
     fn a_v1_hrn_roundtrips_byte_identically() {
         let original = "hrn:aws:hodei::123456789012:User/alice";
@@ -339,7 +339,7 @@ mod tests {
         assert_eq!(hrn.to_string(), original);
     }
 
-    /// Un HRN v2 conserva su región y solo se diferencia del v1 en ese campo.
+    /// An HRN v2 keeps its region and differs from v1 only in that field.
     #[test]
     fn a_v2_hrn_roundtrips_with_its_region() {
         let original = "hrn:hodei:artifacts:eu-west-1:acme:repository/releases";
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(hrn.to_string(), original);
     }
 
-    /// Un HRN con región vacía no se distingue del v1: ambos son el mismo alias.
+    /// An HRN with an empty region is not distinguishable from v1: both are the same alias.
     #[test]
     fn an_empty_region_is_the_v1_alias() {
         let with_region = Hrn::with_region(
@@ -371,8 +371,8 @@ mod tests {
         assert_eq!(with_region.to_string(), "hrn:aws:iam::123:User/alice");
     }
 
-    /// El identificador cualificado distingue dos cuentas distintas con el
-    /// mismo nombre de recurso: es el requisito de aislamiento inter-tenant.
+    /// The qualified identifier tells apart two different accounts with the
+    /// same resource name: it is the inter-tenant isolation requirement.
     #[test]
     fn the_scoped_id_separates_homonyms_of_different_accounts() {
         let alice_in_a = Hrn::new(
@@ -397,8 +397,8 @@ mod tests {
         );
     }
 
-    /// La región también forma parte del scope: el mismo nombre en dos
-    /// regiones son dos recursos distintos.
+    /// The region is also part of the scope: the same name in two
+    /// regions are two different resources.
     #[test]
     fn the_scoped_id_separates_homonyms_of_different_regions() {
         let in_eu = Hrn::with_region(
@@ -430,9 +430,9 @@ mod tests {
         assert!(Hrn::from_string("hrn:aws:iam::123:User/").is_none());
     }
 
-    /// El tipo derivado del HRN coincide con el tipo **declarado** que la
-    /// plataforma registra en el schema Cedar: una política escrita contra el
-    /// schema registrado nombra a la misma entidad que evalúa el motor.
+    /// The type derived from the HRN matches the **declared** type that the
+    /// platform registers in the Cedar schema: a policy written against the
+    /// registered schema names the same entity that the engine evaluates.
     #[test]
     fn the_hrn_type_name_matches_the_declared_type_name() {
         use crate::domain::entity::HodeiEntityType;
@@ -460,9 +460,9 @@ mod tests {
         assert_eq!(hrn.entity_type_name(), DeclaredUser::entity_type_name());
     }
 
-    /// El tipo de recurso se normaliza a la forma que Cedar exige: primera
-    /// letra en mayúscula, resto conservado (un tipo compuesto no se
-    /// decompone).
+    /// The resource type is normalized to the form that Cedar requires: first
+    /// letter uppercase, the rest kept (a compound type is not
+    /// decomposed).
     #[test]
     fn the_resource_type_is_normalized_to_a_cedar_type_name() {
         let lower = Hrn::new(
@@ -553,8 +553,8 @@ mod tests {
         assert_eq!(hrn.region(), "");
     }
 
-    /// Un HRN persistido antes de la región debe seguir leyéndose, y un HRN
-    /// con región no debe alterar el JSON de uno que no la tiene.
+    /// An HRN persisted before the region must keep being readable, and an HRN
+    /// with a region must not alter the JSON of one that does not have it.
     #[test]
     fn a_persisted_v1_hrn_is_still_readable() {
         let v1 = r#"{"partition":"aws","service":"iam","account_id":"123","resource_type":"User","resource_id":"alice"}"#;

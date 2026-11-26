@@ -1,51 +1,51 @@
-//! El dialecto de error de la distribución OCI.
+//! The error dialect of OCI distribution.
 //!
-//! Un cliente de OCI no lee un `404` a pelo: lee un **envelope** con un
-//! código del dialecto (`BLOB_UNKNOWN`, `MANIFEST_UNKNOWN`,
-//! `BLOB_UPLOAD_INVALID`, …) y un mensaje. El código es lo que el cliente
-//! entiende, y el estado HTTP es lo que el transporte entiende.
+//! An OCI client does not read a bare `404`: it reads an **envelope** with a
+//! dialect code (`BLOB_UNKNOWN`, `MANIFEST_UNKNOWN`,
+//! `BLOB_UPLOAD_INVALID`, …) and a message. The code is what the client
+//! understands, and the HTTP status is what the transport understands.
 //!
-//! Y hay una regla que el dialecto impone y que se suele perder: un
-//! recurso de **otra cuenta** no existe para esta, y su error es el mismo
-//! que el de un recurso que no existe. Un `403` o un `404` con un mensaje
-//! que lo distinga filtra la existencia de lo ajeno.
+//! And there is a rule the dialect imposes that tends to get lost: a
+//! resource of **another account** does not exist for this one, and its error is the same
+//! as that of a resource that does not exist. A `403` or a `404` with a message
+//! that tells them apart leaks the existence of what belongs to others.
 //!
-//! Por eso los constructores de aquí no admiten el nombre de la cuenta
-//! ajena: el mensaje dice qué se pidió, nunca de quién es.
+//! That is why the constructors here do not accept the name of the foreign
+//! account: the message says what was asked for, never whose it is.
 
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
-/// Por qué una petición OCI no se puede servir, con su código OCI.
+/// Why an OCI request cannot be served, with its OCI code.
 #[derive(Debug, Clone)]
 pub struct OciFailure {
-    /// El código del error en el dialecto de la distribución.
+    /// The error code in the distribution dialect.
     code: &'static str,
-    /// Lo que pasó, dicho sin credenciales ni rutas de disco.
+    /// What happened, stated without credentials or disk paths.
     message: String,
-    /// El estado HTTP que el código OCI lleva.
+    /// The HTTP status the OCI code carries.
     status: StatusCode,
-    /// El rango que hay ahora, para las respuestas que lo dicen.
+    /// The range that exists now, for the responses that state it.
     ///
-    /// Es lo que permite a un cliente recuperar el offset de una subida
-    /// que se ha descolocado: el error dice cuanto hay, y el cliente
-    /// sigue desde ahi.
+    /// It is what lets a client recover the offset of an upload
+    /// that has gone out of sync: the error says how much there is, and the client
+    /// continues from there.
     range: Option<String>,
-    /// El reto de autenticacion, para las respuestas `401`.
+    /// The authentication challenge, for `401` responses.
     ///
-    /// Un `401` sin reto no dice al cliente como autenticarse: le dice
-    /// que no puede, y se queda ahi. El reto es lo que convierte un
-    /// "no" en un "asi se hace".
+    /// A `401` without a challenge does not tell the client how to authenticate: it says
+    /// that it cannot, and leaves it there. The challenge is what turns a
+    /// "no" into a "here is how it is done".
     challenge: Option<String>,
-    /// Los segundos de `Retry-After`, para la saturacion de subidas.
+    /// The seconds of `Retry-After`, for upload saturation.
     ///
-    /// La cuenta no hace nada mal: hace demasiado a la vez. El estado
-    /// sin el consejo seria un "no" sin puerta de vuelta.
+    /// The account is doing nothing wrong: it is doing too much at once. The status
+    /// without the advice would be a "no" with no way back.
     retry_after: Option<u64>,
 }
 
 impl OciFailure {
-    /// El blob no está, o el repositorio no lo referencia.
+    /// The blob is not there, or the repository does not reference it.
     pub fn blob_unknown(message: impl Into<String>) -> Self {
         Self {
             code: "BLOB_UNKNOWN",
@@ -57,7 +57,7 @@ impl OciFailure {
         }
     }
 
-    /// El manifiesto no está, o el repositorio no lo referencia.
+    /// The manifest is not there, or the repository does not reference it.
     pub fn manifest_unknown(message: impl Into<String>) -> Self {
         Self {
             code: "MANIFEST_UNKNOWN",
@@ -69,7 +69,7 @@ impl OciFailure {
         }
     }
 
-    /// El repositorio no existe para esta cuenta.
+    /// The repository does not exist for this account.
     pub fn name_unknown(message: impl Into<String>) -> Self {
         Self {
             code: "NAME_UNKNOWN",
@@ -81,7 +81,7 @@ impl OciFailure {
         }
     }
 
-    /// El nombre del repositorio no es valido.
+    /// The repository name is not valid.
     pub fn name_invalid(message: impl Into<String>) -> Self {
         Self {
             code: "NAME_INVALID",
@@ -93,7 +93,7 @@ impl OciFailure {
         }
     }
 
-    /// El digest no es un digest, o no es el del contenido.
+    /// The digest is not a digest, or is not that of the content.
     pub fn digest_invalid(message: impl Into<String>) -> Self {
         Self {
             code: "DIGEST_INVALID",
@@ -105,7 +105,7 @@ impl OciFailure {
         }
     }
 
-    /// La subida no es valida: el rango no encaja, o el estado no encaja.
+    /// The upload is not valid: the range does not fit, or the state does not fit.
     pub fn blob_upload_invalid(message: impl Into<String>) -> Self {
         Self {
             code: "BLOB_UPLOAD_INVALID",
@@ -117,13 +117,13 @@ impl OciFailure {
         }
     }
 
-    /// La subida no encaja con el offset que el cliente dice.
+    /// The upload does not fit the offset the client states.
     ///
-    /// El codigo del dialecto es el mismo de una subida invalida --el
-    /// trozo que llega no encaja--, pero el estado es el `416` que el
-    /// protocolo dice para un rango que no se puede satisfacer: un
-    /// cliente cuyo trozo no ha encajado necesita saber que su offset
-    /// esta desfasado, y no un `400` que podria ser cualquier cosa.
+    /// The dialect code is the same as for an invalid upload --the
+    /// chunk that arrives does not fit--, but the status is the `416` the
+    /// protocol specifies for a range that cannot be satisfied: a
+    /// client whose chunk did not fit needs to know that its offset
+    /// is out of sync, and not a `400` that could be anything.
     pub fn blob_upload_range_mismatch(message: impl Into<String>) -> Self {
         Self {
             code: "BLOB_UPLOAD_INVALID",
@@ -135,7 +135,7 @@ impl OciFailure {
         }
     }
 
-    /// La sesion de subida no existe, o no es de esta cuenta.
+    /// The upload session does not exist, or does not belong to this account.
     pub fn blob_upload_unknown(message: impl Into<String>) -> Self {
         Self {
             code: "BLOB_UPLOAD_UNKNOWN",
@@ -147,7 +147,7 @@ impl OciFailure {
         }
     }
 
-    /// El manifiesto no se puede leer o no es del subconjunto soportado.
+    /// The manifest cannot be read or is not of the supported subset.
     pub fn manifest_invalid(message: impl Into<String>) -> Self {
         Self {
             code: "MANIFEST_INVALID",
@@ -159,7 +159,7 @@ impl OciFailure {
         }
     }
 
-    /// El manifiesto referencia un blob que el repositorio no tiene.
+    /// The manifest references a blob the repository does not have.
     pub fn manifest_blob_unknown(message: impl Into<String>) -> Self {
         Self {
             code: "MANIFEST_BLOB_UNKNOWN",
@@ -171,7 +171,7 @@ impl OciFailure {
         }
     }
 
-    /// La longitud declarada no es la del contenido.
+    /// The declared length is not that of the content.
     pub fn size_invalid(message: impl Into<String>) -> Self {
         Self {
             code: "SIZE_INVALID",
@@ -183,14 +183,14 @@ impl OciFailure {
         }
     }
 
-    /// El numero de resultados que se pide no es un numero.
+    /// The requested number of results is not a number.
     ///
-    /// Es un error **del cliente**, y por eso es un 400: el parametro
-    /// `n` de la lista de etiquetas es un entero, y un entero que no lo
-    /// es no es una peticion que el registro no sepa atender, es una
-    /// peticion mal escrita. El codigo es el que usa el registro de
-    /// referencia, para que un cliente que mire el codigo vea lo mismo
-    /// que veria en cualquier otro.
+    /// It is a **client** error, and that is why it is a 400: the `n`
+    /// parameter of the tag list is an integer, and an integer that is
+    /// not one is not a request the registry cannot serve, it is a
+    /// badly written request. The code is the one the reference registry
+    /// uses, so that a client that looks at the code sees the same
+    /// as it would see on any other.
     pub fn pagination_number_invalid(message: impl Into<String>) -> Self {
         Self {
             code: "PAGINATION_NUMBER_INVALID",
@@ -202,7 +202,7 @@ impl OciFailure {
         }
     }
 
-    /// La operacion no existe en esta superficie.
+    /// The operation does not exist on this surface.
     pub fn unsupported(message: impl Into<String>) -> Self {
         Self {
             code: "UNSUPPORTED",
@@ -214,7 +214,7 @@ impl OciFailure {
         }
     }
 
-    /// La decision no es permiso.
+    /// The decision is not permit.
     pub fn denied(message: impl Into<String>) -> Self {
         Self {
             code: "DENIED",
@@ -226,7 +226,7 @@ impl OciFailure {
         }
     }
 
-    /// No hay credencial, o no es valida.
+    /// There is no credential, or it is not valid.
     pub fn unauthorized() -> Self {
         Self {
             code: "UNAUTHORIZED",
@@ -238,7 +238,7 @@ impl OciFailure {
         }
     }
 
-    /// Algo fallo por dentro y no es culpa del cliente.
+    /// Something failed internally and it is not the client's fault.
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self {
             code: "UNAVAILABLE",
@@ -250,12 +250,12 @@ impl OciFailure {
         }
     }
 
-    /// La cuota de almacenamiento de la cuenta no da para más.
+    /// The account's storage quota does not allow for more.
     ///
-    /// El codigo del dialecto es `SIZE_INVALID`: el cliente manda mas
-    /// bytes de los que la cuenta puede tener, y es lo mas cerca que el
-    /// protocolo dice de un `413`. Reenviar lo mismo mas tarde no cambia
-    /// nada, y por eso no lleva `Retry-After`.
+    /// The dialect code is `SIZE_INVALID`: the client sends more
+    /// bytes than the account can hold, and it is the closest the
+    /// protocol has to a `413`. Resending the same later changes
+    /// nothing, and that is why it carries no `Retry-After`.
     pub fn storage_over_quota(message: impl Into<String>) -> Self {
         Self {
             code: "SIZE_INVALID",
@@ -267,11 +267,11 @@ impl OciFailure {
         }
     }
 
-    /// La cuenta ya tiene tantas subidas en curso como puede.
+    /// The account already has as many uploads in progress as it can.
     ///
-    /// `TOO_MANY_REQUESTS` es el codigo que el propio protocolo reserva
-    /// para esto, y el `Retry-After` es la mitad honesta del "no": los
-    /// mismos bytes valen dentro de un momento.
+    /// `TOO_MANY_REQUESTS` is the code the protocol itself reserves
+    /// for this, and the `Retry-After` is the honest half of the "no": the
+    /// same bytes are fine in a moment.
     pub fn too_many_requests(message: impl Into<String>, retry_after_secs: u64) -> Self {
         Self {
             code: "TOO_MANY_REQUESTS",
@@ -283,41 +283,41 @@ impl OciFailure {
         }
     }
 
-    /// El codigo del error, tal y como va en el envelope.
+    /// The error code, as it goes in the envelope.
     pub fn the_code(&self) -> &'static str {
         self.code
     }
 
-    /// El estado HTTP del error.
+    /// The HTTP status of the error.
     pub fn the_status(&self) -> StatusCode {
         self.status
     }
 
-    /// El error con el rango que hay ahora.
+    /// The error with the range that exists now.
     ///
-    /// Es lo que permite a un cliente recuperar el offset de una subida
-    /// que se ha descolocado: el error dice cuanto hay, y el cliente
-    /// sigue desde ahi.
+    /// It is what lets a client recover the offset of an upload
+    /// that has gone out of sync: the error says how much there is, and the client
+    /// continues from there.
     pub fn with_range(mut self, range: impl Into<String>) -> Self {
         self.range = Some(range.into());
         self
     }
 
-    /// El error con el reto de autenticacion.
+    /// The error with the authentication challenge.
     ///
-    /// El reto dice donde esta el endpoint de token y de que servicio se
-    /// trata, y es lo que un cliente de Docker lee para saber como
-    /// autenticarse. Sin el, el cliente se queda en el `401`.
+    /// The challenge says where the token endpoint is and which service it
+    /// is about, and is what a Docker client reads to know how to
+    /// authenticate. Without it, the client stays at the `401`.
     pub fn with_challenge(mut self, realm: impl Into<String>) -> Self {
         self.challenge = Some(realm.into());
         self
     }
 
-    /// El error con el reto, si lo lleva.
+    /// The error with the challenge, if it carries one.
     ///
-    /// El reto es de las respuestas `401` y solo de ellas: un `404` con
-    /// un reto seria una respuesta que pide una credencial que no va a
-    /// servir de nada. Un error que ya trae su reto lo conserva.
+    /// The challenge belongs to `401` responses and only to them: a `404` with
+    /// a challenge would be a response asking for a credential that will not
+    /// help. An error that already carries its challenge keeps it.
     pub fn with_the_realm(mut self, realm: impl Into<String>) -> Self {
         if self.status == StatusCode::UNAUTHORIZED && self.challenge.is_none() {
             self.challenge = Some(realm.into());
@@ -326,7 +326,7 @@ impl OciFailure {
     }
 }
 
-/// La respuesta de error, en el dialecto de la distribucion.
+/// The error response, in the distribution dialect.
 impl IntoResponse for OciFailure {
     fn into_response(self) -> Response {
         let body = serde_json::json!({
@@ -342,10 +342,10 @@ impl IntoResponse for OciFailure {
         )
             .into_response();
         if self.status == StatusCode::UNAUTHORIZED {
-            // El reto: donde esta el endpoint de token y de que servicio
-            // se trata. Es lo que le dice a un cliente de Docker como
-            // autenticarse, y sin el el cliente no tiene por donde
-            // empezar.
+            // The challenge: where the token endpoint is and which service
+            // it is about. It is what tells a Docker client how to
+            // authenticate, and without it the client has nowhere to
+            // start.
             let challenge = match &self.challenge {
                 Some(realm) => format!(
                     "Bearer realm=\"{realm}\",service=\"{}\"",
@@ -362,15 +362,15 @@ impl IntoResponse for OciFailure {
         if let Some(range) = &self.range
             && let Ok(value) = axum::http::HeaderValue::from_str(range)
         {
-            // El rango que hay ahora: un cliente cuyo trozo no encaja
-            // necesita saber por donde seguir.
+            // The range that exists now: a client whose chunk does not fit
+            // needs to know where to continue.
             response.headers_mut().insert(header::RANGE, value);
         }
         if let Some(seconds) = self.retry_after
             && let Ok(value) = axum::http::HeaderValue::from_str(&seconds.to_string())
         {
-            // Cuando volver: la saturacion es temporal, y un 429 sin
-            // consejo es un no sin puerta de vuelta.
+            // When to come back: saturation is temporary, and a 429 without
+            // advice is a no with no way back.
             response.headers_mut().insert(header::RETRY_AFTER, value);
         }
         response
@@ -381,11 +381,11 @@ impl IntoResponse for OciFailure {
 mod tests {
     use super::*;
 
-    /// Cada codigo del dialecto lleva el estado que el protocolo dice.
+    /// Each dialect code carries the status the protocol specifies.
     ///
-    /// El estado no es un detalle de la implementacion: es parte del
-    /// contrato con el cliente, y un codigo con un estado que no le
-    /// corresponde hace que el cliente tome una decision equivocada.
+    /// The status is not an implementation detail: it is part of the
+    /// contract with the client, and a code with a status that does not
+    /// match it makes the client take a wrong decision.
     #[test]
     fn the_codes_carry_the_status_the_protocol_says() {
         let cases: Vec<(OciFailure, StatusCode, &str)> = vec![
@@ -472,16 +472,16 @@ mod tests {
         }
     }
 
-    /// El envelope lleva el codigo del dialecto, que es lo que el cliente
-    /// lee para decidir que hacer.
+    /// The envelope carries the dialect code, which is what the client
+    /// reads to decide what to do.
     #[test]
     fn the_envelope_carries_the_code() {
         let response = OciFailure::blob_upload_unknown("no such upload").into_response();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
-    /// La saturacion dice cuando volver: un `429` sin `Retry-After` es
-    /// un no sin puerta de vuelta, y el consejo es la mitad del no.
+    /// Saturation says when to come back: a `429` without `Retry-After` is
+    /// a no with no way back, and the advice is half of the no.
     #[test]
     fn the_saturation_carries_the_advice_to_come_back() {
         let response = OciFailure::too_many_requests("x", 7).into_response();
@@ -493,8 +493,8 @@ mod tests {
                 .map(|value| value.as_bytes()),
             Some(b"7".as_slice())
         );
-        // Y el 413 de cuota no lo lleva: volver mas tarde no hace la
-        // cuenta mas grande.
+        // And the quota 413 does not carry it: coming back later does not make the
+        // account bigger.
         let over = OciFailure::storage_over_quota("x").into_response();
         assert_eq!(over.status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert!(over.headers().get(header::RETRY_AFTER).is_none());

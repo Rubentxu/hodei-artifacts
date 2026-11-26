@@ -1,15 +1,15 @@
-//! La sonda de integridad del contenido, conectada al arranque.
+//! The content integrity probe, wired into startup.
 //!
-//! El puerto `BlobIntegrityProbe` existe y el catálogo lo consume, pero en
-//! producción **nadie lo conecta**: `with_probe` no lo llama nadie y el
-//! almacén de contenido se monta sin sonda. La consecuencia es que un blob
-//! que no está donde el catálogo dice **se sirve como si estuviera sano**,
-//! y la corrupción se confunde con la ausencia.
+//! The `BlobIntegrityProbe` port exists and the catalog consumes it, but in
+//! production **nobody wires it**: nothing calls `with_probe` and the
+//! content store is mounted without a probe. As a result, a blob
+//! that is not where the catalog says it is **is served as if it were healthy**,
+//! and corruption is mistaken for absence.
 //!
-//! Estas pruebas van contra el proceso **de verdad**: un binario real, un
-//! almacén de bytes real en disco y un catálogo real. El defecto no se ve
-//! en un doble de prueba: se ve cuando el byte guardado no es el que el
-//! catálogo dice que hay.
+//! These tests run against the **real** process: a real binary, a real
+//! on-disk byte store and a real catalog. The defect does not show up
+//! in a test double: it shows up when the stored byte is not the one the
+//! catalog says is there.
 
 mod support;
 
@@ -19,46 +19,46 @@ use hodei_catalog::{BlobIntegrityProbe, CatalogReader, CatalogWriter};
 use hodei_hub::blob::BlobStore;
 use support::{Deployment, FIRST_ACCOUNT, FIRST_REPOSITORY};
 
-/// El semillero del catálogo.
+/// The catalog seeder.
 ///
-/// El despliegue siembra el catálogo en un proceso aparte, y este test es
-/// el que lo hace cuando el proceso le pide: el arnés pasa la ruta de la
-/// base por la variable `HODEI_SEED_DB`, y este es el que la escribe.
+/// The deployment seeds the catalog in a separate process, and this test is
+/// the one that does it when the process asks: the harness passes the path of the
+/// database through the `HODEI_SEED_DB` variable, and this is what writes it.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Donde vive un blob en el almacén de bytes.
+/// Where a blob lives in the byte store.
 ///
-/// El almacén reparte los blobs en dos niveles por el principio del
-/// digest, así que la ruta sale del propio digest y no de donde se
-/// guardó.
+/// The store spreads blobs over two levels by the start of the
+/// digest, so the path comes from the digest itself and not from where it
+/// was saved.
 fn blob_path(root: &std::path::Path, digest: &str) -> PathBuf {
     root.join(&digest[..2]).join(&digest[2..4]).join(digest)
 }
 
-/// La ruta del contenido dentro del repositorio.
+/// The content path inside the repository.
 fn the_path(path: &str) -> String {
     format!("/repository/{FIRST_REPOSITORY}/{path}")
 }
 
-/// El contenido que se publica.
+/// The content that gets published.
 fn the_content() -> Vec<u8> {
     (0u16..4096).map(|value| (value % 251) as u8).collect()
 }
 
-/// Un blob que no esta donde el catálogo dice.
+/// A blob that is not where the catalog says it is.
 ///
-/// El catálogo afirma que el blob tiene esos bytes; el almacen no los
-/// tiene. Con la sonda conectada, esa contradiccion se responde como
-/// **corrupto**, que es "hay algo ahi y no se puede leer bien". Sin ella,
-/// el catálogo responde que el asset esta, y el fallo aparece despues,
-/// como un 404: el cliente ve que no existe, y borra su copia.
+/// The catalog claims the blob has those bytes; the store does not
+/// have them. With the probe wired, that contradiction is answered as
+/// **corrupt**, which means "something is there and it cannot be read properly". Without it,
+/// the catalog answers that the asset is present, and the failure shows up later,
+/// as a 404: the client sees that it does not exist, and deletes its copy.
 ///
-/// Un `Corrupt` donde habia un `Missing` hace que el cliente borre algo
-/// que no era suyo. Un `Missing` donde habia un `Corrupt` hace que el
-/// cliente repita. Confundirlos es peor que no responder.
+/// A `Corrupt` where there was a `Missing` makes the client delete something
+/// that was not theirs. A `Missing` where there was a `Corrupt` makes the
+/// client retry. Confusing them is worse than not answering.
 #[test]
 fn a_blob_that_is_not_where_the_catalog_says_is_corrupt_and_not_missing() {
     let deployment = Deployment::new();
@@ -80,17 +80,17 @@ fn a_blob_that_is_not_where_the_catalog_says_is_corrupt_and_not_missing() {
         deployment.the_log()
     );
 
-    // Y ahora el blob desaparece del almacen de bytes: el catalogo sigue
-    // diciendo que el asset esta, con sus bytes y su longitud.
+    // And now the blob disappears from the byte store: the catalog still
+    // says the asset is there, with its bytes and its length.
     let blob = blob_path(&PathBuf::from(&deployment.cas), &digest);
     std::fs::remove_file(&blob).expect("the blob is removed from the store");
 
     let answer = support::curl_download(service.port, &the_path("app.bin"), &token, None);
 
-    // Lo que se quiere no es un 404: un 404 le dice al cliente que su
-    // copia no existe, y el cliente la borra. Lo que se quiere es un
-    // 503: el servidor tiene el asset y no puede servirlo, y el cliente
-    // reintenta.
+    // What is wanted is not a 404: a 404 tells the client its
+    // copy does not exist, and the client deletes it. What is wanted is a
+    // 503: the server has the asset and cannot serve it, and the client
+    // retries.
     assert_eq!(
         answer.status,
         503,
@@ -101,12 +101,12 @@ fn a_blob_that_is_not_where_the_catalog_says_is_corrupt_and_not_missing() {
     support::stop(&mut service);
 }
 
-/// Un blob cuyos bytes no son los publicados se responde como corrupto.
+/// A blob whose bytes are not the published ones is answered as corrupt.
 ///
-/// El byte corrupto tiene **la misma longitud** que el bueno: la longitud
-/// no lo delata, y la sonda no recalcula el digest —eso es lo barato, y
-/// lo profundo es tarea del scrub—. Lo que lo delata es que los bytes ya
-/// no son los que su digest dice, y por eso la lectura lo dice.
+/// The corrupt byte has **the same length** as the good one: the length
+/// does not give it away, and the probe does not recompute the digest -- that is the cheap part, and
+/// the deep check is the scrub's job --. What gives it away is that the bytes are no
+/// longer those its digest says, and that is why the read reports it.
 #[test]
 fn a_blob_whose_bytes_are_not_the_published_ones_is_not_served_as_healthy() {
     let deployment = Deployment::new();
@@ -127,7 +127,7 @@ fn a_blob_whose_bytes_are_not_the_published_ones_is_not_served_as_healthy() {
         deployment.the_log()
     );
 
-    // El mismo digest, la misma longitud, otros bytes.
+    // The same digest, the same length, other bytes.
     let mut other = content.clone();
     other[0] = other[0].wrapping_add(1);
     let blob = blob_path(&PathBuf::from(&deployment.cas), &digest);
@@ -135,7 +135,7 @@ fn a_blob_whose_bytes_are_not_the_published_ones_is_not_served_as_healthy() {
 
     let answer = support::curl_download(service.port, &the_path("app.bin"), &token, None);
 
-    // El contenido no puede servirse como si fuera el publicado.
+    // The content must not be served as if it were the published one.
     assert_ne!(
         answer.status, 200,
         "the corrupted content was served as the published one"
@@ -148,19 +148,19 @@ fn a_blob_whose_bytes_are_not_the_published_ones_is_not_served_as_healthy() {
     support::stop(&mut service);
 }
 
-/// La sonda comprueba la longitud, y no recalcula el digest.
+/// The probe checks the length, and does not recompute the digest.
 ///
-/// Es lo barato: leer los **metadatos** de un fichero no cuesta lo que
-/// leer su contenido, y recalcular el digest en cada lectura seria una
-/// lectura entera por peticion. La verificacion profunda —que los bytes
-/// sean los que su digest dice— es tarea del scrub, que la hace cuando
-/// puede y no en cada peticion.
+/// That is the cheap part: reading a file's **metadata** does not cost what
+/// reading its content costs, and recomputing the digest on every read would be
+/// a full read per request. Deep verification -- that the bytes
+/// are those its digest says -- is the scrub's job, which does it when it
+/// can and not on every request.
 ///
-/// El blob de esta prueba tiene la longitud que el catalogo declara y
-/// bytes que no son los que su digest dice: la sonda lo acepta, porque lo
-/// que mira es la longitud. Eso no es un fallo de la sonda: es su
-/// contrato, y un contrato que se cumple es mejor que una garantia que
-/// nadie nota.
+/// The blob in this test has the length the catalog declares and
+/// bytes that are not those its digest says: the probe accepts it, because what
+/// it looks at is the length. That is not a probe failure: it is its
+/// contract, and a contract that is met is better than a guarantee that
+/// nobody notices.
 #[tokio::test]
 async fn the_probe_checks_the_length_and_not_the_digest() {
     let deployment = Deployment::new();
@@ -171,7 +171,7 @@ async fn the_probe_checks_the_length_and_not_the_digest() {
     let store = hodei_hub::blob::FileBlobStore::new(&cas).expect("the store");
     store.put(&content).await.expect("the content is stored");
 
-    // Misma longitud, otros bytes.
+    // Same length, other bytes.
     let mut other = content.clone();
     other[0] = other[0].wrapping_add(1);
     std::fs::write(blob_path(&cas, &digest), &other).expect("the blob is altered");
@@ -192,11 +192,11 @@ async fn the_probe_checks_the_length_and_not_the_digest() {
     );
 }
 
-/// El catalogo sin sonda sigue funcionando.
+/// The catalog without a probe keeps working.
 ///
-/// La sonda **mejora** la respuesta, no es un requisito para arrancar: un
-/// catalogo sin sonda sigue leyendo y publicando, y lo que no puede es
-/// afirmar que los bytes esten donde dice.
+/// The probe **improves** the answer, it is not a requirement to start: a
+/// catalog without a probe keeps reading and publishing, and what it cannot do is
+/// assert that the bytes are where it says.
 #[tokio::test]
 async fn a_catalog_without_a_probe_still_publishes_and_reads() {
     let deployment = Deployment::new();
@@ -259,7 +259,7 @@ async fn a_catalog_without_a_probe_still_publishes_and_reads() {
         .await
         .expect("the content is published");
 
-    // Y el asset se lee sin sonda, sin que nadie pregunte por los bytes.
+    // And the asset is read without a probe, with nobody asking about the bytes.
     let asset = catalog
         .asset(FIRST_ACCOUNT, FIRST_REPOSITORY, "app.bin")
         .await
@@ -267,12 +267,12 @@ async fn a_catalog_without_a_probe_still_publishes_and_reads() {
     assert_eq!(asset.size_bytes, content.len() as u64);
 }
 
-/// La sonda no cambia el aislamiento entre cuentas.
+/// The probe does not change isolation between accounts.
 ///
-/// La sonda pregunta por la longitud de un blob, y la pregunta lleva la
-/// cuenta del que pregunta: el mismo digest puede estar en la ranura
-/// global o en la particionada de una cuenta, y preguntar por el digest a
-/// secas solo encontraria la primera.
+/// The probe asks for the length of a blob, and the question carries the
+/// account of the asker: the same digest can be in the global slot
+/// or in an account's partitioned one, and asking for the digest
+/// alone would only find the first.
 #[test]
 fn the_probe_does_not_change_the_isolation_between_accounts() {
     let deployment = Deployment::new();
@@ -292,7 +292,7 @@ fn the_probe_does_not_change_the_isolation_between_accounts() {
         deployment.the_log()
     );
 
-    // La otra cuenta no ve el repositorio de la primera.
+    // The other account does not see the first one's repository.
     let answer = support::curl_download(service.port, &the_path("app.bin"), &other, None);
     assert_ne!(
         answer.status, 200,

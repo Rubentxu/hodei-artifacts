@@ -1,49 +1,49 @@
-//! La gramatica del **module registry protocol v1** de Terraform/OpenTofu.
+//! The grammar of the Terraform/OpenTofu **module registry protocol v1**.
 //!
-//! Un registry de modulos privado habla tres lecturas y una escritura
-//! propia del hub, todos colgando de la superficie de un repositorio
-//! **hosted** del formato Terraform:
+//! A private module registry speaks three reads and one write
+//! specific to the hub, all hanging off the surface of a **hosted**
+//! repository of the Terraform format:
 //!
-//! 1. Service discovery: el hub responde en `/.well-known/terraform.json`
-//!    `{"modules.v1": "<base del protocolo>"}`. El cliente pide siempre
-//!    `https://{host}/.well-known/terraform.json` (el esquema lo fija
-//!    `terraform-svchost/disco`), y un host sin TLS declara el servicio
-//!    directamente en su config de CLI (`host` + `services`), que es el
-//!    `ForceHostServices` del disco.
-//! 2. `GET {base}/{namespace}/{name}/{system}/versions`: el indice de
-//!    versiones, paginable; el cliente solo lee `modules[0].versions[]`.
-//! 3. `GET {base}/{namespace}/{name}/{system}/{version}/download`: una
-//!    respuesta **sin cuerpo** cuyo `X-Terraform-Get` es una fuente
-//!    go-getter. Si el valor empieza por `/`, `./` o `../` el cliente lo
-//!    resuelve contra la URL que pidió, y la descarga del artefacto la
-//!    hace go-getter, que **no** lleva las credenciales del registry: el
-//!    artefacto se autentica con netrc (Basic) o con el mismo Bearer.
-//! 4. `POST publish/{...}/{version}`: la publicacion la define el hub
-//!    (el CLI no sabe publicar modulos): un tarball completo por version,
-//!    inmutable, con el sha256 calculado al commit en el recibo.
+//! 1. Service discovery: the hub answers at `/.well-known/terraform.json`
+//!    `{"modules.v1": "<protocol base>"}`. The client always requests
+//!    `https://{host}/.well-known/terraform.json` (the scheme is fixed by
+//!    `terraform-svchost/disco`), and a host without TLS declares the service
+//!    directly in its CLI config (`host` + `services`), which is the
+//!    disco's `ForceHostServices`.
+//! 2. `GET {base}/{namespace}/{name}/{system}/versions`: the version
+//!    index, paginable; the client only reads `modules[0].versions[]`.
+//! 3. `GET {base}/{namespace}/{name}/{system}/{version}/download`: a
+//!    response **without a body** whose `X-Terraform-Get` is a go-getter
+//!    source. If the value starts with `/`, `./` or `../` the client
+//!    resolves it against the URL it requested, and the artifact download is
+//!    done by go-getter, which does **not** carry the registry credentials: the
+//!    artifact authenticates with netrc (Basic) or with the same Bearer.
+//! 4. `POST publish/{...}/{version}`: publishing is defined by the hub
+//!    (the CLI does not know how to publish modules): one complete tarball per version,
+//!    immutable, with the sha256 computed at commit in the receipt.
 //!
-//! Aqui vive solo la gramatica: que rutas existen y que segmentos son
-//! legitimamente un namespace, un nombre, un sistema, una version o un
-//! nombre de fichero. Como en el mirror, una ruta llega **sin decodificar**
-//! y un segmento con escape por porcentaje, separador de Windows, vacio o
-//! `..` es un intento de traversal, y se rechaza antes de tocar el
-//! catalogo.
+//! Only the grammar lives here: which paths exist and which segments are
+//! legitimately a namespace, a name, a system, a version or a
+//! file name. As in the mirror, a path arrives **undecoded**
+//! and a segment with percent-escape, Windows separator, empty or
+//! `..` is a traversal attempt, and is rejected before touching the
+//! catalog.
 
 use serde_json::{Value, json};
 
-/// Lo que puede salir mal al leer una ruta del registry de modulos.
+/// What can go wrong when reading a module registry path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModuleRegistryError {
-    /// La ruta no pertenece al protocolo del registry.
+    /// The path does not belong to the registry protocol.
     InvalidPath(String),
-    /// El namespace, el nombre o el sistema no son validos.
+    /// The namespace, the name or the system are not valid.
     InvalidCoordinates(String),
-    /// La version no es semver estricto.
+    /// The version is not strict semver.
     InvalidVersion(String),
 }
 
 impl ModuleRegistryError {
-    /// El mensaje que explica el rechazo.
+    /// The message that explains the rejection.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidPath(path) => {
@@ -58,8 +58,8 @@ impl ModuleRegistryError {
         }
     }
 
-    /// Si el rechazo es de la ruta y no de quien la pide: una ruta que el
-    /// protocolo no conoce es un recurso que no existe.
+    /// Whether the rejection is about the path and not about who asks for it: a path that the
+    /// protocol does not know is a resource that does not exist.
     pub fn is_path_error(&self) -> bool {
         matches!(self, Self::InvalidPath(_))
     }
@@ -73,49 +73,49 @@ impl std::fmt::Display for ModuleRegistryError {
 
 impl std::error::Error for ModuleRegistryError {}
 
-/// Los prefijos que este protocolo reclama sobre la superficie de un
-/// repositorio Terraform. Un repositorio **hosted** habla registry y un
-/// **proxy** habla mirror: la modalidad decide el dialecto, y el prefijo
-/// solo separa las rutas del registry de las del mirror.
+/// The prefixes this protocol claims over the surface of a
+/// Terraform repository. A **hosted** repository speaks registry and a
+/// **proxy** speaks mirror: the modality decides the dialect, and the prefix
+/// only separates the registry paths from the mirror ones.
 pub const REGISTRY_PREFIXES: [&str; 3] = ["v1/modules/", "publish/", "artifacts/"];
 
-/// Si el resto de la ruta de un repositorio es una ruta del registry de
-/// modulos y no del mirror de providers.
+/// Whether the rest of the path of a repository is a module registry
+/// path and not a provider mirror one.
 pub fn is_registry_path(rest: &str) -> bool {
     REGISTRY_PREFIXES
         .iter()
         .any(|prefix| rest.starts_with(prefix))
 }
 
-/// La direccion de un modulo dentro del registry: `namespace/name/system`.
+/// The address of a module within the registry: `namespace/name/system`.
 ///
-/// El cliente la construye a partir de la fuente `host/namespace/name/
-/// system` y pide por los tres segmentos finales; el hub los guarda tal
-/// cual publica.
+/// The client builds it from the source `host/namespace/name/
+/// system` and asks by the last three segments; the hub stores them as
+/// published.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleRef {
-    /// El namespace del modulo.
+    /// The namespace of the module.
     pub namespace: String,
-    /// El nombre del modulo.
+    /// The name of the module.
     pub name: String,
-    /// El sistema destino (`local`, `aws`, `kubernetes`, ...).
+    /// The target system (`local`, `aws`, `kubernetes`, ...).
     pub system: String,
 }
 
 impl ModuleRef {
-    /// La fuente que el cliente ve, sin el host: la que el documento de
-    /// versiones declara como `source`.
+    /// The source the client sees, without the host: the one the versions
+    /// document declares as `source`.
     pub fn source(&self) -> String {
         format!("{}/{}/{}", self.namespace, self.name, self.system)
     }
 
-    /// El nombre del paquete en el catalogo.
+    /// The name of the package in the catalog.
     pub fn package_name(&self) -> String {
         self.source()
     }
 
-    /// El camino del artefacto de una version en el CAS: un tarball
-    /// versionado e inmutable.
+    /// The path of the artifact of a version in the CAS: a versioned
+    /// and immutable tarball.
     pub fn artifact_path(&self, version: &str) -> String {
         format!(
             "artifacts/{}/{}/{}/{}.tar.gz",
@@ -124,44 +124,44 @@ impl ModuleRef {
     }
 }
 
-/// Una ruta del registry de modulos, ya validada.
+/// A module registry path, already validated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// El indice de versiones de un modulo.
+    /// The version index of a module.
     Versions {
-        /// La direccion del modulo.
+        /// The address of the module.
         reference: ModuleRef,
     },
-    /// La descarga de una version: la respuesta lleva el `X-Terraform-Get`.
+    /// The download of a version: the response carries the `X-Terraform-Get`.
     Download {
-        /// La direccion del modulo.
+        /// The address of the module.
         reference: ModuleRef,
-        /// La version pedida.
+        /// The requested version.
         version: String,
     },
-    /// El tarball de una version.
+    /// The tarball of a version.
     Artifact {
-        /// La direccion del modulo.
+        /// The address of the module.
         reference: ModuleRef,
-        /// La version pedida.
+        /// The requested version.
         version: String,
     },
-    /// La publicacion del hub: un tarball completo para una version nueva.
+    /// The hub publication: a complete tarball for a new version.
     Publish {
-        /// La direccion del modulo.
+        /// The address of the module.
         reference: ModuleRef,
-        /// La version que se publica.
+        /// The version being published.
         version: String,
     },
 }
 
 impl Route {
-    /// La ruta que dice su propio nombre.
+    /// The path that states its own name.
     ///
-    /// La ruta llega **sin decodificar**: las reglas del protocolo son las
-    /// unicas que interpretan un `%`, y ahi no hay nada que interpretar.
-    /// Un segmento vacio, un `..`, una barra invertida o un escape por
-    /// porcentaje son un traversal, no una ruta.
+    /// The path arrives **undecoded**: the protocol rules are the
+    /// only ones that interpret a `%`, and there is nothing to interpret there.
+    /// An empty segment, a `..`, a backslash or a percent
+    /// escape is a traversal, not a path.
     pub fn parse(rest: &str) -> Result<Self, ModuleRegistryError> {
         if rest.contains('%') || rest.contains('\\') {
             return Err(ModuleRegistryError::InvalidPath(rest.to_string()));
@@ -214,7 +214,7 @@ impl Route {
         }
     }
 
-    /// La version que la ruta nombra, si la nombra.
+    /// The version that the path names, if it names one.
     pub fn version(&self) -> Option<&str> {
         match self {
             Self::Versions { .. } => None,
@@ -225,9 +225,9 @@ impl Route {
     }
 }
 
-/// Un namespace, un nombre o un sistema: minusculas, digitos, guiones y
-/// guiones bajos, sin borde de guion. Las mismas reglas del mirror, que
-/// son las que el cliente usa para sus fuentes.
+/// A namespace, a name or a system: lowercase, digits, hyphens and
+/// underscores, without a hyphen at the edge. The same rules as the mirror, which
+/// are the ones the client uses for its sources.
 fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 100
@@ -255,8 +255,8 @@ fn the_coordinates(
     })
 }
 
-/// La version: semver estricto, sin `v` delante y sin espacios. Las
-/// mismas reglas del mirror de providers.
+/// The version: strict semver, without a leading `v` and without spaces. The
+/// same rules as the provider mirror.
 fn valid_version(version: &str) -> Result<(), ModuleRegistryError> {
     let core = |text: &str| {
         let numbers: Vec<&str> = text.split('.').collect();
@@ -293,21 +293,21 @@ fn valid_version(version: &str) -> Result<(), ModuleRegistryError> {
 }
 
 // ---------------------------------------------------------------------------
-// Documentos
+// Documents
 // ---------------------------------------------------------------------------
 
-/// El documento de service discovery. Esta release **no declara
-/// `providers.v1`**: el registry de providers de origen no se implementa
-/// (AC3 no implementado), y un servicio que no se sabe servir no se
-/// anuncia.
+/// The service discovery document. This release **does not declare
+/// `providers.v1`**: the origin provider registry is not implemented
+/// (AC3 not implemented), and a service that cannot be served is not
+/// announced.
 pub fn discovery_document(module_base: &str) -> Value {
     json!({ "modules.v1": module_base })
 }
 
-/// El documento de versiones de un modulo. El cliente lee
-/// `modules[0].versions[].version` y ordena por semver; `root` va vacio
-/// porque las dependencias de un modulo de registry las declara su
-/// configuracion, no el indice.
+/// The versions document of a module. The client reads
+/// `modules[0].versions[].version` and sorts by semver; `root` is empty
+/// because the dependencies of a registry module are declared by its
+/// configuration, not the index.
 pub fn versions_document(reference: &ModuleRef, versions: &[&str]) -> Value {
     let versions: Vec<Value> = versions
         .iter()
@@ -335,13 +335,13 @@ pub fn versions_document(reference: &ModuleRef, versions: &[&str]) -> Value {
     })
 }
 
-/// La fuente go-getter de la descarga de una version: el camino del
-/// artefacto en esta superficie, **relativo** (el cliente lo resuelve
-/// contra la URL que pidio), con el checksum que go-getter verifica al
-/// bajar. El `.tar.gz` del final es lo que hace que go-getter trate la
-/// descarga como fichero + descompresion, que es la unica forma en que
-/// verifica checksums (`checksum cannot be specified for directory
-/// download` si el camino no acaba en un archivo conocido).
+/// The go-getter source of a version download: the path of the
+/// artifact on this surface, **relative** (the client resolves it
+/// against the URL it requested), with the checksum that go-getter verifies when
+/// downloading. The trailing `.tar.gz` is what makes go-getter treat the
+/// download as file + decompression, which is the only way it
+/// verifies checksums (`checksum cannot be specified for directory
+/// download` if the path does not end in a known archive).
 pub fn download_location(
     repository_key: &str,
     reference: &ModuleRef,
@@ -354,8 +354,8 @@ pub fn download_location(
     )
 }
 
-/// El recibo de una publicacion: la identidad de la version y el sha256
-/// que el hub calculo al commit, el mismo que luego declara la descarga.
+/// The receipt of a publication: the identity of the version and the sha256
+/// that the hub computed at commit, the same one the download later declares.
 pub fn publish_receipt(
     reference: &ModuleRef,
     version: &str,

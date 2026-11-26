@@ -1,48 +1,48 @@
-//! El backend S3-compatible del almacen de contenido.
+//! The S3-compatible backend of the content store.
 //!
-//! Hodei posee los bytes; el sitio donde los posee puede ser un directorio
-//! o un Object Store que hable el protocolo S3. Este crate **no** añade un
-//! tercer almacen: implementa el unico puerto [`hodei_hub::blob::BlobStore`]
-//! sobre `aws-sdk-s3`, de modo que el dominio no sepa nunca si detras hay
-//! AWS, MinIO, R2 o Ceph.
+//! Hodei owns the bytes; the place where it holds them may be a directory
+//! or an Object Store that speaks the S3 protocol. This crate does **not** add a
+//! third store: it implements the single port [`hodei_hub::blob::BlobStore`]
+//! on top of `aws-sdk-s3`, so that the domain never knows whether behind it there is
+//! AWS, MinIO, R2 or Ceph.
 //!
-//! # Las decisiones del backend
+//! # The backend decisions
 //!
-//! - **La clave de un blob es su digest**: `blobs/<ab>/<cd>/<hex>`, el mismo
-//!   reparto que el almacen de ficheros. En un CAS la clave es la identidad,
-//!   y la identidad es el contenido: publicar dos veces el mismo contenido
-//!   no corrompe nada, porque los bytes del ultimo son los bytes del primero.
-//! - **La sesion de escritura es una subida multiple**: los trozos suben en
-//!   cuanto llenan `part_size` y con su `Content-MD5`, y la memoria del
-//!   proceso esta acotada por `part_size * max_inflight_parts`. El commit
-//!   **no completa nada que no cuadre**: si el largo o el digest discrepan
-//!   de lo declarado, la subida se aborta y no queda ninguna referencia
-//!   visible. Esa es la condicion de integridad de la finalizacion.
-//! - **El recolector vive de `Last-Modified`**: `list_blobs` recorre el
-//!   prefijo paginado y `delete_if_older_than` mira la edad antes de borrar,
-//!   con la misma barrera entre publicar y recolectar que el almacen de
-//!   ficheros. Las leases y los tags referidos los respeta el servicio de
-//!   GC, que es quien decide; este backend solo cumple su parte: no borrar
-//!   lo que se publico hace nada.
-//! - **Las credenciales no pasan por aqui**: el almacen recibe un cliente
-//!   ya construido por el despliegue, con la cadena de proveedores segura
-//!   del SDK (variables de entorno, fichero compartido, rol de instancia).
-//!   Nada del almacen guarda, deriva ni imprime un secreto, y los errores
-//!   que produce tampoco: el `Debug` del almacen muestra la configuracion
-//!   publica y nunca el cliente.
+//! - **The key of a blob is its digest**: `blobs/<ab>/<cd>/<hex>`, the same
+//!   layout as the file store. In a CAS the key is the identity,
+//!   and the identity is the content: publishing the same content twice
+//!   corrupts nothing, because the bytes of the last are the bytes of the first.
+//! - **The write session is a multipart upload**: the parts upload as
+//!   soon as they fill `part_size` and with their `Content-MD5`, and the process
+//!   memory is bounded by `part_size * max_inflight_parts`. The commit
+//!   **completes nothing that does not add up**: if the length or the digest differ
+//!   from what was declared, the upload is aborted and no visible reference
+//!   remains. That is the integrity condition of finalization.
+//! - **The collector lives off `Last-Modified`**: `list_blobs` walks the
+//!   paginated prefix and `delete_if_older_than` checks the age before deleting,
+//!   with the same barrier between publishing and collecting as the file
+//!   store. The leases and referenced tags are respected by the GC
+//!   service, which is the one that decides; this backend only does its part: not deleting
+//!   what was published a moment ago.
+//! - **Credentials do not pass through here**: the store receives a client
+//!   already built by the deployment, with the SDK's secure provider
+//!   chain (environment variables, shared file, instance role).
+//!   Nothing in the store keeps, derives or prints a secret, and the errors
+//!   it produces do not either: the store's `Debug` shows the public
+//!   configuration and never the client.
 //!
-//! # El presupuesto de memoria y el benchmark
+//! # The memory budget and the benchmark
 //!
-//! El presupuesto se declara, no se descubre: una sesion en curso puede
-//! tener `max_inflight_parts` trozos de `part_size` bytes simultaneamente
-//! en transmision, y ese producto es el techo de memoria por sesion. Con
-//! los valores por defecto (8 MiB x 4) son 32 MiB, frente a la via de
-//! `put`, que recibe el contenido entero en memoria por contrato del
-//! puerto. `tests/hsp116_s3_bench.rs` comprueba el techo con un blob seis
-//! veces mayor que el presupuesto midiendo la memoria residente del
-//! proceso —el servidor S3 de pruebas vive en otro proceso, en un
-//! contenedor LocalStack— y deja los numeros comparativos con el almacen
-//! de ficheros.
+//! The budget is declared, not discovered: a session in progress may
+//! have `max_inflight_parts` parts of `part_size` bytes simultaneously
+//! in transmission, and that product is the memory ceiling per session. With
+//! the default values (8 MiB x 4) it is 32 MiB, versus the `put` path,
+//! which receives the whole content in memory by contract of the
+//! port. `tests/hsp116_s3_bench.rs` checks the ceiling with a blob six
+//! times larger than the budget, measuring the resident memory of the
+//! process —the test S3 server lives in another process, in a
+//! LocalStack container— and leaves comparative numbers against the file
+//! store.
 
 mod store;
 

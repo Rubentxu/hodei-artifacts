@@ -1,19 +1,19 @@
-//! El enlazado del prototipo.
+//! The prototype's linking.
 //!
-//! La libreria precompilada de LadybugDB (lbug) trae el cliente HTTP con
-//! TLS, y sus simbolos de OpenSSL hay que resolverlos al enlazar. La
-//! libreria esta compilada con TLS y el enlazador no lo sabe, asi que
-//! aqui se dice explicitamente.
+//! The precompiled LadybugDB (lbug) library brings the HTTP client with
+//! TLS, and its OpenSSL symbols must be resolved at link time. The
+//! library is compiled with TLS and the linker does not know it, so
+//! it is stated explicitly here.
 //!
-//! Solo se dice cuando la caracteristica esta activada: el producto no
-//! depende de LadybugDB y no tiene por que pagar su enlazado.
+//! It is only stated when the feature is enabled: the product does not
+//! depend on LadybugDB and has no reason to pay for its linking.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     if std::env::var("CARGO_FEATURE_LADYBUG").is_ok() {
-        // El argumento va al BINARIO: la libreria que se enlaza es la del
-        // motor analitico, y la resolucion de sus simbolos es del binario
-        // final.
+        // The argument goes to the BINARY: the library being linked is the
+        // analytical engine's, and the resolution of its symbols belongs to the
+        // final binary.
         println!("cargo:rustc-link-arg-bins=-lssl");
         println!("cargo:rustc-link-arg-bins=-lcrypto");
     }

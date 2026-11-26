@@ -1,27 +1,27 @@
-//! Un repositorio de grupo: varios repositorios del mismo formato detras de
-//! un unico endpoint, con una precedencia explicita.
+//! A group repository: several repositories of the same format behind
+//! a single endpoint, with an explicit precedence.
 //!
-//! Un grupo no guarda bytes ni los replica: es una **lista ordenada** de
-//! repositorios (hosted, proxy u otros grupos) y una regla de lectura. Este
-//! modulo es puro: valida la configuracion y recorre el grafo de miembros;
-//! quien lee el catalogo y decide los permisos es el servicio.
+//! A group neither stores bytes nor replicates them: it is an **ordered list** of
+//! repositories (hosted, proxy or other groups) and a read rule. This
+//! module is pure: it validates the configuration and walks the member graph;
+//! whoever reads the catalog and decides permissions is the service.
 //!
-//! # La configuracion
+//! # The configuration
 //!
-//! Vive en `config_settings.group`:
+//! It lives in `config_settings.group`:
 //!
 //! ```json
 //! { "group": { "members": ["internal", "central-mirror"] } }
 //! ```
 //!
-//! - El **orden** es la precedencia: gana el primer miembro que tiene la
-//!   ruta. No hay votacion ni "el mas reciente": dos lecturas de la misma
-//!   ruta con la misma configuracion dan la misma fuente.
-//! - Todos los miembros son del mismo formato que el grupo y de la misma
-//!   cuenta. Un grupo puede contener otros grupos (hasta [`MAX_DEPTH`]
-//!   niveles); un ciclo, un miembro que no existe o de otro formato impiden
-//!   guardar la configuracion.
-//! - Una clave que no se conoce es un error, no un ajuste ignorado.
+//! - The **order** is the precedence: the first member that has the
+//!   path wins. There is no voting nor "the most recent": two reads of the same
+//!   path with the same configuration give the same source.
+//! - All members are of the same format as the group and of the same
+//!   account. A group may contain other groups (up to [`MAX_DEPTH`]
+//!   levels); a cycle, a member that does not exist or of another format prevents
+//!   saving the configuration.
+//! - An unknown key is an error, not an ignored setting.
 
 use std::collections::HashSet;
 
@@ -30,20 +30,20 @@ use serde_json::Value;
 
 use crate::{RepositoryConfig, RepositoryFormat, RepositoryMode};
 
-/// Los miembros directos que admite un grupo.
+/// The direct members that a group admits.
 pub const MAX_MEMBERS: usize = 16;
 
-/// Los niveles de grupos anidados que se siguen, contando el grupo raiz
-/// como nivel 0.
+/// The levels of nested groups that are followed, counting the root group
+/// as level 0.
 pub const MAX_DEPTH: usize = 3;
 
-/// Los repositorios distintos que un recorrido puede visitar. Acota las
-/// lecturas del catalogo de una sola peticion.
+/// The distinct repositories that a walk may visit. It bounds the
+/// catalog reads of a single request.
 pub const MAX_NODES: usize = 64;
 
 const MAX_KEY_LEN: usize = 128;
 
-/// Por que una configuracion de grupo no es valida.
+/// Why a group configuration is not valid.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid group configuration: {0}")]
 pub struct GroupConfigError(pub String);
@@ -58,18 +58,18 @@ struct RawGroup {
     members: Vec<String>,
 }
 
-/// La configuracion de un grupo.
+/// The configuration of a group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupConfig {
-    /// Las claves de los miembros, en orden de precedencia.
+    /// The keys of the members, in order of precedence.
     pub members: Vec<String>,
 }
 
 impl GroupConfig {
-    /// El grupo que declara la configuracion de un repositorio.
+    /// The group that the configuration of a repository declares.
     ///
-    /// `Ok(None)` es "no declara ninguno"; una declaracion que existe y no
-    /// se entiende es un error, nunca una lista vacia.
+    /// `Ok(None)` is "declares none"; a declaration that exists and is not
+    /// understood is an error, never an empty list.
     pub fn of(config: &RepositoryConfig) -> Result<Option<Self>, GroupConfigError> {
         let Some(group) = config.config_settings.get("group") else {
             return Ok(None);
@@ -77,7 +77,7 @@ impl GroupConfig {
         Self::parse(group).map(Some)
     }
 
-    /// Valida un grupo escrito como JSON.
+    /// Validates a group written as JSON.
     pub fn parse(value: &Value) -> Result<Self, GroupConfigError> {
         let raw: RawGroup = serde_json::from_value(value.clone())
             .map_err(|error| invalid(format!("it cannot be read: {error}")))?;
@@ -109,77 +109,77 @@ impl GroupConfig {
     }
 }
 
-/// Lo que se sabe de un repositorio al recorrer un grupo.
+/// What is known about a repository when walking a group.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
-    /// El formato del repositorio.
+    /// The format of the repository.
     pub format: RepositoryFormat,
-    /// Su modo.
+    /// Its mode.
     pub mode: RepositoryMode,
-    /// Sus miembros, si es un grupo (vacio en otro caso).
+    /// Its members, if it is a group (empty otherwise).
     pub members: Vec<String>,
 }
 
-/// Lo que dice el catalogo de una clave.
+/// What the catalog says about a key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Lookup {
-    /// El repositorio existe y quien pregunta puede usarlo.
+    /// The repository exists and whoever asks can use it.
     Found(Node),
-    /// No existe en la cuenta.
+    /// It does not exist in the account.
     Missing,
-    /// Existe pero quien pregunta no puede leerlo: se omite del recorrido,
-    /// sin decir si existe.
+    /// It exists but whoever asks cannot read it: it is omitted from the walk,
+    /// without saying whether it exists.
     Hidden,
 }
 
-/// Por que no se pudo recorrer un grupo.
+/// Why a group could not be walked.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GroupError {
-    /// El grupo se contiene a si mismo, directa o indirectamente.
+    /// The group contains itself, directly or indirectly.
     #[error("the group contains itself: {}", .0.join(" -> "))]
     Cycle(Vec<String>),
-    /// Un miembro no existe.
+    /// A member does not exist.
     #[error("the member {0:?} does not exist")]
     MissingMember(String),
-    /// Un miembro es de otro formato.
+    /// A member is of another format.
     #[error("the member {member:?} is {found:?}, not {expected:?}")]
     FormatMismatch {
-        /// La clave del miembro.
+        /// The key of the member.
         member: String,
-        /// El formato del grupo.
+        /// The format of the group.
         expected: RepositoryFormat,
-        /// El formato del miembro.
+        /// The format of the member.
         found: RepositoryFormat,
     },
-    /// Hay mas niveles de grupos anidados de los admitidos.
+    /// There are more levels of nested groups than allowed.
     #[error("the groups are nested more than {} levels deep", MAX_DEPTH)]
     TooDeep,
-    /// El recorrido visita mas repositorios de los admitidos.
+    /// The walk visits more repositories than allowed.
     #[error("the group reaches more than {} repositories", MAX_NODES)]
     TooManyNodes,
 }
 
-/// Los repositorios que un recorrido encontro.
+/// The repositories that a walk found.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Walk {
-    /// Los miembros **hoja** (hosted o proxy) en orden de precedencia, sin
-    /// repetir: la primera aparicion de una clave es la que cuenta.
+    /// The **leaf** members (hosted or proxy) in order of precedence, without
+    /// repeats: the first appearance of a key is the one that counts.
     pub leaves: Vec<String>,
-    /// Los grupos anidados que se visitaron, en el orden en que se
-    /// encontraron.
+    /// The nested groups that were visited, in the order in which they
+    /// were found.
     pub groups: Vec<String>,
 }
 
-/// Recorre un grupo en profundidad y devuelve sus hojas en orden.
+/// Walks a group depth-first and returns its leaves in order.
 ///
-/// `root_members` son los miembros del grupo raiz **tal y como se quieren**:
-/// al validar una configuracion nueva todavia no esta guardada, y al leer
-/// es la guardada. `lookup` dice que es cada clave. Si el recorrido vuelve a
-/// la raiz, o a cualquier grupo de su camino actual, es un ciclo.
+/// `root_members` are the members of the root group **as they are wanted**:
+/// when validating a new configuration it is not saved yet, and when reading
+/// it is the saved one. `lookup` says what each key is. If the walk returns to
+/// the root, or to any group on its current path, it is a cycle.
 ///
-/// Un miembro `Hidden` se omite (y con el, lo que contuviera si es un
-/// grupo). Un miembro `Missing` es un error: una configuracion que apunta a
-/// algo que no existe no se resuelve a medias.
+/// A `Hidden` member is omitted (and with it, whatever it contained if it is a
+/// group). A `Missing` member is an error: a configuration that points at
+/// something that does not exist is not half-resolved.
 pub fn walk(
     root: &str,
     format: RepositoryFormat,
@@ -227,8 +227,8 @@ fn descend(
                 found: node.format,
             });
         }
-        // Un repositorio alcanzable por dos caminos solo cuenta una vez:
-        // ni se vuelve a recorrer ni repite sus hojas.
+        // A repository reachable by two paths counts only once:
+        // it is neither walked again nor repeats its leaves.
         if !visited.insert(member.clone()) {
             continue;
         }
@@ -343,7 +343,7 @@ mod tests {
             ("inner", Lookup::Found(group(&["b", "a"]))),
         ]);
         let walk = walked(&["a", "inner", "c"], &world).unwrap();
-        // `a` ya habia ganado su sitio: `inner` solo aporta `b`.
+        // `a` had already won its place: `inner` only contributes `b`.
         assert_eq!(walk.leaves, members(&["a", "b", "c"]));
         assert_eq!(walk.groups, members(&["inner"]));
     }
@@ -416,7 +416,7 @@ mod tests {
         entries.push(("g2", Lookup::Found(group(&["g3"]))));
         entries.push(("g1", Lookup::Found(group(&["g2"]))));
         let world = world(entries);
-        // root -> g1 -> g2 -> g3 -> g4: el cuarto nivel anidado no se sigue.
+        // root -> g1 -> g2 -> g3 -> g4: the fourth nested level is not followed.
         assert_eq!(walked(&["g1"], &world).unwrap_err(), GroupError::TooDeep);
         assert!(walked(&["g2"], &world).is_ok());
     }
