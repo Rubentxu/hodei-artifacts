@@ -903,6 +903,18 @@ impl Deployment {
         assert!(status.success(), "the hf repositories could not be seeded");
     }
 
+    /// Creates **cargo proxy** repositories of the first account: the key and
+    /// its `config_settings.proxy` (the upstream and its cache).
+    pub fn seed_cargo_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
+        let repositories: Vec<serde_json::Value> = repositories
+            .iter()
+            .map(
+                |(key, proxy)| serde_json::json!({ "key": key, "proxy": proxy, "format": "cargo" }),
+            )
+            .collect();
+        self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo proxies");
+    }
+
     /// Creates **apt hosted** repositories of the first account. Each
     /// entry is a key and its config (`null` if it has none).
     pub fn seed_apt(&self, repositories: &[(&str, serde_json::Value)]) {

@@ -139,6 +139,9 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
         (RepositoryFormat::Cargo, RepositoryMode::Hosted) => {
             &["hsp119_cargo_e2e", "hsp119_cargo_cli"]
         }
+        (RepositoryFormat::Cargo, RepositoryMode::Proxy) => {
+            &["hsp156_cargo_proxy_e2e", "hsp156_cargo_proxy_cli"]
+        }
         (RepositoryFormat::NuGet, RepositoryMode::Hosted) => {
             &["hsp120_nuget_e2e", "hsp120_dotnet_client"]
         }
@@ -185,12 +188,9 @@ fn refusal_evidence_of(
 /// The limit a cell carries, when the refusal is a decision.
 fn note_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static str {
     match (format, mode) {
-        (RepositoryFormat::Cargo, RepositoryMode::Proxy) => {
-            "the proxy of cargo needs a client-verified upstream before it is declared (HSP-156); \
-             the configuration refuses it today"
-        }
         (RepositoryFormat::Cargo, RepositoryMode::Group) => {
-            "cargo has no group until a client-verified surface declares one (HSP-156)"
+            "cargo has no group: composing a sparse index by package across members has not been \
+             proven with the real client (HSP-156)"
         }
         (RepositoryFormat::Go, RepositoryMode::Group) => {
             "a go group resolves a version from a single member: its .info, .mod and .zip never come from two members, so the go.sum of the client describes one version"
@@ -387,7 +387,7 @@ fn plausible_suite(stem: &str) -> bool {
 /// declared is covered once, an accreditation is always backed by suites
 /// and always about a served modality, and a served modality is always
 /// accredited. A fraudulent declaration —cargo hosted accredited by the
-/// proxy suite, cargo proxy promised without evidence, a suite name
+/// proxy suite, cargo group promised without evidence, a suite name
 /// erased— fails here with the rule it broke.
 pub fn audit(
     matrix: &[ConformanceCell],
@@ -666,37 +666,37 @@ mod tests {
     }
 
     /// A cell accredited for a modality the release does not serve: the
-    /// declaration says cargo proxy is accredited, and the release does
-    /// not serve cargo proxy at all.
+    /// declaration says cargo group is accredited, and the release does
+    /// not serve cargo group at all.
     #[test]
     fn a_cell_accredited_outside_the_service_is_refused() {
         let mut matrix = matrix();
         for cell in matrix.iter_mut() {
-            if cell.format == RepositoryFormat::Cargo && cell.mode == RepositoryMode::Proxy {
+            if cell.format == RepositoryFormat::Cargo && cell.mode == RepositoryMode::Group {
                 cell.status = Accreditation::Accredited;
                 cell.evidence = &["hsp106_proxy_e2e"];
                 cell.note = "";
             }
         }
         let failure = audit(&matrix, RepositoryFormat::declared(), &served_pairs())
-            .expect_err("cargo proxy is not served: the accreditation is a fraud");
+            .expect_err("cargo group is not served: the accreditation is a fraud");
         assert!(
-            failure.to_string().contains("cargo") && failure.to_string().contains("proxy"),
+            failure.to_string().contains("cargo") && failure.to_string().contains("group"),
             "the explanation names the cell: {failure}"
         );
     }
 
-    /// The release promises cargo proxy —the served declaration is
+    /// The release promises cargo group —the served declaration is
     /// doctored— and the matrix still refuses it: no suite accredits the
     /// promise, so the client fails instead of trusting it.
     #[test]
     fn a_modality_promised_without_evidence_is_refused() {
         let mut served = served_pairs();
-        served.push((RepositoryFormat::Cargo, RepositoryMode::Proxy));
+        served.push((RepositoryFormat::Cargo, RepositoryMode::Group));
         let failure = audit(&matrix(), RepositoryFormat::declared(), &served)
-            .expect_err("no suite accredits cargo proxy: the promise is a fraud");
+            .expect_err("no suite accredits cargo group: the promise is a fraud");
         assert!(
-            failure.to_string().contains("cargo") && failure.to_string().contains("proxy"),
+            failure.to_string().contains("cargo") && failure.to_string().contains("group"),
             "the explanation names the promise: {failure}"
         );
     }

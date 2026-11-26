@@ -1,10 +1,11 @@
 # Formatos de paquetes — contrato de aceptación
 
-**Tareas:** HSP-109 (HAR-15, Maven 2 hosted) · HSP-110 (HAR-16, Maven 2 proxy y group) · HSP-111 (HAR-17, npm hosted, proxy y group) · **Servicio medido:** `hodei-artifacts 0.2.0`
+**Tareas:** HSP-109 (HAR-15, Maven 2 hosted) · HSP-110 (HAR-16, Maven 2 proxy y group) · HSP-111 (HAR-17, npm hosted, proxy y group) · HSP-156 (HAE-23, Cargo hosted y proxy) · **Servicio medido:** `hodei-artifacts 0.2.0`
 
 Este documento reúne los contratos de aceptación de los formatos de paquetes
-nativos. Hoy tiene tres secciones, MAVEN (hosted), MAVEN-REMOTE (proxy y
-group) y NPM; cada formato nuevo añade la suya.
+nativos. Hoy tiene seis secciones, MAVEN (hosted), MAVEN-REMOTE (proxy y
+group), NPM, PYPI, CARGO (hosted y proxy) y LINUX; cada formato nuevo añade
+la suya.
 
 ## MAVEN — repositorios Maven 2 hosted
 
@@ -417,6 +418,65 @@ Las pruebas con `twine` y `pip` fallan, y no se saltan, si no están en el
 - **El sdist se construye en el cliente.** Instalar desde un sdist necesita las
   herramientas de construcción allí (`--no-build-isolation`); el servicio no
   las trae ni las ejecuta.
+
+## CARGO — repositorios Cargo hosted y proxy
+
+### 1. Qué afirma este contrato
+
+Un repositorio con `format: cargo` se sirve en `/cargo/{repo}/…` con el
+protocolo del registro de Cargo en su variante sparse. Lo que sigue lo
+comprueba el cliente `cargo` de verdad (`publish`, `add`, `fetch`, `build`),
+no un simulacro.
+
+- **Hosted: publicar y resolver.** `cargo publish` sube el sobre de
+  longitud prefijada (cabecera JSON y fichero `.crate`) a
+  `PUT api/v1/crates/new`. Cada versión deja dos assets inmutables (los
+  bytes del `.crate` y su línea de índice), y una versión publicada es para
+  siempre: repetir los mismos bytes es `200` (idempotente) y otros bytes es
+  `409`. El índice se ensambla listando las líneas, ordenadas por semver,
+  y el `cksum` que el cliente verifica al descargar lo calcula el servicio.
+- **El índice sparse es determinista.** `config.json` declara `dl`, `api`
+  y `auth-required: true` (sin esto `cargo` no manda el token); el camino
+  de cada crate es el del protocolo (`1/a`, `2/ab`, `3/a/abc`, `ab/cd/nombre`)
+  con el nombre normalizado a minúsculas. Un crate que no existe es un
+  `404`, y un camino que no es del protocolo también.
+- **Proxy: el documento del upstream, byte a byte.** El índice de un crate
+  se trae del upstream por el mismo camino sparse que pide el cliente y se
+  sirve **tal cual**: el orden de versiones y los `cksum` son del upstream,
+  y reordenar o reescribir el documento rompería la verificación del
+  cliente. Es **metadata** (`proxy.cache.ttl.metadata_secs`): el TTL la
+  revalida contra el `ETag` del upstream y un `304` renueva el recibo sin
+  mover bytes.
+- **Proxy: yank y descarga verificada.** Un yank del upstream aparece
+  cuando la revalidación trae el documento nuevo (`yanked: true` en la
+  línea). La descarga se trae por la plantilla `dl` que el `config.json`
+  del upstream declara (con sus marcadores `{crate}`, `{version}`,
+  `{lowerprefix}`…, y sin marcadores se añade `/{crate}/{version}/download`)
+  y **solo se sirve si el sha256 de los bytes es el que su línea de índice
+  declara**: un upstream que entrega otros bytes recibe un `502` y la
+  versión no se sirve.
+- **Proxy: nunca publica y no suplanta al hosted.** `cargo publish`
+  contra un proxy es un `405`. Un nombre que un repositorio cargo
+  **hosted** de la misma cuenta ya conoce está reservado: índice y
+  descarga por el proxy son un `409`, sin fallback silencioso al upstream
+  (ni vivo ni de cache) — el upstream no puede suplantar lo que el hosted
+  publicó.
+- **Proxy: offline y cache negativa.** Sin salida a la red, lo que ya se
+  verificó se sigue sirviendo (`X-Hodei-Cache: offline`); lo que no, un
+  `503`. La ausencia que el upstream contestó con `404` se recuerda
+  (`proxy.cache.negative_secs`).
+- **Acceso.** La autorización del hosted aplica al proxy: `401` sin
+  credencial, `404` para el repositorio de otra cuenta (un paquete que el
+  principal no puede ver no aparece), la misma decisión de Cedar
+  (`DownloadAsset`) en índice y descarga, y la compuerta de confianza
+  antes de servir.
+- **No hay group para cargo.** Componer un índice por paquete entre
+  miembros no está probado con cliente real: crear un repositorio cargo
+  en modo group se rechaza en la alta.
+- **Límites.** El índice sirve el documento entero del crate (sin
+  paginación por versión); el proxy no reescribe las líneas del upstream
+  ni valida la gramática de sus `deps`; la plantilla `dl` relativa se
+  resuelve contra la base del upstream.
 
 ## LINUX — repositorios hosted Debian (apt) y Fedora (yum/dnf)
 

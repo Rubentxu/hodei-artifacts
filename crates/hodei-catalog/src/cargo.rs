@@ -355,6 +355,62 @@ pub fn config_json(base: &str) -> Value {
     })
 }
 
+/// The download template that the **upstream's** config.json declares.
+///
+/// The proxy does not invent where the .crate lives: the upstream says so
+/// in its config.json, and that template rules. A document that does not
+/// declare it yields `None`, and the caller applies what the protocol
+/// would apply.
+pub fn the_upstream_dl(config: &Value) -> Option<&str> {
+    config
+        .get("dl")
+        .and_then(Value::as_str)
+        .filter(|dl| !dl.is_empty())
+}
+
+/// The download URL that comes out of the upstream's template, following
+/// the sparse index protocol.
+///
+/// The markers `{crate}`, `{version}`, `{prefix}`, `{lowerprefix}` and
+/// `{sha256-checksum}` are substituted; if the template carries none, the
+/// protocol says to append `/{crate}/{version}/download` at the end. The
+/// name arrives already normalized (lowercase), which is how the index
+/// knows it: `prefix` and `lowerprefix` coincide.
+pub fn download_url(dl: &str, name: &str, version: &str) -> String {
+    let prefix = prefix_of(name);
+    let marked = [
+        ("{crate}", name),
+        ("{version}", version),
+        ("{prefix}", prefix.as_str()),
+        ("{lowerprefix}", prefix.as_str()),
+        ("{sha256-checksum}", ""),
+    ];
+    let has_markers = marked.iter().any(|(marker, _)| dl.contains(marker));
+    let mut url = dl.to_string();
+    if has_markers {
+        for (marker, value) in marked {
+            url = url.replace(marker, value);
+        }
+        url
+    } else {
+        format!("{url}/{name}/{version}/download")
+    }
+}
+
+/// The directory prefix of a name in the index: `1/a`, `2/ab`, `3/a` for
+/// three, and the first two chunks of two for four or more (`ca/rg` for
+/// `cargo`). It is what the protocol calls `{prefix}`: the name does NOT
+/// go inside.
+fn prefix_of(name: &str) -> String {
+    match name.len() {
+        0 => String::new(),
+        1 => format!("1/{name}"),
+        2 => format!("2/{name}"),
+        3 => format!("3/{}", &name[..1]),
+        _ => format!("{}/{}", &name[..2], &name[2..4]),
+    }
+}
+
 /// A version is what cargo publishes: strict semver.
 pub fn valid_version(version: &str) -> bool {
     semver::Version::parse(version).is_ok()
@@ -490,7 +546,45 @@ mod tests {
         assert_eq!(config["api"], "http://host/cargo/mirror");
         assert_eq!(
             config["auth-required"], true,
-            "cargo only sends the token on downloads if declared"
+            "cargo solo manda el token a las descargas si el registro lo declara"
+        );
+    }
+
+    #[test]
+    fn the_upstream_dl_is_what_its_config_declares() {
+        let config = json!({"dl": "https://static.example.com/{crate}/{version}.crate"});
+        assert_eq!(
+            the_upstream_dl(&config),
+            Some("https://static.example.com/{crate}/{version}.crate")
+        );
+        assert_eq!(the_upstream_dl(&json!({"api": "https://x"})), None);
+        assert_eq!(the_upstream_dl(&json!({"dl": ""})), None);
+    }
+
+    #[test]
+    fn the_download_url_follows_the_template_markers() {
+        // With markers: they are substituted, and the prefix comes from the sparse path.
+        assert_eq!(
+            download_url(
+                "https://static.example.com/crates/{crate}/{version}.crate",
+                "serde",
+                "1.0.0"
+            ),
+            "https://static.example.com/crates/serde/1.0.0.crate"
+        );
+        // The protocol prefix for a name of four or more characters.
+        assert_eq!(
+            download_url(
+                "https://dl.example/{lowerprefix}/{crate}-{version}.crate",
+                "hodei-pkg",
+                "0.2.0"
+            ),
+            "https://dl.example/ho/de/hodei-pkg-0.2.0.crate"
+        );
+        // Without markers: the protocol appends the download tail.
+        assert_eq!(
+            download_url("https://crates.example/api/v1/crates", "serde", "1.0.0"),
+            "https://crates.example/api/v1/crates/serde/1.0.0/download"
         );
     }
 
