@@ -249,6 +249,21 @@ impl TrustLedger for CachedTrustLedger {
     ) -> Result<Vec<TrustGrant>, CatalogError> {
         self.inner.grants_of(account, repository).await
     }
+
+    async fn active_digests(
+        &self,
+        account: &str,
+        repository: &str,
+        digests: &[ContentDigest],
+        at: DateTime<Utc>,
+    ) -> Result<Vec<ContentDigest>, CatalogError> {
+        // A listing reads the ledger itself: the page is answered by one
+        // bounded read of the inner ledger, and a listing does not fill a
+        // per-digest cache with the digests it merely names.
+        self.inner
+            .active_digests(account, repository, digests, at)
+            .await
+    }
 }
 
 #[cfg(test)]

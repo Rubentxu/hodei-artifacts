@@ -25,16 +25,19 @@ use hodei_authz::{
     IndeterminateReason, PrincipalAuthenticator, PrincipalClaims, PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogWriter, DigestScope, PackageCoordinates, Publication,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustGrant,
-    TrustLedger, repository_hrn,
+    CatalogWriter, DigestScope, PackageCoordinates, Publication, RepositoryConfig,
+    RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustGrant, TrustLedger,
+    repository_hrn,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use serde_json::json;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
 use tower::ServiceExt;
+
+// The graph profile of the harness: a REAL Dgraph namespace per application.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// The first account.
 const ACCOUNT: &str = "acme";
@@ -156,32 +159,30 @@ fn descriptor_with(
 }
 
 /// The application with a real catalog behind it.
-async fn app() -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
+async fn app() -> (
+    axum::Router,
+    Arc<DgraphCatalogStore>,
+    Arc<hodei_trust_policy_storage::DgraphTrustStore>,
+    Workdir,
+) {
     app_with(cedar()).await
 }
 
 /// The application with the authorizer that is given.
 async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
-) -> (axum::Router, Arc<SurrealCatalogStore>, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let db = Surreal::new::<RocksDb>(tmp.path().join("db"))
-        .await
-        .expect("rocksdb");
-    db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-    let store = Arc::new(SurrealCatalogStore::with_authorizer(
-        db,
-        Arc::new(AllowAllAuthorizer),
-    ));
-    store.initialize().await.expect("initialize");
+) -> (
+    axum::Router,
+    Arc<DgraphCatalogStore>,
+    Arc<hodei_trust_policy_storage::DgraphTrustStore>,
+    Workdir,
+) {
+    let tmp = Workdir::new();
+    let store = Arc::new(tmp.tenant().catalog_store().await);
 
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
-    config.rocksdb.path = tmp
-        .path()
-        .join("schema.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -193,22 +194,27 @@ async fn app_with(
     )
     .await
     .expect("bootstrap");
+    let trust = Arc::new(tmp.tenant().trust_store().await);
+    // The search and the trust ledger are the ones the production bootstrap
+    // of the graph profile wired: this suite measures that wiring, not a
+    // hand-built one. The catalog reader is the plain store: the one the
+    // bootstrap wires verifies in the content store the bytes of every asset
+    // it reads, and this suite publishes metadata only. `store` and `trust`
+    // are handles on the same namespace, to seed it.
     let state = state
         .with_authorization(authorizer)
         .with_repository_auth(
             Arc::new(TestAuthenticator),
             Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
         )
-        .with_catalog(store.clone(), store.clone())
-        .with_catalog_search(store.clone())
-        .with_trust_ledger(store.clone());
+        .with_catalog(store.clone(), store.clone());
 
-    (build_router(state, &config), store, tmp)
+    (build_router(state, &config), store, trust, tmp)
 }
 
 /// Publishes an asset and returns its digest.
 async fn publish(
-    store: &SurrealCatalogStore,
+    store: &DgraphCatalogStore,
     account: &str,
     repository: &str,
     package: &str,
@@ -244,7 +250,7 @@ async fn publish(
 
 /// A catalog with two accounts, a repository that alice cannot read and
 /// an asset with the same name in both.
-async fn a_catalog(store: &SurrealCatalogStore) {
+async fn a_catalog(store: &DgraphCatalogStore) {
     for (account, key, format) in [
         (ACCOUNT, READABLE, RepositoryFormat::PyPi),
         (ACCOUNT, "apps", RepositoryFormat::Npm),
@@ -324,21 +330,6 @@ async fn a_catalog(store: &SurrealCatalogStore) {
     .await;
 }
 
-/// An asset seeded by hand, for the cases that need many.
-#[derive(Debug, serde::Serialize)]
-struct SeededAsset {
-    account: String,
-    repository: String,
-    asset_path: String,
-    package_name: String,
-    package_version: String,
-    digest_algorithm: String,
-    digest: String,
-    size_bytes: i64,
-    subject: Option<String>,
-    updated_at: surrealdb::sql::Datetime,
-}
-
 /// A search request.
 fn search_request(token: &str, query: &str) -> Request<Body> {
     Request::builder()
@@ -372,7 +363,7 @@ async fn the_body(response: axum::response::Response) -> serde_json::Value {
 /// The search of an account finds its own and not the foreign one.
 #[tokio::test]
 async fn the_search_finds_its_own_and_not_the_other_account() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let response = app
@@ -395,7 +386,7 @@ async fn the_search_finds_its_own_and_not_the_other_account() {
 /// The other account does not come out in the names nor in the totals.
 #[tokio::test]
 async fn the_other_account_does_not_appear_in_the_names_nor_in_the_totals() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let response = app
@@ -425,7 +416,7 @@ async fn the_other_account_does_not_appear_in_the_names_nor_in_the_totals() {
 /// The repository that Cedar does not grant neither comes out nor is counted.
 #[tokio::test]
 async fn a_repository_without_permission_neither_appears_nor_is_counted() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let response = app
@@ -447,7 +438,7 @@ async fn a_repository_without_permission_neither_appears_nor_is_counted() {
 /// A search without a credential is not a search.
 #[tokio::test]
 async fn the_search_needs_a_credential() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let request = Request::builder()
@@ -462,7 +453,7 @@ async fn the_search_needs_a_credential() {
 /// A query that does not say what it says is a 400.
 #[tokio::test]
 async fn a_query_that_does_not_say_what_it_says_is_a_400() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     for query in [
@@ -486,7 +477,7 @@ async fn a_query_that_does_not_say_what_it_says_is_a_400() {
 /// does not name what the principal cannot read.
 #[tokio::test]
 async fn a_request_without_filters_is_the_walk_of_what_there_is() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let response = app
@@ -518,7 +509,7 @@ async fn a_request_without_filters_is_the_walk_of_what_there_is() {
 /// it hangs from, what the evidence says and what has been decided.
 #[tokio::test]
 async fn the_detail_view_links_the_blob_the_metadata_and_the_decision() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let response = app
@@ -570,7 +561,7 @@ async fn the_detail_view_links_the_blob_the_metadata_and_the_decision() {
 /// A referrer hangs from the asset and the view says so.
 #[tokio::test]
 async fn the_view_says_whose_the_content_is() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
     let subject = ContentDigest::of_bytes(b"labpkg-1.0.whl");
     publish(
@@ -604,10 +595,10 @@ async fn the_view_says_whose_the_content_is() {
 /// its decision.
 #[tokio::test]
 async fn the_grant_is_the_decision_that_says_it_is_trusted() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, trust, _tmp) = app().await;
     a_catalog(&store).await;
     let digest = ContentDigest::of_bytes(b"labpkg-1.0.whl");
-    store
+    trust
         .grant(&[TrustGrant {
             account: ACCOUNT.to_string(),
             repository: READABLE.to_string(),
@@ -659,7 +650,7 @@ async fn the_grant_is_the_decision_that_says_it_is_trusted() {
 /// The detail of an asset of another account does not exist.
 #[tokio::test]
 async fn the_detail_of_another_account_asset_does_not_exist() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     // The repository is not of carol's account: the same 404 as if it did
@@ -682,7 +673,7 @@ async fn the_detail_of_another_account_asset_does_not_exist() {
 /// The detail of an asset of a repository without permission is not seen.
 #[tokio::test]
 async fn the_detail_of_a_repository_without_permission_is_not_seen() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let response = app
@@ -696,7 +687,7 @@ async fn the_detail_of_a_repository_without_permission_is_not_seen() {
 /// The detail needs a credential.
 #[tokio::test]
 async fn the_detail_needs_a_credential() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let request = Request::builder()
@@ -721,7 +712,7 @@ fn the_paths(body: &serde_json::Value) -> Vec<String> {
 /// The search pages, and says whether there is more behind the page.
 #[tokio::test]
 async fn the_search_pages_and_says_whether_there_is_more() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     let first = app
@@ -765,34 +756,23 @@ async fn the_search_pages_and_says_whether_there_is_more() {
 /// more.
 #[tokio::test]
 async fn a_total_that_does_not_fit_is_not_said() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     // More assets than are counted: the total does not fit, and a number
     // that was not counted is not said.
-    let now = surrealdb::sql::Datetime::from(chrono::Utc::now());
-    let rows: Vec<SeededAsset> = (0..300)
-        .map(|index| SeededAsset {
-            account: ACCOUNT.to_string(),
-            repository: READABLE.to_string(),
-            asset_path: format!("cargado-{index:05}.whl"),
-            package_name: format!("cargado-{index:05}"),
-            package_version: "1.0".to_string(),
-            digest_algorithm: "sha256".to_string(),
-            digest: format!("{index:064x}"),
-            size_bytes: 10,
-            subject: None,
-            updated_at: now.clone(),
-        })
-        .collect();
-    store
-        .db()
-        .query("INSERT INTO catalog_asset $rows")
-        .bind(("rows", rows))
-        .await
-        .expect("the assets are seeded")
-        .check()
-        .expect("the assets are seeded");
+    for index in 0..300 {
+        publish(
+            &store,
+            ACCOUNT,
+            READABLE,
+            &format!("cargado-{index:05}"),
+            "1.0",
+            &format!("cargado-{index:05}.whl"),
+            None,
+        )
+        .await;
+    }
 
     let response = app
         .clone()
@@ -814,7 +794,7 @@ async fn a_total_that_does_not_fit_is_not_said() {
 /// The filters of the search are the ones the client writes.
 #[tokio::test]
 async fn the_filters_of_the_search_are_the_ones_the_client_writes() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, _trust, _tmp) = app().await;
     a_catalog(&store).await;
 
     // The attribute of the repository.
@@ -874,7 +854,7 @@ async fn the_filters_of_the_search_are_the_ones_the_client_writes() {
 /// grant, and its detail answers that it does not exist.
 #[tokio::test]
 async fn the_trusted_channel_does_not_show_what_has_no_grant() {
-    let (app, store, _tmp) = app().await;
+    let (app, store, trust, _tmp) = app().await;
     a_catalog(&store).await;
     let digest = publish(
         &store,
@@ -912,7 +892,7 @@ async fn the_trusted_channel_does_not_show_what_has_no_grant() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     // Granted, it comes out and its detail comes with it.
-    store
+    trust
         .grant(&[TrustGrant {
             account: ACCOUNT.to_string(),
             repository: TOOLS.to_string(),
@@ -959,7 +939,7 @@ async fn the_trusted_channel_does_not_show_what_has_no_grant() {
 /// page would say that there is nothing there, and nobody asked.
 #[tokio::test]
 async fn an_authorizer_that_cannot_decide_is_not_an_empty_page() {
-    let (app, store, _tmp) = app_with(Arc::new(IndeterminateAuthorizer)).await;
+    let (app, store, _trust, _tmp) = app_with(Arc::new(IndeterminateAuthorizer)).await;
     a_catalog(&store).await;
 
     let response = app

@@ -340,6 +340,10 @@ hodei-graph-client = { path = "crates/hodei-graph-client" }
 # saltan a si mismos (exit 0) sin HODEI_GRAPH_IT_ENDPOINT.
 
 [[test]]
+name = "hsp314_p5_search_dgraph_it"
+path = "tests/hsp314_p5_search_dgraph_it.rs"
+
+[[test]]
 name = "hsp187_catalog_dgraph_it"
 path = "tests/hsp187_catalog_dgraph_it.rs"
 
@@ -451,7 +455,6 @@ path = "tests/hsp112_pypi_e2e.rs"
 [[test]]
 name = "hsp113_search_e2e"
 path = "tests/hsp113_search_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp114_console_contract"
