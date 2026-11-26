@@ -1,39 +1,38 @@
-//! AC2 de HSP-160: el pasaporte se lee y se verifica con herramientas
-//! externas, sin el servicio Hodei.
+//! HSP-160 AC2: the passport is read and verified with external
+//! tools, without the Hodei service.
 //!
-//! Carril separado a proposito: aqui no manda el codigo de Hodei sino
-//! `oras`, `cosign` y `gpg` del sistema. Un pasaporte que solo Hodei
-//! sabe leer es un formato propietario con otro nombre, y la AC dice lo
-//! contrario: el manifest es OCI, la procedencia es un statement
-//! in-toto con envelope DSSE, el VSA es SLSA, el SBOM es CycloneDX y
-//! la firma es OpenPGP detached. Lo que se comprueba es la salida de
-//! los binarios, no la de un parser propio haciendoles de eco: cuando
-//! una herramienta falta, el test se salta con la precondition exacta
-//! impresa y NO declara PASS.
+//! A deliberately separate lane: here it is not Hodei's code that rules but
+//! the system's `oras`, `cosign` and `gpg`. A passport that only Hodei
+//! knows how to read is a proprietary format by another name, and the AC says the
+//! opposite: the manifest is OCI, the provenance is an in-toto statement
+//! with a DSSE envelope, the VSA is SLSA, the SBOM is CycloneDX and
+//! the signature is detached OpenPGP. What is checked is the output of
+//! the binaries, not that of a parser of our own echoing for them: when
+//! a tool is missing, the test is skipped with the exact precondition
+//! printed and does NOT declare PASS.
 //!
-//! Precondition real de cada carril (sondeada en esta maquina):
+//! Real precondition of each lane (probed on this machine):
 //!
-//! - `oras` 1.2.0: `manifest fetch`, `resolve` y `pull` con
-//!   `--oci-layout <dir>:<tag>`. Las capas salen nombradas porque
-//!   llevan `org.opencontainers.image.title` (el export las escribe
-//!   con titulo). En 1.2.0 `discover` no recorre el campo `subject`
-//!   sobre oci-layout: la firma se localiza por su tag `latest.sig`.
-//! - `cosign`: modo clave `verify-blob --key <PEM> --signature
-//!   <base64|DER>`. Sin log de transparencia el modo clave exige
-//!   `--insecure-ignore-tlog=true`, y eso se declara: el pasaporte no
-//!   finge tener tlog. La firma se verifica sobre `sha256(archivo)`;
-//!   el archivo es el PAE del envelope, que es exactamente el material
-//!   que DSSE firma.
-//! - `gpg`: batch, anillo en un `GNUPGHOME` de usar y tirar; la firma
-//!   detached se verifica con `gpg --verify <asc> <datos>`.
+//! - `oras` 1.2.0: `manifest fetch`, `resolve` and `pull` with
+//!   `--oci-layout <dir>:<tag>`. The layers come out named because
+//!   they carry `org.opencontainers.image.title` (the export writes them
+//!   with a title). In 1.2.0 `discover` does not follow the `subject` field
+//!   over oci-layout: the signature is located by its `latest.sig` tag.
+//! - `cosign`: key mode `verify-blob --key <PEM> --signature
+//!   <base64|DER>`. Without a transparency log, key mode requires
+//!   `--insecure-ignore-tlog=true`, and that is declared: the passport does not
+//!   pretend to have a tlog. The signature is verified over `sha256(file)`;
+//!   the file is the envelope's PAE, which is exactly the material
+//!   that DSSE signs.
+//! - `gpg`: batch, keyring in a throwaway `GNUPGHOME`; the detached
+//!   signature is verified with `gpg --verify <asc> <data>`.
 //!
-//! La clave privada no se guarda nunca: los fixture la generan en
-//! tiempo de prueba y el scratch se borra al terminar. No hay `.pem`
-//! ni claves en el repositorio.
+//! The private key is never stored: the fixtures generate it at
+//! test time and the scratch is deleted when done. There is no `.pem`
+//! or keys in the repository.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -43,17 +42,15 @@ use hodei_catalog::model::{
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt,
-    ReceiptOutcome, TrustGrant, TrustLedger,
+    CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
+    TrustGrant, TrustLedger,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_evidence::standards::{RootRevision, TrustRoots, VerificationKey};
 use hodei_hub::BlobStore;
 use hodei_hub::blob::FileBlobStore;
 use serde_json::json;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, RocksDb};
 
 use hodei_artifacts_api::bundles::passport::{
     PASSPORT_ARTIFACT_TYPE, PASSPORT_SIGNATURE_ARTIFACT_TYPE, SBOM_MEDIA_TYPE,
@@ -65,13 +62,18 @@ use hodei_artifacts_api::bundles::{
 };
 use hodei_artifacts_api::openpgp::MetadataSigner;
 
+// The graph profile of the harness: a REAL Dgraph namespace per site.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
+
 const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 const ISSUER: &str = "registry.example";
 
-// El andamiaje del sitio es el del contrato del paquete (hsp118): el
-// pasaporte que verifican las herramientas externas es exactamente el
-// que `bundles::export` y `export_passport` escribieron — no una
-// copia de muestra hecha a mano para la ocasion.
+// The site scaffolding is the package contract's (hsp118): the
+// passport the external tools verify is exactly the
+// one that `bundles::export` and `export_passport` wrote — not a
+// hand-made sample copy for the occasion.
 include!("support/hsp118_site.rs");
 include!("support/hsp160_material.rs");
 
@@ -84,8 +86,8 @@ fn read_json(path: &Path) -> serde_json::Value {
     serde_json::from_slice(&raw).expect("the layout holds JSON")
 }
 
-/// Un paquete con decision, ruta desnuda y ruta retenida: la capsula y
-/// el pasaporte se exportan sobre contenido real.
+/// A package with a decision, a bare route and a withheld route: the capsule and
+/// the passport are exported over real content.
 async fn three_way_site() -> (Site, ContentDigest) {
     let site = Site::new().await;
     site.create_proxy("acme", "mirror", "central").await;
@@ -103,7 +105,7 @@ async fn three_way_site() -> (Site, ContentDigest) {
         1,
     )
     .await;
-    site.store
+    site.trust
         .grant(&[TrustGrant {
             account: "acme".to_string(),
             repository: "mirror".to_string(),
@@ -136,32 +138,32 @@ async fn three_way_site() -> (Site, ContentDigest) {
         1,
     )
     .await;
-    // c.bin no tiene recibo: se retiene y la capsula lo dice.
+    // c.bin has no receipt: it is withheld and the capsule says so.
     site.resolve("acme", "mirror", "tools/c.bin", b"tool c")
         .await;
     (site, decided)
 }
 
-/// Lo que el carril externo necesita despues de exportar: el sitio vivo
-/// (su `TempDir` sostiene los ficheros), el firmante, las raices y la
-/// politica con las que el lector offline puede volver a mirar, el
-/// layout OCI, la identidad del pasaporte y la de la capsula.
+/// What the external lane needs after exporting: the live site
+/// (its `TempDir` holds the files), the signer, the roots and the
+/// policy with which the offline reader can look again, the
+/// OCI layout, the passport identity and the capsule identity.
 struct ExternalCase {
     _site: Site,
     signer: MetadataSigner,
     roots: TrustRoots,
     policy: PassportPolicy,
     layout: PathBuf,
-    /// La identidad del pasaporte que `export_passport` devolvio: lo
-    /// que `oras resolve` tendra que reproducir.
+    /// The passport identity that `export_passport` returned: what
+    /// `oras resolve` will have to reproduce.
     image_digest: String,
-    /// El digest de la imagen de capsula: el `subject` que tanto el
-    /// pasaporte como la firma prometen en JSON OCI estandar.
+    /// The digest of the capsule image: the `subject` that both the
+    /// passport and the signature promise in standard OCI JSON.
     capsule_digest: String,
 }
 
-/// Exporta un pasaporte sobre un paquete real, con procedencia firmada
-/// por la raiz alfa anclada a `registry.example`.
+/// Exports a passport over a real package, with provenance signed
+/// by the alpha root anchored to `registry.example`.
 async fn external_case(name: &str) -> ExternalCase {
     let (site, _) = three_way_site().await;
     let signer = scratch_signer(name);
@@ -202,8 +204,8 @@ async fn external_case(name: &str) -> ExternalCase {
     }
 }
 
-/// Si la herramienta no esta, se imprime la precondition exacta y el
-/// carril se retira sin fingir. No se ejecuta nada propio en su lugar.
+/// If the tool is not there, the exact precondition is printed and the
+/// lane withdraws without pretending. Nothing of our own is run in its place.
 fn require(tool: &str, version_args: &[&str]) -> Option<String> {
     match Command::new(tool).args(version_args).output() {
         Ok(output) if output.status.success() => {
@@ -240,14 +242,14 @@ fn run(program: &str, args: &[&str]) -> (bool, String) {
     }
 }
 
-/// La clave publica ECDSA P-256 en PEM (SPKI DER + base64) a partir del
-/// punto sin comprimir que el bundle declara: es la forma que
-/// `cosign --key` acepta. Solo la parte publica, y generada en un
-/// scratch que se borra — ningun `.pem` acaba en el repositorio.
+/// The ECDSA P-256 public key in PEM (SPKI DER + base64) from the
+/// uncompressed point that the bundle declares: it is the form that
+/// `cosign --key` accepts. Only the public part, and generated in a
+/// scratch that is deleted — no `.pem` ends up in the repository.
 fn cosign_key_pem(point: &[u8]) -> String {
     assert_eq!(point.len(), 65, "an uncompressed P-256 point");
     // SubjectPublicKeyInfo: SEQUENCE(SEQUENCE(OID ecPublicKey, OID
-    // prime256v1), BIT STRING(unused-bits=0 || punto)).
+    // prime256v1), BIT STRING(unused-bits=0 || point)).
     let mut der = vec![0x30, 0x59, 0x30, 0x13, 0x06, 0x07];
     der.extend_from_slice(&[0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]); // 1.2.840.10045.2.1
     der.extend_from_slice(&[0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]); // 1.2.840.10045.3.1.7
@@ -263,8 +265,8 @@ fn cosign_key_pem(point: &[u8]) -> String {
     pem
 }
 
-/// El manifiesto del pasaporte segun el index del layout: la primera
-/// entrada es la imagen de pasaporte, la segunda la firma.
+/// The passport manifest according to the layout index: the first
+/// entry is the passport image, the second the signature.
 fn passport_manifest(case: &ExternalCase) -> serde_json::Value {
     let hex = case.image_digest.strip_prefix("sha256:").expect("sha256");
     serde_json::from_slice(
@@ -281,9 +283,9 @@ async fn ac2_oras_reads_the_passport_as_plain_oci() {
     };
     let case = external_case("oras").await;
 
-    // 1. La imagen se resuelve por tag con el estandar OCI: `oras` no
-    //    sabe nada de Hodei y, aun asi, la identidad que ve es la que
-    //    el export juro (`export.image_digest`).
+    // 1. The image is resolved by tag with the OCI standard: `oras` knows
+    //    nothing about Hodei and, even so, the identity it sees is the one
+    //    the export swore (`export.image_digest`).
     let (ok, text) = run(
         "oras",
         &[
@@ -304,9 +306,9 @@ async fn ac2_oras_reads_the_passport_as_plain_oci() {
         "oras resolves the exported identity byte for byte"
     );
 
-    // 2. El manifest es JSON OCI estandar: `oras manifest fetch` lo
-    //    imprime tal cual y el artifact type y el subject se leen sin
-    //    un solo parser de Hodei.
+    // 2. The manifest is standard OCI JSON: `oras manifest fetch` prints
+    //    it as is and the artifact type and the subject are read without
+    //    a single Hodei parser.
     let (ok, text) = run(
         "oras",
         &[
@@ -333,11 +335,11 @@ async fn ac2_oras_reads_the_passport_as_plain_oci() {
         "the passport is a referrer of the capsule, and oras sees it"
     );
 
-    // 3. La firma vive como referrer con su propio artifact type y su
-    //    `subject` apuntando al pasaporte: `oras 1.2.0` no descubre
-    //    referrers por subject sobre oci-layout, pero el tag
-    //    `latest.sig` es estandar y la binding la comprueba la
-    //    herramienta con el digest que ella misma resolvio arriba.
+    // 3. The signature lives as a referrer with its own artifact type and its
+    //    `subject` pointing at the passport: `oras 1.2.0` does not discover
+    //    referrers by subject over oci-layout, but the tag
+    //    `latest.sig` is standard and the tool checks the binding with the
+    //    digest it itself resolved above.
     let (ok, sig_text) = run(
         "oras",
         &[
@@ -362,9 +364,9 @@ async fn ac2_oras_reads_the_passport_as_plain_oci() {
         "the referrer's subject is the passport identity oras resolved"
     );
 
-    // 4. `oras pull` trae las capas nombradas y verifica sus digests
-    //    mientras copia. Lo que un consumidor obtiene son los ficheros
-    //    estandar, no un paquete opaco.
+    // 4. `oras pull` fetches the named layers and verifies their digests
+    //    while copying. What a consumer gets are the standard
+    //    files, not an opaque package.
     let out = std::env::temp_dir().join(format!("hsp160-oras-{}-pull", std::process::id()));
     let _ = std::fs::remove_dir_all(&out);
     let (ok, text) = run(
@@ -399,8 +401,8 @@ async fn ac2_oras_reads_the_passport_as_plain_oci() {
             "the pull carried {expected}: {names:?}"
         );
     }
-    // El VSA que oras trajó es un statement in-toto con el predicate
-    // SLSA: un consumidor externo lo entiende con su propio esquema.
+    // The VSA that oras pulled is an in-toto statement with the SLSA
+    // predicate: an external consumer understands it with its own schema.
     let vsa: serde_json::Value =
         serde_json::from_slice(&std::fs::read(out.join("vsa.json")).expect("the pulled VSA"))
             .expect("the VSA is JSON");
@@ -416,8 +418,8 @@ async fn ac2_oras_reads_the_passport_as_plain_oci() {
             .starts_with("SLSA_BUILD_LEVEL_"),
         "the verdict is the SLSA vocabulary, read with no Hodei code"
     );
-    // El SBOM que oras trajó es CycloneDX legible por cualquier
-    // herramienta de la cadena de suministro.
+    // The SBOM that oras pulled is CycloneDX, readable by any
+    // supply-chain tool.
     let sbom: serde_json::Value =
         serde_json::from_slice(&std::fs::read(out.join("sbom.cdx.json")).expect("the pulled SBOM"))
             .expect("the SBOM is JSON");
@@ -439,16 +441,16 @@ async fn ac2_oras_detects_a_tampered_artifact_and_missing_evidence() {
     };
     let case = external_case("oras-tamper").await;
 
-    // El blob del SBOM es content-addressed: cambiar un byte sin tocar
-    // el manifest hace que el PROPIO oras lo rechace al copiar
-    // (sondeado: "mismatched digest"). No lo decide Hodei — lo decide
-    // el verificador de digests de la herramienta externa.
+    // The SBOM blob is content-addressed: changing one byte without touching
+    // the manifest makes oras ITSELF reject it when copying
+    // (probed: "mismatched digest"). Hodei does not decide that — the digest
+    // verifier of the external tool does.
     let manifest = passport_manifest(&case);
     let sbom_digest = hsp160_layer_digest(&manifest, SBOM_MEDIA_TYPE);
     let original = hsp160_blob(&case.layout, &sbom_digest);
     let mut tampered = original.clone();
     let last = tampered.len() - 1;
-    tampered[last] ^= 0x20; // mismo tamano: solo el digest puede delatarlo
+    tampered[last] ^= 0x20; // same size: only the digest can give it away
     hsp160_write_blob(&case.layout, &sbom_digest, &tampered);
 
     let out = std::env::temp_dir().join(format!("hsp160-oras-{}-bad", std::process::id()));
@@ -469,9 +471,9 @@ async fn ac2_oras_detects_a_tampered_artifact_and_missing_evidence() {
         "the refusal names the digest, externally: {text}"
     );
 
-    // Evidencia que falta: quitar el blob del layout es `not found`
-    // para oras — la ausencia la reporta la herramienta antes de que
-    // nadie interprete el VSA.
+    // Evidence that is missing: removing the blob from the layout is `not found`
+    // for oras — the absence is reported by the tool before
+    // anyone interprets the VSA.
     hsp160_write_blob(&case.layout, &sbom_digest, &original);
     hsp160_remove_blob(&case.layout, &sbom_digest);
     let out = std::env::temp_dir().join(format!("hsp160-oras-{}-gone", std::process::id()));
@@ -502,8 +504,8 @@ async fn ac2_cosign_verifies_the_envelope_the_bundle_publishes() {
     };
     let case = external_case("cosign").await;
 
-    // El envelope DSSE sale de la capa del bundle sigstore del layout
-    // — byte a byte, no de una copia lateral del test.
+    // The DSSE envelope comes out of the sigstore bundle layer of the layout
+    // — byte for byte, not from a side copy of the test.
     let manifest = passport_manifest(&case);
     let bundle_digest = hsp160_layer_digest(&manifest, SIGSTORE_BUNDLE_MEDIA_TYPE);
     let bundle: serde_json::Value =
@@ -526,12 +528,12 @@ async fn ac2_cosign_verifies_the_envelope_the_bundle_publishes() {
         "the statement under the envelope is real SLSA v1 provenance"
     );
 
-    // cosign verify-blob (modo clave, sin tlog) verifica la firma sobre
-    // `sha256(archivo)`. El archivo que se le da son los bytes PAE del
-    // envelope — el material exacto que DSSE firma: `ring` firmo
-    // `ECDSA(SHA256(PAE))` y cosign espera esa forma. La clave PEM se
-    // construye del punto que el propio bundle declara: si el bundle
-    // mintiera sobre su clave, cosign lo diria.
+    // cosign verify-blob (key mode, no tlog) verifies the signature over
+    // `sha256(file)`. The file given to it is the PAE bytes of the
+    // envelope — the exact material that DSSE signs: `ring` signed
+    // `ECDSA(SHA256(PAE))` and cosign expects that form. The PEM key is
+    // built from the point that the bundle itself declares: if the bundle
+    // lied about its key, cosign would say so.
     let signature = BASE64
         .decode(
             envelope["signatures"][0]["sig"]
@@ -580,9 +582,9 @@ async fn ac2_cosign_verifies_the_envelope_the_bundle_publishes() {
         "cosign itself signs off: {text}"
     );
 
-    // Y el mismo cosign rechaza el mensaje alterado: un byte del PAE y
-    // la firma del envelope deja de corresponder. La deteccion del
-    // manipulado es de la herramienta, no de una excepcion nuestra.
+    // And the same cosign rejects the altered message: one byte of the PAE and
+    // the envelope signature no longer corresponds. Detecting the
+    // tampering is the tool's doing, not an exception of ours.
     let mut tampered = pae.clone();
     let last = tampered.len() - 1;
     tampered[last] ^= 0x01;
@@ -590,8 +592,8 @@ async fn ac2_cosign_verifies_the_envelope_the_bundle_publishes() {
     let (ok, text) = verify(work.join("pae-tampered").to_str().expect("utf8"));
     assert!(!ok, "cosign refuses the tampered PAE: {text}");
 
-    // Y con la clave equivocada: otra clave generada aqui mismo. El
-    // bundle no puede apuntar a un root que no firmo.
+    // And with the wrong key: another key generated right here. The
+    // bundle cannot point at a root that did not sign.
     let other = SignedRoot::generate("hsp160-root-omega-v1", "omega", ISSUER);
     std::fs::write(work.join("other.pem"), cosign_key_pem(&other.point)).expect("the wrong PEM");
     let (ok, text) = run(
@@ -618,10 +620,10 @@ async fn ac2_gpg_verifies_the_detached_signature_over_the_manifest() {
     };
     let case = external_case("gpg").await;
 
-    // La firma detached vive en la capa del referrer `latest.sig`; el
-    // material firmado son los bytes exactos del manifest del
-    // pasaporte. Un consumidor con el layout y la clave publica del hub
-    // verifica esto con su gnupg de siempre.
+    // The detached signature lives in the `latest.sig` referrer layer; the
+    // signed material is the exact bytes of the passport
+    // manifest. A consumer with the layout and the hub's public key
+    // verifies this with their usual gnupg.
     let index = read_json(&case.layout.join("index.json"));
     let entry = index["manifests"]
         .as_array()
@@ -674,9 +676,9 @@ async fn ac2_gpg_verifies_the_detached_signature_over_the_manifest() {
     .expect("the public key");
 
     let gpg_home = work.join("gnupg");
-    // LC_ALL=C: el carril necesita la frase tecnica de gpg ("Good
-    // signature"), no la traduccion del sistema. Y el home en 0700,
-    // que gpg se queja de los permisos inseguros.
+    // LC_ALL=C: the lane needs gpg's technical phrase ("Good
+    // signature"), not the system's translation. And the home at 0700,
+    // since gpg complains about insecure permissions.
     use std::os::unix::fs::PermissionsExt as _;
     std::fs::set_permissions(&gpg_home, std::fs::Permissions::from_mode(0o700))
         .expect("a private gpg home");
@@ -713,8 +715,8 @@ async fn ac2_gpg_verifies_the_detached_signature_over_the_manifest() {
         "gpg says it itself: {text}"
     );
 
-    // La misma firma sobre otros bytes la rechaza gpg: lo que
-    // autenticaba era ESTE manifest, no cualquier manifest.
+    // The same signature over other bytes is rejected by gpg: what it
+    // authenticated was THIS manifest, not any manifest.
     std::fs::write(work.join("manifest"), b"{}").expect("other bytes land");
     let mut verify = Command::new("gpg");
     verify.env("GNUPGHOME", &gpg_home).env("LC_ALL", "C").args([
@@ -740,10 +742,10 @@ async fn ac2_the_layout_the_external_tools_read_is_the_one_hodei_reads_offline()
     };
     let case = external_case("cross").await;
 
-    // El carril externo y la lectura offline del mismo layout no son
-    // dos fuentes de verdad: `oras resolve` reproduce la identidad que
-    // `verify_passport_offline` acepta, con las mismas raices y la
-    // misma politica, sin tocar la red.
+    // The external lane and the offline read of the same layout are not
+    // two sources of truth: `oras resolve` reproduces the identity that
+    // `verify_passport_offline` accepts, with the same roots and the same
+    // policy, without touching the network.
     let (ok, text) = run(
         "oras",
         &[

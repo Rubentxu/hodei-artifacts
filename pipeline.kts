@@ -411,6 +411,12 @@ pipeline {
                     "cargo test --workspace " + listOf(
                         "--test hsp118_bundle_contract",
                         "--test hsp126_capsule_oci",
+                        // HSP-160: the trust passport of the capsule. Neither needs the
+                        // graph. The external lane runs real `oras`, `cosign` and `gpg`;
+                        // it REQUIRES those tools in PATH (it prints an explicit SKIP
+                        // line when one is missing, so a run without them is visible).
+                        "--test hsp160_trust_passport",
+                        "--test hsp160_trust_passport_external",
                         "--test har04_raw_hosted_contract",
                         "--test hsp114_console_contract",
                         "--test hsp142_capability_matrix",

@@ -1,28 +1,27 @@
-//! El pasaporte de confianza como extension de la capsula (HSP-160).
+//! The trust passport as a capsule extension (HSP-160).
 //!
-//! Lo que aqui se comprueba no es que el pasaporte *declare* una
-//! verificacion, sino que la *contenga de verdad*: los veredictos del
-//! VSA salen de `cosign_verify` y del ladder SLSA ejecutados sobre los
-//! bytes firmados, no de una autoafirmacion. Cada condicion de
-//! aceptacion tiene un test que puede fallar:
+//! What is checked here is not that the passport *declares* a
+//! verification, but that it *truly contains* it: the VSA
+//! verdicts come from `cosign_verify` and the SLSA ladder run over the
+//! signed bytes, not from a self-assertion. Each acceptance
+//! condition has a test that can fail:
 //!
-//! - AC1 un VSA con veredictos reales: una clave extrana produce un
-//!   `FAILED` honesto, nunca un `PASSED` lavado; un lector que trae
-//!   expectativas que el material no confirma se rechaza con
-//!   `verdict-mismatch`, no se reinterpreta.
-//! - AC3 una importacion aislada conserva el origen y los instantes del
-//!   registro, y la frescura revocatoria en offline es
-//!   `UnknownOffline` — nunca "no hay revocacion, luego hoy es valido".
-//! - AC4 dos exportaciones de las mismas entradas reproducen la
-//!   identidad del manifiesto byte a byte; las firmas quedan declaradas
-//!   fuera de esa identidad.
+//! - AC1 a VSA with real verdicts: a foreign key produces an
+//!   honest `FAILED`, never a laundered `PASSED`; a reader that brings
+//!   expectations the material does not confirm is rejected with
+//!   `verdict-mismatch`, not reinterpreted.
+//! - AC3 an isolated import keeps the origin and the instants of the
+//!   record, and revocation freshness offline is
+//!   `UnknownOffline` — never "no revocation, therefore valid today".
+//! - AC4 two exports of the same inputs reproduce the
+//!   manifest identity byte for byte; the signatures are declared
+//!   outside that identity.
 //!
-//! La condicion AC2 (herramientas externas: `oras`, `cosign`, `gpg`)
-//! vive en su propio target, `hsp160_trust_passport_external.rs`, porque
-//! necesita binarios reales del sistema y se ejecuta en un carril aparte.
+//! The AC2 condition (external tools: `oras`, `cosign`, `gpg`)
+//! lives in its own target, `hsp160_trust_passport_external.rs`, because
+//! it needs real system binaries and runs in a separate lane.
 
 use std::path::Path;
-use std::sync::Arc;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -32,10 +31,10 @@ use hodei_catalog::model::{
     RepositoryFormat, RepositoryMode, repository_hrn,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt,
-    ReceiptOutcome, TrustGrant, TrustLedger,
+    CatalogWriter, ChecksumEvidence, ProvenanceLedger, ProvenanceReceipt, ReceiptOutcome,
+    TrustGrant, TrustLedger,
 };
-use hodei_catalog_storage::SurrealCatalogStore;
+use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
 use hodei_evidence::domain::standards::attestation::DsseEnvelope;
 use hodei_evidence::standards::{
@@ -44,8 +43,6 @@ use hodei_evidence::standards::{
 use hodei_hub::BlobStore;
 use hodei_hub::blob::FileBlobStore;
 use serde_json::json;
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, RocksDb};
 
 use hodei_artifacts_api::bundles::passport::{
     PASSPORT_ARTIFACT_TYPE, PassportProblemCode, PassportReading, SIGSTORE_BUNDLE_MEDIA_TYPE,
@@ -57,19 +54,24 @@ use hodei_artifacts_api::bundles::{
 };
 use hodei_artifacts_api::openpgp::MetadataSigner;
 
+// The graph profile of the harness: a REAL Dgraph namespace per site.
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
+
 const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 const ISSUER: &str = "registry.example";
 
-// El andamiaje del sitio es el del contrato del paquete (hsp118): una
-// capsula que no se exporte desde un paquete real no prueba nada.
+// The site scaffolding is the package contract's (hsp118): a
+// capsule that is not exported from a real package proves nothing.
 include!("support/hsp118_site.rs");
-// El andamiaje de material de procedencia firmada (HSP-160).
+// The signed provenance material scaffolding (HSP-160).
 include!("support/hsp160_material.rs");
 
-/// Un paquete con las tres formas que puede tener una ruta: confirmada
-/// con decision, confirmada sin decision y retenida. El mismo andamiaje
-/// del contrato de la capsula (hsp126): el pasaporte se exporta sobre un
-/// paquete que ya paso por esas tres vias.
+/// A package with the three forms a path can take: confirmed
+/// with a decision, confirmed without a decision, and withheld. The same scaffolding
+/// as the capsule contract (hsp126): the passport is exported over a
+/// package that has already gone through those three routes.
 async fn three_way_site() -> (Site, ContentDigest) {
     let site = Site::new().await;
     site.create_proxy("acme", "mirror", "central").await;
@@ -87,7 +89,7 @@ async fn three_way_site() -> (Site, ContentDigest) {
         1,
     )
     .await;
-    site.store
+    site.trust
         .grant(&[TrustGrant {
             account: "acme".to_string(),
             repository: "mirror".to_string(),
@@ -120,7 +122,7 @@ async fn three_way_site() -> (Site, ContentDigest) {
         1,
     )
     .await;
-    // c.bin no tiene recibo: se retiene y la capsula lo dice.
+    // c.bin has no receipt: it is withheld and the capsule says so.
     site.resolve("acme", "mirror", "tools/c.bin", b"tool c")
         .await;
     (site, decided)
@@ -135,12 +137,12 @@ fn read_json(path: &Path) -> serde_json::Value {
     serde_json::from_slice(&raw).expect("the layout holds JSON")
 }
 
-/// La hex de un digest `sha256:<hex>`, para abrir su blob en el layout.
+/// The hex of a `sha256:<hex>` digest, to open its blob in the layout.
 fn blob_hex(digest: &str) -> &str {
     digest.strip_prefix("sha256:").expect("a sha256 digest")
 }
 
-/// El digest que el indice de la capsula anuncia primero: su imagen.
+/// The digest the capsule index announces first: its image.
 fn capsule_digest(capsule_dir: &Path) -> String {
     let index = read_json(&capsule_dir.join("index.json"));
     index["manifests"][0]["digest"]
@@ -149,10 +151,10 @@ fn capsule_digest(capsule_dir: &Path) -> String {
         .to_string()
 }
 
-/// Lo que una prueba necesita despues de exportar un pasaporte: el sitio
-/// vivo (su `TempDir` sostiene los ficheros), las raices, la politica y
-/// el firmante. `layout` es el directorio OCI del pasaporte recien
-/// escrito.
+/// What a test needs after exporting a passport: the live site
+/// (its `TempDir` holds the files), the roots, the policy and
+/// the signer. `layout` is the OCI directory of the freshly
+/// written passport.
 struct PassportCase {
     _site: Site,
     roots: TrustRoots,
@@ -161,8 +163,8 @@ struct PassportCase {
     layout: std::path::PathBuf,
 }
 
-/// Exporta un pasaporte sobre un paquete real, con procedencia firmada
-/// por la raiz alfa anclada a `registry.example`.
+/// Exports a passport over a real package, with provenance signed
+/// by the alpha root anchored to `registry.example`.
 async fn export_good(name: &str) -> PassportCase {
     let (site, _) = three_way_site().await;
     let signer = scratch_signer(name);
@@ -213,17 +215,17 @@ fn read_with(
     )
 }
 
-/// Lectura aislada offline con las expectativas correctas del caso bueno.
+/// Isolated offline read with the correct expectations of the good case.
 fn read_ok(case: &PassportCase) -> PassportReading {
     read_with(case, Some(ISSUER.to_string()), None)
         .expect("a passport built over real pinned provenance reads")
 }
 
-/// El codigo de rechazo con el que el pasaporte contesto. `PassportProblem`
-/// escribe el codigo en forma `Debug` entre corchetes; los rechazos
-/// estructurales del layout que `tag_missing_and_tampered` etiqueta
-/// llevan la forma kebab de la serde (`[missing-evidence]`,
-/// `[tampered-blob]`), asi que se prueban las dos.
+/// The rejection code with which the passport answered. `PassportProblem`
+/// writes the code in `Debug` form between brackets; the structural
+/// layout rejections that `tag_missing_and_tampered` labels
+/// carry serde's kebab form (`[missing-evidence]`,
+/// `[tampered-blob]`), so both are tested.
 fn code_of(error: &BundleError) -> PassportProblemCode {
     let text = error.to_string();
     [
@@ -255,10 +257,10 @@ async fn ac1_the_vsa_carries_verdicts_the_material_actually_produces() {
     let case = export_good("good").await;
     let reading = read_ok(&case);
 
-    // AC1: el resultado del VSA es el nivel que la escalera realmente
-    // afirma sobre estos bytes, no una etiqueta puesta a mano. Con el
-    // builder confiado, el emisor anclado y los dos establecimientos de
-    // politica declarados, el material da L3.
+    // AC1: the VSA result is the level the ladder actually
+    // asserts over these bytes, not a hand-set label. With the
+    // trusted builder, the anchored issuer and the two policy
+    // establishments declared, the material yields L3.
     assert_eq!(
         reading.vsa.predicate.verification_result,
         "SLSA_BUILD_LEVEL_3"
@@ -266,24 +268,24 @@ async fn ac1_the_vsa_carries_verdicts_the_material_actually_produces() {
     assert_eq!(reading.recorded.asserted_level(), Some(SlsaBuildLevel::L3));
     assert!(
         reading.recorded.gaps().is_empty(),
-        "un pasaporte L3 no tiene huecos: {:?}",
+        "an L3 passport has no gaps: {:?}",
         reading.recorded.gaps()
     );
-    // La puerta anti-autoafirmacion: lo registrado y lo recalculado son
-    // iguales requisito a requisito (la lectura solo paso por eso).
+    // The anti-self-assertion gate: what was recorded and what was recomputed are
+    // equal requirement by requirement (the read only passed because of that).
     assert_eq!(reading.recorded.findings, reading.recomputed.findings);
     assert!(
         reading.cryptographic_holds,
-        "la firma de la raiz alfa sostiene"
+        "the alpha root signature holds"
     );
     assert_eq!(reading.root, Some(("alpha".to_string(), 1)));
 }
 
 #[tokio::test]
 async fn ac1_a_foreign_key_lands_as_an_honest_failed_never_a_washed_pass() {
-    // La procedencia la firma una raiz extrana (beta) que las raices del
-    // export no conocen. El export NO la lava a pasado: ejecuta
-    // `cosign_verify`, ve la clave desconocida y escribe un FAILED.
+    // The provenance is signed by a foreign root (beta) that the export's
+    // roots do not know. The export does NOT launder it into a pass: it runs
+    // `cosign_verify`, sees the unknown key and writes a FAILED.
     let (site, _) = three_way_site().await;
     let signer = scratch_signer("foreign");
     let bundle_dir = export_with(&site, "foreign", Some(&signer)).await;
@@ -309,7 +311,7 @@ async fn ac1_a_foreign_key_lands_as_an_honest_failed_never_a_washed_pass() {
     };
     let export =
         export_passport(&inputs, &layout, &signer).expect("a foreign key still exports as FAILED");
-    assert!(!export.cryptographic_holds, "una clave extrana no sostiene");
+    assert!(!export.cryptographic_holds, "a foreign key does not hold");
 
     let reading = verify_passport_offline(
         &layout,
@@ -322,44 +324,44 @@ async fn ac1_a_foreign_key_lands_as_an_honest_failed_never_a_washed_pass() {
         },
         hsp160_verified_at(),
     )
-    .expect("el FAILED se lee igual de honesto que un PASSED");
-    // El registro dice FAILED y el material se recalcula FAILED: la
-    // verificacion real manda sobre cualquier etiqueta puesta a mano.
+    .expect("a FAILED reads as honestly as a PASSED");
+    // The record says FAILED and the material recomputes to FAILED: the
+    // real verification overrides any hand-set label.
     assert_eq!(reading.vsa.predicate.verification_result, "FAILED");
     assert_eq!(reading.recorded, reading.recomputed);
     assert!(
         !reading.recorded.unmet_at(SlsaBuildLevel::L1).is_empty(),
-        "un FAILED tiene al menos un requisito de suelo no cumplido"
+        "a FAILED has at least one unmet floor requirement"
     );
     assert!(!reading.cryptographic_holds);
-    // La escalera no afirma ningun nivel sobre una clave desconocida.
+    // The ladder asserts no level over an unknown key.
     assert_eq!(reading.recorded.asserted_level(), None);
 }
 
 #[tokio::test]
 async fn ac1_a_reader_with_wrong_expectations_is_refused_not_reinterpreted() {
-    // El export anclo el emisor registry.example y salio L3. Un lector
-    // que no ancla ningun emisor re-ejecuta la cadena sin pin: la
-    // escalera marca el pin como `NotEvaluated` (hueco) y baja a L1. La
-    // puerta anti-autoafirmacion ve que el registro dice 3 y el material
-    // 1, y rechaza con verdict-mismatch en vez de re-sustituir el hueco.
+    // The export anchored the registry.example issuer and came out L3. A reader
+    // that anchors no issuer re-runs the chain without a pin: the
+    // ladder marks the pin as `NotEvaluated` (a gap) and drops to L1. The
+    // anti-self-assertion gate sees that the record says 3 and the material
+    // 1, and rejects with verdict-mismatch instead of re-substituting the gap.
     let case = export_good("mismatch").await;
     let error = read_with(&case, None, None)
-        .expect_err("un lector sin anclaje no puede releer un registro anclado");
+        .expect_err("a reader without an anchor cannot re-read an anchored record");
     assert_eq!(code_of(&error), PassportProblemCode::VerdictMismatch);
     let text = error.to_string();
     assert!(
         text.contains("SLSA_BUILD_LEVEL_3") && text.contains("SLSA_BUILD_LEVEL_1"),
-        "el rechazo compara lo registrado con lo recalculado: {text}"
+        "the rejection compares what was recorded with what was recomputed: {text}"
     );
 }
 
 #[tokio::test]
 async fn ac1_a_foreign_key_cannot_be_laundered_into_the_record() {
-    // El guard del export: si la clave que firmo es una raiz publicada
-    // en el ring pero no esta entre las revisiones que el pasaporte
-    // declararia, el export se rechaza — un registro no puede documentar
-    // unas raices y avalar con otras.
+    // The export guard: if the key that signed is a root published
+    // in the ring but is not among the revisions the passport
+    // would declare, the export is rejected — a record cannot document
+    // some roots and vouch with others.
     let (site, _) = three_way_site().await;
     let signer = scratch_signer("launder");
     let bundle_dir = export_with(&site, "launder", Some(&signer)).await;
@@ -368,11 +370,11 @@ async fn ac1_a_foreign_key_cannot_be_laundered_into_the_record() {
 
     let alpha = SignedRoot::generate("hsp160-root-alpha-v1", "alpha", ISSUER);
     let r1 = alpha.revision(1, hsp160_verified_at() - Duration::days(30));
-    // Beta comparte emisor para que la cadena llegue a Verified (un
-    // pin roto no activa el guard de la firma); solo cambia su linaje.
+    // Beta shares the issuer so the chain reaches Verified (a
+    // broken pin does not trigger the signature guard); only its lineage changes.
     let beta = SignedRoot::generate("hsp160-root-beta-v1", "beta", ISSUER);
     let b1 = beta.revision(1, hsp160_verified_at() - Duration::days(30));
-    // El ring del export conoce alfa y beta; el pasaporte solo publicaria alfa.
+    // The export's ring knows alpha and beta; the passport would only publish alpha.
     let mut roots = alpha.trust_roots(r1.clone());
     roots.activate(b1, "eve", "a lineage the record would not publish");
     let policy = hsp160_policy();
@@ -388,19 +390,19 @@ async fn ac1_a_foreign_key_cannot_be_laundered_into_the_record() {
         verified_at: hsp160_verified_at(),
     };
     let error = export_passport(&inputs, &bundle_dir.join("launder.passport"), &signer)
-        .expect_err("la clave firmante no puede quedarse fuera del record");
+        .expect_err("the signing key cannot be left out of the record");
     assert!(
         error.to_string().contains("not among the revisions"),
-        "el rechazo nombra la revision no publicada: {error}"
+        "the rejection names the unpublished revision: {error}"
     );
 }
 
 #[tokio::test]
 async fn ac1_a_self_written_vsa_cannot_become_a_pass() {
-    // Autoafirmacion: reescribir la capa del VSA para que proclame otro
-    // veredicto no engana al lector. El blob del VSA es contenido-
-    // direccionado: cambiar sus bytes rompe el digest que el manifiesto
-    // anuncia, y `read_declared_blobs` lo rechaza antes de leerlo.
+    // Self-assertion: rewriting the VSA layer so it proclaims another
+    // verdict does not fool the reader. The VSA blob is content-
+    // addressed: changing its bytes breaks the digest the manifest
+    // announces, and `read_declared_blobs` rejects it before reading it.
     let case = export_good("selfwritten").await;
     let passport = read_json(
         &case
@@ -410,7 +412,7 @@ async fn ac1_a_self_written_vsa_cannot_become_a_pass() {
     );
     let vsa_digest = hsp160_layer_digest(&passport, VSA_MEDIA_TYPE);
 
-    // Forjar: mismo shape, resultado y hallazgos cambiados.
+    // Forge: same shape, result and findings changed.
     let mut forged: serde_json::Value =
         serde_json::from_slice(&hsp160_blob(&case.layout, &vsa_digest)).unwrap();
     forged["predicate"]["verificationResult"] = json!("SLSA_BUILD_LEVEL_0");
@@ -421,21 +423,21 @@ async fn ac1_a_self_written_vsa_cannot_become_a_pass() {
     );
 
     let error = read_with(&case, Some(ISSUER.to_string()), None)
-        .expect_err("un VSA manipulado no se lee como bueno");
+        .expect_err("a tampered VSA is not read as good");
     assert_eq!(
         code_of(&error),
         PassportProblemCode::TamperedBlob,
-        "el digest del VSA ya no es el que el manifiesto promete: {error}"
+        "the VSA digest is no longer the one the manifest promises: {error}"
     );
 }
 
 #[tokio::test]
 async fn ac1_a_tampered_envelope_is_refused_at_its_digest() {
-    // Manipular el envelope (la capa del sigstore bundle) rompe el digest
-    // que el VSA nombra en `inputAttestations`: verdict-mismatch, porque
-    // el registro evaluo otros bytes. El envelope NO esta anclado en el
-    // manifiesto, asi que la capa se lee; es el digest del VSA el que
-    // delata que los bytes ya no son los verificados.
+    // Tampering with the envelope (the sigstore bundle layer) breaks the digest
+    // the VSA names in `inputAttestations`: verdict-mismatch, because
+    // the record evaluated other bytes. The envelope is NOT anchored in the
+    // manifest, so the layer is read; it is the VSA's digest that
+    // reveals that the bytes are no longer the verified ones.
     let case = export_good("envelope-tamper").await;
     let passport = read_json(
         &case
@@ -446,7 +448,7 @@ async fn ac1_a_tampered_envelope_is_refused_at_its_digest() {
     let bundle_digest = hsp160_layer_digest(&passport, SIGSTORE_BUNDLE_MEDIA_TYPE);
     let mut bundle: serde_json::Value =
         serde_json::from_slice(&hsp160_blob(&case.layout, &bundle_digest)).unwrap();
-    // Cambiar la firma dentro del bundle sin tocar el digest del VSA.
+    // Change the signature inside the bundle without touching the VSA digest.
     bundle["dsseEnvelope"]["signatures"][0]["sig"] = json!(BASE64.encode([0u8; 8]));
     hsp160_write_blob(
         &case.layout,
@@ -454,14 +456,14 @@ async fn ac1_a_tampered_envelope_is_refused_at_its_digest() {
         &serde_json::to_vec_pretty(&bundle).expect("bundle serializes"),
     );
 
-    // La manipulacion cambia los bytes del blob del bundle; el descriptor
-    // del manifiesto sigue anunciando el digest viejo -> el blob miente.
+    // The tampering changes the bytes of the bundle blob; the manifest
+    // descriptor still announces the old digest -> the blob lies.
     let error = read_with(&case, Some(ISSUER.to_string()), None)
-        .expect_err("un envelope manipulado no pasa");
+        .expect_err("a tampered envelope does not pass");
     assert!(
         code_of(&error) == PassportProblemCode::TamperedBlob
             || code_of(&error) == PassportProblemCode::VerdictMismatch,
-        "o el blob del bundle miente o el digest del VSA lo delata: {error}"
+        "either the bundle blob lies or the VSA digest gives it away: {error}"
     );
 }
 
@@ -470,13 +472,13 @@ async fn ac3_isolated_import_keeps_origin_and_temporal_validity() {
     let case = export_good("origin").await;
     let reading = read_ok(&case);
 
-    // AC3: el origen del paquete sobrevive a una lectura sin servicio.
+    // AC3: the package origin survives a read without a service.
     assert_eq!(reading.manifest.origin.account, "acme");
     assert_eq!(reading.manifest.origin.repository, "mirror");
     assert_eq!(reading.trust_state.origin, reading.manifest.origin);
-    // La validez temporal del registro es la que se congelo al exportar.
+    // The record's temporal validity is the one frozen at export.
     assert_eq!(reading.verified_at, hsp160_verified_at());
-    // La capsula de confianza conserva la decision y la ausencia original.
+    // The trust capsule keeps the original decision and the absence.
     let decided = reading
         .trust_state
         .entries
@@ -486,31 +488,31 @@ async fn ac3_isolated_import_keeps_origin_and_temporal_validity() {
     assert_eq!(
         decided.decision.as_ref().expect("a decision").decision_id,
         "dec-1",
-        "la decision original se conserva"
+        "the original decision is kept"
     );
     assert_eq!(reading.trust_state.entries.len(), 2);
     assert_eq!(
         reading.trust_state.withheld.len(),
         1,
-        "la ausencia sigue contada"
+        "the absence is still counted"
     );
-    // El TrustState del pasaporte es derivable del manifiesto que lleva.
+    // The passport's TrustState is derivable from the manifest it carries.
     assert_eq!(reading.trust_state, TrustState::of(&reading.manifest));
 }
 
 #[tokio::test]
 async fn ac3_offline_never_claims_fresh_revocation_state() {
     let case = export_good("fresh").await;
-    // Lectura offline: aunque el instante de lectura sea el del registro,
-    // la frescura revocatoria NO es Fresh — es UnknownOffline.
+    // Offline read: even if the read instant is the record's own,
+    // revocation freshness is NOT Fresh — it is UnknownOffline.
     let reading = read_ok(&case);
     assert_eq!(reading.freshness, FreshnessNow::UnknownOffline);
-    assert!(reading.cryptographic_holds, "los bytes si sostienen");
+    assert!(reading.cryptographic_holds, "the bytes do hold");
     assert!(
         !reading.proves_current(),
-        "offline no se afirma frescura: UnknownOffline no es una luz verde"
+        "offline, freshness is not asserted: UnknownOffline is not a green light"
     );
-    // El limite esta declarado dentro del propio VSA, no solo en la lectura.
+    // The bound is declared inside the VSA itself, not only in the read.
     assert_eq!(
         reading
             .vsa
@@ -534,9 +536,9 @@ async fn ac3_offline_never_claims_fresh_revocation_state() {
 
 #[tokio::test]
 async fn ac3_a_revoked_signing_key_is_refused_although_the_signature_holds() {
-    // El lector roto la raiz y revoco la revision que firmo: la firma
-    // sigue siendo valida sobre los bytes, pero la confianza la retiro.
-    // La lectura la rechaza con signer-revoked, no como fallo de firma.
+    // The reader broke the root and revoked the revision that signed: the signature
+    // is still valid over the bytes, but trust withdrew it.
+    // The read rejects it with signer-revoked, not as a signature failure.
     let (site, _) = three_way_site().await;
     let signer = scratch_signer("revoked");
     let bundle_dir = export_with(&site, "revoked", Some(&signer)).await;
@@ -558,10 +560,10 @@ async fn ac3_a_revoked_signing_key_is_refused_although_the_signature_holds() {
         published_revisions: vec![r1],
         verified_at: hsp160_verified_at(),
     };
-    export_passport(&inputs, &layout, &signer).expect("mientras la clave vive, se exporta");
+    export_passport(&inputs, &layout, &signer).expect("while the key is alive, it exports");
 
-    // Revocar la revision 1 rotando a una 2 y marcando la 1 revocada
-    // antes del instante de lectura.
+    // Revoke revision 1 by rotating to a 2 and marking 1 revoked
+    // before the read instant.
     let mut roots = roots;
     let second = RootRevision {
         lineage: "alpha".to_string(),
@@ -597,11 +599,11 @@ async fn ac3_a_revoked_signing_key_is_refused_although_the_signature_holds() {
         },
         hsp160_verified_at(),
     )
-    .expect_err("una clave revocada no avala el pasaporte");
+    .expect_err("a revoked key does not vouch for the passport");
     assert_eq!(code_of(&error), PassportProblemCode::SignerRevoked);
     assert!(
         error.to_string().contains("revoked"),
-        "el rechazo nombra la revocacion, no un fallo de firma: {error}"
+        "the rejection names the revocation, not a signature failure: {error}"
     );
 }
 
@@ -619,10 +621,10 @@ async fn ac4_two_exports_of_the_same_inputs_reproduce_the_manifest_identity() {
     let published = vec![r1];
     let policy = hsp160_policy();
 
-    // La procedencia es UN input canonico: se firma una sola vez. Dos
-    // firmas ECDSA del mismo mensaje no son el mismo envelope (el nonce
-    // es aleatorio), y la identidad reproducible se jura sobre las
-    // mismas entradas, no sobre firmas rehechas.
+    // The provenance is ONE canonical input: it is signed only once. Two
+    // ECDSA signatures of the same message are not the same envelope (the nonce
+    // is random), and the reproducible identity is sworn over the
+    // same inputs, not over re-made signatures.
     let provenance = hsp160_provenance(&alpha, &digest);
     let build_inputs = || PassportInputs {
         bundle_dir: &bundle_dir,
@@ -637,7 +639,7 @@ async fn ac4_two_exports_of_the_same_inputs_reproduce_the_manifest_identity() {
     let a = export_passport(&build_inputs(), &bundle_dir.join("a.passport"), &signer).expect("a");
     let b = export_passport(&build_inputs(), &bundle_dir.join("b.passport"), &signer).expect("b");
 
-    // AC4: la identidad del manifiesto es identica byte a byte.
+    // AC4: the manifest identity is identical byte for byte.
     println!("AC4 passport identity a: {}", a.image_digest);
     println!("AC4 passport identity b: {}", b.image_digest);
     println!("AC4 vsa digest: {}", a.vsa_digest);
@@ -647,13 +649,13 @@ async fn ac4_two_exports_of_the_same_inputs_reproduce_the_manifest_identity() {
     );
     assert_eq!(
         a.signed_manifest, b.signed_manifest,
-        "los mismos bytes firmados"
+        "the same signed bytes"
     );
     assert_eq!(a.vsa_digest, b.vsa_digest);
     assert_eq!(a.asserted_level, Some(SlsaBuildLevel::L3));
 
-    // Las firmas y las marcas de tiempo quedan declaradas fuera de la
-    // identidad, no silenciosamente excluidas.
+    // The signatures and timestamps are declared outside the
+    // identity, not silently excluded.
     let manifest: serde_json::Value = serde_json::from_slice(&a.signed_manifest).unwrap();
     assert_eq!(
         manifest["annotations"]["hodei.passport.signatures"],
@@ -664,8 +666,8 @@ async fn ac4_two_exports_of_the_same_inputs_reproduce_the_manifest_identity() {
         json!("input-declared-in-layers; no clock in manifest")
     );
 
-    // Y la re-lectura aislada de la primera copia confirma la misma
-    // identidad del manifiesto que el export anancio.
+    // And the isolated re-read of the first copy confirms the same
+    // manifest identity the export announced.
     let case_a = PassportCase {
         _site: site,
         roots,
@@ -681,9 +683,9 @@ async fn ac4_two_exports_of_the_same_inputs_reproduce_the_manifest_identity() {
 
 #[tokio::test]
 async fn ac4_missing_evidence_is_named_as_absent_not_as_invalid() {
-    // Quitar un blob del layout es evidencia que falta (missing-evidence),
-    // distinto de evidencia que miente (tampered-blob). Un consumidor sin
-    // servicio debe poder decir cual ausencia tuvo.
+    // Removing a blob from the layout is missing evidence (missing-evidence),
+    // distinct from evidence that lies (tampered-blob). A consumer without a
+    // service must be able to say which absence it had.
     let case = export_good("missing").await;
     let passport = read_json(
         &case
@@ -695,18 +697,18 @@ async fn ac4_missing_evidence_is_named_as_absent_not_as_invalid() {
     hsp160_remove_blob(&case.layout, &sbom_digest);
 
     let error = read_with(&case, Some(ISSUER.to_string()), None)
-        .expect_err("un pasaporte al que le falta un blob no se lee");
+        .expect_err("a passport missing a blob is not read");
     assert!(
         error.to_string().contains("missing-evidence"),
-        "la ausencia se nombra ausencia, no invalidacion: {error}"
+        "the absence is named an absence, not an invalidation: {error}"
     );
 }
 
 #[tokio::test]
 async fn the_envelope_the_record_carries_is_the_envelope_the_signature_said() {
-    // Invariante: la capa del sigstore bundle lleva el envelope DSSE que
-    // firmo la raiz alfa sobre el digest de capsula, y se re-verifica sin
-    // el servicio.
+    // Invariant: the sigstore bundle layer carries the DSSE envelope that
+    // the alpha root signed over the capsule digest, and it re-verifies without
+    // the service.
     let case = export_good("envelope").await;
     let passport = read_json(
         &case
