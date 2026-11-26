@@ -1964,31 +1964,6 @@ impl DgraphCatalogStore {
         .and_then(|row| row)
     }
 
-    /// La fila de un asset por su clave, sin autorizar.
-    async fn the_asset_row(
-        &self,
-        account: &str,
-        repository: &str,
-        asset_path: &str,
-    ) -> Result<Option<AssetRow>, CatalogError> {
-        let query = format!(
-            "{{ q(func: eq(hodei.catalog.asset.key, {})) {{ {ASSET_FIELDS} }} }}",
-            dql_string(&asset_key(account, repository, asset_path)),
-        );
-        let response = self
-            .client
-            .execute_dql(&query)
-            .await
-            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
-        single_row(
-            response.json.get("q"),
-            "asset",
-            format!("{repository}/{asset_path}"),
-        )
-        .map(|node| node.map(|node| AssetRow::from_node(&node)).transpose())
-        .and_then(|row| row)
-    }
-
     /// La fila de una versión por sus coordenadas, sin autorizar.
     async fn the_version_row(
         &self,
@@ -2043,6 +2018,38 @@ impl DgraphCatalogStore {
         )
         .map(|node| node.map(|node| ReferenceRow::from_node(&node)).transpose())
         .and_then(|row| row)
+    }
+
+    /// The asset row and its reference row read in ONE query, hence from ONE
+    /// snapshot of the graph. A publication moves both in a single
+    /// transaction; two separate reads can straddle that commit and see the
+    /// new pointer with the old reference (or the other way round), which
+    /// the read model would then report as corruption of a healthy asset
+    /// (the concurrent npm publishers answered 503 because of it).
+    async fn the_asset_and_reference_rows(
+        &self,
+        account: &str,
+        repository: &str,
+        asset_path: &str,
+    ) -> Result<(Option<AssetRow>, Option<ReferenceRow>), CatalogError> {
+        let key = dql_string(&asset_key(account, repository, asset_path));
+        let query = format!(
+            "{{ a(func: eq(hodei.catalog.asset.key, {key})) {{ {ASSET_FIELDS} }} \
+             r(func: eq(hodei.catalog.reference.key, {key})) {{ {REFERENCE_FIELDS} }} }}"
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        let name = format!("{repository}/{asset_path}");
+        let asset = single_row(response.json.get("a"), "asset", name.clone())?
+            .map(|node| AssetRow::from_node(&node))
+            .transpose()?;
+        let reference = single_row(response.json.get("r"), "reference", name)?
+            .map(|node| ReferenceRow::from_node(&node))
+            .transpose()?;
+        Ok((asset, reference))
     }
 
     /// La fila de una etiqueta por su clave, sin autorizar: la identidad
@@ -2364,10 +2371,10 @@ impl CatalogReader for DgraphCatalogStore {
         ))
         .await?;
         let key = format!("{repository}/{asset_path}");
-        let asset = self
-            .the_asset_row(principal_account, repository, asset_path)
-            .await?
-            .ok_or_else(|| CatalogError::missing("asset", key.clone()))?;
+        let (asset, reference) = self
+            .the_asset_and_reference_rows(principal_account, repository, asset_path)
+            .await?;
+        let asset = asset.ok_or_else(|| CatalogError::missing("asset", key.clone()))?;
 
         // La versión a la que apunta tiene que decir el mismo contenido.
         let coordinates = PackageCoordinates {
@@ -2402,12 +2409,9 @@ impl CatalogReader for DgraphCatalogStore {
         // Y la referencia tiene que apuntar al mismo contenido que el
         // asset: si no, la descarga serviría un blob y la recolección
         // guardaría otro.
-        let reference = self
-            .the_reference_row(principal_account, repository, asset_path)
-            .await?
-            .ok_or_else(|| {
-                CatalogError::corrupt("asset", key.clone(), "the asset has no reference to a blob")
-            })?;
+        let reference = reference.ok_or_else(|| {
+            CatalogError::corrupt("asset", key.clone(), "the asset has no reference to a blob")
+        })?;
         if reference.digest != asset.digest {
             return Err(CatalogError::corrupt(
                 "asset",
