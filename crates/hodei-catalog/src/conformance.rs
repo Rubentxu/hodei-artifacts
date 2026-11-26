@@ -153,6 +153,8 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
             &["hsp195_apt_dgraph_it"]
         }
         (RepositoryFormat::Rpm, RepositoryMode::Hosted) => &["hsp122_yum_e2e", "hsp122_yum_client"],
+        (RepositoryFormat::Rpm, RepositoryMode::Proxy) => &["hsp235_rpm_proxy"],
+        (RepositoryFormat::Rpm, RepositoryMode::Group) => &["hsp236_rpm_group"],
         (RepositoryFormat::Conan, RepositoryMode::Hosted) => &["hsp159_conan_client"],
         (RepositoryFormat::Galaxy, RepositoryMode::Hosted) => &["hsp217_galaxy_client"],
         (RepositoryFormat::Terraform, RepositoryMode::Hosted) => {

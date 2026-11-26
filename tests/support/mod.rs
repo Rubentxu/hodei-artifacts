@@ -959,6 +959,30 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the yum proxies");
     }
 
+    /// Seeds a **yum group** repository for the first account.
+    pub fn seed_yum_group(&self, key: &str, members: &[&str]) {
+        let groups = vec![serde_json::json!({
+            "key": key,
+            "members": members,
+            "format": "rpm",
+        })];
+        let status = Command::new(std::env::current_exe().expect("the test binary"))
+            .args([
+                "--exact",
+                "the_catalog_can_be_seeded",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("HODEI_SEED_DB", &self.db)
+            .env(
+                "HODEI_SEED_GROUPS",
+                serde_json::Value::Array(groups).to_string(),
+            )
+            .status()
+            .expect("the group seeder runs");
+        assert!(status.success(), "the yum group could not be seeded");
+    }
+
     /// Crea repositorios **go hosted** de la primera cuenta. Cada entrada
     /// es una clave y su config (`null` si no tiene).
     pub fn seed_go(&self, repositories: &[(&str, serde_json::Value)]) {
@@ -2880,6 +2904,8 @@ fn seed_the_groups(path: &str, groups: &[serde_json::Value]) {
                             hodei_catalog::RepositoryFormat::NuGet
                         } else if group["format"].as_str() == Some("oci") {
                             hodei_catalog::RepositoryFormat::Oci
+                        } else if group["format"].as_str() == Some("rpm") {
+                            hodei_catalog::RepositoryFormat::Rpm
                         } else {
                             hodei_catalog::RepositoryFormat::Raw
                         },

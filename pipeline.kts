@@ -379,6 +379,7 @@ pipeline {
                         "--test hsp217_galaxy_client",
                         "--test hsp232_go_group",
                         "--test hsp235_rpm_proxy",
+                        "--test hsp236_rpm_group",
                         "--test hsp300_go_sumdb",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
@@ -407,6 +408,7 @@ pipeline {
                         "--test hsp227_raw_external",
                         "--test hsp228_oci_proxy",
                         "--test hsp229_oci_group",
+                        "--test hsp230_oci_helm_public",
                         "--test hsp288_native_guides",
                         "--test hsp296_formats_audit",
                         "--test raw_conformity_uat",

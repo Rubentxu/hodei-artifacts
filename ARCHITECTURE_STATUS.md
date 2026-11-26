@@ -90,7 +90,7 @@ de git por si una idea se promueve.
 | Detalle de un paquete: blob, metadatos, lineage, cápsula y decisión | `GET /api/v1/packages/{repository}/{path}` | `tests/hsp113_search_e2e.rs` |
 | Repositorios del catálogo: listar y crear | `GET|POST /api/v1/catalog/repositories` | `tests/hsp114_console_contract.rs` |
 | Capacidades: qué formatos y modalidades se pueden crear | `GET /api/v1/capabilities` | `tests/hsp114_console_contract.rs` |
-| Consola del catálogo: repositorios, búsqueda, detalle, promoción y retirada | `frontend/src/features/console/` | `frontend/src/features/console/__tests__/`, `frontend/tests/e2e/` · `uat/UAT-OPERATIONS.md` |
+| Consola del catálogo: repositorios, búsqueda, detalle con pestañas de resumen, evidencias, confianza y relaciones, promoción y retirada | `frontend/src/features/console/` | `frontend/src/features/console/__tests__/`, `frontend/tests/e2e/` · `uat/UAT-OPERATIONS.md` |
 | Investigación de un artefacto: informe con citas, cobertura y manifiesto de lecturas | `POST /api/v1/investigations` | `tests/hsp88_investigation_query.rs`, `crates/hodei-investigator/tests/deterministic_contract.rs` |
 | Frescura de un informe entregado: vigente, obsoleto o no se sabe | `POST /api/v1/investigations/freshness` | `tests/hsp89_investigation_freshness.rs`, `crates/hodei-investigator/tests/freshness_contract.rs`, `crates/hodei-investigator-storage/tests/freshness_storage.rs` |
 

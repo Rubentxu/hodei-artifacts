@@ -3,6 +3,7 @@ import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
+import { AccountUsageSummary } from '@/features/console/components/AccountUsageSummary';
 import { repositoryServiceMock } from '@/shared/api/mockAdapter';
 import { searchServiceMock } from '@/shared/api/mockAdapter';
 import type { Repository, PackageResult } from '@/shared/types/openapi.types';
@@ -50,8 +51,7 @@ const Dashboard = () => {
         0
       );
       setTotalDownloads(total);
-    } catch (error) {
-      console.error('Error loading dashboard data:', error);
+    } catch {
       setError('Failed to load dashboard data. Please try again later.');
     } finally {
       setLoading(false);
@@ -224,6 +224,9 @@ const Dashboard = () => {
           </div>
         </Card>
       </div>
+
+      {/* Account Usage Summary */}
+      <AccountUsageSummary />
 
       {/* Main Content Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

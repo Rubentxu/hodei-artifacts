@@ -1,25 +1,17 @@
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
-import { Spinner } from '@/components/ui/Spinner';
+import { BrowseView } from '@/features/console/components/BrowseView';
 
-const SearchPage = () => {
-  return (
-    <div>
-      <PageHeader
-        title="Search"
-        subtitle="Search for artifacts and repositories across the system."
-      />
-      <div className="flex gap-2 mb-4">
-        <Input placeholder="Search..." />
-        <Button>Search</Button>
-      </div>
-      <div className="flex justify-center items-center p-8">
-        <Spinner />
-        <p className="ml-2">Search results will appear here.</p>
-      </div>
-    </div>
-  );
-};
+/**
+ * Global catalog search page backed by the canonical BrowseView and consoleApi.
+ */
+const SearchPage = () => (
+  <div className="p-6">
+    <PageHeader
+      title="Search"
+      subtitle="Search for assets across the repositories you may read."
+    />
+    <BrowseView />
+  </div>
+);
 
 export default SearchPage;

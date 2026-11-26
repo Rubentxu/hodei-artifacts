@@ -14,7 +14,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Package, Plus, Server } from 'lucide-react';
+import { Package, Plus, Server, Terminal } from 'lucide-react';
 
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -28,6 +28,7 @@ import type {
   ServeChannel,
 } from '../api/types';
 import { useRepositories } from '../hooks/useConsole';
+import { ClientConnectDialog } from './ClientConnectDialog';
 import { FailureNotice } from './FailureNotice';
 import { formatLabel } from './formatLabels';
 import { RepositoryCreateDialog } from './RepositoryCreateDialog';
@@ -54,6 +55,8 @@ const CHANNEL_VARIANT: Record<ServeChannel, 'info' | 'success'> = {
 export const RepositoriesView = () => {
   const repositories = useRepositories();
   const [creating, setCreating] = useState(false);
+  const [selectedForConnect, setSelectedForConnect] =
+    useState<RepositorySummary | null>(null);
 
   if (repositories.isLoading) {
     return (
@@ -96,7 +99,11 @@ export const RepositoriesView = () => {
       ) : (
         <ul className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {list.map(repository => (
-            <RepositoryCard key={repository.name} repository={repository} />
+            <RepositoryCard
+              key={repository.name}
+              repository={repository}
+              onConnect={() => setSelectedForConnect(repository)}
+            />
           ))}
         </ul>
       )}
@@ -105,15 +112,20 @@ export const RepositoriesView = () => {
         open={creating}
         onClose={() => setCreating(false)}
       />
+      <ClientConnectDialog
+        repository={selectedForConnect}
+        onClose={() => setSelectedForConnect(null)}
+      />
     </div>
   );
 };
 
 interface RepositoryCardProps {
   repository: RepositorySummary;
+  onConnect: () => void;
 }
 
-const RepositoryCard = ({ repository }: RepositoryCardProps) => (
+const RepositoryCard = ({ repository, onConnect }: RepositoryCardProps) => (
   <li>
     <Card className="h-full">
       <CardContent className="flex flex-col gap-3">
@@ -144,6 +156,19 @@ const RepositoryCard = ({ repository }: RepositoryCardProps) => (
             </dd>
           </div>
         </dl>
+
+        <div className="mt-auto pt-1">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            leftIcon={<Terminal className="h-3.5 w-3.5" />}
+            onClick={onConnect}
+            aria-label={`Connect client to ${repository.name}`}
+          >
+            Connect client
+          </Button>
+        </div>
       </CardContent>
     </Card>
   </li>
