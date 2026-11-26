@@ -1,39 +1,39 @@
-//! Recuperacion del registro: copia de seguridad, restauracion y scrub.
+//! Registry recovery: backup, restore and scrub.
 //!
-//! El registro tiene dos verdades que se escriben en momentos distintos: el
-//! catalogo (SurrealDB) dice **que** existe, y el almacen de contenido
-//! guarda **los bytes**. Una copia de solo una de las dos deja un registro
-//! que parece sano y no lo es: referencias a bytes que no estan, o bytes que
-//! nadie referencia. Este modulo existe para que eso no pase en silencio.
+//! The registry has two truths that are written at different times: the
+//! catalog (SurrealDB) says **what** exists, and the content store
+//! holds **the bytes**. A copy of only one of the two leaves a registry
+//! that looks healthy and is not: references to bytes that are missing, or bytes that
+//! nobody references. This module exists so that this does not happen silently.
 //!
-//! - [`manifest`]: el nucleo puro. Que dice una copia de si misma y cuando es
-//!   restaurable.
-//! - [`scrub`]: el nucleo puro del informe (corrupto, referencia rota,
-//!   huerfano) y el servicio que lo calcula reutilizando el censo de la
-//!   recoleccion de basura.
-//! - [`export`]: la correccion del export del motor para que se pueda importar.
-//! - [`import`]: el import idempotente del paquete semantico portable
-//!   (HSP-210): misma clave canonica, mismo orden, ninguna copia de UID.
-//! - [`reconcile`]: el rebuild de proyecciones y la reconciliacion
-//!   semantica del cutover (HSP-211): origen y destino equivalen por
-//!   cuenta, grants, tags, caminos, digests y cursores — nunca por
-//!   conteos aislados — y missing/corrupt jamas escala a verificado.
+//! - [`manifest`]: the pure core. What a backup says about itself and when it is
+//!   restorable.
+//! - [`scrub`]: the pure core of the report (corrupt, broken reference,
+//!   orphan) and the service that computes it by reusing the census of the
+//!   garbage collection.
+//! - [`export`]: the fix to the engine's export so that it can be imported.
+//! - [`import`]: the idempotent import of the portable semantic bundle
+//!   (HSP-210): same canonical key, same order, no UID copied.
+//! - [`reconcile`]: the projection rebuild and the semantic reconciliation
+//!   of the cutover (HSP-211): origin and destination are equivalent per
+//!   account, grants, tags, paths, digests and cursors — never by
+//!   isolated counts — and missing/corrupt never escalates to verified.
 //!
-//! Reglas, de mas a menos importantes:
+//! Rules, from most to least important:
 //!
-//! 1. **Nunca se inventan bytes.** Un contenido solo vuelve al almacen desde
-//!    una copia que lo contiene y cuyo hash coincide con su digest.
-//! 2. **El orden hace la coherencia.** Los metadatos se exportan *antes* que
-//!    los blobs: los blobs de la copia son un superconjunto de lo que los
-//!    metadatos referencian, y lo que sobra es huerfano, nunca una
-//!    referencia rota.
-//! 3. **Una copia a medias no existe.** Se escribe en un directorio
-//!    temporal y se publica con un renombrado atomico.
-//! 4. **La restauracion exige una instalacion limpia.** Mezclar con datos
-//!    vivos es justo lo que esto evita.
-//! 5. **Es una operacion de operador, sin servicio en marcha.** El motor
-//!    embebido bloquea la base mientras el servicio vive; no se promete
-//!    copia en caliente ni alta disponibilidad.
+//! 1. **Bytes are never invented.** Content only returns to the store from
+//!    a backup that contains it and whose hash matches its digest.
+//! 2. **Order makes coherence.** Metadata is exported *before* the
+//!    blobs: the backup's blobs are a superset of what the
+//!    metadata references, and the surplus is orphaned, never a
+//!    broken reference.
+//! 3. **A half-written backup does not exist.** It is written to a
+//!    temporary directory and published with an atomic rename.
+//! 4. **Restore requires a clean installation.** Mixing with live data
+//!    is exactly what this avoids.
+//! 5. **It is an operator operation, with no running service.** The
+//!    embedded engine locks the database while the service is alive; neither
+//!    hot backup nor high availability is promised.
 
 pub mod cutover;
 pub mod export;
@@ -61,28 +61,28 @@ pub use reconcile::{
 };
 pub use scrub::{Finding, RepairAction, RootRef, ScrubReport, ScrubSummary, Scrubber};
 
-/// Por que una operacion de recuperacion no se hizo.
+/// Why a recovery operation was not performed.
 #[derive(Debug, thiserror::Error)]
 pub enum RecoveryError {
-    /// La peticion no es valida.
+    /// The request is not valid.
     #[error("{0}")]
     Invalid(String),
-    /// El destino de una restauracion no esta limpio.
+    /// The destination of a restore is not clean.
     #[error("the destination is not clean: {0}")]
     NotClean(String),
-    /// La copia no es integra o no es restaurable.
+    /// The backup is not intact or is not restorable.
     #[error("the backup is not sound: {0}")]
     Unsound(String),
-    /// Los metadatos no se pudieron exportar o importar.
+    /// The metadata could not be exported or imported.
     #[error("the metadata could not be moved: {0}")]
     Metadata(String),
-    /// El almacen o el catalogo fallaron.
+    /// The store or the catalog failed.
     #[error("the store failed: {0}")]
     Store(String),
-    /// El paquete de resolucion no pudo exportarse o importarse.
+    /// The resolution bundle could not be exported or imported.
     #[error("the resolution bundle failed: {0}")]
     Bundle(String),
-    /// El sistema de ficheros fallo.
+    /// The filesystem failed.
     #[error("the file system failed: {0}")]
     Io(String),
 }

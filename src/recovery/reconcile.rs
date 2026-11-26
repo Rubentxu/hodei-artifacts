@@ -1,36 +1,36 @@
-//! Rebuild de proyecciones y reconciliación semántica para el cutover (HSP-211).
+//! Projection rebuild and semantic reconciliation for the cutover (HSP-211).
 //!
-//! El import de [`super::import`] responde a *qué filas hay*: la identidad
-//! canónica manda y el fingerprint de autoridades es el oráculo. Este módulo
-//! responde a la pregunta del cutover: **origen y destino equivalen por
-//! cuenta**, no "por conteo". Dos estados con el mismo número de filas pueden
-//! no equivaler nada — una etiqueta cruzada, un grant sin evidencia en el
-//! CAS, un cabezal de ledger que miente — y un cutover autorizado por conteos
-//! aislados es justo el falso verde que doc-20 prohíbe.
+//! The import in [`super::import`] answers *which rows exist*: the canonical
+//! identity rules and the authorities fingerprint is the oracle. This module
+//! answers the cutover's question: **origin and destination are equivalent per
+//! account**, not "by count". Two states with the same number of rows may
+//! be equivalent in nothing — a crossed tag, a grant with no evidence in the
+//! CAS, a ledger head that lies — and a cutover authorized by isolated
+//! counts is exactly the false green that doc-20 forbids.
 //!
-//! Reglas, de más a menos importantes:
+//! Rules, from most to least important:
 //!
-//! 1. **La equivalencia es agregada por clave lógica.** Cada proyección
-//!    ([`SemanticProjection`]) se calcula por cuenta, grant vigente, tag,
-//!    camino de artefacto, digest referenciado y cursor de ledger. Ninguna
-//!    comparación usa recuentos globales: un desplazamiento entre cuentas es
-//!    divergencia, no compensación.
-//! 2. **Falta y corrupción jamás escalan a verificado.** [`CutoverToken`]
-//!    solo lo fabrica [`gate_cutover`] cuando cada proyección cuadra y cada
-//!    digest referenciado está en el CAS. No hay constructor público, no hay
-//!    booleano suelto: el estado se llama `Blocked` o `Verified`, y `Blocked`
-//!    nombra la cuenta o fila culpable.
-//! 3. **El fingerprint de autoridades es uno solo.** El oráculo es
-//!    [`super::import::DestinationState::fingerprint`]; este módulo lo
-//!    reutiliza para la equivalencia global y añade la semántica por encima,
-//!    sin inventar una segunda firma canónica.
-//! 4. **El rebuild es idempotente.** [`prepare`] es una función pura sobre
-//!    el mapa de filas: reconstruir dos veces el mismo estado produce la
-//!    misma versión semántica y el mismo resultado de gate (AC2).
-//! 5. **El cabezal no miente.** Si la posición máxima de `event_ledger` de un
-//!    stream no coincide con su `event_ledger_head`, el estado está corrupto
-//!    y el rebuild aborta nombrando el stream: un cursor divergente impide
-//!    el cutover, nunca se "normaliza".
+//! 1. **Equivalence is aggregated by logical key.** Each projection
+//!    ([`SemanticProjection`]) is computed per account, current grant, tag,
+//!    artifact path, referenced digest and ledger cursor. No
+//!    comparison uses global counts: a shift between accounts is a
+//!    divergence, not a compensation.
+//! 2. **Missing and corruption never escalate to verified.** [`CutoverToken`]
+//!    is only produced by [`gate_cutover`] when every projection matches and every
+//!    referenced digest is in the CAS. There is no public constructor, no loose
+//!    boolean: the state is called `Blocked` or `Verified`, and `Blocked`
+//!    names the guilty account or row.
+//! 3. **There is only one authorities fingerprint.** The oracle is
+//!    [`super::import::DestinationState::fingerprint`]; this module
+//!    reuses it for global equivalence and adds the semantics on top,
+//!    without inventing a second canonical signature.
+//! 4. **The rebuild is idempotent.** [`prepare`] is a pure function over
+//!    the row map: rebuilding the same state twice produces the
+//!    same semantic version and the same gate result (AC2).
+//! 5. **The head does not lie.** If the maximum `event_ledger` position of a
+//!    stream does not match its `event_ledger_head`, the state is corrupt
+//!    and the rebuild aborts naming the stream: a divergent cursor prevents
+//!    the cutover, it is never "normalized".
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -43,8 +43,8 @@ use super::import::{
     canonical_digest, canonicalize_id, read_batch, read_import_manifest,
 };
 
-/// Tablas cuyas filas cuelgan de una cuenta. `iam_account` declara la cuenta
-/// por su `handle`; el resto, por el campo `account`.
+/// Tables whose rows hang from an account. `iam_account` declares the account
+/// by its `handle`; the rest, by the `account` field.
 pub const ACCOUNT_TABLES: &[&str] = &[
     "catalog_repository",
     "catalog_version",
@@ -53,48 +53,48 @@ pub const ACCOUNT_TABLES: &[&str] = &[
     "catalog_tag",
 ];
 
-/// Tablas que definen un camino de artefacto dentro de una cuenta y
-/// repositorio.
+/// Tables that define an artifact path within an account and
+/// repository.
 pub const PATH_TABLES: &[&str] = &["catalog_asset", "catalog_reference"];
 
-/// La tabla de grants vigentes.
+/// The table of current grants.
 pub const GRANT_TABLE: &str = "trust_grant";
 
-/// La tabla de etiquetas.
+/// The table of tags.
 pub const TAG_TABLE: &str = "catalog_tag";
 
-/// La tabla de cabezales de ledger (cursores).
+/// The table of ledger heads (cursors).
 pub const HEAD_TABLE: &str = "event_ledger_head";
 
-/// La tabla de eventos del ledger.
+/// The table of ledger events.
 pub const LEDGER_TABLE: &str = "event_ledger";
 
-/// El rebuild falla: el estado no es proyectable tal como está.
+/// The rebuild fails: the state is not projectable as it is.
 #[derive(Debug, thiserror::Error)]
 pub enum ReconcileError {
-    /// Una fila obligatoria para la proyección no lleva su campo clave, o lo
-    /// lleva con otra forma. Corrupción: fail-closed, no se ignora.
+    /// A row required for the projection does not carry its key field, or
+    /// carries it in another shape. Corruption: fail-closed, it is not ignored.
     #[error("the row '{identity}' is not projectable: {detail}")]
     Corrupt {
-        /// La identidad canónica culpable.
+        /// The guilty canonical identity.
         identity: String,
-        /// Por qué no cuadra.
+        /// Why it does not match.
         detail: String,
     },
-    /// El cabezal del ledger no respalda la posición más alta de sus eventos.
+    /// The ledger head does not back the highest position of its events.
     #[error("the ledger head of stream '{stream}' says {head}, its events reach {events}")]
     CursorMismatch {
-        /// El stream culpable.
+        /// The guilty stream.
         stream: String,
-        /// Lo que dice el cabezal.
+        /// What the head says.
         head: u64,
-        /// Lo que alcanzan los eventos.
+        /// What the events reach.
         events: u64,
     },
-    /// El paquete de origen no se puede leer o no es íntegro.
+    /// The origin bundle cannot be read or is not intact.
     #[error("the origin package failed: {0}")]
     Package(#[from] RecoveryError),
-    /// El origen no se puede canonicar (filas del paquete inválidas).
+    /// The origin cannot be canonicalized (invalid bundle rows).
     #[error("the origin package is invalid: {0}")]
     Origin(#[from] ImportFailure),
 }
@@ -137,33 +137,33 @@ fn num_field(row: &Row, identity: &str, field: &str) -> Result<u64, ReconcileErr
     })
 }
 
-/// La proyección semántica del estado: cada agregado por **su** clave
-/// lógica, nunca un censo global. Es la unidad con la que origen y destino
-/// se comparan; su [`Self::version`] es la firma del rebuild.
+/// The semantic projection of the state: each aggregate by **its** logical
+/// key, never a global census. It is the unit with which origin and destination
+/// are compared; its [`Self::version`] is the signature of the rebuild.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticProjection {
-    /// Cuenta -> digest sobre el haz completo de sus filas
-    /// (`tabla:identidad = digest` ordenado). Cubre repositorios, versiones,
-    /// assets, referencias y etiquetas de la cuenta.
+    /// Account -> digest over the full bundle of its rows
+    /// (`table:identity = digest` sorted). Covers the account's repositories,
+    /// versions, assets, references and tags.
     pub accounts: BTreeMap<String, String>,
-    /// Grant vigente (identidad canónica) -> digest de su contenido.
+    /// Current grant (canonical identity) -> digest of its content.
     pub grants: BTreeMap<String, String>,
-    /// Etiqueta (identidad canónica) -> digest de su contenido.
+    /// Tag (canonical identity) -> digest of its content.
     pub tags: BTreeMap<String, String>,
-    /// Camino `cuenta|repositorio|ruta` -> digest de la fila que lo ocupa.
+    /// Path `account|repository|path` -> digest of the row that occupies it.
     pub paths: BTreeMap<String, String>,
-    /// Digest de contenido referenciado -> identidades que lo referencian,
-    /// unidas por coma en orden. Es el mapa que se confronta con el CAS.
+    /// Referenced content digest -> identities that reference it,
+    /// joined by commas in order. It is the map that is checked against the CAS.
     pub digests: BTreeMap<String, String>,
-    /// Stream del ledger -> posición que declara su cabezal.
+    /// Ledger stream -> position declared by its head.
     pub cursors: BTreeMap<String, u64>,
 }
 
 impl SemanticProjection {
-    /// La versión semántica del estado reconstruido: un SHA-256 sobre los
-    /// seis agregados en orden de clave. Reconstruir el mismo estado dos
-    /// veces da la misma versión (AC2); una divergencia en cualquier clave
-    /// la cambia.
+    /// The semantic version of the rebuilt state: a SHA-256 over the
+    /// six aggregates in key order. Rebuilding the same state twice
+    /// gives the same version (AC2); a divergence in any key
+    /// changes it.
     pub fn version(&self) -> String {
         let mut hasher = Sha256::new();
         for (account, digest) in &self.accounts {
@@ -188,29 +188,29 @@ impl SemanticProjection {
     }
 }
 
-/// Un estado listo para comparar: las filas canónicas, su proyección
-/// semántica y el fingerprint de autoridades del oráculo de HSP-210.
+/// A state ready to compare: the canonical rows, its semantic
+/// projection and the authorities fingerprint of the HSP-210 oracle.
 #[derive(Debug, Clone)]
 pub struct ReconcileSubject {
-    /// Las filas por identidad canónica.
+    /// The rows by canonical identity.
     pub rows: BTreeMap<String, Row>,
-    /// La proyección semántica reconstruida desde esas filas.
+    /// The semantic projection rebuilt from those rows.
     pub projection: SemanticProjection,
-    /// El fingerprint de autoridades (el único oráculo, el de
+    /// The authorities fingerprint (the only oracle, that of
     /// [`DestinationState::fingerprint`]).
     pub fingerprint: String,
 }
 
 impl ReconcileSubject {
-    /// La versión semántica del estado.
+    /// The semantic version of the state.
     pub fn version(&self) -> String {
         self.projection.version()
     }
 }
 
-/// El rebuild puro: de `tabla:identidad -> fila` a la proyección semántica
-/// y al fingerprint de autoridades. Es una sola pasada determinista;
-/// aplicarlo dos veces sobre el mismo mapa preserva versión y resultados.
+/// The pure rebuild: from `table:identity -> row` to the semantic projection
+/// and the authorities fingerprint. It is a single deterministic pass;
+/// applying it twice over the same map preserves the version and the results.
 pub fn prepare(rows: BTreeMap<String, Row>) -> Result<ReconcileSubject, ReconcileError> {
     let mut projection = SemanticProjection {
         accounts: BTreeMap::new(),
@@ -221,8 +221,8 @@ pub fn prepare(rows: BTreeMap<String, Row>) -> Result<ReconcileSubject, Reconcil
         cursors: BTreeMap::new(),
     };
 
-    // Haz por cuenta: iam_account declara la cuenta por su handle; las
-    // tablas de catálogo cuelgan del campo `account`.
+    // Bundle per account: iam_account declares the account by its handle; the
+    // catalog tables hang from the `account` field.
     let mut bundles: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut heads: BTreeMap<String, u64> = BTreeMap::new();
     let mut ledger_max: BTreeMap<String, u64> = BTreeMap::new();
@@ -297,8 +297,8 @@ pub fn prepare(rows: BTreeMap<String, Row>) -> Result<ReconcileSubject, Reconcil
             .insert(account, sha256_hex(joined.as_bytes()));
     }
 
-    // El cabezal no miente: su posición tiene que ser exactamente la más
-    // alta de sus eventos. Un stream sin eventos no puede declarar cabeza.
+    // The head does not lie: its position has to be exactly the highest
+    // of its events. A stream with no events cannot declare a head.
     for (stream, head) in &heads {
         let events = ledger_max.get(stream).copied().unwrap_or(0);
         if *head != events {
@@ -330,80 +330,80 @@ pub fn prepare(rows: BTreeMap<String, Row>) -> Result<ReconcileSubject, Reconcil
     })
 }
 
-/// El estado de una comparación origen↔destino. Explícito por construcción:
-/// no existe un booleano "ok" suelto que falta y corrupción puedan escalar.
+/// The state of an origin↔destination comparison. Explicit by construction:
+/// there is no loose "ok" boolean that missing and corruption could escalate.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Divergence {
-    /// Una clave lógica del origen no existe en el destino. **Missing**:
-    /// impide el cutover; jamás se conforma en verificado.
+    /// A logical key of the origin does not exist at the destination. **Missing**:
+    /// it prevents the cutover; it is never conformed into verified.
     #[error("missing on the destination: {what}")]
     Missing {
-        /// Qué agregado y qué clave.
+        /// Which aggregate and which key.
         what: String,
     },
-    /// Una clave lógica del destino no existe en el origen.
+    /// A logical key of the destination does not exist at the origin.
     #[error("extra on the destination: {what}")]
     Extra {
-        /// Qué agregado y qué clave.
+        /// Which aggregate and which key.
         what: String,
     },
-    /// La misma clave lógica, distinto contenido canónico.
+    /// The same logical key, different canonical content.
     #[error("{what} differs: origin {origin}, destination {destination}")]
     Content {
-        /// Qué agregado y qué clave.
+        /// Which aggregate and which key.
         what: String,
-        /// Digest del origen.
+        /// Digest of the origin.
         origin: String,
-        /// Digest del destino.
+        /// Digest of the destination.
         destination: String,
     },
-    /// La posición del cursor no equivale.
+    /// The cursor position is not equivalent.
     #[error(
         "the ledger cursor of stream '{stream}' is at origin {origin}, destination {destination}"
     )]
     Cursor {
-        /// El stream culpable.
+        /// The guilty stream.
         stream: String,
-        /// La posición de origen.
+        /// The origin position.
         origin: u64,
-        /// La posición del destino.
+        /// The destination position.
         destination: u64,
     },
-    /// El CAS no tiene el digest que una fila referencia. **Missing/corrupt
-    /// de contenido**: fail-closed, nombrando al referente.
+    /// The CAS does not have the digest that a row references. **Missing/corrupt
+    /// content**: fail-closed, naming the referent.
     #[error("the CAS lacks the digest {digest} referenced by {referenced_by}")]
     MissingDigest {
-        /// El digest ausente.
+        /// The missing digest.
         digest: String,
-        /// La primera fila (origen o destino) que lo referencia.
+        /// The first row (origin or destination) that references it.
         referenced_by: String,
     },
-    /// El fingerprint de autoridades no equivale aunque las proyecciones
-    /// cuadren: hay filas fuera de los agregados (decisiones, outbox,
-    /// ledger) que divergen.
+    /// The authorities fingerprint is not equivalent even though the projections
+    /// match: there are rows outside the aggregates (decisions, outbox,
+    /// ledger) that diverge.
     #[error("the authority fingerprint differs: origin {origin}, destination {destination}")]
     Authority {
-        /// Fingerprint del origen.
+        /// Fingerprint of the origin.
         origin: String,
-        /// Fingerprint del destino.
+        /// Fingerprint of the destination.
         destination: String,
     },
 }
 
-/// El resultado del gate. [`CutoverDecision::Verified`] lleva el token
-/// único que autoriza el corte; [`CutoverDecision::Blocked`] enumera cada
-/// divergencia con su culpable nombrado.
+/// The result of the gate. [`CutoverDecision::Verified`] carries the single
+/// token that authorizes the cut; [`CutoverDecision::Blocked`] lists each
+/// divergence with its guilty party named.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CutoverDecision {
-    /// Origen y destino equivalen por cuenta, supports, tags, digests,
-    /// caminos y cursores, y el CAS respalda cada digest referenciado.
+    /// Origin and destination are equivalent per account, supports, tags, digests,
+    /// paths and cursors, and the CAS backs every referenced digest.
     Verified(CutoverToken),
-    /// Algo diverge. El cutover está impedido; nada de advertencias.
+    /// Something diverges. The cutover is prevented; no warnings.
     Blocked(Vec<Divergence>),
 }
 
 impl CutoverDecision {
-    /// El token si y solo si la decisión es verificada.
+    /// The token if and only if the decision is verified.
     pub fn token(&self) -> Option<&CutoverToken> {
         match self {
             Self::Verified(token) => Some(token),
@@ -412,9 +412,9 @@ impl CutoverDecision {
     }
 }
 
-/// La prueba de que el gate pasó. **No se puede fabricar desde fuera**:
-/// su constructor está privado y sus campos son privados. Un `Verified`
-/// sin token no existe; un missing o corrupt no llega a este tipo.
+/// The proof that the gate passed. **It cannot be forged from outside**:
+/// its constructor is private and its fields are private. A `Verified`
+/// without a token does not exist; a missing or corrupt never reaches this type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CutoverToken {
     origin_fingerprint: String,
@@ -423,24 +423,24 @@ pub struct CutoverToken {
 }
 
 impl CutoverToken {
-    /// El fingerprint de autoridades que se verificó en el origen.
+    /// The authorities fingerprint that was verified at the origin.
     pub fn origin_fingerprint(&self) -> &str {
         &self.origin_fingerprint
     }
 
-    /// El fingerprint de autoridades que se verificó en el destino.
+    /// The authorities fingerprint that was verified at the destination.
     pub fn destination_fingerprint(&self) -> &str {
         &self.destination_fingerprint
     }
 
-    /// La versión semántica común a ambos estados.
+    /// The semantic version common to both states.
     pub fn version(&self) -> &str {
         &self.version
     }
 }
 
-/// El rebuild del destino desde un sink del contrato de import: mismo
-/// mapa `tabla:identidad -> fila` que ve el import, misma proyección.
+/// The destination rebuild from a sink of the import contract: same
+/// `table:identity -> row` map that the import sees, same projection.
 pub async fn prepare_from_sink(sink: &dyn RowSink) -> Result<ReconcileSubject, ReconcileError> {
     let summary = sink.state_summary().await?;
     let mut rows = BTreeMap::new();
@@ -457,9 +457,9 @@ pub async fn prepare_from_sink(sink: &dyn RowSink) -> Result<ReconcileSubject, R
     prepare(rows)
 }
 
-/// Las filas del paquete de origen, canonicadas con la misma identidad que
-/// fija el import. Reutiliza la verificación manifest-first de HSP-210:
-/// un lote alterado o fuera de bordes aborta antes de proyectar nada.
+/// The rows of the origin bundle, canonicalized with the same identity that
+/// the import fixes. It reuses the manifest-first verification of HSP-210:
+/// a tampered or out-of-bounds batch aborts before projecting anything.
 pub fn package_rows(package: &Path) -> Result<BTreeMap<String, Row>, ReconcileError> {
     let manifest: ImportManifest =
         read_import_manifest(package).map_err(ReconcileError::Package)?;
@@ -481,11 +481,11 @@ pub fn package_rows(package: &Path) -> Result<BTreeMap<String, Row>, ReconcileEr
     Ok(rows)
 }
 
-/// El gate del cutover. Reconstruye la comparación sobre las proyecciones
-/// ya preparadas de origen y destino y confronta cada digest referenciado
-/// contra el CAS. Devuelve `Blocked` con la lista completa de culpables;
-/// `Verified` exige que no haya ninguno (AC1 fail-closed) y que las dos
-/// proyecciones tengan la misma versión.
+/// The cutover gate. It rebuilds the comparison over the already prepared
+/// projections of origin and destination and checks each referenced digest
+/// against the CAS. It returns `Blocked` with the full list of guilty parties;
+/// `Verified` requires that there be none (AC1 fail-closed) and that the two
+/// projections have the same version.
 pub async fn gate_cutover(
     origin: &ReconcileSubject,
     destination: &ReconcileSubject,
@@ -554,8 +554,8 @@ pub async fn gate_cutover(
         });
     }
 
-    // CAS: cada digest que cualquier lado referencia tiene que estar. El
-    // "first referencing" viaja en el error para nombrar al culpable.
+    // CAS: every digest that either side references has to be there. The
+    // "first referencing" travels in the error to name the guilty party.
     let mut digests: BTreeMap<&String, &String> = BTreeMap::new();
     for (digest, refs) in origin.projection.digests.iter() {
         digests.insert(digest, refs);

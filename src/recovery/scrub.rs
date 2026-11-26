@@ -1,22 +1,22 @@
-//! El scrub: comprueba que el catalogo y el almacen se dicen la verdad.
+//! The scrub: checks that the catalog and the store tell each other the truth.
 //!
-//! La recoleccion de basura ya sabe que blobs hay y que raices los
-//! referencian; dejo para el scrub lo que ella no hace: **leer los bytes**.
-//! Detecta tres males, y los tres se informan con la causa y con lo que se
-//! puede hacer, sin tocar nada:
+//! Garbage collection already knows which blobs exist and which roots
+//! reference them; the scrub covers what it does not do: **reading the bytes**.
+//! It detects three ills, and all three are reported with the cause and with what
+//! can be done, without touching anything:
 //!
-//! - **corrupto**: los bytes del blob ya no tienen el digest que su nombre
-//!   dice;
-//! - **referencia rota**: una fila del catalogo apunta a un contenido que no
-//!   esta en el almacen;
-//! - **huerfano**: un blob que nadie referencia (lo reclama la recoleccion
-//!   de basura, no el scrub).
+//! - **corrupt**: the blob's bytes no longer have the digest that its name
+//!   says;
+//! - **broken reference**: a catalog row points to a content that
+//!   is not in the store;
+//! - **orphan**: a blob that nobody references (it is reclaimed by garbage
+//!   collection, not by the scrub).
 //!
-//! El scrub **no repara por su cuenta**. Reparar un blob es devolverle los
-//! bytes correctos, y los unicos bytes correctos son los de una copia cuyo
-//! hash coincide. Inventar bytes, o
-//! borrar una referencia para que el informe salga limpio, seria esconder
-//! el dano.
+//! The scrub **does not repair on its own**. Repairing a blob is giving it back
+//! the correct bytes, and the only correct bytes are those of a backup whose
+//! hash matches. Inventing bytes, or
+//! deleting a reference so that the report comes out clean, would be hiding
+//! the damage.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -31,78 +31,78 @@ use crate::gc::{GcError, GcService};
 
 use super::RecoveryError;
 
-/// Una fila del catalogo que referencia un contenido.
+/// A catalog row that references a content.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct RootRef {
-    /// De que fila: asset, referencia, version o subject.
+    /// Which row: asset, reference, version or subject.
     pub root: &'static str,
-    /// La cuenta.
+    /// The account.
     pub account: String,
-    /// El repositorio.
+    /// The repository.
     pub repository: String,
-    /// La ruta o la version.
+    /// The path or the version.
     pub subject: String,
 }
 
-/// Que se puede hacer con un hallazgo.
+/// What can be done with a finding.
 ///
-/// Es una sugerencia para la persona que opera, no una accion que el scrub
-/// ejecute.
+/// It is a suggestion for the person operating, not an action that the scrub
+/// executes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RepairAction {
-    /// Devolver los bytes desde una copia cuyo hash coincide
-    /// (`hodei-recovery repair --from <copia>`).
+    /// Give the bytes back from a backup whose hash matches
+    /// (`hodei-recovery repair --from <backup>`).
     RestoreFromBackup,
-    /// No hay copia que valga: volver a publicar o a sincronizar el
-    /// contenido desde su origen, o retirar la version afectada.
+    /// There is no backup that will do: republish or resync the
+    /// content from its origin, or withdraw the affected version.
     RepublishOrRetire,
-    /// Nadie lo referencia: lo recoge la recoleccion de basura.
+    /// Nobody references it: garbage collection picks it up.
     ReclaimWithGc,
 }
 
-/// Un hallazgo del scrub.
+/// A scrub finding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Finding {
-    /// Los bytes no tienen el digest de su nombre.
+    /// The bytes do not have the digest of their name.
     Corrupt {
-        /// El contenido que se esperaba, `sha256:<hex>`.
+        /// The content that was expected, `sha256:<hex>`.
         digest: String,
-        /// El contenido que tienen los bytes que hay.
+        /// The content that the existing bytes have.
         found: String,
-        /// Los bytes que ocupa.
+        /// The bytes it occupies.
         length: u64,
-        /// Que filas lo referencian: si esta vacio, nadie lo usa.
+        /// Which rows reference it: if empty, nobody uses it.
         referenced_by: Vec<RootRef>,
-        /// Que se puede hacer.
+        /// What can be done.
         repair: RepairAction,
     },
-    /// Una fila del catalogo apunta a un contenido que no esta.
+    /// A catalog row points to a content that is not there.
     BrokenReference {
-        /// El contenido que falta, `sha256:<hex>`.
+        /// The missing content, `sha256:<hex>`.
         digest: String,
-        /// Que filas lo referencian.
+        /// Which rows reference it.
         referenced_by: Vec<RootRef>,
-        /// Que se puede hacer.
+        /// What can be done.
         repair: RepairAction,
     },
-    /// Un blob que nadie referencia.
+    /// A blob that nobody references.
     Orphan {
-        /// El contenido, `sha256:<hex>`.
+        /// The content, `sha256:<hex>`.
         digest: String,
-        /// Los bytes que ocupa.
+        /// The bytes it occupies.
         length: u64,
-        /// Si sigue dentro del periodo de gracia: un contenido recien
-        /// subido que aun no se ha publicado es un huerfano legitimo.
+        /// Whether it is still within the grace period: a recently
+        /// uploaded content that has not been published yet is a legitimate orphan.
         in_grace: bool,
-        /// Que se puede hacer.
+        /// What can be done.
         repair: RepairAction,
     },
 }
 
 impl Finding {
-    /// El contenido al que se refiere.
+    /// The content it refers to.
     pub fn digest(&self) -> &str {
         match self {
             Self::Corrupt { digest, .. }
@@ -111,82 +111,82 @@ impl Finding {
         }
     }
 
-    /// Si el hallazgo es un dano de datos (corrupto o referencia rota),
-    /// y no un huerfano, que es solo espacio.
+    /// Whether the finding is data damage (corrupt or broken reference),
+    /// and not an orphan, which is only space.
     pub fn is_damage(&self) -> bool {
         !matches!(self, Self::Orphan { .. })
     }
 }
 
-/// Los totales de un scrub.
+/// The totals of a scrub.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ScrubSummary {
-    /// Blobs con los bytes cambiados.
+    /// Blobs with changed bytes.
     pub corrupt: u64,
-    /// Referencias a contenido que no esta.
+    /// References to content that is not there.
     pub broken_references: u64,
-    /// Blobs que nadie referencia y ya no estan en gracia.
+    /// Blobs that nobody references and are no longer in grace.
     pub orphans: u64,
-    /// Blobs que nadie referencia y siguen en gracia.
+    /// Blobs that nobody references and are still in grace.
     pub orphans_in_grace: u64,
 }
 
-/// El informe de un scrub.
+/// The report of a scrub.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ScrubReport {
-    /// Cuantos blobs se leyeron y se comprobaron.
+    /// How many blobs were read and checked.
     pub blobs_checked: u64,
-    /// Cuantos bytes se leyeron.
+    /// How many bytes were read.
     pub bytes_checked: u64,
-    /// Cuantas filas del catalogo se comprobaron.
+    /// How many catalog rows were checked.
     pub roots_checked: u64,
-    /// Lo que se encontro, ordenado por digest.
+    /// What was found, sorted by digest.
     pub findings: Vec<Finding>,
-    /// Los totales.
+    /// The totals.
     pub summary: ScrubSummary,
-    /// Cuanto tardo, en milisegundos.
+    /// How long it took, in milliseconds.
     pub elapsed_ms: u64,
 }
 
 impl ScrubReport {
-    /// Si no hay ningun dano: huerfanos no cuentan, son espacio.
+    /// Whether there is no damage: orphans do not count, they are space.
     pub fn is_sound(&self) -> bool {
         self.summary.corrupt == 0 && self.summary.broken_references == 0
     }
 
-    /// Si no hay ningun hallazgo, ni siquiera huerfanos.
+    /// Whether there is no finding at all, not even orphans.
     pub fn is_clean(&self) -> bool {
         self.findings.is_empty()
     }
 }
 
-/// Lo que la lectura de un blob dijo.
+/// What the read of a blob said.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Check {
-    /// Los bytes tienen el digest que dice el nombre.
+    /// The bytes have the digest that the name says.
     Sound,
-    /// Los bytes tienen otro digest.
+    /// The bytes have another digest.
     Corrupt {
-        /// El digest de los bytes que hay.
+        /// The digest of the existing bytes.
         found: String,
     },
-    /// El blob ya no estaba cuando se fue a leer.
+    /// The blob was no longer there when it came to be read.
     Gone,
 }
 
-/// Todo lo que el informe necesita saber, ya leido.
+/// Everything the report needs to know, already read.
 pub struct Evidence<'a> {
-    /// Los blobs del almacen.
+    /// The store's blobs.
     pub blobs: &'a [StoredBlob],
-    /// Lo que la lectura de cada uno dijo, por `sha256:<hex>`.
+    /// What the read of each one said, by `sha256:<hex>`.
     pub checks: &'a BTreeMap<String, Check>,
-    /// Las raices del catalogo.
+    /// The catalog's roots.
     pub roots: &'a [ContentRoot],
-    /// El plan de la recoleccion de basura: de el salen los huerfanos.
+    /// The garbage collection plan: the orphans come from it.
     pub plan: &'a Plan,
-    /// Los contenidos que se comprobo de nuevo que **no** estan: solo estos
-    /// pueden ser referencia rota. Un contenido publicado entre el listado y
-    /// la lectura de las raices no esta aqui y no se acusa.
+    /// The contents that were checked again and are **not** there: only these
+    /// can be a broken reference. A content published between the listing and
+    /// the reading of the roots is not here and is not accused.
     pub confirmed_missing: &'a BTreeSet<String>,
 }
 
@@ -199,9 +199,9 @@ fn root_ref(root: &ContentRoot) -> RootRef {
     }
 }
 
-/// Calcula el informe. Es una funcion pura: no lee ni escribe nada.
+/// Computes the report. It is a pure function: it neither reads nor writes anything.
 pub fn assess(evidence: &Evidence<'_>, elapsed: Duration) -> ScrubReport {
-    // Quien referencia cada contenido.
+    // Who references each content.
     let mut referenced: BTreeMap<String, BTreeSet<RootRef>> = BTreeMap::new();
     for root in evidence.roots {
         referenced
@@ -257,12 +257,12 @@ pub fn assess(evidence: &Evidence<'_>, elapsed: Duration) -> ScrubReport {
             Verdict::InGrace { .. } => true,
             Verdict::Reclaimable { .. } => false,
             Verdict::Retained { .. } => continue,
-            // El censo del scrub es completo: un desconocido aqui solo
-            // puede ser una degradacion del paginado, y eso nunca es
-            // huerfano.
+            // The scrub's census is complete: an unknown here can only
+            // be a degradation of the pagination, and that is never an
+            // orphan.
             Verdict::Unknown { .. } => continue,
         };
-        // Un huerfano danado ya esta en la lista como corrupto.
+        // A damaged orphan is already in the list as corrupt.
         if corrupt.contains(&entry.digest) {
             continue;
         }
@@ -305,16 +305,16 @@ pub fn assess(evidence: &Evidence<'_>, elapsed: Duration) -> ScrubReport {
     }
 }
 
-/// El servicio de scrub: lee el almacen y el catalogo y arma el informe.
+/// The scrub service: reads the store and the catalog and builds the report.
 pub struct Scrubber {
     store: Arc<dyn BlobStore>,
     gc: GcService,
-    /// Un scrub lee todo el almacen: solo hay uno a la vez en el servicio.
+    /// A scrub reads the whole store: there is only one at a time in the service.
     running: tokio::sync::Mutex<()>,
 }
 
 impl Scrubber {
-    /// Crea el servicio. Falla si el almacen no sabe listar sus blobs.
+    /// Creates the service. Fails if the store does not know how to list its blobs.
     pub fn new(
         ledger: Arc<dyn ContentLedger>,
         store: Arc<dyn BlobStore>,
@@ -329,10 +329,10 @@ impl Scrubber {
         })
     }
 
-    /// Como [`Self::run`], pero devuelve `None` si ya hay un scrub en curso.
+    /// Like [`Self::run`], but returns `None` if a scrub is already in progress.
     ///
-    /// Es lo que usa el servicio: leer todo el almacen dos veces a la vez
-    /// no aporta nada y duplica la carga de disco.
+    /// It is what the service uses: reading the whole store twice at once
+    /// adds nothing and doubles the disk load.
     pub async fn try_run(&self) -> Result<Option<ScrubReport>, RecoveryError> {
         let Ok(_guard) = self.running.try_lock() else {
             return Ok(None);
@@ -340,12 +340,12 @@ impl Scrubber {
         self.run().await.map(Some)
     }
 
-    /// Hace el scrub. Solo lee: no escribe, no mueve y no borra nada.
+    /// Performs the scrub. It only reads: it writes, moves and deletes nothing.
     pub async fn run(&self) -> Result<ScrubReport, RecoveryError> {
         let started = Instant::now();
-        // El censo lista los blobs primero y lee las raices despues: asi lo
-        // que se publica mientras tanto solo puede protegerse de mas, nunca
-        // de menos.
+        // The census lists the blobs first and reads the roots afterwards: that way what
+        // gets published in the meantime can only be over-protected, never
+        // under-protected.
         let (plan, blobs) = self
             .gc
             .census_with(crate::gc::service::ManifestReads::Lenient)
@@ -375,9 +375,9 @@ impl Scrubber {
             checks.insert(blob.digest.to_string(), check);
         }
 
-        // Una raiz cuyo contenido no esta en el listado puede ser una
-        // referencia rota **o** algo publicado despues del listado: solo se
-        // acusa lo que sigue sin estar cuando se vuelve a preguntar.
+        // A root whose content is not in the listing may be a broken
+        // reference **or** something published after the listing: only what
+        // is still missing when asked again is accused.
         let listed: BTreeSet<String> = blobs.iter().map(|blob| blob.digest.to_string()).collect();
         let mut confirmed_missing: BTreeSet<String> = BTreeSet::new();
         for root in &roots {
@@ -543,7 +543,7 @@ mod tests {
             vec![orphan('a', false)],
             &[],
         );
-        // Aparece una sola vez: como corrupto, no tambien como huerfano.
+        // It appears only once: as corrupt, not also as an orphan.
         assert_eq!(result.findings.len(), 1);
         assert_eq!(result.summary.orphans, 0);
         let Finding::Corrupt { repair, .. } = &result.findings[0] else {
@@ -571,8 +571,8 @@ mod tests {
 
     #[test]
     fn content_that_was_published_after_the_listing_is_not_accused() {
-        // La raiz existe, el blob no se listo, pero al volver a preguntar
-        // estaba: no esta en `confirmed_missing` y no es un hallazgo.
+        // The root exists, the blob was not listed, but on asking again
+        // it was there: it is not in `confirmed_missing` and is not a finding.
         let result = report(&[], &[], &[root('c', "blobs/c")], vec![], &[]);
         assert!(result.is_clean());
     }

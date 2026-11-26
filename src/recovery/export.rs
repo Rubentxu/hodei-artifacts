@@ -1,16 +1,16 @@
-//! Correccion del export de SurrealDB para que sea importable.
+//! Fix to the SurrealDB export so that it is importable.
 //!
-//! El export del motor embebido (2.7) escribe, para un campo `array<T>`,
-//! la definicion del campo **y** la de su elemento implicito `campo[*]`.
-//! Su propio `import` falla al llegar a la segunda: el elemento ya existe
-//! porque lo creo la primera. Sin esta correccion una copia de seguridad se
-//! escribiria bien y no se podria restaurar, que es la peor forma de fallar.
+//! The embedded engine's export (2.7) writes, for an `array<T>` field,
+//! the definition of the field **and** that of its implicit element `field[*]`.
+//! Its own `import` fails on reaching the second one: the element already exists
+//! because the first one created it. Without this fix a backup would
+//! be written fine and could not be restored, which is the worst way to fail.
 //!
-//! La regla es estricta: solo se quita la linea `campo[*]` que **sigue
-//! inmediatamente** a la de su campo, que declara exactamente el tipo del
-//! elemento y no anade nada mas (ni `ASSERT`, ni `DEFAULT`, ni `VALUE`).
-//! Cualquier otra definicion se deja tal cual: si colisionara, el import
-//! fallaria en voz alta, que es mejor que perder una restriccion.
+//! The rule is strict: only the `field[*]` line that **immediately follows**
+//! that of its field is removed, which declares exactly the element's type
+//! and adds nothing else (no `ASSERT`, no `DEFAULT`, no `VALUE`).
+//! Any other definition is left as is: if it collided, the import
+//! would fail loudly, which is better than losing a constraint.
 
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
@@ -18,14 +18,14 @@ use std::path::Path;
 const DEFINE: &str = "DEFINE FIELD ";
 const PLAIN_TAIL: &str = " PERMISSIONS FULL;";
 
-/// Lo que se sabe de la ultima definicion de campo con tipo coleccion.
+/// What is known about the last collection-typed field definition.
 struct Parent {
     name: String,
     table: String,
     element: String,
 }
 
-/// El tipo del elemento de un tipo `array<T>`, `set<T>` o `option<array<T>>`.
+/// The element type of an `array<T>`, `set<T>` or `option<array<T>>` type.
 fn element_of(declared: &str) -> Option<String> {
     let declared = declared
         .strip_prefix("option<")
@@ -35,7 +35,7 @@ fn element_of(declared: &str) -> Option<String> {
         .strip_prefix("array<")
         .or_else(|| declared.strip_prefix("set<"))?
         .strip_suffix('>')?;
-    // `array<string, 5>` lleva la longitud maxima tras la coma.
+    // `array<string, 5>` carries the maximum length after the comma.
     let element = match inner.rsplit_once(", ") {
         Some((element, length)) if length.chars().all(|c| c.is_ascii_digit()) => element,
         _ => inner,
@@ -43,7 +43,7 @@ fn element_of(declared: &str) -> Option<String> {
     Some(element.to_string())
 }
 
-/// Lee `DEFINE FIELD <name> ON <table> TYPE <type> PERMISSIONS FULL;`.
+/// Reads `DEFINE FIELD <name> ON <table> TYPE <type> PERMISSIONS FULL;`.
 fn parse(line: &str) -> Option<(&str, &str, &str)> {
     let rest = line.strip_prefix(DEFINE)?;
     let (name, rest) = rest.split_once(" ON ")?;
@@ -62,7 +62,7 @@ fn parent_of(line: &str) -> Option<Parent> {
     })
 }
 
-/// Si `line` es el elemento implicito del campo `parent`.
+/// Whether `line` is the implicit element of the `parent` field.
 fn is_implied(parent: &Parent, line: &str) -> bool {
     parse(line).is_some_and(|(name, table, declared)| {
         name.strip_suffix("[*]") == Some(parent.name.as_str())
@@ -71,17 +71,17 @@ fn is_implied(parent: &Parent, line: &str) -> bool {
     })
 }
 
-/// Copia `input` en `output` sin los elementos implicitos.
+/// Copies `input` into `output` without the implicit elements.
 ///
-/// Devuelve cuantas lineas quito. Lee y escribe por lineas: el export
-/// lleva los datos y puede ser grande.
+/// Returns how many lines it removed. Reads and writes by lines: the export
+/// carries the data and can be large.
 pub fn drop_implied_elements(input: &Path, output: &Path) -> std::io::Result<usize> {
     let mut reader = BufReader::new(std::fs::File::open(input)?);
     let mut writer = BufWriter::new(std::fs::File::create(output)?);
     let mut parent: Option<Parent> = None;
     let mut dropped = 0usize;
-    // Se lee por bytes y se escribe lo leido tal cual: un texto con saltos
-    // `\r\n` dentro de un valor no puede cambiar de contenido.
+    // It is read as bytes and what was read is written as is: a text with `\r\n`
+    // line breaks inside a value must not change its content.
     let mut raw: Vec<u8> = Vec::new();
     loop {
         raw.clear();
