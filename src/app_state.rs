@@ -6,10 +6,10 @@
 //!
 //! # Architecture
 //!
-//! AppState sigue el patrón Composition Root:
-//! - Solo contiene puertos (traits), no implementaciones concretas
-//! - Es construido por el composition_root
-//! - Es clonado e inyectado en cada handler de Axum
+//! AppState follows the Composition Root pattern:
+//! - It only holds ports (traits), no concrete implementations
+//! - It is built by the composition_root
+//! - It is cloned and injected into every Axum handler
 
 use crate::audit::{AuditSink, TracingAuditSink};
 use crate::authorization::{AuthorizeResourceUseCase, AuthorizerPort};
@@ -34,11 +34,11 @@ use std::sync::Arc;
 
 /// Application state containing all use case ports
 ///
-/// Este struct es clonado en cada handler de Axum y proporciona acceso a
-/// toda la lógica de negocio a través de puertos (traits). Esto permite:
-/// - Desacoplamiento total entre handlers e implementaciones
-/// - Fácil testing con mocks
-/// - Cumplimiento del Dependency Inversion Principle
+/// This struct is cloned into every Axum handler and provides access to
+/// all the business logic through ports (traits). This allows:
+/// - Total decoupling between handlers and implementations
+/// - Easy testing with mocks
+/// - Compliance with the Dependency Inversion Principle
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct AppState {
@@ -47,7 +47,7 @@ pub struct AppState {
     pub schema_version: String,
 
     // ============================================================
-    // Puertos de hodei-policies
+    // Ports of hodei-policies
     // ============================================================
     /// Port for registering entity types
     #[allow(dead_code)]
@@ -74,7 +74,7 @@ pub struct AppState {
     pub playground_evaluate: Arc<dyn PlaygroundEvaluatePort>,
 
     // ============================================================
-    // Puertos de hodei-iam
+    // Ports of hodei-iam
     // ============================================================
     /// Port for registering IAM schema
     pub register_iam_schema: Arc<dyn RegisterIamSchemaPort>,
@@ -141,11 +141,11 @@ pub struct AppState {
     /// Optional for the same reason the catalog is: without it there are no
     /// bytes to serve.
     pub(crate) content_store: Option<Arc<dyn BlobStore>>,
-    /// El probe de readiness del despliegue.
+    /// The deployment's readiness probe.
     ///
-    /// Es un puerto y no una comprobacion: el handler de
-    /// `/health/ready` no sabe que dependencias exige el perfil activo, y
-    /// el perfil activo no se entera de que hay un handler.
+    /// It is a port and not a check: the `/health/ready` handler does not
+    /// know which dependencies the active profile requires, and the active
+    /// profile does not know there is a handler.
     pub(crate) readiness: Arc<dyn crate::readiness::ReadinessProbe>,
     /// The garbage collection of the store of content.
     ///
@@ -174,8 +174,8 @@ pub struct AppState {
     /// Optional: without it the promotion routes answer `501` and nothing
     /// is ever granted, so a trusted channel stays empty.
     pub(crate) trust_plane: Option<Arc<crate::trust::promotion::TrustPlane>>,
-    /// El ciclo reactivo CVE: admision de advisories, reevaluacion y
-    /// barrido de vigencias (HSP-137).
+    /// The reactive CVE cycle: advisory admission, reevaluation and the
+    /// sweep of validity periods (HSP-137).
     ///
     /// Optional, and fail-closed: a deployment without it answers `501`
     /// on the advisory entry and never reevaluates on its own -- a
@@ -221,8 +221,8 @@ pub struct AppState {
     /// A deployment that says nothing about quotas gets the ledger of
     /// no limits, which admits everything and is exactly what it said.
     pub(crate) quota: Arc<crate::quota::QuotaLedger>,
-    /// La clave con la que el hub firma la metadata de los repositorios
-    /// de sistema: el `Release.gpg` de apt y el `repomd.xml.asc` de yum.
+    /// The key with which the hub signs the metadata of the system
+    /// repositories: apt's `Release.gpg` and yum's `repomd.xml.asc`.
     pub(crate) metadata_signer: Arc<dyn crate::openpgp::MetadataSigning>,
     /// Atomic signed `repodata` snapshots for YUM/DNF group repositories.
     pub(crate) yum_group_snapshots: Arc<
@@ -629,10 +629,10 @@ impl AppState {
         self
     }
 
-    /// El probe de readiness del despliegue.
+    /// The deployment's readiness probe.
     ///
-    /// Lo inyecta el arranque, que es donde se decide que dependencias
-    /// exige el perfil activo.
+    /// Injected by the bootstrap, which is where it is decided which
+    /// dependencies the active profile requires.
     pub fn with_readiness(mut self, probe: Arc<dyn crate::readiness::ReadinessProbe>) -> Self {
         self.readiness = probe;
         self

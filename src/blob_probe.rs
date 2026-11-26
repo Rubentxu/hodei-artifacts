@@ -1,20 +1,20 @@
-//! La sonda de integridad del contenido.
+//! The content integrity probe.
 //!
-//! El catálogo afirma que un asset tiene tales bytes y tal longitud. Esa
-//! afirmación es una promesa, y una promesa que nadie comprueba es una
-//! mentira: un blob que no esta donde el catálogo dice se sirve como si
-//! estuviera sano, y la corrupción se confunde con la ausencia.
+//! The catalog asserts that an asset has certain bytes and a certain length. That
+//! assertion is a promise, and a promise nobody checks is a lie: a blob that is
+//! not where the catalog says it is gets served as if it were healthy, and
+//! corruption is mistaken for absence.
 //!
-//! La sonda comprueba lo **barato**: la longitud que el almacen de
-//! bytes tiene de verdad. Recalcular el digest en cada lectura seria leer
-//! el contenido entero en cada peticion, y la verificacion profunda —que
-//! los bytes sean los que su digest dice— es tarea del scrub, que la
-//! hace cuando puede y no en cada peticion.
+//! The probe checks the **cheap** thing: the length the byte store actually
+//! holds. Recomputing the digest on every read would mean reading the whole
+//! content on every request, and deep verification --that the bytes are the ones
+//! their digest says-- is the scrub's job, which it does when it can and not on
+//! every request.
 //!
-//! Lo que la sonda NO hace es decidir nada: ella responde con un hecho —
-//! esta longitud, o no esta— y el catálogo decide que significa. Por eso
-//! vive en la aplicacion, que es donde el catalogo y el almacen de
-//! bytes ya se conocen y se cablean.
+//! What the probe does NOT do is decide anything: it answers with a fact --
+//! this length, or not there-- and the catalog decides what it means. That is why
+//! it lives in the application, which is where the catalog and the byte store
+//! already know each other and are wired together.
 
 use std::sync::Arc;
 
@@ -23,17 +23,17 @@ use async_trait::async_trait;
 use hodei_catalog::{BlobIntegrityProbe, BlobLocation, BlobProbeError, DigestScope};
 use hodei_hub::blob::{BlobError, BlobStore};
 
-/// La sonda que pregunta al almacen de bytes.
+/// The probe that asks the byte store.
 ///
-/// El almacen sabe la longitud de un blob por su digest, y eso es lo que
-/// se pregunta: la longitud, que es un metadato, y no el contenido.
+/// The store knows the length of a blob by its digest, and that is what is
+/// asked: the length, which is metadata, and not the content.
 pub struct BlobStoreProbe {
-    /// El almacen de bytes.
+    /// The byte store.
     store: Arc<dyn BlobStore>,
 }
 
 impl BlobStoreProbe {
-    /// Una sonda sobre el almacen dado.
+    /// A probe over the given store.
     pub fn new(store: Arc<dyn BlobStore>) -> Self {
         Self { store }
     }
@@ -43,20 +43,20 @@ impl BlobStoreProbe {
 impl BlobIntegrityProbe for BlobStoreProbe {
     async fn length_of(&self, location: &BlobLocation) -> Result<u64, BlobProbeError> {
         match location.scope {
-            // El ambito global: el almacen guarda un blob por digest, y
-            // la pregunta es por ese digest.
+            // The global scope: the store keeps one blob per digest, and
+            // the question is about that digest.
             DigestScope::Global => self
                 .store
                 .length(&location.digest)
                 .await
                 .map_err(the_probe_error),
-            // El ambito particionado: el almacen de bytes no tiene
-            // todavia una ranura por cuenta. La sonda no lo dice "no
-            // esta" —eso seria afirmar que el contenido esta roto— ni
-            // "no lo se" con la misma respuesta que un fallo de disco:
-            // dice que **no lo puede saber**, que es lo cierto. El
-            // catalogo lo traduce como indisponible, y el cliente
-            // reintenta en vez de borrar algo que no era suyo.
+            // The partitioned scope: the byte store does not yet have a slot
+            // per account. The probe does not say "not there" --that would be
+            // claiming the content is broken-- nor "I don't know" with the same
+            // answer as a disk failure: it says it **cannot know**, which is the
+            // truth. The catalog translates that as unavailable, and the client
+            // retries instead of deleting something that was not
+            // theirs.
             DigestScope::AccountPartitioned => Err(BlobProbeError::Unavailable {
                 detail: "the content store keeps one blob per digest and has no \
                          account-partitioned slot yet"
@@ -66,12 +66,12 @@ impl BlobIntegrityProbe for BlobStoreProbe {
     }
 }
 
-/// Un fallo del almacen, traducido a lo que la sonda puede decir.
+/// A store failure, translated into what the probe can say.
 ///
-/// Un `NotFound` es que el blob no esta: eso si lo sabe el almacen. Todo
-/// lo demas —un disco que no responde, un permiso que no deja leer— es
-/// que el almacen **no pudo** responder, y la sonda no puede afirmar nada
-/// sobre la integridad de un blob que no ha podido mirar.
+/// A `NotFound` means the blob is not there: the store does know that. Everything
+/// else --a disk that does not respond, a permission that prevents reading-- means
+/// the store **could not** answer, and the probe cannot claim anything about the
+/// integrity of a blob it could not look at.
 fn the_probe_error(error: BlobError) -> BlobProbeError {
     match error {
         BlobError::NotFound => BlobProbeError::Missing,

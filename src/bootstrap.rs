@@ -382,8 +382,8 @@ async fn the_content_store(
                     config.content.cas_path
                 )))
             })?;
-            // La comprobacion de readiness del almacen: el directorio
-            // existe y es un directorio. No se lee nada de dentro.
+            // The store's readiness check: the directory
+            // exists and is a directory. Nothing inside is read.
             let check = crate::readiness::ContentCheck::Filesystem {
                 root: std::path::PathBuf::from(&config.content.cas_path),
             };
@@ -470,10 +470,10 @@ async fn the_content_store(
                     )));
                 }
             }
-            // La comprobacion de readiness del almacen: `head_bucket`,
-            // la llamada mas barata que existe. El presupuesto de red es
-            // el del probe: un bucket que no contesta produce un
-            // `timeout`, no una peticion colgada.
+            // The store's readiness check: `head_bucket`,
+            // the cheapest call there is. The network budget is
+            // the probe's: a bucket that does not answer produces a
+            // `timeout`, not a hanging request.
             let check = crate::readiness::ContentCheck::S3 {
                 client: client.clone(),
                 bucket: table.bucket.clone(),

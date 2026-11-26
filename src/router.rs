@@ -350,9 +350,9 @@ fn admin_v1_routes(app_state: AppState) -> Router {
             get(crate::handlers::gc::list_holds).post(crate::handlers::gc::place_hold),
         )
         .route("/gc/holds/release", post(crate::handlers::gc::release_hold))
-        // El ciclo reactivo CVE: la admision de un advisory es su propia
-        // resource para el gate, porque quien la tiene puede apagar el
-        // canal trusted de un artefacto (HSP-137).
+        // The reactive CVE cycle: the admission of an advisory is its own
+        // resource for the gate, because whoever holds it can turn off the
+        // trusted channel of an artifact (HSP-137).
         .route(
             "/advisories/accept",
             post(crate::handlers::advisories::accept),
@@ -387,10 +387,10 @@ fn admin_v1_routes(app_state: AppState) -> Router {
 /// has already become `..` cannot be refuted by an extractor that decoded
 /// it. The handler validates the name before it looks anywhere.
 ///
-/// The pull and el push comparten el mismo camino porque el protocolo
-/// los comparte: `GET /v2/<name>/blobs/<digest>` lee y
-/// `POST /v2/<name>/blobs/uploads/` escribe. El dispatcher decide por el
-/// metodo y por el path, y el pull nunca se confunde con el push.
+/// The pull and the push share the same path because the protocol
+/// shares it: `GET /v2/<name>/blobs/<digest>` reads and
+/// `POST /v2/<name>/blobs/uploads/` writes. The dispatcher decides by
+/// method and by path, and the pull is never confused with the push.
 fn oci_routes(app_state: AppState) -> Router {
     Router::new()
         .route(
@@ -406,9 +406,9 @@ fn oci_routes(app_state: AppState) -> Router {
                 .put(crate::handlers::oci::dispatch)
                 .delete(crate::handlers::oci::dispatch),
         )
-        // El endpoint de token: donde va el cliente de Docker a por su
-        // credencial. Vive con la superficie de distribucion porque es
-        // parte de su protocolo, y se abre y se cierra con ella.
+        // The token endpoint: where the Docker client goes for its
+        // credential. It lives with the distribution surface because it is
+        // part of its protocol, and it is opened and closed with it.
         .route(
             crate::oci::token::TOKEN_PATH,
             axum::routing::get(crate::oci::token::token).post(crate::oci::token::token),

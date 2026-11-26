@@ -264,8 +264,8 @@ fn a_valid_authority(authority: &str) -> bool {
     if authority.contains('/') || authority.contains('?') || authority.contains('#') {
         return false;
     }
-    // Un literal IPv6 lleva sus propios dos puntos, y su puerto va
-    // despues del corchete de cierre.
+    // An IPv6 literal carries its own colons, and its port goes
+    // after the closing bracket.
     if let Some(rest) = authority.strip_prefix('[') {
         let Some((literal, after)) = rest.split_once(']') else {
             return false;
@@ -281,7 +281,7 @@ fn a_valid_authority(authority: &str) -> bool {
             },
         };
     }
-    // Una IPv6 sin corchetes no tiene puerto: los dos puntos son suyos.
+    // An IPv6 without brackets has no port: the colons all belong to it.
     if authority.matches(':').count() > 1 {
         return authority.parse::<IpAddr>().is_ok();
     }

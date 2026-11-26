@@ -1,18 +1,18 @@
-//! Lo minimo de OpenPGP que necesita la firma de metadata de sistemas:
-//! una clave Ed25519, su publicacion como anillo que `gpgv` acepta, y
-//! firmas separadas en texto blindado sobre el `Release` de APT o el `repomd.xml`
-//! de yum.
+//! The minimum OpenPGP needed to sign system metadata:
+//! an Ed25519 key, its publication as a keyring that `gpgv` accepts, and
+//! armored detached signatures over APT's `Release` or
+//! yum's `repomd.xml`.
 //!
-//! No es una implementacion propia del formato: el trazado de paquetes
-//! y la firma las hace el crate `pgp`, y `gpgv` es el oraculo en las
-//! pruebas. Eso es deliberado: un trazado casero de OpenPGP que `gpg`
-//! no valide es exactamente el fallo que la AC quiere evitar, y apt no
-//! negocia: firma mal formada es "el repositorio no existe".
+//! This is not an in-house implementation of the format: packet layout
+//! and signing are done by the `pgp` crate, and `gpgv` is the oracle in
+//! the tests. That is deliberate: a home-grown OpenPGP layout that `gpg`
+//! does not validate is exactly the failure the CA wants to avoid, and apt does not
+//! negotiate: a malformed signature means "the repository does not exist".
 //!
-//! La clave se genera una vez por proceso y viaja en la memoria como
-//! `MetadataSigner`; el material privado puede serializarse en blindado
-//! y volver a cargarse, que es como un operador persiste la identidad
-//! entre reinicios.
+//! The key is generated once per process and travels in memory as
+//! `MetadataSigner`; the private material can be serialized in armored form
+//! and loaded back, which is how an operator persists the identity
+//! across restarts.
 
 use pgp::composed::{
     CleartextSignedMessage, Deserializable, DetachedSignature, KeyType, SecretKeyParamsBuilder,
@@ -23,9 +23,9 @@ use pgp::ser::Serialize;
 use pgp::types::{KeyDetails, Password};
 use rand::thread_rng;
 
-/// Los fallos del firmante: construir o cargar la clave, y firmar. La
-/// firma no puede fallar con una clave ya cargada, pero el formato lo
-/// dice con su tipo y aqui se traduce a algo propio.
+/// The signer's failures: building or loading the key, and signing. Signing
+/// cannot fail with an already loaded key, but the format says so
+/// with its type and here it is translated into something of our own.
 #[derive(Debug, thiserror::Error)]
 pub enum OpenPgpError {
     #[error("the key could not be built: {0}")]
@@ -44,9 +44,9 @@ pub enum OpenPgpError {
     Verification(String),
 }
 
-/// La clave con la que el hub firma la metadata de los repositorios de
-/// sistema, mas su certificate publico. El `uid` es lo que las
-/// herramientas de la distro muestran como firmante.
+/// The key with which the hub signs the metadata of the system repositories,
+/// plus its public certificate. The `uid` is what the distro
+/// tools show as the signer.
 #[derive(Debug, Clone)]
 pub struct MetadataSigner {
     secret: SignedSecretKey,
@@ -81,9 +81,9 @@ impl MetadataSigning for MetadataSigner {
 }
 
 impl MetadataSigner {
-    /// Genera una clave Ed25519 nueva con la identidad dada. La firma
-    /// primaria es de la propia clave (sin subclaves): apt y rpm solo
-    /// necesitan encontrar la clave de la huella en el anillo.
+    /// Generates a new Ed25519 key with the given identity. The primary
+    /// signature is the key's own (no subkeys): apt and rpm only
+    /// need to find the key by its fingerprint in the keyring.
     pub fn generate(uid: &str) -> Result<Self, OpenPgpError> {
         let mut params = SecretKeyParamsBuilder::default();
         params
@@ -103,10 +103,10 @@ impl MetadataSigner {
         Ok(Self { secret, public })
     }
 
-    /// Recupera el firmante desde el texto blindado de una clave
-    /// privada exportada con `to_armor`. Es la via de persistencia:
-    /// el operador guarda el archivo y el hub vuelve a firmar con la
-    /// misma identidad en cada arranque.
+    /// Recovers the signer from the armored text of a private key
+    /// exported with `to_armor`. This is the persistence path:
+    /// the operator stores the file and the hub signs again with the
+    /// same identity on every start.
     pub fn from_armor(armored: &str) -> Result<Self, OpenPgpError> {
         let (secret, _) = SignedSecretKey::from_armor_single(std::io::Cursor::new(armored))
             .map_err(|_| OpenPgpError::NotASecretKey)?;
@@ -114,44 +114,44 @@ impl MetadataSigner {
         Ok(Self { secret, public })
     }
 
-    /// La clave privada en texto blindado, para persistirla.
+    /// The private key in armored text, for persisting it.
     pub fn to_armor(&self) -> Result<String, OpenPgpError> {
         self.secret
             .to_armored_string(pgp::composed::ArmorOptions::default())
             .map_err(|error| OpenPgpError::Key(error.to_string()))
     }
 
-    /// El anillo de claves publico en binario: es lo que `gpgv
-    /// --keyring` lee, y lo que apt espera en `TrustedPart` cuando se
-    /// exporta en claro; para el archivo `.asc` que se instala en
-    /// `signed-by` usa `key_asc`.
+    /// The public keyring in binary: it is what `gpgv
+    /// --keyring` reads, and what apt expects in `TrustedPart` when it is
+    /// exported in the clear; for the `.asc` file installed in
+    /// `signed-by` use `key_asc`.
     pub fn keyring(&self) -> Result<Vec<u8>, OpenPgpError> {
         self.public
             .to_bytes()
             .map_err(|error| OpenPgpError::Key(error.to_string()))
     }
 
-    /// La clave publica en texto blindado: el `key.asc` que el
-    /// administrador de la distro referencia con `signed-by`.
+    /// The public key in armored text: the `key.asc` that the
+    /// distro administrator references with `signed-by`.
     pub fn key_asc(&self) -> Result<String, OpenPgpError> {
         self.public
             .to_armored_string(pgp::composed::ArmorOptions::default())
             .map_err(|error| OpenPgpError::Key(error.to_string()))
     }
 
-    /// La huella en hexadecimal mayusculo, tal y como la imprimen `gpg
-    /// --list-keys` y `dnf`; sirve para los log de auditoria y para
-    /// que el documente qué clave hay que esperar en el anillo.
+    /// The fingerprint in uppercase hexadecimal, as printed by `gpg
+    /// --list-keys` and `dnf`; it serves for audit logs and so
+    /// that the reader knows which key to expect in the keyring.
     pub fn fingerprint_hex(&self) -> String {
         self.public.fingerprint().to_string().to_uppercase()
     }
 
-    /// La firma separada en texto blindado (tipo `Binary`, SHA-256)
-    /// sobre los bytes exactos de la metadata: `Release.gpg` y
-    /// `repomd.xml.asc` son exactamente esto sobre el cuerpo que se
-    /// sirve en la misma peticion. El armor no es un adorno: apt
-    /// concatena firma y mensaje para gpgv, y solo el formato blindado
-    /// se reconoce ahi como firma separada.
+    /// The detached signature in armored text (type `Binary`, SHA-256)
+    /// over the exact bytes of the metadata: `Release.gpg` and
+    /// `repomd.xml.asc` are exactly this over the body that is
+    /// served in the same request. The armor is not decoration: apt
+    /// concatenates signature and message for gpgv, and only the armored format
+    /// is recognized there as a detached signature.
     /// Signs UTF-8 metadata as an OpenPGP cleartext-signed message.
     pub fn sign_cleartext(&self, text: &str) -> Result<Vec<u8>, OpenPgpError> {
         pgp::composed::CleartextSignedMessage::sign(
@@ -178,10 +178,10 @@ impl MetadataSigner {
             .map(String::into_bytes)
             .map_err(|error| OpenPgpError::Signing(error.to_string()))
     }
-    /// Comprueba una firma separada en blindado sobre los bytes exactos
-    /// que se le den, contra una clave publica en blindado. Es la cara
-    /// inversa de `sign_detached`, y la necesita quien recibe un paquete
-    /// por aire: allà no hay `gpgv`, pero si los mismos tipos.
+    /// Checks an armored detached signature over the exact bytes
+    /// given, against an armored public key. It is the inverse of
+    /// `sign_detached`, and whoever receives a package over the air needs it:
+    /// there is no `gpgv` there, but the same types are.
     pub fn verify_detached(
         data: &[u8],
         signature_armor: &[u8],
@@ -232,12 +232,12 @@ impl MetadataSigner {
     }
 }
 
-/// El firmante con el que arranca el proceso. Si el operador deja la
-/// clave en `HODEI_METADATA_SIGNER_ARMOR` (el texto blindado que
-/// devuelve `to_armor`), esa es la identidad del hub; si no, se genera
-/// una efimera: cada arranque firma con una clave nueva, y el cliente
-/// tiene que leer la que se sirve en `key.asc`, que es como funciona
-/// en una prueba y como funciona en un hub de un solo nodo.
+/// The signer the process starts with. If the operator leaves the
+/// key in `HODEI_METADATA_SIGNER_ARMOR` (the armored text
+/// returned by `to_armor`), that is the hub's identity; if not, an
+/// ephemeral one is generated: each start signs with a new key, and the client
+/// has to read the one served at `key.asc`, which is how it works
+/// in a test and how it works in a single-node hub.
 pub fn bootstrap_signer() -> MetadataSigner {
     if let Ok(armor) = std::env::var("HODEI_METADATA_SIGNER_ARMOR") {
         return MetadataSigner::from_armor(&armor)
@@ -314,9 +314,9 @@ mod tests {
         );
     }
 
-    /// El oraculo de verdad: `gpgv`, el mismo verificador que apt
-    /// invoca por detras, valida la firma contra el anillo que
-    /// servimos. Sin `gpgv` en la maquina, la prueba se omite.
+    /// The real oracle: `gpgv`, the same verifier that apt
+    /// invokes behind the scenes, validates the signature against the keyring we
+    /// serve. Without `gpgv` on the machine, the test is skipped.
     #[test]
     fn gpgv_opens_what_we_sign() {
         if which("gpgv").is_none() {
@@ -341,8 +341,8 @@ mod tests {
             .arg(&keyring)
             .arg(&signature)
             .arg(&message)
-            // El mensaje de exito esta localizado; se fija el idioma para
-            // poder comprobar que gpgv dijo literalmente buena firma.
+            // The success message is localized; the locale is pinned so
+            // we can check that gpgv literally said good signature.
             .env("LC_ALL", "C")
             .output()
             .expect("gpgv runs");
@@ -354,10 +354,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// El formato del alambre para `Release.gpg` es la firma separada
-    /// en texto blindado: `apt-key verify` (el envoltorio que apt
-    /// invoca) solo la acepta asi, y el armor es lo que la hace
-    /// inspeccionable a ojo en el repositorio.
+    /// The wire format for `Release.gpg` is the detached signature
+    /// in armored text: `apt-key verify` (the wrapper apt
+    /// invokes) only accepts it that way, and the armor is what makes it
+    /// inspectable by eye in the repository.
     #[test]
     fn the_detached_signature_is_armored_the_way_apt_expects() {
         let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");

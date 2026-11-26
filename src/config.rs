@@ -374,14 +374,14 @@ pub struct TrustConfig {
     /// Default: 86400 (one day). Minimum: 1.
     #[serde(default = "the_default_grant_max_validity_secs")]
     pub grant_max_validity_secs: u64,
-    /// Intervalo, en segundos, del barrido que reevalúa las concesiones
-    /// cuya vigencia se agotó o cuya política ya no es la activa, y del
-    /// consumo de deltas que materializa la vista de impacto (HSP-137).
+    /// Interval, in seconds, of the sweep that re-evaluates grants
+    /// whose validity has run out or whose policy is no longer the active one, and of the
+    /// consumption of deltas that materializes the impact view (HSP-137).
     ///
-    /// El camino de servicio ya rechaza la concesión vencida
-    /// (HSP-135); el barrido es lo que hace que la verdad se reevalúe
-    /// y se escriba, no solo que se note al leer. `0` desactiva el
-    /// bucle: el ciclo sigue vivo por la entrada de advisories y el
+    /// The serving path already rejects an expired grant
+    /// (HSP-135); the sweep is what makes the truth get re-evaluated
+    /// and written, not merely noticed on read. `0` disables the
+    /// loop: the cycle stays alive through advisory intake and the
     /// `resume` de arranque.
     ///
     /// Default: 60.
@@ -1059,12 +1059,12 @@ pub struct SecurityConfig {
     pub authorization_schema_path: Option<String>,
 }
 
-/// El valor por defecto de la configuracion de seguridad.
+/// The default value of the security configuration.
 ///
-/// Todo cerrado y sin credenciales: un despliegue que no dice nada no
-/// dice que si a nada. Y los limites de la superficie OCI tienen sus
-/// valores, porque un limite que vale cero no es un limite: es una
-/// superficie que no funciona.
+/// Everything closed and without credentials: a deployment that says nothing
+/// does not say yes to anything. And the OCI surface limits have their
+/// values, because a limit that is zero is not a limit: it is a
+/// surface that does not work.
 impl Default for SecurityConfig {
     fn default() -> Self {
         Self {
