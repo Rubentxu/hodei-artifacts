@@ -684,6 +684,9 @@ pub struct AptProxyConfig {
     pub components: Vec<String>,
     /// Allowed architectures (empty means unrestricted).
     pub architectures: Vec<String>,
+    /// Operator-pinned OpenPGP public key used to authenticate proxy metadata
+    /// before a group republishes its hashes.
+    pub trusted_key_asc: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -695,6 +698,8 @@ struct RawAptProxyConfig {
     components: Vec<String>,
     #[serde(default)]
     architectures: Vec<String>,
+    #[serde(default)]
+    trusted_key_asc: Option<String>,
 }
 
 impl AptProxyConfig {
@@ -724,6 +729,7 @@ impl AptProxyConfig {
             distributions: raw.distributions,
             components: raw.components,
             architectures: raw.architectures,
+            trusted_key_asc: raw.trusted_key_asc,
         })
     }
 

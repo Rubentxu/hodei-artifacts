@@ -409,6 +409,22 @@ fn signed_proxy_fixture(
     ])
 }
 
+fn add_inrelease(
+    files: &mut HashMap<String, Vec<u8>>,
+    signer: &hodei_artifacts_api::openpgp::MetadataSigner,
+) {
+    let release = std::str::from_utf8(
+        files
+            .get("dists/bookworm/Release")
+            .expect("fixture Release exists"),
+    )
+    .expect("fixture Release is UTF-8");
+    let inrelease = signer
+        .sign_cleartext(release)
+        .expect("upstream cleartext signature");
+    files.insert("dists/bookworm/InRelease".into(), inrelease);
+}
+
 /// The armored OpenPGP body as raw bytes (what `gpg --dearmor` yields).
 fn dearmor(armored: &str) -> Vec<u8> {
     let body: String = armored
@@ -710,7 +726,11 @@ impl Vertical {
         }
     }
 
-    async fn mount_apt_proxy_group(the_account: &str, upstream_port: u16) -> Self {
+    async fn mount_apt_proxy_group(
+        the_account: &str,
+        upstream_port: u16,
+        trusted_key_asc: &str,
+    ) -> Self {
         let client = fresh_client().await.expect("the dgraph client connects");
         let tmp = tempfile::tempdir().expect("temp dir");
         let content = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the CAS"));
@@ -733,7 +753,8 @@ impl Vertical {
             "apt": {
                 "distributions": ["bookworm"],
                 "components": ["main"],
-                "architectures": ["amd64"]
+                "architectures": ["amd64"],
+                "trusted_key_asc": trusted_key_asc
             }
         });
         store
@@ -2393,14 +2414,12 @@ async fn hsp295_dgraph_apt_proxy_precedes_hosted_with_persisted_provenance() {
     assert_ne!(proxy_bytes, hosted_bytes);
     let signer = hodei_artifacts_api::openpgp::MetadataSigner::generate("Upstream fixture")
         .expect("fixture signer");
-    let upstream = ProxyUpstream::start(signed_proxy_fixture(
-        package,
-        version,
-        pool_path,
-        &proxy_bytes,
-        &signer,
-    ));
-    let vertical = Vertical::mount_apt_proxy_group(&the_account, upstream.port).await;
+    let trusted_key_asc = signer.key_asc().expect("upstream public key");
+    let mut proxy_files = signed_proxy_fixture(package, version, pool_path, &proxy_bytes, &signer);
+    add_inrelease(&mut proxy_files, &signer);
+    let upstream = ProxyUpstream::start(proxy_files);
+    let vertical =
+        Vertical::mount_apt_proxy_group(&the_account, upstream.port, &trusted_key_asc).await;
     let port = serve_over_tcp(&vertical).await;
     let hosted = call(
         port,
@@ -2468,6 +2487,58 @@ async fn hsp295_dgraph_apt_proxy_precedes_hosted_with_persisted_provenance() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn hsp295_dgraph_apt_proxy_group_rejects_untrusted_release_signature() {
+    let Some(_client) = fresh_client().await else {
+        return;
+    };
+    let account = account("hsp295-untrusted-proxy");
+    let package = "untrusted-proxy-pkg";
+    let version = "1.0.0";
+    let pool_path = "pool/main/u/untrusted-proxy-pkg/untrusted-proxy-pkg_1.0.0_amd64.deb";
+    let deb = a_package(package, version);
+    let upstream_signer =
+        hodei_artifacts_api::openpgp::MetadataSigner::generate("Unexpected upstream signer")
+            .expect("upstream signer");
+    let wrong_trust_anchor =
+        hodei_artifacts_api::openpgp::MetadataSigner::generate("Operator-pinned signer")
+            .expect("pinned signer");
+    let trusted_key_asc = wrong_trust_anchor
+        .key_asc()
+        .expect("operator-pinned public key");
+    let mut upstream_files =
+        signed_proxy_fixture(package, version, pool_path, &deb, &upstream_signer);
+    add_inrelease(&mut upstream_files, &upstream_signer);
+    let upstream = ProxyUpstream::start(upstream_files);
+    let vertical = Vertical::mount_apt_proxy_group(&account, upstream.port, &trusted_key_asc).await;
+    let port = serve_over_tcp(&vertical).await;
+
+    let response = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);
+    assert_eq!(
+        response.status,
+        StatusCode::BAD_GATEWAY,
+        "{}",
+        text_of(&response)
+    );
+
+    let key = AptSnapshotKey {
+        account: account.clone(),
+        group: "apt-group".into(),
+        distribution: "bookworm".into(),
+        principal_subject: format!("hrn:hodei:iam::{account}:User/alice"),
+    };
+    assert!(
+        vertical
+            .store
+            .current_apt_snapshot(&key)
+            .await
+            .expect("snapshot lookup")
+            .is_none(),
+        "untrusted metadata must not publish a durable group snapshot"
+    );
+    upstream.stop();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hsp295_dgraph_apt_proxy_group_revocation_blocks_cached_package() {
     let Some(_client) = fresh_client().await else {
         return;
@@ -2481,10 +2552,11 @@ async fn hsp295_dgraph_apt_proxy_group_revocation_blocks_cached_package() {
         "Upstream fixture <upstream@example.local>",
     )
     .expect("fixture signer");
+    let trusted_key_asc = signer.key_asc().expect("upstream public key");
     let upstream = ProxyUpstream::start(signed_proxy_fixture(
         package, version, pool_path, &deb, &signer,
     ));
-    let vertical = Vertical::mount_apt_proxy_group(&account, upstream.port).await;
+    let vertical = Vertical::mount_apt_proxy_group(&account, upstream.port, &trusted_key_asc).await;
     let port = serve_over_tcp(&vertical).await;
 
     let release = call(port, "GET", "/apt/apt-group/dists/bookworm/Release", None);

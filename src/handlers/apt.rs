@@ -39,6 +39,7 @@ use super::raw::{
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::handlers::{correlation_id, record_audit};
+use crate::openpgp::MetadataSigner;
 use crate::raw::conditional;
 use crate::resolution::{ProxyServed, the_proxy_asset_verified};
 
@@ -1049,34 +1050,60 @@ async fn active_parsed_release(
     dist: &str,
     correlation: &str,
 ) -> Result<ParsedRelease, Failure> {
-    let inrelease_path = format!("dists/{dist}/InRelease");
-    let release_path = format!("dists/{dist}/Release");
-    let store = the_content_store(state)?;
-
-    if let Some(asset) =
-        the_current_asset(state, context, &repository.repo_key, &inrelease_path).await?
-    {
-        let bytes = store
-            .get(&asset.digest)
-            .await
-            .map_err(|error| the_blob_error(&error))?;
-        return parse_and_check_release(&bytes, true);
-    }
-    if let Some(asset) =
-        the_current_asset(state, context, &repository.repo_key, &release_path).await?
-    {
-        let bytes = store
-            .get(&asset.digest)
-            .await
-            .map_err(|error| the_blob_error(&error))?;
-        return parse_and_check_release(&bytes, false);
-    }
+    let apt_config = AptProxyConfig::of(&repository.config).map_err(|error| {
+        tracing::warn!(error = %error, member = %repository.repo_key, "invalid apt proxy configuration");
+        Failure::plain(StatusCode::BAD_GATEWAY, "the apt proxy configuration is invalid")
+    })?;
+    let trusted_key = apt_config.trusted_key_asc.as_deref().ok_or_else(|| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the APT proxy group member has no operator-pinned signing key",
+        )
+    })?;
 
     match resolve_proxy_release(state, context, repository, dist, true, correlation).await {
-        Ok((_, parsed)) => Ok(parsed),
+        Ok((served, parsed)) => {
+            let bytes = the_content_store(state)?
+                .get(&served.asset.digest)
+                .await
+                .map_err(|error| the_blob_error(&error))?;
+            MetadataSigner::verify_cleartext(&bytes, trusted_key).map_err(|_| {
+                Failure::plain(
+                    StatusCode::BAD_GATEWAY,
+                    "upstream InRelease signature is invalid",
+                )
+            })?;
+            Ok(parsed)
+        }
         Err(Failure::Raw(RawApiError::NotFound)) => {
-            let (_, parsed) =
+            let (release, parsed) =
                 resolve_proxy_release(state, context, repository, dist, false, correlation).await?;
+            let release_bytes = the_content_store(state)?
+                .get(&release.asset.digest)
+                .await
+                .map_err(|error| the_blob_error(&error))?;
+            let signature_path = format!("dists/{dist}/Release.gpg");
+            let signature = the_proxy_asset_verified(
+                state,
+                context,
+                repository,
+                &signature_path,
+                None,
+                false,
+                correlation,
+            )
+            .await?;
+            let signature_bytes = the_content_store(state)?
+                .get(&signature.asset.digest)
+                .await
+                .map_err(|error| the_blob_error(&error))?;
+            MetadataSigner::verify_detached(&release_bytes, &signature_bytes, trusted_key)
+                .map_err(|_| {
+                    Failure::plain(
+                        StatusCode::BAD_GATEWAY,
+                        "upstream Release signature is invalid",
+                    )
+                })?;
             Ok(parsed)
         }
         Err(other) => Err(other),

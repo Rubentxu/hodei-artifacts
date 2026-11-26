@@ -15,8 +15,8 @@
 //! entre reinicios.
 
 use pgp::composed::{
-    Deserializable, DetachedSignature, KeyType, SecretKeyParamsBuilder, SignedPublicKey,
-    SignedSecretKey,
+    CleartextSignedMessage, Deserializable, DetachedSignature, KeyType, SecretKeyParamsBuilder,
+    SignedPublicKey, SignedSecretKey,
 };
 use pgp::crypto::hash::HashAlgorithm;
 use pgp::ser::Serialize;
@@ -38,6 +38,8 @@ pub enum OpenPgpError {
     NotASignature,
     #[error("the armored text is not a readable OpenPGP public key")]
     NotAPublicKey,
+    #[error("the bytes are not a readable OpenPGP cleartext-signed message")]
+    NotACleartextMessage,
     #[error("the signature does not hold over these bytes with this key: {0}")]
     Verification(String),
 }
@@ -190,9 +192,43 @@ impl MetadataSigner {
                 .map_err(|_| OpenPgpError::NotASignature)?;
         let (key, _) = SignedPublicKey::from_armor_single(std::io::Cursor::new(public_key_asc))
             .map_err(|_| OpenPgpError::NotAPublicKey)?;
-        signature
-            .verify(&key.primary_key, data)
-            .map_err(|error| OpenPgpError::Verification(error.to_string()))
+        key.verify()
+            .map_err(|error| OpenPgpError::Verification(error.to_string()))?;
+        if signature.verify(&key.primary_key, data).is_ok()
+            || key
+                .public_subkeys
+                .iter()
+                .any(|subkey| signature.verify(&subkey.key, data).is_ok())
+        {
+            Ok(())
+        } else {
+            Err(OpenPgpError::Verification(
+                "no key in the trusted certificate verifies the detached signature".to_owned(),
+            ))
+        }
+    }
+
+    /// Verifies an OpenPGP cleartext-signed message against an operator-pinned certificate.
+    pub fn verify_cleartext(data: &[u8], public_key_asc: &str) -> Result<(), OpenPgpError> {
+        let message = CleartextSignedMessage::from_armor(std::io::Cursor::new(data))
+            .map(|(message, _)| message)
+            .map_err(|_| OpenPgpError::NotACleartextMessage)?;
+        let (key, _) = SignedPublicKey::from_armor_single(std::io::Cursor::new(public_key_asc))
+            .map_err(|_| OpenPgpError::NotAPublicKey)?;
+        key.verify()
+            .map_err(|error| OpenPgpError::Verification(error.to_string()))?;
+        if message.verify(&key.primary_key).is_ok()
+            || key
+                .public_subkeys
+                .iter()
+                .any(|subkey| message.verify(&subkey.key).is_ok())
+        {
+            Ok(())
+        } else {
+            Err(OpenPgpError::Verification(
+                "no key in the trusted certificate verifies the cleartext signature".to_owned(),
+            ))
+        }
     }
 }
 
@@ -244,6 +280,26 @@ mod tests {
         detached
             .verify(&signer.public, RELEASE)
             .expect("the original key opens what the reloaded one signed");
+    }
+
+    #[test]
+    fn pinned_certificate_verifies_cleartext_and_rejects_tampering() {
+        let signer = MetadataSigner::generate("Hodei <hodei@example.local>").expect("a key");
+        let public_key = signer.key_asc().expect("public key armor");
+        let signed = signer
+            .sign_cleartext(std::str::from_utf8(RELEASE).expect("UTF-8 release"))
+            .expect("cleartext signature");
+
+        MetadataSigner::verify_cleartext(&signed, &public_key)
+            .expect("the pinned certificate opens the signed message");
+
+        let tampered = String::from_utf8(signed)
+            .expect("signed message is UTF-8")
+            .replace("Suite: stable", "Suite: unstable");
+        assert!(
+            MetadataSigner::verify_cleartext(tampered.as_bytes(), &public_key).is_err(),
+            "a changed Release must not verify"
+        );
     }
 
     #[test]
