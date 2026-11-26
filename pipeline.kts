@@ -332,6 +332,8 @@ pipeline {
                     "cargo test --workspace " + listOf(
                         "--test hsp119_cargo_cli",
                         "--test hsp119_cargo_e2e",
+                        "--test hsp156_cargo_proxy_cli",
+                        "--test hsp156_cargo_proxy_e2e",
                         "--test hsp120_dotnet_client",
                         "--test hsp120_nuget_e2e",
                         "--test hsp231_nuget_group",

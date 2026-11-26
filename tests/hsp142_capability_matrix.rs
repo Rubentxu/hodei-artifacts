@@ -359,8 +359,8 @@ async fn the_capabilities_offer_exactly_what_the_release_serves() {
 
 /// A configuration the registry does not support is refused in the
 /// creation with a dialect error that names the format and the
-/// modality, for every declared combination — and the cargo proxy and
-/// group the encargo names are among the refusals, with the helm
+/// modality, for every declared combination — and the cargo group the
+/// encargo names is among the refusals, with the helm
 /// formats that are declared and not served.
 #[tokio::test]
 async fn every_unsupported_config_is_refused_with_a_dialect_error() {
@@ -432,21 +432,19 @@ async fn every_unsupported_config_is_refused_with_a_dialect_error() {
     actual.sort_by_key(|(format, mode)| (format.as_str(), mode.as_str()));
     assert_eq!(actual, expected, "every declared combination is walked");
 
-    // Cargo proxy and group are refused until a client-verified upstream
-    // exists, and the registry says so with its own note.
-    for mode in [RepositoryMode::Proxy, RepositoryMode::Group] {
-        let cargo_proxy = hodei_catalog::conformance_cell(RepositoryFormat::Cargo, mode);
-        assert_eq!(
-            cargo_proxy.status,
-            Accreditation::NotSupported,
-            "cargo {mode} is not supported until HSP-156 verifies it against a client"
-        );
-        assert!(
-            !cargo_proxy.note.is_empty(),
-            "the refusal of cargo {} carries its limit",
-            mode.as_str()
-        );
-    }
+    // Cargo group is refused until a composed index is verified with a
+    // client, and the registry says so with its own note.
+    let cargo_group =
+        hodei_catalog::conformance_cell(RepositoryFormat::Cargo, RepositoryMode::Group);
+    assert_eq!(
+        cargo_group.status,
+        Accreditation::NotSupported,
+        "cargo group is not supported until a composed index is verified against a client"
+    );
+    assert!(
+        !cargo_group.note.is_empty(),
+        "the refusal of cargo group carries its limit"
+    );
 
     // And one combination that the registry serves is accepted: the loop
     // is not a walk that refuses everything.
@@ -546,33 +544,33 @@ fn a_fraudulent_declaration_fails_the_client() {
     // A cell accredited for a modality the release does not serve.
     let mut matrix = hodei_catalog::conformance_matrix();
     for cell in matrix.iter_mut() {
-        if cell.format == RepositoryFormat::Cargo && cell.mode == RepositoryMode::Proxy {
+        if cell.format == RepositoryFormat::Cargo && cell.mode == RepositoryMode::Group {
             cell.status = Accreditation::Accredited;
             cell.evidence = &["hsp106_proxy_e2e"];
             cell.note = "";
         }
     }
     let failure = audit(&matrix, RepositoryFormat::declared(), &served_pairs())
-        .expect_err("cargo proxy is not served: the accreditation is a fraud");
+        .expect_err("cargo group is not served: the accreditation is a fraud");
     assert!(
-        failure.to_string().contains("cargo") && failure.to_string().contains("proxy"),
+        failure.to_string().contains("cargo") && failure.to_string().contains("group"),
         "the explanation names the cell: {failure}"
     );
 
     // A modality the declaration promises without evidence.
     let mut served = served_pairs();
-    served.push((RepositoryFormat::Cargo, RepositoryMode::Proxy));
+    served.push((RepositoryFormat::Cargo, RepositoryMode::Group));
     let failure = audit(
         &hodei_catalog::conformance_matrix(),
         RepositoryFormat::declared(),
         &served,
     )
-    .expect_err("no suite accredits the promise of cargo proxy");
+    .expect_err("no suite accredits the promise of cargo group");
     assert_eq!(
         failure,
         AuditFailure::ServedWithoutAccreditation {
             format: "cargo",
-            mode: "proxy"
+            mode: "group"
         },
         "the promise is refused with the rule it broke"
     );

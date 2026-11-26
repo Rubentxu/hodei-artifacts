@@ -694,14 +694,14 @@ fn the_publication_error_ref(error: &CatalogError) -> RawApiError {
 // Proxy
 // ---------------------------------------------------------------------------
 
-/// El nombre reservado por un hosted de la cuenta, si lo hay.
+/// The name reserved by a hosted repository of the account, if any.
 ///
-/// Un crate que un repositorio cargo **hosted** de la misma cuenta ya
-/// conoce (cualquier asset bajo `{nombre}/`) esta reservado: el proxy no
-/// resuelve su indice ni su descarga contra el upstream, ni vivo ni de la
-/// cache. Un upstream que contestara por un nombre que el hosted ya
-/// publico seria una suplantacion, y el fallback silencioso es justo lo
-/// que esta superficie no hace.
+/// A crate that a **hosted** cargo repository of the same account already
+/// knows (any asset under `{name}/`) is reserved: the proxy resolves
+/// neither its index nor its download against the upstream, neither live
+/// nor from the cache. An upstream that answered for a name the hosted one
+/// already published would be an impersonation, and the silent fallback is
+/// exactly what this surface does not do.
 async fn the_hosted_collision(
     state: &AppState,
     account: &str,
@@ -736,7 +736,7 @@ async fn the_hosted_collision(
     Ok(None)
 }
 
-/// La reserva se bloquea con un 409 que dice quien la tiene.
+/// The reservation is blocked with a 409 that says who holds it.
 async fn guard_against_hosted(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -755,15 +755,15 @@ async fn guard_against_hosted(
     Ok(())
 }
 
-/// El indice sparse de un crate en un proxy: el documento del upstream,
-/// byte a byte.
+/// The sparse index of a crate on a proxy: the upstream's document, byte
+/// for byte.
 ///
-/// El camino que se cachea es el camino sparse determinista del nombre
-/// normalizado: el mismo que el cliente calcula. Lo que el upstream
-/// contesto se sirve tal cual — el orden de versiones y los cksum son del
-/// upstream, y reordenarlos seria reescribir un documento que el cliente
-/// verifica. Es metadata: el TTL la revalida, y un yank del upstream
-/// aparece cuando la revalidacion lo trae.
+/// The cached path is the deterministic sparse path of the normalized
+/// name: the same one the client computes. What the upstream answered is
+/// served as is: the order of versions and the cksums are the upstream's,
+/// and reordering them would rewrite a document the client verifies. It is
+/// metadata: the TTL revalidates it, and an upstream yank shows up when the
+/// revalidation brings it.
 async fn read_proxy_index(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -779,12 +779,12 @@ async fn read_proxy_index(
     serve_proxy_document(state, context, repository, served, head, correlation).await
 }
 
-/// La descarga de una version en un proxy.
+/// The download of a version on a proxy.
 ///
-/// La linea de indice del upstream dice el cksum; la plantilla `dl` del
-/// config.json del upstream dice de donde vienen los bytes. La descarga
-/// solo se sirve si el sha256 de los bytes es el que su linea declara: un
-/// upstream que entrega otros bytes no sirve la version, nunca.
+/// The upstream's index line states the cksum; the `dl` template of the
+/// upstream's config.json states where the bytes come from. The download is
+/// served only if the sha256 of the bytes is the one its line declares: an
+/// upstream that delivers other bytes never serves the version.
 async fn read_proxy_download(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -798,9 +798,9 @@ async fn read_proxy_download(
     guard_against_hosted(state, context, &normalized).await?;
     let index_path = cargo::Route::index_path(&normalized)?;
 
-    // La linea de la version: sin ella no hay descarga que verificar. La
-    // linea se busca aunque sea un HEAD: la existencia de la version se
-    // comprueba igual.
+    // The version's line: without it there is no download to verify. The
+    // line is looked up even for a HEAD: the existence of the version is
+    // checked all the same.
     let index = the_proxy_asset(state, context, repository, &index_path, correlation).await?;
     let bytes = proxy_bytes(state, &index.asset, false).await?;
     let cksum = the_version_cksum(&bytes, version)?
@@ -812,8 +812,8 @@ async fn read_proxy_download(
         })?
         .to_lowercase();
 
-    // La plantilla del upstream: donde vive el .crate segun lo que el
-    // propio upstream declara.
+    // The upstream's template: where the .crate lives according to what the
+    // upstream itself declares.
     let upstream = hodei_catalog::UpstreamConfig::of(&repository.config)
         .ok()
         .flatten()
@@ -858,7 +858,7 @@ async fn read_proxy_download(
     serve_proxy_document(state, context, repository, served, head, correlation).await
 }
 
-/// El sha256 que la linea de la version declara en el indice del upstream.
+/// The sha256 that the version line declares in the upstream index.
 fn the_version_cksum(index: &[u8], version: &str) -> Result<Option<String>, Failure> {
     let text = std::str::from_utf8(index)
         .map_err(|_| Failure::plain(StatusCode::BAD_GATEWAY, "the upstream index is not text"))?;
@@ -879,8 +879,8 @@ fn the_version_cksum(index: &[u8], version: &str) -> Result<Option<String>, Fail
     Ok(None)
 }
 
-/// La URL de descarga: la plantilla `dl` del upstream, y si el upstream no
-/// declara config.json, la cola que el protocolo appende a la base.
+/// The download URL: the upstream's `dl` template, and if the upstream
+/// declares no config.json, the tail the protocol appends to the base.
 async fn the_upstream_target(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -911,7 +911,7 @@ async fn the_upstream_target(
         .map_err(|_| Failure::plain(StatusCode::BAD_GATEWAY, "the upstream dl is not a URL"))
 }
 
-/// Los bytes de un documento servido por el proxy; un HEAD no los lee.
+/// The bytes of a document served by the proxy; a HEAD does not read them.
 async fn proxy_bytes(
     state: &AppState,
     asset: &hodei_catalog::AssetRecord,
@@ -928,8 +928,8 @@ async fn proxy_bytes(
         .to_vec())
 }
 
-/// Sirve un documento del proxy: la compuerta de confianza, el ETag de su
-/// contenido y el estado de la cache.
+/// Serves a proxy document: the trust gate, the ETag of its content and
+/// the state of the cache.
 async fn serve_proxy_document(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -938,8 +938,8 @@ async fn serve_proxy_document(
     head: bool,
     correlation: &str,
 ) -> Result<Response, Failure> {
-    // La compuerta de confianza pasa antes de las condiciones: un 304
-    // diria que el contenido existe.
+    // The trust gate runs before the conditions: a 304 would say the
+    // content exists.
     crate::trust::admit(
         state,
         context.account().as_str(),

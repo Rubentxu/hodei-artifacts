@@ -355,11 +355,12 @@ pub fn config_json(base: &str) -> Value {
     })
 }
 
-/// La plantilla de descarga que el config.json **del upstream** declara.
+/// The download template that the **upstream's** config.json declares.
 ///
-/// El proxy no inventa donde vive el .crate: el upstream lo dice en su
-/// config.json, y esa plantilla manda. Un documento que no la declara es
-/// `None`, y el que pregunta aplica lo que el protocolo aplicaria.
+/// The proxy does not invent where the .crate lives: the upstream says so
+/// in its config.json, and that template rules. A document that does not
+/// declare it yields `None`, and the caller applies what the protocol
+/// would apply.
 pub fn the_upstream_dl(config: &Value) -> Option<&str> {
     config
         .get("dl")
@@ -367,14 +368,14 @@ pub fn the_upstream_dl(config: &Value) -> Option<&str> {
         .filter(|dl| !dl.is_empty())
 }
 
-/// La URL de descarga que sale de la plantilla del upstream, segun el
-/// protocolo del indice sparse.
+/// The download URL that comes out of the upstream's template, following
+/// the sparse index protocol.
 ///
-/// Las marcas `{crate}`, `{version}`, `{prefix}`, `{lowerprefix}` y
-/// `{sha256-checksum}` se sustituyen; si la plantilla no lleva ninguna, el
-/// protocolo manda append `/{crate}/{version}/download` al final. El
-/// nombre llega ya normalizado (minusculas), que es como el indice lo
-/// conoce: `prefix` y `lowerprefix` coinciden.
+/// The markers `{crate}`, `{version}`, `{prefix}`, `{lowerprefix}` and
+/// `{sha256-checksum}` are substituted; if the template carries none, the
+/// protocol says to append `/{crate}/{version}/download` at the end. The
+/// name arrives already normalized (lowercase), which is how the index
+/// knows it: `prefix` and `lowerprefix` coincide.
 pub fn download_url(dl: &str, name: &str, version: &str) -> String {
     let prefix = prefix_of(name);
     let marked = [
@@ -396,10 +397,10 @@ pub fn download_url(dl: &str, name: &str, version: &str) -> String {
     }
 }
 
-/// El prefijo de directorio de un nombre en el indice: `1/a`, `2/ab`,
-/// `3/a` para tres, y los dos primeros tramos de dos para cuatro o mas
-/// (`ca/rg` para `cargo`). Es lo que el protocolo llama `{prefix}`: el
-/// nombre NO va dentro.
+/// The directory prefix of a name in the index: `1/a`, `2/ab`, `3/a` for
+/// three, and the first two chunks of two for four or more (`ca/rg` for
+/// `cargo`). It is what the protocol calls `{prefix}`: the name does NOT
+/// go inside.
 fn prefix_of(name: &str) -> String {
     match name.len() {
         0 => String::new(),
@@ -562,7 +563,7 @@ mod tests {
 
     #[test]
     fn the_download_url_follows_the_template_markers() {
-        // Con marcas: se sustituyen, y el prefix sale del camino sparse.
+        // With markers: they are substituted, and the prefix comes from the sparse path.
         assert_eq!(
             download_url(
                 "https://static.example.com/crates/{crate}/{version}.crate",
@@ -571,7 +572,7 @@ mod tests {
             ),
             "https://static.example.com/crates/serde/1.0.0.crate"
         );
-        // El prefix del protocolo para un nombre de cuatro o mas.
+        // The protocol prefix for a name of four or more characters.
         assert_eq!(
             download_url(
                 "https://dl.example/{lowerprefix}/{crate}-{version}.crate",
@@ -580,7 +581,7 @@ mod tests {
             ),
             "https://dl.example/ho/de/hodei-pkg-0.2.0.crate"
         );
-        // Sin marcas: el protocolo appende la cola de descarga.
+        // Without markers: the protocol appends the download tail.
         assert_eq!(
             download_url("https://crates.example/api/v1/crates", "serde", "1.0.0"),
             "https://crates.example/api/v1/crates/serde/1.0.0/download"
