@@ -632,9 +632,9 @@ pub async fn activate(
             return Err(StudioError::from(error));
         }
     };
-    // The durable head is per account and is what `AccountPolicyLoader`
-    // reads. The process-wide promotion registry is deliberately left
-    // alone: one tenant's activation must not change another's decisions.
+    // The durable head is per account and is what the promotion plane reads
+    // on every decision (`AccountScopedPolicies`), so this activation applies
+    // to this account at once and to no other.
     record_audit(
         &state,
         &approver,

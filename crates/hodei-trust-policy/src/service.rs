@@ -71,7 +71,11 @@ impl PromotionService {
         // an operational failure, and the promotion tells the two apart.
         // The failure is closed -- nothing advances -- and the decision is
         // written down all the same, so that the absence is visible.
-        let policy = match self.policies.active_policy(policy_id).await {
+        let policy = match self
+            .policies
+            .active_policy_for(&request.account, policy_id)
+            .await
+        {
             Ok(policy) => policy,
             Err(_) => {
                 let decision = PromotionDecision {

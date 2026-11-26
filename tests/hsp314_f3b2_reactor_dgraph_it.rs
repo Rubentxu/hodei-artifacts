@@ -205,6 +205,16 @@ struct Stack {
 }
 
 async fn stack(client: Arc<GraphClient>, tag: &str) -> Stack {
+    stack_with(client, tag, None).await
+}
+
+/// `lifecycle` makes the plane the production per-account one (HSP-321);
+/// without it the plane decides with the process-wide registry.
+async fn stack_with(
+    client: Arc<GraphClient>,
+    tag: &str,
+    lifecycle: Option<Arc<dyn hodei_trust_policy::LifecycleStore>>,
+) -> Stack {
     let suffix = nonce();
     let account = format!("{tag}{}", &suffix[suffix.len() - 12..]);
     let namespace = format!("f3b2-{account}");
@@ -242,12 +252,21 @@ async fn stack(client: Arc<GraphClient>, tag: &str) -> Stack {
         "the policy of the reactor IT",
         Utc::now(),
     );
-    let plane = Arc::new(TrustPlane::new(
-        decisions.clone() as Arc<dyn DecisionStore>,
-        registry,
-        POLICY_ID,
-        Duration::hours(1),
-    ));
+    let plane = Arc::new(match lifecycle {
+        Some(lifecycle) => TrustPlane::per_account(
+            decisions.clone() as Arc<dyn DecisionStore>,
+            lifecycle,
+            PolicyRegistry::empty(),
+            POLICY_ID,
+            Duration::hours(1),
+        ),
+        None => TrustPlane::new(
+            decisions.clone() as Arc<dyn DecisionStore>,
+            registry,
+            POLICY_ID,
+            Duration::hours(1),
+        ),
+    });
 
     let graph = Arc::new(DgraphGraphStore::new(client.clone()));
     let frontier = Arc::new(
@@ -319,8 +338,18 @@ async fn promote(
     lapsed: bool,
     policy_version: Option<&str>,
 ) -> Promoted {
-    let digest = ContentDigest::of_bytes(format!("f3b2-{}-{repository}", stack.account).as_bytes());
-    let subject = artifact_hrn(REGION, &stack.account, repository, &digest);
+    promote_in(stack, &stack.account, repository, lapsed, policy_version).await
+}
+
+async fn promote_in(
+    stack: &Stack,
+    account: &str,
+    repository: &str,
+    lapsed: bool,
+    policy_version: Option<&str>,
+) -> Promoted {
+    let digest = ContentDigest::of_bytes(format!("f3b2-{}-{repository}", account).as_bytes());
+    let subject = artifact_hrn(REGION, account, repository, &digest);
     let now = Utc::now();
     let capsule = CapsuleAssembler::new().assemble(&subject, &[], now);
     let context = TrustContext::builder(&capsule)
@@ -335,16 +364,16 @@ async fn promote(
         })
         .assembled_at(now)
         .build();
-    let id = DecisionId::new(format!("dec-seed-{}-{repository}", stack.account));
+    let id = DecisionId::new(format!("dec-seed-{}-{repository}", account));
     let outcome = stack
         .plane
         .service()
         .request_promotion(
             id.clone(),
             PromotionRequest::new(
-                format!("corr-{}-{repository}", stack.account),
+                format!("corr-{}-{repository}", account),
                 "seed",
-                stack.account.clone(),
+                account.to_string(),
                 subject.to_string(),
                 "trusted",
                 now,
@@ -366,7 +395,7 @@ async fn promote(
         .expect("the decision store answers")
         .expect("the decision was written");
     let grant = TrustGrant {
-        account: stack.account.clone(),
+        account: account.to_string(),
         repository: repository.to_string(),
         digest: digest.clone(),
         decision_id: id.as_str().to_string(),
@@ -921,4 +950,110 @@ async fn with_the_alpha_unreachable_every_entry_fails_closed_and_writes_nothing(
         .is_some(),
         "an outage never revokes a concession"
     );
+}
+
+/// Saves (as the editor) and activates (as the approver) a revision of the
+/// IT policy for `account`; the revision only differs by its version.
+async fn activate_version(
+    lifecycle: &Arc<dyn hodei_trust_policy::LifecycleStore>,
+    account: &str,
+    version: &str,
+    expected_head: Option<u64>,
+) -> u64 {
+    let policy = TrustPolicy::new(
+        POLICY_ID,
+        version,
+        vec![Requirement::denying(
+            RequirementKind::NoReachableCriticalVulnerability,
+        )],
+    );
+    let revision = lifecycle
+        .save(account, policy, "editor", "it", Utc::now())
+        .await
+        .expect("the revision is saved");
+    lifecycle
+        .activate(
+            account,
+            POLICY_ID,
+            revision.sequence,
+            expected_head,
+            "approver",
+            "it",
+            Utc::now(),
+        )
+        .await
+        .expect("the revision is activated")
+        .sequence
+}
+
+/// HSP-321: with the per-account plane, the drift of the sweep is judged
+/// against the policy of the account of each grant. Two accounts decided
+/// under their version 1; only one activates version 2: only ITS grant
+/// drifts and is renewed, the other's is left alone.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_sweep_drifts_only_the_grants_of_the_account_whose_policy_changed() {
+    let Some(endpoint) = endpoint() else {
+        return;
+    };
+    let client = connect_to(&endpoint).await;
+    let lifecycle: Arc<dyn hodei_trust_policy::LifecycleStore> = Arc::new(
+        hodei_trust_policy_storage::DgraphLifecycleStore::open(
+            client.clone(),
+            hodei_trust_policy::lifecycle::SeparationPolicy::required(),
+        )
+        .await
+        .expect("the lifecycle opens"),
+    );
+    let stack = stack_with(client, "drf", Some(lifecycle.clone())).await;
+    let changed = stack.account.clone();
+    let other = format!("{changed}b");
+
+    let changed_head = activate_version(&lifecycle, &changed, "1", None).await;
+    activate_version(&lifecycle, &other, "1", None).await;
+    stack
+        .reactor
+        .admit_advisory(
+            &changed,
+            REGION,
+            "bootstrap",
+            &ContentDigest::of_bytes(b"f3b2-bootstrap"),
+            &osv(&stack.advisory_id),
+            None,
+        )
+        .await
+        .expect("the bootstrap advisory is admitted");
+
+    let on_changed = promote_in(&stack, &changed, "drifting", false, None).await;
+    let on_other = promote_in(&stack, &other, "steady", false, None).await;
+    assert_eq!(on_changed.grant.policy_version.as_deref(), Some("1"));
+    assert_eq!(on_other.grant.policy_version.as_deref(), Some("1"));
+
+    // Only `changed` activates version 2.
+    activate_version(&lifecycle, &changed, "2", Some(changed_head)).await;
+
+    let swept = stack
+        .reactor
+        .sweep_stale_grants(Utc::now())
+        .await
+        .expect("the sweep reads the book through the port");
+    assert!(swept.superseded_reevaluated >= 1, "drift: {swept:?}");
+
+    let renewed = stack
+        .trust
+        .grants_of(&changed, "drifting")
+        .await
+        .expect("the book answers")
+        .into_iter()
+        .find(|grant| grant.decision_id != on_changed.grant.decision_id)
+        .expect("the grant of the account whose policy changed was renewed");
+    assert_eq!(renewed.policy_version.as_deref(), Some("2"));
+
+    let untouched = stack
+        .trust
+        .grants_of(&other, "steady")
+        .await
+        .expect("the book answers");
+    assert_eq!(untouched.len(), 1, "no second grant: {untouched:?}");
+    assert_eq!(untouched[0].decision_id, on_other.grant.decision_id);
+    assert_eq!(untouched[0].policy_version.as_deref(), Some("1"));
 }

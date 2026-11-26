@@ -226,15 +226,6 @@ pub async fn assemble_graph_profile(
                 ))
             })?,
     );
-    let plane = Arc::new(crate::trust::promotion::TrustPlane::new(
-        decisions,
-        policies,
-        config.trust.policy_id.clone(),
-        chrono::Duration::seconds(i64::from(
-            u32::try_from(config.trust.grant_max_validity_secs.max(1)).unwrap_or(u32::MAX),
-        )),
-    ));
-
     // The Policy Studio's lifecycle over the same graph: per-account
     // revisions, head (CAS) and events. The separation of editor and
     // approver is required: whoever saves a revision cannot activate it.
@@ -250,6 +241,21 @@ pub async fn assemble_graph_profile(
             ))
         })?,
     );
+
+    // The plane decides with the head each account activated in the Policy
+    // Studio, read on every decision (HSP-321). An account with no head has
+    // no policy (fail closed). The deployment's trust policy file, when
+    // declared, is an explicit seed that answers only for accounts that never
+    // activated anything; it is never consulted for an account with a head.
+    let plane = Arc::new(crate::trust::promotion::TrustPlane::per_account(
+        decisions,
+        lifecycle.clone(),
+        policies,
+        config.trust.policy_id.clone(),
+        chrono::Duration::seconds(i64::from(
+            u32::try_from(config.trust.grant_max_validity_secs.max(1)).unwrap_or(u32::MAX),
+        )),
+    ));
 
     // 5. The remote proxy's provenance: the durable ledger over the graph.
     let provenance_ledger: Arc<dyn hodei_catalog::ProvenanceLedger> = Arc::new(

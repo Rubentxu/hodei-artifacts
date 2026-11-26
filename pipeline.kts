@@ -210,6 +210,8 @@ pipeline {
                         "--test hsp314_graph_risk_facts_it",
                         "--test hsp314_graph_evidence_reader_it",
                         "--test hsp314_f3b2_reactor_dgraph_it",
+                        // HSP-321 tramo g: the policy a head activates is the one the plane applies, per account.
+                        "--test hsp321g_policy_applied_dgraph_it",
                         "--test hsp314_f3b3_reactor_wiring_it",
                         "--test hsp323_reaction_status_it",
                         // HSP-151 / HSP-321: the Policy Studio API over the real binary and Dgraph.
