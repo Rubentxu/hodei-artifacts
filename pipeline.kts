@@ -209,6 +209,7 @@ pipeline {
                         "--test hsp314_graph_evidence_reader_it",
                         "--test hsp314_f3b2_reactor_dgraph_it",
                         "--test hsp314_f3b3_reactor_wiring_it",
+                        "--test hsp323_reaction_status_it",
                         "--test hsp314_f3c_investigation_wiring_it",
                         "--test hsp220_drain_outbox_it",
                         "--test hsp314_surface_probe",
