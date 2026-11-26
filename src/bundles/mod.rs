@@ -23,6 +23,7 @@ pub mod capsule_dgraph;
 pub mod export;
 pub mod import;
 pub mod manifest;
+pub mod passport;
 
 pub use capsule::{CapsuleExport, CapsuleVerification, TrustState, export_capsule, verify_capsule};
 pub use export::{ExportReport, export};
@@ -30,6 +31,11 @@ pub use import::{ImportReport, Mapping, import, read_manifest};
 pub use manifest::{
     AssetEntry, BLOBS_DIRECTORY, BlobEntry, BundleManifest, DecisionEvidence, FORMAT,
     MANIFEST_NAME, Origin, Withheld,
+};
+pub use passport::{
+    PassportExport, PassportInputs, PassportPolicy, PassportProblem, PassportProblemCode,
+    PassportReading, ReaderExpectations, SignedDocument, VSA_PREDICATE_TYPE, export_passport,
+    read_sbom, verify_passport_offline,
 };
 
 use thiserror::Error;
