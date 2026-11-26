@@ -559,13 +559,12 @@ async fn the_blast_radius_is_the_known_reach_with_its_depths() {
 /// environments is reported in BOTH, and the risk is not collapsed into a
 /// property of the artifact alone: one affected subject, two deployments.
 ///
-/// Ignored: measured defect. `blast_radius_dgraph` fills `affected_deployments`
-/// with `row.from` (the ARTIFACT) of each `DeployedAs` relation instead of
-/// `row.to` (the deployment), so two environments of one artifact collapse to
-/// a single entry that is not a deployment (the reference walk in
-/// `hodei-risk::traversal` uses `edge.to`). With `row.to` this test passes.
+/// Regression guard: `blast_radius_dgraph` once filled `affected_deployments`
+/// with `row.from` (the ARTIFACT) of each `DeployedAs` relation, so two
+/// environments of one artifact collapsed into a single entry that was not a
+/// deployment. It now uses `row.to`, like the reference walk in
+/// `hodei-risk::traversal`.
 #[tokio::test]
-#[ignore = "HSP-318: blast_radius_dgraph reports the artifact (row.from) instead of the deployment (row.to)"]
 async fn the_blast_radius_names_every_environment_the_artifact_runs_in() {
     let tenant = tenant("envs");
     let Some(graph) = seeded_graph(&tenant).await else {
