@@ -8,15 +8,15 @@
 //! sees:
 //!
 //! - That what is published comes back **intact**: the hash of the file that
-//! comes out of `curl` is the hash of the file that went in, and it is stated by a
-//! program that has nothing to do with this service.
+//!   comes out of `curl` is the hash of the file that went in, and it is stated by a
+//!   program that has nothing to do with this service.
 //! - That a process that **dies in the middle of an upload** does not leave a
-//! half-published path, and that on restarting the service picks up
-//! what was left and respects what is alive.
+//!   half-published path, and that on restarting the service picks up
+//!   what was left and respects what is alive.
 //! - That two simultaneous uploads **do not get mixed**: what is downloaded
-//! has the hash of what was uploaded, always.
+//!   has the hash of what was uploaded, always.
 //! - That two accounts with real tokens **do not see** each other, and that the
-//! account that does not have the repository cannot know whether it exists.
+//!   account that does not have the repository cannot know whether it exists.
 //!
 //! And the result is written to a report, which is what remains six
 //! months from now.
@@ -434,10 +434,10 @@ fn an_upload_that_is_interrupted_leaves_nothing_published() {
 /// Three situations, because each fails in a different way:
 ///
 /// - The same content to the same path: the effect is **one**, and what
-/// is downloaded is that content.
+///   is downloaded is that content.
 /// - Different contents to different paths: each path has its own.
 /// - Different contents to the same path: the address publishes once,
-/// so one wins and the others receive a `409`.
+///   so one wins and the others receive a `409`.
 ///
 /// What cannot happen is that what is downloaded is a mix: the
 /// hash of what is downloaded has to be the hash of what was uploaded.

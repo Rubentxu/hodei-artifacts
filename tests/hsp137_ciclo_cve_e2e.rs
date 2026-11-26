@@ -313,8 +313,8 @@ fn runtime() -> tokio::runtime::Runtime {
 /// reevaluation intent in the durable outbox -- exactly what stays
 /// alive when the process dies after planning and before revoking.
 fn plant_crash_window(deployment: &Deployment, subject: &str) {
-    use hodei_reactive::intent::{EventOrigin, Intent, IntentOrigin};
     use hodei_reactive::intent::IntentOutbox as _;
+    use hodei_reactive::intent::{EventOrigin, Intent, IntentOrigin};
     let graph = deployment.graph.as_ref().expect("the graph profile");
     let advisory = CRASH_ADVISORY;
     // The view says the same version as the ledger, for the baseline route

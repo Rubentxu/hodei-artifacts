@@ -31,9 +31,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::Utc;
 use hodei_artifacts_api::gc::{CoordinatedPass, GcService, PassAction, PassConfig};
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogError, CatalogWriter, ContentLedger, DeletionState, DigestScope,
-    ContentHold, GcDeletion, GcRun, HoldScope, PackageCoordinates, Publication, RepositoryConfig, RepositoryDescriptor,
-    RepositoryFormat, RepositoryMode, RootKind, RunCandidate, RunState, repository_hrn,
+    AllowAllAuthorizer, CatalogError, CatalogWriter, ContentHold, ContentLedger, DeletionState,
+    DigestScope, GcDeletion, GcRun, HoldScope, PackageCoordinates, Publication, RepositoryConfig,
+    RepositoryDescriptor, RepositoryFormat, RepositoryMode, RootKind, RunCandidate, RunState,
+    repository_hrn,
 };
 use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
@@ -750,7 +751,10 @@ async fn a_released_claim_is_free_for_the_next_owner_and_only_the_live_token_rel
     let busy = ledger(&store)
         .claim_gc_pass(&scope, "worker-b", Duration::from_secs(300), Utc::now())
         .await;
-    assert!(matches!(busy, Err(CatalogError::Conflict { .. })), "{busy:?}");
+    assert!(
+        matches!(busy, Err(CatalogError::Conflict { .. })),
+        "{busy:?}"
+    );
 
     let mut stale = first.clone();
     stale.token = "not-the-live-token".to_string();
@@ -800,7 +804,12 @@ async fn a_hold_is_released_once_and_the_census_lists_the_accounts_with_reposito
             .iter()
             .any(|seen| seen.id == hold.id)
     );
-    assert!(ledger(&store).release_hold(&hold.id).await.expect("release"));
+    assert!(
+        ledger(&store)
+            .release_hold(&hold.id)
+            .await
+            .expect("release")
+    );
     assert!(
         !ledger(&store).release_hold(&hold.id).await.expect("again"),
         "releasing twice is not a second release"

@@ -1851,6 +1851,9 @@ mod tests {
             ("HODEI_SERVER__PORT", "41535"),
             ("HODEI_SERVER__HOST", "127.0.0.1"),
             ("HODEI_DATABASE__DB_TYPE", "dgraph"),
+            // The graph profile is required: declare the alpha by environment.
+            ("HODEI_GRAPH__ENDPOINT", "127.0.0.1:9080"),
+            ("HODEI_GRAPH__TLS__ENABLED", "false"),
             ("HODEI_SCHEMA__REGISTER_IAM_ON_STARTUP", "true"),
             ("HODEI_LOGGING__LEVEL", "warn"),
         ]
@@ -1972,7 +1975,7 @@ mod tests {
     /// configuration that asks for it is rejected instead of obeyed.
     #[test]
     fn the_age_of_the_staging_has_a_floor() {
-        let mut config = AppConfig::default();
+        let mut config = a_graph_config();
         config.content.staging_max_age_secs = 0;
         let error = config.validate().expect_err("an age of zero is refused");
         assert!(
@@ -1980,14 +1983,14 @@ mod tests {
             "the error says what is wrong: {error}"
         );
 
-        let mut config = AppConfig::default();
+        let mut config = a_graph_config();
         config.content.staging_max_age_secs = 59;
         assert!(
             config.validate().is_err(),
             "an age below the floor is refused"
         );
 
-        let mut config = AppConfig::default();
+        let mut config = a_graph_config();
         config.content.staging_max_age_secs = 60;
         assert!(config.validate().is_ok(), "the floor itself is allowed");
     }
@@ -2067,7 +2070,7 @@ mod tests {
 
     #[test]
     fn security_rejects_permissive_cors_configuration() {
-        let mut config = AppConfig::default();
+        let mut config = a_graph_config();
         config.security.cors_allowed_origins = vec!["*".to_string()];
         assert!(config.validate().is_err());
 
@@ -2357,6 +2360,8 @@ keys = [
             ("HODEI_SIGNING__KEYS__0__ID", "new"),
             ("HODEI_SIGNING__KEYS__0__SECRET_FILE", "/run/secrets/new"),
             ("HODEI_SIGNING__TTL_SECS", "60"),
+            ("HODEI_GRAPH__ENDPOINT", "127.0.0.1:9080"),
+            ("HODEI_GRAPH__TLS__ENABLED", "false"),
         ] {
             given.insert(name.to_string(), value.to_string());
         }

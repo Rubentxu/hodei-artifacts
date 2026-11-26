@@ -549,7 +549,7 @@ async fn the_ledger_answers_the_active_subset_of_a_page() {
     // Another repository and another account have no grant for it.
     let active = fixture
         .trust
-        .active_digests(ACCOUNT, TRUSTED, &[live.clone()], Utc::now())
+        .active_digests(ACCOUNT, TRUSTED, std::slice::from_ref(&live), Utc::now())
         .await
         .expect("the answer");
     assert!(active.is_empty());

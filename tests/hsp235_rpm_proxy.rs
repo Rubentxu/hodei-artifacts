@@ -6,14 +6,14 @@
 //! service:
 //!
 //! - the `repomd.xml` that is served is **the upstream's**, not a rebuilt
-//! document;
+//!   document;
 //! - the signature that is served is the upstream's, and the key that is served is
-//! the upstream's, not the hub's;
+//!   the upstream's, not the hub's;
 //! - the metadata is served **only** if it meets the checksum it declares: the
-//! one its own name announces, or the one the cached `repomd`
-//! declares;
+//!   one its own name announces, or the one the cached `repomd`
+//!   declares;
 //! - a metadata that does not meet its checksum is **not** served, and neither is one that the
-//! `repomd` does not declare;
+//!   `repomd` does not declare;
 //! - a path outside the upstream's scopes does not exist for that proxy;
 //! - without network, the cache serves what was already downloaded and does not invent the rest;
 //! - the trust gate is also applied to the proxy path.

@@ -202,10 +202,7 @@ fn freshness(
     )
 }
 
-fn environment(
-    endpoint: &str,
-    deployment: &Deployment,
-) -> Vec<(String, String)> {
+fn environment(endpoint: &str, deployment: &Deployment) -> Vec<(String, String)> {
     std::fs::write(
         deployment.directory.path().join("schema.json"),
         the_schema(),
@@ -363,8 +360,14 @@ async fn the_graph_profile_serves_the_investigation_of_a_subject() {
     );
     let (missing_status, _, missing_body) =
         investigate(&deployment, port, &alice, &not_an_artifact);
-    assert_eq!(foreign_status, 404, "a foreign subject is hidden: {foreign_body}");
-    assert_eq!(missing_status, 404, "a non-subject is not found: {missing_body}");
+    assert_eq!(
+        foreign_status, 404,
+        "a foreign subject is hidden: {foreign_body}"
+    );
+    assert_eq!(
+        missing_status, 404,
+        "a non-subject is not found: {missing_body}"
+    );
     assert_eq!(
         foreign_body, missing_body,
         "the two absences are indistinguishable"
@@ -412,15 +415,16 @@ async fn the_graph_profile_serves_the_investigation_of_a_subject() {
 
     // The relation is withdrawn through the frontier: the report is stale
     // and says which reference moved.
-    let withdrawal = GraphChangeSet::empty().with_withdrawal(GraphRelationWithdrawal::new(
-        RelationType::Contains,
-        subject.clone(),
-        dependency.clone(),
-        tenant.clone(),
-        EvidenceId::new(evidence_id.clone()),
-        Utc::now(),
-    ))
-    .with_cause(evidence_id.clone());
+    let withdrawal = GraphChangeSet::empty()
+        .with_withdrawal(GraphRelationWithdrawal::new(
+            RelationType::Contains,
+            subject.clone(),
+            dependency.clone(),
+            tenant.clone(),
+            EvidenceId::new(evidence_id.clone()),
+            Utc::now(),
+        ))
+        .with_cause(evidence_id.clone());
     frontier
         .apply_and_checkpoint_with(&withdrawal, &delivery(account, 1), true)
         .await
@@ -438,7 +442,8 @@ async fn the_graph_profile_serves_the_investigation_of_a_subject() {
     relay.cut();
     let (status, _, body) = investigate(&deployment, port, &alice, &subject);
     assert_eq!(
-        status, 503,
+        status,
+        503,
         "a silent alpha closes the investigation: {body}\n{}",
         log()
     );

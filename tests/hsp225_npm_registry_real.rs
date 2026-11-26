@@ -9,19 +9,19 @@
 //! What is measured, and not asserted:
 //!
 //! - **AC1**: `npm view` and `npm pack` / `npm install --ignore-scripts` with
-//! a temporary `.npmrc` and HOME resolve `is-number@7.0.0` through Hodei,
-//! and the tarball's `integrity` matches the one the origin declares.
-//! The check against the real npmjs is **opt-in** and with the version
-//! pinned: without `HODEI_LAB_REAL=1` the case does not run and the report is
-//! not green, which is correct.
+//!   a temporary `.npmrc` and HOME resolve `is-number@7.0.0` through Hodei,
+//!   and the tarball's `integrity` matches the one the origin declares.
+//!   The check against the real npmjs is **opt-in** and with the version
+//!   pinned: without `HODEI_LAB_REAL=1` the case does not run and the report is
+//!   not green, which is correct.
 //! - **AC2**: a **second** fetch of the same content does **not** query the
-//! upstream (the lab's counter says so), with the upstream
-//! **disconnected** it resolves the same with local data, and a
-//! dist-tag that moves is revalidated **according to the TTL** without changing the
-//! historical bytes.
+//!   upstream (the lab's counter says so), with the upstream
+//!   **disconnected** it resolves the same with local data, and a
+//!   dist-tag that moves is revalidated **according to the TTL** without changing the
+//!   historical bytes.
 //! - **AC3**: a **reserved scope** does not fall through to the public one, the
-//! `dist.tarball` URLs the proxy returns point to **Hodei's endpoint**,
-//! and no client token appears in the log or travels to the upstream.
+//!   `dist.tarball` URLs the proxy returns point to **Hodei's endpoint**,
+//!   and no client token appears in the log or travels to the upstream.
 //!
 //! # The path without network
 //!

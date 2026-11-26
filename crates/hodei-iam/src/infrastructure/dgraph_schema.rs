@@ -73,7 +73,11 @@ impl DgraphSchemaStore {
 
     /// Runs a read and returns the rows of the `q` root.
     async fn rows(&self, query: &str) -> Result<Vec<Value>, BuildSchemaError> {
-        let response = self.client.execute_dql(query).await.map_err(storage_error)?;
+        let response = self
+            .client
+            .execute_dql(query)
+            .await
+            .map_err(storage_error)?;
         Ok(response
             .json
             .get("q")
@@ -125,7 +129,10 @@ impl SchemaStoragePort for DgraphSchemaStore {
         // so two writers of the same version meet there and the loser
         // retries on top of whatever committed.
         let transaction = GraphUpsertTransaction {
-            query: format!("{{ v as var(func: eq(hodei.cedar.key, {})) }}", dql_string(&key)),
+            query: format!(
+                "{{ v as var(func: eq(hodei.cedar.key, {})) }}",
+                dql_string(&key)
+            ),
             blocks: vec![GraphMutationBlock {
                 cond: None,
                 set_nquads,
@@ -141,8 +148,7 @@ impl SchemaStoragePort for DgraphSchemaStore {
                     break;
                 }
                 Err(GraphClientError::UpsertConflict { .. }) if attempt + 1 < MAX_ATTEMPTS => {
-                    tokio::time::sleep(Duration::from_millis(10u64 << attempt.min(6) as u32))
-                        .await;
+                    tokio::time::sleep(Duration::from_millis(10u64 << attempt.min(6) as u32)).await;
                 }
                 Err(error) => return Err(storage_error(error)),
             }

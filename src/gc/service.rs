@@ -613,7 +613,9 @@ pub(crate) async fn scope_roots(
     let mut pages = 0u64;
     let mut cursor: Option<String> = None;
     loop {
-        let page = ledger.root_page(scope, cursor.as_deref(), page_limit).await?;
+        let page = ledger
+            .root_page(scope, cursor.as_deref(), page_limit)
+            .await?;
         pages += 1;
         let last = page.roots.last().map(|root| root.digest.to_string());
         let has_more = page.has_more;
@@ -621,9 +623,10 @@ pub(crate) async fn scope_roots(
         if !has_more {
             return Ok((roots, pages));
         }
-        cursor = Some(last.ok_or_else(|| {
-            GcError::Unknown("a full root page carried no cursor".to_string())
-        })?);
+        cursor =
+            Some(last.ok_or_else(|| {
+                GcError::Unknown("a full root page carried no cursor".to_string())
+            })?);
     }
 }
 

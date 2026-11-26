@@ -28,6 +28,9 @@ SRC="$ROOT/docs/openapi/openapi.yaml"
 BUNDLED="$ROOT/docs/openapi/bundled.yaml"
 OUT="$ROOT/target/openapi/bundled.generated.yaml"
 
+# The output directory lives under target/, which a clean checkout lacks.
+mkdir -p "$ROOT/target/openapi"
+
 # 1. Lint: limpio significa cero errores y cero avisos. La configuración
 #    de las reglas vive en redocly.yaml, con sus excepciones escritas.
 if ! npx -y @redocly/cli lint "$SRC" > "$ROOT/target/openapi/lint.log" 2>&1; then
@@ -42,7 +45,6 @@ if grep -qE "[0-9]+ (error|warning)" "$ROOT/target/openapi/lint.log" \
 fi
 
 # 2. Bundle: el contrato entero, en un fichero.
-mkdir -p "$ROOT/target/openapi"
 if ! npx -y @redocly/cli bundle "$SRC" -o "$OUT" > "$ROOT/target/openapi/bundle.log" 2>&1; then
     echo "the OpenAPI contract cannot be bundled (see target/openapi/bundle.log)" >&2
     exit 2

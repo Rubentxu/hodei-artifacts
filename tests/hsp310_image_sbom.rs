@@ -148,7 +148,9 @@ fn check_binary(bytes: &[u8]) -> Result<(), String> {
     if bad.is_empty() {
         Ok(())
     } else {
-        Err(format!("binary: embeds crates of the retired engine: {bad:?}"))
+        Err(format!(
+            "binary: embeds crates of the retired engine: {bad:?}"
+        ))
     }
 }
 
@@ -182,7 +184,11 @@ fn mutation_a_surrealdb_component_fails_the_check() {
 #[test]
 fn mutation_an_empty_or_thin_sbom_cannot_pass() {
     let empty = serde_json::json!({"components": []});
-    assert!(check_image_cdx(&empty).unwrap_err().contains("proves nothing"));
+    assert!(
+        check_image_cdx(&empty)
+            .unwrap_err()
+            .contains("proves nothing")
+    );
     let no_components_key = serde_json::json!({});
     assert!(check_image_cdx(&no_components_key).is_err());
     // Files do not count as packages.
@@ -196,7 +202,11 @@ fn mutation_an_empty_or_thin_sbom_cannot_pass() {
 fn mutation_a_missing_control_component_fails() {
     let doc = serde_json::json!({"components":
         (0..80).map(|i| serde_json::json!({"type":"library","name":format!("p{i}")})).collect::<Vec<_>>()});
-    assert!(check_image_cdx(&doc).unwrap_err().contains("control component"));
+    assert!(
+        check_image_cdx(&doc)
+            .unwrap_err()
+            .contains("control component")
+    );
 }
 
 #[test]
