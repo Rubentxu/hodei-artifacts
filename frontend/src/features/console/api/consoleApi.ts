@@ -59,7 +59,8 @@ type SessionGuardedConfig = InternalAxiosRequestConfig & {
   _sessionEpoch?: number;
 };
 
-const attachSessionGuard = (instance: AxiosInstance): void => {
+/** Binds a client to the session: the credential and the epoch guard. */
+export const attachSessionGuard = (instance: AxiosInstance): void => {
   instance.interceptors.request.use(config => {
     const guarded = config as SessionGuardedConfig;
     const { token, sessionEpoch } = useAuthStore.getState();

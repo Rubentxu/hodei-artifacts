@@ -50,6 +50,7 @@ export function isNavItemActive(
       return (
         pathname.startsWith('/admin') ||
         pathname.startsWith('/settings') ||
+        pathname.startsWith('/console/policy-studio') ||
         pathname.startsWith('/policies') ||
         pathname.startsWith('/repositories') ||
         pathname.startsWith('/openapi-demo')

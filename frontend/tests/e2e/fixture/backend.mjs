@@ -16,23 +16,29 @@
 
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { theAssetPath, theContent, theDigest, theRepository } from './seed.mjs';
 import {
-  theAssetPath,
-  theContent,
-  theDigest,
-  theRepository,
-} from './seed.mjs';
-import {
+  aTokenFor,
+  subjectOf,
   theAudience,
   theIssuer,
   theSecret,
+  theStudioPrincipals,
   theToken,
   theTokenPath,
+  theTokenPathOf,
 } from './token.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -73,17 +79,20 @@ const readyPort = port + 1;
 const theBinary = () => {
   const explicit = process.env.HODEI_API_BIN;
   if (explicit) return explicit;
-  const target =
-    process.env.CARGO_TARGET_DIR ?? theCargoTargetDirectory();
+  const target = process.env.CARGO_TARGET_DIR ?? theCargoTargetDirectory();
   return join(target, 'debug', 'hodei-artifacts-api');
 };
 
 /** The target directory that `cargo` would use. */
 const theCargoTargetDirectory = () => {
-  const result = spawnSync('cargo', ['metadata', '--no-deps', '--format-version', '1'], {
-    cwd: repositoryRoot,
-    encoding: 'utf8',
-  });
+  const result = spawnSync(
+    'cargo',
+    ['metadata', '--no-deps', '--format-version', '1'],
+    {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+    }
+  );
   if (result.status !== 0) return join(repositoryRoot, 'target');
   return JSON.parse(result.stdout).target_directory;
 };
@@ -133,7 +142,9 @@ const adminCall = async (alpha, query, token) => {
   });
   const answer = await response.json();
   if (answer.errors) {
-    throw new Error(`the alpha refused an admin call: ${JSON.stringify(answer.errors)}`);
+    throw new Error(
+      `the alpha refused an admin call: ${JSON.stringify(answer.errors)}`
+    );
   }
   return answer.data;
 };
@@ -280,6 +291,56 @@ const theReadiness = () => {
   };
 };
 
+/** The routes of the Policy Studio that only read. */
+const theStudioReads = [
+  'get-policy-studio-head',
+  'get-policy-studio-revisions',
+  'get-policy-studio-history',
+];
+
+/**
+ * The Cedar bundle of the lane.
+ *
+ * It is the example bundle plus what the Policy Studio needs to tell the
+ * principals apart: `carol` is the approver (the admin grant), `viewer`
+ * has a permit per route that only reads, and `bob` has none. The example
+ * bundle is not edited: the lane writes its own copy next to the data it
+ * seeds and points the service at it.
+ */
+const writeBundle = directory => {
+  const examples = join(repositoryRoot, 'config', 'examples');
+  const schema = join(directory, 'schema.json');
+  const policies = join(directory, 'policies.cedar');
+  copyFileSync(join(examples, 'schema.json'), schema);
+  const grants = [
+    `permit(principal == Iam::User::"${subjectOf('carol')}", action == Admin::Action::"AccessAdminApi", resource);`,
+    ...theStudioReads.map(
+      route =>
+        `permit(principal == Iam::User::"${subjectOf('viewer')}", action == Admin::Action::"AccessAdminApi", resource == Admin::AdminApi::"hrn:hodei:admin:global:acme:AdminApi/${route}");`
+    ),
+  ];
+  writeFileSync(
+    policies,
+    `${readFileSync(join(examples, 'policies.cedar'), 'utf8')}\n${grants.join('\n')}\n`
+  );
+  return { schema, policies };
+};
+
+/** The tokens of the principals of the studio, each in its own file. */
+const writeStudioTokens = () => {
+  for (const name of theStudioPrincipals) {
+    writeFileSync(theTokenPathOf(name), aTokenFor(subjectOf(name)), {
+      mode: 0o600,
+    });
+  }
+};
+
+const removeStudioTokens = () => {
+  for (const name of theStudioPrincipals) {
+    rmSync(theTokenPathOf(name), { force: true });
+  }
+};
+
 const main = async () => {
   const binary = theBinary();
   if (!existsSync(binary)) {
@@ -292,6 +353,7 @@ const main = async () => {
   rmSync(directory, { recursive: true, force: true });
   mkdirSync(directory, { recursive: true });
   mkdirSync(dirname(theTokenPath), { recursive: true });
+  const bundle = writeBundle(directory);
   const alpha = theAlpha();
   const namespace = await createNamespace(alpha);
   const readiness = theReadiness();
@@ -322,18 +384,8 @@ const main = async () => {
       HODEI_SECURITY__AUTH_JWT_SECRET: theSecret,
       HODEI_SECURITY__AUTH_ISSUER: theIssuer,
       HODEI_SECURITY__AUTH_AUDIENCE: theAudience,
-      HODEI_SECURITY__AUTHORIZATION_POLICY_PATH: join(
-        repositoryRoot,
-        'config',
-        'examples',
-        'policies.cedar'
-      ),
-      HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH: join(
-        repositoryRoot,
-        'config',
-        'examples',
-        'schema.json'
-      ),
+      HODEI_SECURITY__AUTHORIZATION_POLICY_PATH: bundle.policies,
+      HODEI_SECURITY__AUTHORIZATION_SCHEMA_PATH: bundle.schema,
       HODEI_TRUST__POLICY_FILE: join(here, 'trust-policy.json'),
       RUST_LOG: 'warn',
     },
@@ -345,6 +397,7 @@ const main = async () => {
     readiness.server.close();
     rmSync(directory, { recursive: true, force: true });
     rmSync(theTokenPath, { force: true });
+    removeStudioTokens();
     await deleteNamespace(alpha, namespace.id);
   };
   process.on('SIGTERM', () => {
@@ -358,6 +411,7 @@ const main = async () => {
   process.on('exit', () => {
     rmSync(directory, { recursive: true, force: true });
     rmSync(theTokenPath, { force: true });
+    removeStudioTokens();
   });
 
   await waitFor(service);
@@ -366,6 +420,7 @@ const main = async () => {
   // reads a token that is not there yet is a test that fails for the
   // wrong reason.
   writeFileSync(theTokenPath, theToken(), { mode: 0o600 });
+  writeStudioTokens();
   readiness.announce();
   console.log(`the fixture of the console is ready at ${address}`);
 };
