@@ -1,48 +1,48 @@
-//! Los tokens de los upstreams que exigen autenticacion.
+//! The tokens of upstreams that require authentication.
 //!
-//! Un upstream que pide un token lo pide en su reto, y el token que devuelve
-//! sirve para **varias** peticiones: pedirlo otra vez por cada manifiesto es
-//! una peticion de mas por cada imagen que se tira.
+//! An upstream that asks for a token asks for it in its challenge, and the token it returns
+//! serves **several** requests: asking for it again for each manifest is
+//! an extra request for every image pulled.
 //!
-//! El token es una credencial, asi que la cache es **por upstream**: dos
-//! repositorios que apuntan al mismo sitio pero con credenciales distintas no
-//! comparten token, porque no son la misma identidad. La clave la pone
-//! quien llama, y el plano no sabe nada de repositorios.
+//! The token is a credential, so the cache is **per upstream**: two
+//! repositories that point to the same place but with different credentials do not
+//! share a token, because they are not the same identity. The key is set by
+//! the caller, and the plane knows nothing about repositories.
 //!
-//! Y el token caduca: lo que dice el propio upstream es lo que manda, con un
-//! tope para que un upstream que dice "dura un dia" no nos deje un token
-//! vivo un dia. Un token caducado se pide otra vez, que es lo que hace un
-//! cliente de verdad.
+//! And the token expires: what the upstream itself says governs, with a
+//! cap so that an upstream saying "lasts a day" does not leave us a token
+//! alive for a day. An expired token is requested again, which is what a real
+//! client does.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-/// El tope de cuanto vive un token en la cache.
+/// The cap on how long a token lives in the cache.
 pub const MAX_TOKEN_TTL: Duration = Duration::from_secs(300);
 
-/// Un token y cuando caduca.
+/// A token and when it expires.
 #[derive(Debug, Clone)]
 struct TheToken {
-    /// El token.
+    /// The token.
     token: String,
-    /// Cuando deja de valer.
+    /// When it stops being valid.
     expires_at: Instant,
 }
 
-/// Los tokens, por upstream.
+/// The tokens, per upstream.
 #[derive(Debug, Default)]
 pub struct TokenCache {
     entries: Mutex<HashMap<String, TheToken>>,
 }
 
 impl TokenCache {
-    /// Una cache vacia.
+    /// An empty cache.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// El token de un upstream, si lo hay y sigue valiendo.
+    /// The token of an upstream, if there is one and it is still valid.
     pub fn get(&self, key: &str) -> Option<String> {
         let mut entries = self.entries.lock().ok()?;
         let token = entries.get(key)?;
@@ -53,10 +53,10 @@ impl TokenCache {
         Some(token.token.clone())
     }
 
-    /// Se guarda un token, con el tiempo de vida que dice el upstream.
+    /// A token is stored, with the lifetime the upstream states.
     ///
-    /// El tiempo de vida se acota: un upstream que declara un token para un
-    /// dia no decide cuanto vive una credencial en esta maquina.
+    /// The lifetime is capped: an upstream that declares a token for a
+    /// day does not decide how long a credential lives on this machine.
     pub fn put(&self, key: &str, token: String, ttl: Duration) {
         let ttl = ttl.min(MAX_TOKEN_TTL);
         let Ok(mut entries) = self.entries.lock() else {
@@ -71,14 +71,14 @@ impl TokenCache {
         );
     }
 
-    /// Se olvida un token: el upstream lo ha rechazado.
+    /// A token is forgotten: the upstream has rejected it.
     pub fn forget(&self, key: &str) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.remove(key);
         }
     }
 
-    /// Cuantos tokens hay.
+    /// How many tokens there are.
     pub fn len(&self) -> usize {
         self.entries
             .lock()
@@ -86,7 +86,7 @@ impl TokenCache {
             .unwrap_or(0)
     }
 
-    /// Si no hay ninguno.
+    /// Whether there are none.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

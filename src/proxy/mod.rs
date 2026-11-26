@@ -1,12 +1,12 @@
-//! El proxy remoto: resolver contenido contra un upstream sin abrir la red
-//! interna del servicio.
+//! The remote proxy: resolve content against an upstream without opening the
+//! service's internal network.
 //!
-//! - [`egress`]: a donde se puede salir (allow-list y direcciones).
-//! - [`fetch`]: el cliente que sale, y la comprobacion de lo que llega.
-//! - [`resolution`]: traer, verificar, guardar y dejar constancia.
-//! - [`cache`]: coalescencia de descargas, cache negativa y metricas.
-//! - [`token`]: los tokens que un upstream exige y ya se han pedido.
-//! - [`dgraph_ledger`]: el libro de recibos durable sobre el grafo (HSP-196).
+//! - [`egress`]: where egress is allowed (allow-list and addresses).
+//! - [`fetch`]: the client that goes out, and the check of what arrives.
+//! - [`resolution`]: fetch, verify, store and record provenance.
+//! - [`cache`]: download coalescing, negative cache and metrics.
+//! - [`token`]: the tokens an upstream demands and that have already been requested.
+//! - [`dgraph_ledger`]: the durable receipt ledger over the graph (HSP-196).
 
 pub mod cache;
 pub mod dgraph_ledger;
@@ -24,30 +24,30 @@ use self::fetch::ProxyFetcher;
 use self::resolution::Outcome;
 use self::token::TokenCache;
 
-/// Lo que comparten las peticiones que esperan la misma descarga.
+/// What requests waiting for the same download share.
 pub type FlightResult = Result<Outcome, ProxyFailure>;
 
-/// Lo que el servicio necesita para resolver contra un upstream: el
-/// cliente de salida, el libro donde queda la procedencia y el estado de
-/// proceso de la cache.
+/// What the service needs to resolve against an upstream: the egress
+/// client, the ledger where provenance is recorded and the cache's process
+/// state.
 #[derive(Clone)]
 pub struct ProxyPlane {
-    /// El cliente de salida.
+    /// The egress client.
     pub fetcher: ProxyFetcher,
-    /// El libro de recibos de procedencia.
+    /// The provenance receipt ledger.
     pub ledger: Arc<dyn ProvenanceLedger>,
-    /// Las descargas en vuelo, una por ruta.
+    /// The in-flight downloads, one per path.
     pub flights: Arc<SingleFlight<(PathKey, u64), FlightResult>>,
-    /// Las rutas que el upstream dijo que no existen.
+    /// The paths the upstream said do not exist.
     pub negatives: Arc<NegativeCache>,
-    /// Los contadores.
+    /// The counters.
     pub metrics: Arc<ProxyMetrics>,
-    /// Los tokens de los upstreams que exigen autenticacion.
+    /// The tokens of upstreams that require authentication.
     pub tokens: Arc<TokenCache>,
 }
 
 impl ProxyPlane {
-    /// Un plano de proxy con la cache vacia.
+    /// A proxy plane with an empty cache.
     pub fn new(fetcher: ProxyFetcher, ledger: Arc<dyn ProvenanceLedger>) -> Self {
         Self {
             fetcher,
@@ -59,7 +59,7 @@ impl ProxyPlane {
         }
     }
 
-    /// Si el servicio entero esta sin salida a la red.
+    /// Whether the entire service has no egress to the network.
     pub fn is_offline(&self) -> bool {
         self.fetcher.is_offline()
     }

@@ -1,28 +1,28 @@
-//! La resolucion de un contenido contra su upstream: la primera vez y cada
-//! revalidacion.
+//! The resolution of content against its upstream: the first time and each
+//! revalidation.
 //!
-//! Une las tres piezas del proxy: el cliente de salida ([`ProxyFetcher`]),
-//! el almacen de contenido y el libro de procedencia. El orden importa y es
-//! lo que da la garantia:
+//! It joins the three pieces of the proxy: the egress client ([`ProxyFetcher`]),
+//! the content store and the provenance ledger. The order matters and is
+//! what gives the guarantee:
 //!
-//! 1. Los bytes entran a una sesion de escritura que **no es visible**.
-//! 2. Cuando el cuerpo termina se comprueba: entero, dentro del presupuesto
-//!    y con el checksum que el upstream declaro.
-//! 3. Solo entonces se publica el blob (`commit`) y se escribe el recibo.
+//! 1. The bytes go into a write session that is **not visible**.
+//! 2. When the body ends it is checked: complete, within the budget
+//!    and with the checksum the upstream declared.
+//! 3. Only then is the blob published (`commit`) and the receipt written.
 //!
-//! Un fetch que falla en cualquier punto aborta la sesion y no deja ni
-//! contenido ni recibo: nada de lo que quede en el sistema puede presentarse
-//! como contenido verificado de un upstream.
+//! A fetch that fails at any point aborts the session and leaves neither
+//! content nor a receipt: nothing left in the system can be presented
+//! as verified content from an upstream.
 //!
-//! Si ya se tiene un contenido para la ruta ([`Known`]) la peticion es
-//! condicional y hay tres desenlaces ademas de traerlo:
+//! If content is already held for the path ([`Known`]) the request is
+//! conditional and there are three outcomes besides fetching it:
 //!
-//! - el upstream confirma (`304`) o entrega los mismos bytes: se escribe un
-//!   recibo `Revalidated` y no se mueve nada;
-//! - entrega **otros** bytes para un contenido inmutable: no se publican, y
-//!   el recibo `Quarantined` guarda lo que se ofrecio;
-//! - entrega otros bytes para metadata mutable: es una actualizacion, y se
-//!   publica.
+//! - the upstream confirms (`304`) or delivers the same bytes: a
+//!   `Revalidated` receipt is written and nothing is moved;
+//! - it delivers **other** bytes for immutable content: they are not published, and
+//!   the `Quarantined` receipt keeps what was offered;
+//! - it delivers other bytes for mutable metadata: it is an update, and it is
+//!   published.
 
 use chrono::Utc;
 use hodei_catalog::proxy_cache::Known;
@@ -36,78 +36,78 @@ use url::Url;
 
 use super::fetch::{FetchError, Fetched, ProxyFetcher, Validators};
 
-/// Lo que hace falta saber para resolver una ruta.
+/// What needs to be known to resolve a path.
 #[derive(Debug, Clone)]
 pub struct Resolution<'a> {
-    /// La cuenta propietaria del repositorio.
+    /// The account that owns the repository.
     pub account: &'a str,
-    /// La clave del repositorio proxy.
+    /// The proxy repository key.
     pub repository: &'a str,
-    /// La ruta que se pide.
+    /// The path being requested.
     pub asset_path: &'a str,
-    /// El upstream configurado.
+    /// The configured upstream.
     pub upstream: &'a UpstreamConfig,
-    /// La version de la configuracion del repositorio.
+    /// The version of the repository configuration.
     pub config_version: u64,
-    /// Quien pide el contenido.
+    /// Who requests the content.
     pub actor: &'a str,
-    /// La correlacion de la peticion.
+    /// The request's correlation.
     pub correlation_id: &'a str,
-    /// El `Accept` que se pide al upstream, si es distinto del de siempre.
+    /// The `Accept` requested from the upstream, if different from the usual one.
     pub accept: Option<&'a str>,
-    /// Un token que el upstream ya pidio y que viaja como `Bearer`.
+    /// A token the upstream already asked for and that travels as `Bearer`.
     ///
-    /// Solo lo usa la superficie OCI, cuyo upstream puede pedir un token en
-    /// su reto. El token viaja **solo** al origen del upstream.
+    /// Only used by the OCI surface, whose upstream may ask for a token in
+    /// its challenge. The token travels **only** to the upstream's origin.
     pub authorization: Option<&'a str>,
-    /// El digest que el contenido **tiene** que tener.
+    /// The digest the content **must** have.
     ///
-    /// Lo usa la superficie OCI, donde la identidad del contenido es el
-    /// digest: un manifiesto pedido por `sha256:...` que llega con otros
-    /// bytes no es el que se pidio, y no se publica.
+    /// Used by the OCI surface, where the content's identity is the
+    /// digest: a manifest requested by `sha256:...` that arrives with other
+    /// bytes is not the one that was requested, and is not published.
     pub expect_digest: Option<&'a str>,
-    /// El prefijo de la ruta del asset, cuando la ruta **es** el digest.
+    /// The asset path prefix, when the path **is** the digest.
     ///
-    /// La superficie OCI guarda el manifiesto en `manifests/<digest>` y el
-    /// blob en `blobs/<digest>`, y el recibo tiene que ir ahi: un recibo en
-    /// la ruta por la que se pidio --una etiqueta-- no respalda el contenido
-    /// que hay, y el contenido sin respaldo no se sirve sin red.
+    /// The OCI surface stores the manifest at `manifests/<digest>` and the
+    /// blob at `blobs/<digest>`, and the receipt has to go there: a receipt at
+    /// the path it was requested by --a tag-- does not back the content
+    /// that is there, and unbacked content is not served without network.
     pub digest_path_prefix: Option<&'a str>,
 }
 
-/// Un contenido resuelto y verificado.
+/// Content that was resolved and verified.
 #[derive(Debug, Clone)]
 pub struct Resolved {
-    /// El digest del contenido, ya publicado en el almacen.
+    /// The content digest, already published in the store.
     pub digest: ContentDigest,
-    /// Sus bytes.
+    /// Its bytes.
     pub size_bytes: u64,
-    /// El recibo que quedo escrito.
+    /// The receipt that was written.
     pub receipt: ProvenanceReceipt,
 }
 
-/// Como termino una resolucion que no fallo.
+/// How a resolution that did not fail ended.
 #[derive(Debug, Clone)]
 pub enum Outcome {
-    /// Hay bytes nuevos, publicados en el almacen.
+    /// There are new bytes, published in the store.
     Stored(Resolved),
-    /// El upstream confirma el contenido que ya se tenia.
+    /// The upstream confirms the content that was already held.
     Unchanged(ProvenanceReceipt),
-    /// El upstream entrego otros bytes para un contenido inmutable: no se
-    /// publicaron.
+    /// The upstream delivered other bytes for immutable content: they were not
+    /// published.
     Quarantined(ProvenanceReceipt),
 }
 
-/// Por que no se pudo resolver.
+/// Why it could not be resolved.
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
-    /// El upstream no entrego un contenido utilizable.
+    /// The upstream did not deliver usable content.
     #[error(transparent)]
     Fetch(#[from] FetchError),
-    /// El almacen no pudo guardar el contenido.
+    /// The store could not save the content.
     #[error("the content store failed: {0}")]
     Blob(BlobError),
-    /// El libro de procedencia no pudo guardar el recibo.
+    /// The provenance ledger could not save the receipt.
     #[error("the provenance ledger failed: {0}")]
     Ledger(#[from] CatalogError),
 }
@@ -118,14 +118,14 @@ impl From<BlobError> for ResolveError {
     }
 }
 
-/// Trae, verifica, guarda y deja constancia.
+/// Fetches, verifies, stores and records provenance.
 ///
-/// Si devuelve `Ok`, el desenlace esta en el libro: el contenido nuevo esta
-/// publicado en el almacen **y** su recibo escrito, o el recibo dice que se
-/// confirmo o se retuvo. Si devuelve `Err`, no hay recibo y nada se sirve
-/// por esta via: un fallo antes del commit no deja contenido; uno del libro,
-/// despues del commit, deja un blob sin catalogar que recoge el GC (un blob
-/// ya presente con ese mismo digest no se toca: es el mismo contenido).
+/// If it returns `Ok`, the outcome is in the ledger: the new content is
+/// published in the store **and** its receipt written, or the receipt says it was
+/// confirmed or held back. If it returns `Err`, there is no receipt and nothing is served
+/// this way: a failure before the commit leaves no content; one from the ledger,
+/// after the commit, leaves an uncataloged blob that the GC collects (a blob
+/// already present with that same digest is not touched: it is the same content).
 pub async fn resolve(
     fetcher: &ProxyFetcher,
     store: &dyn BlobStore,
@@ -139,12 +139,12 @@ pub async fn resolve(
     resolve_url(fetcher, store, ledger, request, known, url).await
 }
 
-/// Como [`resolve`], pero con la URL exacta de donde se trae el contenido.
+/// Like [`resolve`], but with the exact URL the content is fetched from.
 ///
-/// Lo usa la superficie PyPI: la pagina de un proyecto y cada distribucion
-/// se piden por la URL que declara el upstream, que no es la ruta del
-/// asset. La URL se juzga con la misma politica de salida que cualquier
-/// otra.
+/// Used by the PyPI surface: a project's page and each distribution
+/// are requested at the URL the upstream declares, which is not the asset's
+/// path. The URL is judged with the same egress policy as any
+/// other.
 pub async fn resolve_url(
     fetcher: &ProxyFetcher,
     store: &dyn BlobStore,
@@ -171,16 +171,16 @@ pub async fn resolve_url(
         .await?;
     let mut opened = match fetched {
         Fetched::Content(opened) => *opened,
-        // El upstream pide una credencial y no hay ninguna todavia: quien
-        // llama tiene que resolver el reto antes de volver a intentarlo. El
-        // reto viaja en el error, que es donde se lee lo que dice el
-        // upstream sobre como autenticarse.
+        // The upstream asks for a credential and there is none yet: the
+        // caller has to resolve the challenge before retrying. The
+        // challenge travels in the error, which is where what the
+        // upstream says about how to authenticate is read.
         Fetched::Unauthorized { challenge } => {
             return Err(FetchError::Unauthorized(challenge.unwrap_or_default()).into());
         }
         Fetched::NotModified(confirmation) => {
-            // Un `304` solo se acepta si se enviaron validadores: sin
-            // `known` no hay a que referirlo.
+            // A `304` is only accepted if validators were sent: without
+            // `known` there is nothing to relate it to.
             let Some(known) = known else {
                 return Err(FetchError::Status(304).into());
             };
@@ -194,8 +194,8 @@ pub async fn resolve_url(
                 config_version: request.config_version,
                 digest: known.digest.clone(),
                 size_bytes: known.size_bytes,
-                // Un `304` no trae cuerpo que comprobar: hereda la
-                // evidencia del recibo que respaldaba esos bytes.
+                // A `304` has no body to check: it inherits the
+                // evidence of the receipt that backed those bytes.
                 checksum: known
                     .checksum
                     .clone()
@@ -218,7 +218,7 @@ pub async fn resolve_url(
     let mut guard = opened.guard(request.upstream.require_checksum);
     let mut session = store.begin().await?;
 
-    // Cualquier fallo a partir de aqui descarta la escritura en curso.
+    // Any failure from here on discards the write in progress.
     loop {
         match opened.chunk().await {
             Ok(Some(chunk)) => {
@@ -239,8 +239,8 @@ pub async fn resolve_url(
         }
     }
 
-    // El digest lo calcula la sesion mientras pasan los trozos: es el que
-    // el commit va a comprobar y el que se compara con lo declarado.
+    // The digest is computed by the session while the chunks pass: it is the one
+    // the commit will check and the one compared with what was declared.
     let computed = session.the_digest();
     let verified = match guard.finish(&computed.value) {
         Ok(verified) => verified,
@@ -250,12 +250,12 @@ pub async fn resolve_url(
         }
     };
 
-    // El digest esperado: el contenido tiene que **ser** el que se pidio.
+    // The expected digest: the content has to **be** the one that was requested.
     //
-    // La superficie OCI lo necesita: el manifiesto pedido por `sha256:...`
-    // que llega con otros bytes no es el que se pidio, y un contenido que
-    // no es el pedido no se publica --ni se sirve, ni queda con recibo que
-    // lo respalde. Se retiene, y el recibo lo dice.
+    // The OCI surface needs it: a manifest requested by `sha256:...`
+    // that arrives with other bytes is not the one that was requested, and content that
+    // is not the requested one is not published --nor served, nor left with a receipt that
+    // backs it. It is held back, and the receipt says so.
     if let Some(expected) = request.expect_digest
         && expected != computed.value
     {
@@ -264,8 +264,8 @@ pub async fn resolve_url(
             id: format!("prv-{}", uuid::Uuid::new_v4()),
             account: request.account.to_string(),
             repository: request.repository.to_string(),
-            // El recibo va a la ruta del contenido **pedido**: es el que
-            // tiene que saber que lo que se ofrecio no era lo suyo.
+            // The receipt goes to the path of the **requested** content: it is the one
+            // that has to know that what was offered was not its own.
             asset_path: the_asset_path(request, expected),
             upstream_id: request.upstream.id.clone(),
             source_url: opened.source_url(),
@@ -307,12 +307,12 @@ pub async fn resolve_url(
         fetched_at: Utc::now(),
     };
 
-    // Ya se tenia un contenido: la pregunta es si estos bytes son los mismos.
+    // Content was already held: the question is whether these bytes are the same.
     if let Some(known) = known {
         let same = known.digest == computed;
         if same || known.immutable {
-            // Ni los mismos bytes ni los ofrecidos como cambio de un
-            // contenido inmutable se publican: no hay nada que escribir.
+            // Neither the same bytes nor those offered as a change to
+            // immutable content are published: there is nothing to write.
             let _ = session.abort().await;
             receipt.outcome = if same {
                 ReceiptOutcome::Revalidated
@@ -341,9 +341,9 @@ pub async fn resolve_url(
             return Err(error.into());
         }
     };
-    // Sin recibo no hay procedencia: si el libro falla, el contenido ya
-    // publicado queda como un blob mas sin catalogar (se recoge por GC) y
-    // la peticion falla; nunca se sirve sin su recibo.
+    // Without a receipt there is no provenance: if the ledger fails, the already
+    // published content is left as one more uncataloged blob (collected by GC) and
+    // the request fails; it is never served without its receipt.
     ledger.record(&receipt).await?;
 
     Ok(Outcome::Stored(Resolved {
@@ -353,13 +353,13 @@ pub async fn resolve_url(
     }))
 }
 
-/// La ruta del asset que respalda el recibo.
+/// The asset path that backs the receipt.
 ///
-/// Cuando la ruta **es** el digest del contenido --como en la superficie
-/// OCI, donde el manifiesto vive en `manifests/<digest>`-- el recibo va ahi
-/// y no a la ruta por la que se pidio: un recibo en la ruta de una etiqueta
-/// no respalda el contenido que hay, y el contenido sin respaldo no se
-/// sirve sin red.
+/// When the path **is** the content's digest --as in the OCI
+/// surface, where the manifest lives at `manifests/<digest>`-- the receipt goes there
+/// and not to the path it was requested by: a receipt at a tag's path
+/// does not back the content that is there, and unbacked content is not
+/// served without network.
 fn the_asset_path(request: &Resolution<'_>, digest: &str) -> String {
     match request.digest_path_prefix {
         Some(prefix) => format!("{prefix}/{digest}"),

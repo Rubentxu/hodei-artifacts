@@ -1,27 +1,27 @@
-//! La politica de salida del servicio: a donde puede ir una peticion.
+//! The service's egress policy: where a request may go.
 //!
-//! Un repositorio proxy hace que el **servicio** salga a la red a buscar
-//! contenido por cuenta de un cliente. Esa salida es la superficie clasica
-//! del SSRF: lo que el cliente (o un upstream hostil, por una redireccion)
-//! consigue que el servicio visite con la red del servicio. Por eso la
-//! decision de a donde se puede ir no la toma la configuracion de un
-//! repositorio, sino el **administrador del servicio**, en una lista de
-//! hosts permitidos, y se aplica en cada salto.
+//! A proxy repository makes the **service** go out to the network to fetch
+//! content on behalf of a client. That egress is the classic SSRF surface:
+//! what the client (or a hostile upstream, via a redirect) gets the service
+//! to visit using the service's network. That is why the decision of where
+//! to go is not made by a repository's configuration but by the **service
+//! administrator**, in an allowlist of
+//! hosts, and it is applied on every hop.
 //!
-//! Dos reglas sostienen todo lo demas:
+//! Two rules underpin everything else:
 //!
-//! - Un host solo se visita si esta en la lista, con su puerto y su
-//!   esquema.
-//! - Una direccion privada o de bucle local solo se visita si la entrada
-//!   de ese host lo permite **explicitamente** (`allow_private`). Las
-//!   direcciones que nunca son un destino legitimo (sin especificar,
-//!   multicast, difusion, enlace local y el servicio de metadatos de la
-//!   nube, reservadas) no tienen permiso que las abra.
+//! - A host is only visited if it is in the list, with its port and its
+//!   scheme.
+//! - A private or loopback address is only visited if that host's entry
+//!   **explicitly** allows it (`allow_private`). Addresses that are never a
+//!   legitimate destination (unspecified, multicast, broadcast, link-local
+//!   and the cloud metadata service, reserved) have no permission that
+//!   opens them.
 //!
-//! La resolucion se valida y se fija **antes** de conectar: la conexion se
-//! hace a las direcciones que se validaron, de modo que un DNS que cambie
-//! de respuesta entre la comprobacion y la conexion (rebind) no tiene
-//! ventana.
+//! Resolution is validated and pinned **before** connecting: the connection
+//! is made to the addresses that were validated, so a DNS that changes its
+//! answer between the check and the connection (rebind) has no
+//! window.
 
 use std::fmt;
 use std::io;
@@ -31,33 +31,33 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use url::{Host, Url};
 
-/// Una entrada de la lista de hosts permitidos.
+/// An entry in the allowed-hosts list.
 ///
-/// En un fichero de configuracion es un objeto
-/// (`{ host = "...", port = 8080, allow_private = true }`). En una variable
-/// de entorno, donde una lista solo puede ser de cadenas, es
-/// `host[:puerto][;private][;http]`, por ejemplo
+/// In a configuration file it is an object
+/// (`{ host = "...", port = 8080, allow_private = true }`). In an environment
+/// variable, where a list can only be strings, it is
+/// `host[:port][;private][;http]`, for example
 /// `HODEI_PROXY__ALLOWED_HOSTS=repo.example.com,127.0.0.1:8080;private;http`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "AllowedHostSpec")]
 pub struct AllowedHost {
-    /// El nombre del host, o la IP literal. Sin esquema, sin puerto y sin
-    /// comodines.
+    /// The host name, or the literal IP. No scheme, no port and no
+    /// wildcards.
     pub host: String,
-    /// El puerto. Sin puerto, solo el del esquema (443 o 80).
+    /// The port. Without a port, only the scheme's own (443 or 80).
     #[serde(default)]
     pub port: Option<u16>,
-    /// Permite que este host sea (o resuelva a) una direccion privada o de
-    /// bucle local. Es el permiso administrativo explicito de la salida a
-    /// la red interna; sin el, esas direcciones se rechazan.
+    /// Allows this host to be (or resolve to) a private or loopback
+    /// address. It is the explicit administrative permission for egress to the
+    /// internal network; without it, those addresses are rejected.
     #[serde(default)]
     pub allow_private: bool,
-    /// Permite `http` sin TLS para este host.
+    /// Allows `http` without TLS for this host.
     #[serde(default)]
     pub allow_http: bool,
 }
 
-/// El tipo de una direccion que no es publica.
+/// The kind of an address that is not public.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IpClass {
     /// `0.0.0.0/8`, `::`.
@@ -70,22 +70,22 @@ pub enum IpClass {
     SharedAddressSpace,
     /// `fc00::/7`.
     UniqueLocal,
-    /// `169.254.0.0/16` (incluye el servicio de metadatos de la nube) y
+    /// `169.254.0.0/16` (includes the cloud metadata service) and
     /// `fe80::/10`.
     LinkLocal,
     /// Multicast.
     Multicast,
     /// `255.255.255.255`.
     Broadcast,
-    /// Documentacion, pruebas de rendimiento, protocolo y reservados.
+    /// Documentation, benchmarking, protocol and reserved.
     Reserved,
 }
 
 impl IpClass {
-    /// Si un permiso administrativo puede abrir esta clase.
+    /// Whether an administrative permission can open this class.
     ///
-    /// Solo la red interna legitima se puede abrir: bucle local, redes
-    /// privadas, espacio compartido y ULA. Lo demas no es un destino.
+    /// Only the legitimate internal network can be opened: loopback, private
+    /// networks, shared space and ULA. Everything else is not a destination.
     pub fn can_be_allowed(self) -> bool {
         matches!(
             self,
@@ -114,7 +114,7 @@ impl fmt::Display for IpClass {
     }
 }
 
-/// Las dos formas de escribir una entrada.
+/// The two ways to write an entry.
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum AllowedHostSpec {
@@ -151,11 +151,11 @@ impl TryFrom<AllowedHostSpec> for AllowedHost {
 }
 
 impl AllowedHost {
-    /// Lee `host[:puerto][;private][;http]`.
+    /// Reads `host[:port][;private][;http]`.
     ///
-    /// Una IPv6 literal lleva corchetes si lleva puerto (`[::1]:8080`).
-    /// Un indicador que no se conoce es un error: una opcion de seguridad
-    /// mal escrita no se ignora.
+    /// A literal IPv6 takes brackets if it has a port (`[::1]:8080`).
+    /// An unknown flag is an error: a misspelled security option
+    /// is not ignored.
     pub fn from_spec(text: &str) -> Result<Self, String> {
         let mut parts = text.split(';').map(str::trim);
         let address = parts.next().unwrap_or_default();
@@ -166,7 +166,7 @@ impl AllowedHost {
             allow_http: false,
         };
         if let Some(rest) = address.strip_prefix('[') {
-            // `[v6]` o `[v6]:puerto`
+            // `[v6]` or `[v6]:port`
             let (host, tail) = rest
                 .split_once(']')
                 .ok_or_else(|| format!("unclosed bracket in `{address}`"))?;
@@ -199,43 +199,43 @@ impl AllowedHost {
     }
 }
 
-/// Por que se deniega una salida.
+/// Why an egress is denied.
 ///
-/// El mensaje es para el rastro del servicio: no lleva la URL entera ni
-/// nada que pueda ser un secreto.
+/// The message is for the service trace: it carries neither the whole URL nor
+/// anything that could be a secret.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum EgressDenied {
-    /// El esquema no es `http` ni `https`.
+    /// The scheme is neither `http` nor `https`.
     #[error("the scheme is not http or https")]
     Scheme,
-    /// La URL trae usuario o contrasena.
+    /// The URL carries a user or password.
     #[error("the url carries credentials")]
     Credentials,
-    /// La URL no tiene host.
+    /// The URL has no host.
     #[error("the url has no host")]
     NoHost,
-    /// El host no esta en la lista.
+    /// The host is not in the list.
     #[error("the host is not in the allow-list")]
     HostNotAllowed,
-    /// El puerto no es el permitido para ese host.
+    /// The port is not the one allowed for that host.
     #[error("the port is not the one allowed for that host")]
     PortNotAllowed,
-    /// `http` sin que la entrada lo permita.
+    /// `http` without the entry allowing it.
     #[error("plain http is not allowed for that host")]
     PlainHttp,
-    /// El host es, o resuelve a, una direccion que no se visita.
+    /// The host is, or resolves to, an address that is not visited.
     #[error("the host is or resolves to an address that is not allowed ({0})")]
     Address(IpClass),
-    /// El host no resolvio a ninguna direccion.
+    /// The host did not resolve to any address.
     #[error("the host did not resolve")]
     Unresolved,
 }
 
-/// La clase de una direccion, o `None` si es publica.
+/// The class of an address, or `None` if it is public.
 ///
-/// Las direcciones que embeben una IPv4 (mapeadas, NAT64 y 6to4) se
-/// clasifican por la IPv4 que llevan: `::ffff:127.0.0.1` es el bucle
-/// local, no una direccion IPv6 cualquiera.
+/// Addresses that embed an IPv4 (mapped, NAT64 and 6to4) are
+/// classified by the IPv4 they carry: `::ffff:127.0.0.1` is loopback,
+/// not just any IPv6 address.
 pub fn classify(ip: IpAddr) -> Option<IpClass> {
     match ip {
         IpAddr::V4(v4) => classify_v4(v4),
@@ -266,8 +266,8 @@ fn classify_v4(ip: Ipv4Addr) -> Option<IpClass> {
     if (224..=239).contains(&a) {
         return Some(IpClass::Multicast);
     }
-    // Protocolo (192.0.0.0/24), documentacion (TEST-NET), pruebas de
-    // rendimiento (198.18.0.0/15) y reservado (240.0.0.0/4).
+    // Protocol (192.0.0.0/24), documentation (TEST-NET), benchmarking
+    // (198.18.0.0/15) and reserved (240.0.0.0/4).
     if (a == 192 && b == 0 && (c == 0 || c == 2))
         || (a == 198 && (b == 18 || b == 19))
         || (a == 198 && b == 51 && c == 100)
@@ -286,12 +286,12 @@ fn classify_v6(ip: Ipv6Addr) -> Option<IpClass> {
     if ip.is_loopback() {
         return Some(IpClass::Loopback);
     }
-    // Una IPv4 dentro de una IPv6 se clasifica por la IPv4.
+    // An IPv4 inside an IPv6 is classified by the IPv4.
     if let Some(inner) = ip.to_ipv4_mapped() {
         return classify_v4(inner).or(Some(IpClass::Reserved));
     }
     let segments = ip.segments();
-    // NAT64 (64:ff9b::/96): lleva la IPv4 en los ultimos 32 bits.
+    // NAT64 (64:ff9b::/96): carries the IPv4 in the last 32 bits.
     if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6].iter().all(|s| *s == 0) {
         let inner = Ipv4Addr::new(
             (segments[6] >> 8) as u8,
@@ -301,7 +301,7 @@ fn classify_v6(ip: Ipv6Addr) -> Option<IpClass> {
         );
         return classify_v4(inner).or(Some(IpClass::Reserved));
     }
-    // 6to4 (2002::/16): lleva la IPv4 en los bits 16..48.
+    // 6to4 (2002::/16): carries the IPv4 in bits 16..48.
     if segments[0] == 0x2002 {
         let inner = Ipv4Addr::new(
             (segments[1] >> 8) as u8,
@@ -320,10 +320,10 @@ fn classify_v6(ip: Ipv6Addr) -> Option<IpClass> {
     if (segments[0] & 0xff00) == 0xff00 {
         return Some(IpClass::Multicast);
     }
-    // Reservados que un traductor de red podria llevar a IPv4 interna o que
-    // no son de nadie: documentacion 2001:db8::/32, Teredo 2001::/32,
-    // NAT64 local 64:ff9b:1::/48, descarte 100::/64, site-local fec0::/10,
-    // IPv4 traducida ::ffff:0:0:0/96 y la IPv4 compatible, deprecada.
+    // Reserved ranges that a network translator could map to an internal IPv4 or that
+    // belong to nobody: documentation 2001:db8::/32, Teredo 2001::/32,
+    // local NAT64 64:ff9b:1::/48, discard 100::/64, site-local fec0::/10,
+    // translated IPv4 ::ffff:0:0:0/96 and IPv4-compatible, deprecated.
     let reserved = (segments[0] == 0x2001 && (segments[1] == 0x0db8 || segments[1] == 0))
         || (segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 1)
         || (segments[0] == 0x0100 && segments[1..4].iter().all(|s| *s == 0))
@@ -336,17 +336,17 @@ fn classify_v6(ip: Ipv6Addr) -> Option<IpClass> {
     None
 }
 
-/// Quien resuelve nombres.
+/// Who resolves names.
 ///
-/// Es un puerto para poder probar el rebind con un resolutor que responde
-/// lo que el test quiere: el del sistema es [`SystemResolver`].
+/// It is a port so rebind can be tested with a resolver that answers
+/// what the test wants: the system one is [`SystemResolver`].
 #[async_trait]
 pub trait HostResolver: Send + Sync {
-    /// Las direcciones de un nombre.
+    /// The addresses of a name.
     async fn resolve(&self, host: &str, port: u16) -> io::Result<Vec<IpAddr>>;
 }
 
-/// El resolutor del sistema.
+/// The system resolver.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemResolver;
 
@@ -358,27 +358,27 @@ impl HostResolver for SystemResolver {
     }
 }
 
-/// La politica de salida del servicio.
+/// The service's egress policy.
 #[derive(Debug, Clone, Default)]
 pub struct EgressPolicy {
     allowed: Vec<AllowedHost>,
 }
 
-/// La politica no es valida.
+/// The policy is not valid.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("the egress allow-list is not valid: {0}")]
 pub struct EgressPolicyError(pub String);
 
 impl EgressPolicy {
-    /// Construye la politica, o dice que entrada no tiene sentido.
+    /// Builds the policy, or says which entry makes no sense.
     ///
-    /// Una lista que no se entiende impide arrancar: una politica de
-    /// seguridad ilegible no se interpreta con generosidad.
+    /// A list that is not understood prevents startup: an unreadable security
+    /// policy is not interpreted generously.
     pub fn new(allowed: Vec<AllowedHost>) -> Result<Self, EgressPolicyError> {
         let mut normalized = Vec::with_capacity(allowed.len());
         for entry in allowed {
             let host = entry.host.trim().trim_end_matches('.').to_ascii_lowercase();
-            // Una IPv6 literal se escribe sin corchetes en la lista.
+            // A literal IPv6 is written without brackets in the list.
             let host = host
                 .strip_prefix('[')
                 .and_then(|rest| rest.strip_suffix(']'))
@@ -399,16 +399,16 @@ impl EgressPolicy {
         })
     }
 
-    /// Si la lista esta vacia: el servicio no sale a ningun sitio.
+    /// Whether the list is empty: the service goes nowhere.
     pub fn is_empty(&self) -> bool {
         self.allowed.is_empty()
     }
 
-    /// Valida la URL contra la lista, sin resolver nada.
+    /// Validates the URL against the list, without resolving anything.
     ///
-    /// Devuelve la entrada que la permite. Una IP literal se valida aqui
-    /// mismo contra su clase; un nombre se valida despues, con lo que
-    /// resuelva ([`Self::validate_addresses`]).
+    /// Returns the entry that allows it. A literal IP is validated right here
+    /// against its class; a name is validated afterwards, with what it
+    /// resolves to ([`Self::validate_addresses`]).
     pub fn check_url(&self, url: &Url) -> Result<&AllowedHost, EgressDenied> {
         if !matches!(url.scheme(), "http" | "https") {
             return Err(EgressDenied::Scheme);
@@ -442,7 +442,7 @@ impl EgressPolicy {
         if url.scheme() == "http" && !entry.allow_http {
             return Err(EgressDenied::PlainHttp);
         }
-        // Una IP literal no pasa por el resolutor: se juzga ya.
+        // A literal IP does not go through the resolver: it is judged now.
         match host {
             Host::Ipv4(ip) => Self::validate_addresses(entry, &[IpAddr::V4(ip)])?,
             Host::Ipv6(ip) => Self::validate_addresses(entry, &[IpAddr::V6(ip)])?,
@@ -451,11 +451,11 @@ impl EgressPolicy {
         Ok(entry)
     }
 
-    /// Valida las direcciones a las que resolvio un host.
+    /// Validates the addresses a host resolved to.
     ///
-    /// **Todas** tienen que ser admisibles: un nombre que resuelve a una
-    /// direccion publica y a otra interna es el truco del rebind, y no se
-    /// deja a la suerte de cual elija el cliente.
+    /// **All** of them must be admissible: a name that resolves to a public
+    /// address and to an internal one is the rebind trick, and which one the
+    /// client picks is not left to chance.
     pub fn validate_addresses(
         entry: &AllowedHost,
         addresses: &[IpAddr],
@@ -474,7 +474,7 @@ impl EgressPolicy {
     }
 }
 
-/// Si el texto es un nombre de host o una IP literal, y nada mas.
+/// Whether the text is a host name or a literal IP, and nothing else.
 fn is_well_formed_host(host: &str) -> bool {
     if host.is_empty() || host.len() > 253 {
         return false;
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(v6.host, "::1");
         assert_eq!(v6.port, Some(9000));
 
-        // Una opcion de seguridad mal escrita no se ignora.
+        // A misspelled security option is not ignored.
         assert!(AllowedHost::from_spec("a.example;privat").is_err());
         assert!(AllowedHost::from_spec("a.example:port").is_err());
     }
@@ -537,7 +537,7 @@ mod tests {
         .expect("list");
         assert!(list[0].allow_http);
         assert_eq!(list[1].port, Some(8443));
-        // Un campo que no existe no se ignora.
+        // A field that does not exist is not ignored.
         assert!(
             serde_json::from_value::<Vec<AllowedHost>>(serde_json::json!([
                 { "host": "b.example", "allow_privte": true }
@@ -587,13 +587,13 @@ mod tests {
             ("fe80::1", IpClass::LinkLocal),
             ("ff02::1", IpClass::Multicast),
             ("2001:db8::1", IpClass::Reserved),
-            // Lo que un traductor de red podria llevar a IPv4 interna.
+            // What a network translator could map to an internal IPv4.
             ("2001::1", IpClass::Reserved),
             ("64:ff9b:1::1", IpClass::Reserved),
             ("100::1", IpClass::Reserved),
             ("fec0::1", IpClass::Reserved),
             ("::ffff:0:7f00:1", IpClass::Reserved),
-            // Una IPv4 dentro de una IPv6 se juzga por la IPv4.
+            // An IPv4 inside an IPv6 is judged by the IPv4.
             ("::ffff:127.0.0.1", IpClass::Loopback),
             ("::ffff:10.0.0.1", IpClass::Private),
             ("::ffff:169.254.169.254", IpClass::LinkLocal),
@@ -633,7 +633,7 @@ mod tests {
             policy.check_url(&url("https://evil.example.org/a")),
             Err(EgressDenied::HostNotAllowed)
         );
-        // Un subdominio no hereda la entrada del dominio.
+        // A subdomain does not inherit the domain's entry.
         assert_eq!(
             policy.check_url(&url("https://x.repo.example.org/a")),
             Err(EgressDenied::HostNotAllowed)
@@ -684,12 +684,12 @@ mod tests {
     fn an_ip_literal_is_judged_without_resolving() {
         let policy =
             EgressPolicy::new(vec![host("127.0.0.1"), host("169.254.169.254")]).expect("policy");
-        // Esta en la lista, pero es el bucle local y la entrada no lo permite.
+        // It is in the list, but it is loopback and the entry does not allow it.
         assert_eq!(
             policy.check_url(&url("https://127.0.0.1/a")),
             Err(EgressDenied::Address(IpClass::Loopback))
         );
-        // Y los metadatos de la nube no los abre ningun permiso.
+        // And no permission opens the cloud metadata.
         let mut metadata = host("169.254.169.254");
         metadata.allow_private = true;
         let policy = EgressPolicy::new(vec![metadata]).expect("policy");
@@ -707,12 +707,12 @@ mod tests {
         local.port = Some(8080);
         let policy = EgressPolicy::new(vec![local, host("repo.example.org")]).expect("policy");
         assert!(policy.check_url(&url("http://127.0.0.1:8080/a")).is_ok());
-        // Otro puerto del mismo host no esta permitido.
+        // Another port of the same host is not allowed.
         assert_eq!(
             policy.check_url(&url("http://127.0.0.1:9090/a")),
             Err(EgressDenied::PortNotAllowed)
         );
-        // Y el permiso de una entrada no abre las demas.
+        // And one entry's permission does not open the others.
         let entry = policy
             .check_url(&url("https://repo.example.org/a"))
             .expect("allowed");
@@ -778,7 +778,7 @@ mod tests {
         let mut zero = host("example.org");
         zero.port = Some(0);
         assert!(EgressPolicy::new(vec![zero]).is_err());
-        // Una IPv6 se escribe con o sin corchetes.
+        // An IPv6 is written with or without brackets.
         assert!(EgressPolicy::new(vec![host("::1"), host("[::1]")]).is_ok());
     }
 }
