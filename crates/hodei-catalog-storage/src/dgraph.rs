@@ -3406,11 +3406,14 @@ impl DgraphCatalogStore {
         principal_account: &str,
         repo_key: &str,
         query: &SearchQuery,
-        target: Option<&TagTarget>,
-        after_path: Option<&str>,
-        granted: Option<&GrantedDigests>,
+        scope: WindowScope<'_>,
         window: usize,
     ) -> Result<Vec<AssetRow>, CatalogError> {
+        let WindowScope {
+            target,
+            after_path,
+            granted,
+        } = scope;
         let mut filters = vec![format!(
             "eq(hodei.catalog.asset.account, {})",
             dql_string(principal_account)
@@ -3501,21 +3504,11 @@ impl DgraphCatalogStore {
         principal_account: &str,
         repo_key: &str,
         query: &SearchQuery,
-        target: Option<&TagTarget>,
-        after_path: Option<&str>,
-        granted: Option<&GrantedDigests>,
+        scope: WindowScope<'_>,
         cap: usize,
     ) -> Result<usize, CatalogError> {
         let rows = self
-            .the_asset_window(
-                principal_account,
-                repo_key,
-                query,
-                target,
-                after_path,
-                granted,
-                cap + 1,
-            )
+            .the_asset_window(principal_account, repo_key, query, scope, cap + 1)
             .await?;
         Ok(rows.len())
     }
@@ -3533,6 +3526,16 @@ const GRANTED_DIGESTS_PER_QUERY: usize = 64;
 /// libro entero, y se dice con un error de petición, igual que las
 /// etiquetas compartidas por demasiados repositorios.
 const MAX_GRANTED_DIGESTS: usize = 2048;
+
+/// Lo que estrecha la ventana de un repositorio además de la consulta: las
+/// coordenadas de la etiqueta, la clave que el cursor ya vio y el grupo de
+/// digests concedidos.
+#[derive(Clone, Copy, Default)]
+struct WindowScope<'a> {
+    target: Option<&'a TagTarget>,
+    after_path: Option<&'a str>,
+    granted: Option<&'a GrantedDigests>,
+}
 
 /// Un grupo de digests concedidos de un mismo algoritmo.
 struct GrantedDigests {
@@ -3810,14 +3813,17 @@ impl CatalogSearch for DgraphCatalogStore {
                 .await?;
             let mut repository_rows: Vec<AssetRow> = Vec::new();
             for group in &groups {
+                let scope = WindowScope {
+                    target,
+                    after_path,
+                    granted: group.as_ref(),
+                };
                 let rows = self
                     .the_asset_window(
                         principal_account,
                         &repository.repo_key,
                         query,
-                        target,
-                        after_path,
-                        group.as_ref(),
+                        scope,
                         window,
                     )
                     .await?;
@@ -3835,9 +3841,7 @@ impl CatalogSearch for DgraphCatalogStore {
                                     principal_account,
                                     &repository.repo_key,
                                     query,
-                                    target,
-                                    after_path,
-                                    group.as_ref(),
+                                    scope,
                                     remaining,
                                 )
                                 .await?;
