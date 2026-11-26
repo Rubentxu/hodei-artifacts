@@ -208,9 +208,12 @@ impl QuotaTicket {
     /// Pin a chunk that streamed in as it arrives.
     ///
     /// Returns the bytes **not** yet pinned by a previous `admit`; the
-    /// caller hands it the running total. Refusing takes nothing back
-    /// out of the ledger: the caller aborts its own write and the
-    /// ticket releases what it had on drop.
+    /// caller hands it the running total. A refusal is the end of this
+    /// upload: the reservation it held goes back in the SAME step that
+    /// refuses (under the same lock), so a concurrent upload that is
+    /// decided a moment later never counts the bytes of an upload that
+    /// has already been refused -- the handler still has to abort its
+    /// staging write, and that window must not starve the others.
     pub fn admit(&mut self, total_so_far: u64) -> Result<(), QuotaRefusal> {
         let more = total_so_far.saturating_sub(self.reserved);
         if more == 0 {
@@ -221,10 +224,20 @@ impl QuotaTicket {
             ledger.limits.max_stored_bytes_per_account,
             ledger.limits.retry_after_secs,
         );
-        if let Some(max) = max_bytes
-            && let Some(state) = ledger.accounts.get_mut(&self.account)
-            && state.stored + state.in_flight + more > max
-        {
+        let over = max_bytes.is_some_and(|max| {
+            ledger
+                .accounts
+                .get(&self.account)
+                .is_some_and(|state| state.stored + state.in_flight + more > max)
+        });
+        if over {
+            if !self.settled {
+                self.settled = true;
+                if let Some(state) = ledger.accounts.get_mut(&self.account) {
+                    state.in_flight = state.in_flight.saturating_sub(self.reserved);
+                    state.active = state.active.saturating_sub(1);
+                }
+            }
             return Err(QuotaRefusal::StorageOver { retry_after_secs });
         }
         if let Some(state) = ledger.accounts.get_mut(&self.account) {

@@ -132,13 +132,52 @@ fn an_undeclared_stream_is_pinned_chunk_by_chunk() {
             retry_after_secs: 3
         }
     );
-    // El rechazo no reservo nada mas: lo anclado sigue siendo 90.
-    assert_eq!(ledger.usage("acme").in_flight_bytes, 90);
+    // El rechazo reserva nada mas y, ademas, suelta lo anclado en el mismo
+    // paso atomico: un ticket rechazado ya no es una subida viva.
+    let usage = ledger.usage("acme");
+    assert_eq!(
+        (usage.in_flight_bytes, usage.active_uploads),
+        (0, 0),
+        "a refusal releases the reservation of the ticket at once"
+    );
     ticket.settle(0);
     assert_eq!(
         ledger.usage("acme").in_flight_bytes,
         0,
         "the refused bytes never became stored"
+    );
+}
+
+/// HSP-314 P4: dos subidas en streaming que juntas pasan la cuota. La que
+/// cruza el limite es rechazada y su reserva vuelve en ESE mismo paso: la
+/// otra, que llega un instante despues -- antes de que el manejador de la
+/// primera haya soltado el ticket --, no puede ver la reserva de una subida
+/// que ya murio. Antes el rechazo dejaba la reserva viva hasta el `drop` y
+/// las dos subidas eran rechazadas (`[413, 413]`).
+#[test]
+fn a_refused_ticket_does_not_starve_the_upload_that_follows() {
+    let ledger = QuotaLedger::new(limits(1000, 8));
+    let mut first = ledger.begin("acme", None).expect("admitted");
+    let mut second = ledger.begin("acme", None).expect("admitted");
+    first.admit(600).expect("600 fits");
+    second.admit(400).expect("1000 fits");
+    // The first crosses the limit and is refused. Its handler has not
+    // dropped the ticket yet (it is still aborting its staging write).
+    first.admit(700).expect_err("1100 does not fit in 1000");
+    // The second arrives in that window: the dead upload holds nothing.
+    second
+        .admit(500)
+        .expect("the refused upload released its reservation");
+    second.admit(800).expect("800 fits once the first is gone");
+    second.settle(800);
+    let usage = ledger.usage("acme");
+    assert_eq!((usage.stored_bytes, usage.in_flight_bytes), (800, 0));
+    assert_eq!(usage.active_uploads, 0);
+    drop(first);
+    assert_eq!(
+        ledger.usage("acme").active_uploads,
+        0,
+        "dropping the refused ticket must not release twice"
     );
 }
 
