@@ -1,4 +1,4 @@
-//! The performance lab of the graph profile (HSP-319, slice S1).
+//! The performance lab of the graph profile (HSP-319, slices S1 and S2).
 //!
 //! A deliberately small, reproducible load lab: it boots the production
 //! binary on `RUN_MODE=dgraph` against a REAL Dgraph alpha (the same
@@ -38,6 +38,19 @@
 //!   of any shared (scale, workload) worsens by more than `--threshold-pct`
 //!   AND by more than `--min-delta-ms` (the floor keeps sub-millisecond noise
 //!   from failing a run), or if any request failed.
+//! - `--payload-bytes 1KiB,64KiB,1MiB`: several payload sizes in one run; each
+//!   size is its own (scale, size) row on a fresh namespace.
+//! - `--dist uniform|zipf` (`--zipf-s`, `--seed`): how read and search pick
+//!   the asset. Zipf is seeded, so the same options give the same accesses.
+//! - Replica validity (HSP-173): after setup and after every workload the lab
+//!   probes the liveness (`GET /health/live`) and a permission probe (an
+//!   authorised `GET /api/v1/catalog/repositories`). A dead service is
+//!   `INVALID_SERVICE_DIED`; a permission probe with status 0 or 401/403 is
+//!   `INVALID_PERMISSION_PROBE`. Either aborts at once, names the scenario and
+//!   the last good one with a timestamp, and the result is evidence of the
+//!   failure: `--record` and `--compare` refuse it.
+//! - `--inject-kill WORKLOAD`: kills the service halfway through that workload
+//!   (mutation check of the liveness probe; never record with it).
 //! - `--inject-delay-ms N`: adds N ms to every measured request. It exists to
 //!   prove that `--compare` fails when it must (mutation check); never record
 //!   a baseline with it.
@@ -55,14 +68,16 @@ use std::time::{Duration, Instant};
 use futures_util::StreamExt as _;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use support::{Deployment, FIRST_ACCOUNT};
+use support::{Deployment, FIRST_ACCOUNT, Service};
 
 /// The schema version of the result file; bump it when the shape changes.
-const SCHEMA_VERSION: u64 = 1;
+const SCHEMA_VERSION: u64 = 2;
 /// How many samples make a p99 worth printing.
 const P99_MIN_SAMPLES: usize = 1000;
 /// The repository every scale publishes into.
 const REPOSITORY: &str = "perf";
+/// The payload size the first baseline rows were recorded with.
+const DEFAULT_PAYLOAD: usize = 1024;
 /// The workloads of a scale, in the order they run and are reported.
 const WORKLOADS: [&str; 4] = ["publish", "read", "search_text", "search_digest"];
 
@@ -71,7 +86,11 @@ struct Options {
     scales: Vec<usize>,
     concurrency: usize,
     samples: usize,
-    payload_bytes: usize,
+    payload_bytes: Vec<usize>,
+    dist: Dist,
+    zipf_s: f64,
+    seed: u64,
+    inject_kill: Option<String>,
     out: PathBuf,
     record: Option<PathBuf>,
     compare: Option<PathBuf>,
@@ -86,7 +105,11 @@ impl Options {
             scales: vec![1000],
             concurrency: 4,
             samples: 1000,
-            payload_bytes: 1024,
+            payload_bytes: vec![DEFAULT_PAYLOAD],
+            dist: Dist::Uniform,
+            zipf_s: 1.0,
+            seed: 319,
+            inject_kill: None,
             out: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/perf-lab/last.json"),
             record: None,
             compare: None,
@@ -123,7 +146,32 @@ impl Options {
                 }
                 "--concurrency" => options.concurrency = number(&value("--concurrency")?)?,
                 "--samples" => options.samples = number(&value("--samples")?)?,
-                "--payload-bytes" => options.payload_bytes = number(&value("--payload-bytes")?)?,
+                "--payload-bytes" => {
+                    options.payload_bytes = value("--payload-bytes")?
+                        .split(',')
+                        .map(size)
+                        .collect::<Result<_, _>>()?;
+                }
+                "--dist" => {
+                    options.dist = match value("--dist")?.as_str() {
+                        "uniform" => Dist::Uniform,
+                        "zipf" => Dist::Zipf,
+                        other => return Err(format!("`{other}` is not a distribution")),
+                    };
+                }
+                "--zipf-s" => {
+                    options.zipf_s = value("--zipf-s")?
+                        .parse()
+                        .map_err(|_| "--zipf-s is not a number".to_string())?;
+                }
+                "--seed" => options.seed = number::<u64>(&value("--seed")?)?,
+                "--inject-kill" => {
+                    let workload = value("--inject-kill")?;
+                    if !WORKLOADS.contains(&workload.as_str()) {
+                        return Err(format!("`{workload}` is not a workload"));
+                    }
+                    options.inject_kill = Some(workload);
+                }
                 "--out" => options.out = PathBuf::from(value("--out")?),
                 "--record" => options.record = Some(PathBuf::from(value("--record")?)),
                 "--compare" => options.compare = Some(PathBuf::from(value("--compare")?)),
@@ -149,8 +197,11 @@ impl Options {
         if options.concurrency == 0 || options.samples == 0 {
             return Err("--concurrency and --samples must be at least 1".to_string());
         }
-        if options.payload_bytes < 64 {
-            return Err("--payload-bytes must be at least 64".to_string());
+        if options.payload_bytes.iter().any(|bytes| *bytes < 64) {
+            return Err("every --payload-bytes size must be at least 64".to_string());
+        }
+        if !(options.zipf_s > 0.0 && options.zipf_s.is_finite()) {
+            return Err("--zipf-s must be a positive number".to_string());
         }
         Ok(options)
     }
@@ -160,6 +211,42 @@ fn number<T: std::str::FromStr>(text: &str) -> Result<T, String> {
     text.trim()
         .parse()
         .map_err(|_| format!("`{text}` is not a number"))
+}
+
+/// A size such as `1024`, `64KiB` or `1MiB`.
+fn size(text: &str) -> Result<usize, String> {
+    let text = text.trim();
+    let (digits, unit) = match text.find(|c: char| !c.is_ascii_digit()) {
+        Some(at) => text.split_at(at),
+        None => (text, ""),
+    };
+    let factor = match unit {
+        "" | "B" => 1,
+        "KiB" => 1024,
+        "MiB" => 1024 * 1024,
+        "GiB" => 1024 * 1024 * 1024,
+        _ => return Err(format!("`{text}` is not a size")),
+    };
+    digits
+        .parse::<usize>()
+        .map(|count| count * factor)
+        .map_err(|_| format!("`{text}` is not a size"))
+}
+
+/// How read and search pick the asset.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dist {
+    Uniform,
+    Zipf,
+}
+
+impl Dist {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Uniform => "uniform",
+            Self::Zipf => "zipf",
+        }
+    }
 }
 
 /// What one workload measured.
@@ -172,7 +259,13 @@ struct Outcome {
 
 /// Runs `count` operations with `concurrency` in flight. The latency of each
 /// one is measured around the whole operation, including the injected delay.
-async fn drive<F, Fut>(count: usize, concurrency: usize, delay_ms: u64, operation: F) -> Outcome
+async fn drive<F, Fut>(
+    count: usize,
+    concurrency: usize,
+    delay_ms: u64,
+    kill_pid: Option<u32>,
+    operation: F,
+) -> Outcome
 where
     F: Fn(usize) -> Fut,
     Fut: Future<Output = Result<(), String>>,
@@ -183,6 +276,10 @@ where
     let mut first_error = None;
     let mut stream = futures_util::stream::iter(0..count)
         .map(|index| {
+            // Mutation check: the service dies halfway through the load.
+            if let (Some(pid), true) = (kill_pid, index == count / 2) {
+                let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+            }
             let future = operation(index);
             async move {
                 let begin = Instant::now();
@@ -284,6 +381,91 @@ fn sample_index(n: usize, scale: usize) -> usize {
     (mixed % scale as u64) as usize
 }
 
+/// SplitMix64: a seeded, dependency-free generator for the Zipf draws.
+fn splitmix(mut state: u64) -> u64 {
+    state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let mut z = state;
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 { a } else { gcd(b, a % b) }
+}
+
+/// The asset index every sample of a run touches, and what that says about the
+/// distribution (the proof that Zipf concentrates and uniform does not).
+struct AccessPlan {
+    indexes: Vec<usize>,
+}
+
+impl AccessPlan {
+    fn new(options: &Options, scale: usize) -> Self {
+        let indexes = match options.dist {
+            Dist::Uniform => (0..options.samples)
+                .map(|n| sample_index(n, scale))
+                .collect(),
+            Dist::Zipf => {
+                // P(rank k) is proportional to 1 / k^s; inverse-CDF sampling.
+                let mut cumulative = Vec::with_capacity(scale);
+                let mut total = 0.0f64;
+                for rank in 1..=scale {
+                    total += (rank as f64).powf(-options.zipf_s);
+                    cumulative.push(total);
+                }
+                // Ranks are spread over the keyspace by a stride coprime with
+                // the scale, so the hot assets are not simply the first ones.
+                let mut stride = (0x9E37_79B1usize % scale).max(1);
+                while gcd(stride, scale) != 1 {
+                    stride += 1;
+                }
+                (0..options.samples)
+                    .map(|n| {
+                        let unit = (splitmix(options.seed ^ (n as u64).wrapping_mul(0xA24B_AED4))
+                            >> 11) as f64
+                            / (1u64 << 53) as f64;
+                        let rank = cumulative.partition_point(|c| *c < unit * total);
+                        (rank.min(scale - 1) * stride) % scale
+                    })
+                    .collect()
+            }
+        };
+        Self { indexes }
+    }
+
+    fn at(&self, n: usize) -> usize {
+        self.indexes[n]
+    }
+
+    /// Distinct assets touched, the share of the samples on the hottest asset
+    /// and on the ten hottest, and the five hottest with their counts.
+    fn report(&self, options: &Options) -> Value {
+        let mut counts = std::collections::HashMap::<usize, usize>::new();
+        for index in &self.indexes {
+            *counts.entry(*index).or_default() += 1;
+        }
+        let mut ranked: Vec<(usize, usize)> = counts.into_iter().collect();
+        ranked.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let total = self.indexes.len() as f64;
+        let share = |top: usize| {
+            round3(ranked.iter().take(top).map(|(_, c)| *c).sum::<usize>() as f64 / total)
+        };
+        json!({
+            "dist": options.dist.name(),
+            "zipf_s": (options.dist == Dist::Zipf).then_some(options.zipf_s),
+            "seed": (options.dist == Dist::Zipf).then_some(options.seed),
+            "samples": self.indexes.len(),
+            "distinct_assets": ranked.len(),
+            "top1_share": share(1),
+            "top10_share": share(10),
+            "hottest": ranked.iter().take(5)
+                .map(|(index, count)| json!({"asset": index, "count": count}))
+                .collect::<Vec<_>>(),
+        })
+    }
+}
+
 fn the_policy() -> String {
     let mut policy = support::the_policy();
     for action in ["CreateRepository", "ReadRepository"] {
@@ -294,18 +476,125 @@ fn the_policy() -> String {
     policy
 }
 
-/// Measures one scale on a fresh namespace and a fresh service.
-async fn run_scale(scale: usize, options: &Options) -> Result<Value, String> {
+/// A replica that cannot be measured: it never feeds an aggregate.
+struct Fault {
+    /// `INVALID_SERVICE_DIED`, `INVALID_PERMISSION_PROBE` or `INVALID_SETUP`.
+    verdict: &'static str,
+    /// The scenario during or after which the fault was seen.
+    scenario: String,
+    /// The last scenario whose end-of-load probes passed.
+    last_good: String,
+    at_utc: String,
+    detail: String,
+    assets: usize,
+    payload_bytes: usize,
+    /// What the scenarios that did run measured (evidence, not a result).
+    partial: serde_json::Map<String, Value>,
+}
+
+impl Fault {
+    fn setup(assets: usize, payload_bytes: usize, detail: String) -> Self {
+        Self {
+            verdict: "INVALID_SETUP",
+            scenario: "setup".to_string(),
+            last_good: "none".to_string(),
+            at_utc: chrono::Utc::now().to_rfc3339(),
+            detail,
+            assets,
+            payload_bytes,
+            partial: serde_json::Map::new(),
+        }
+    }
+
+    fn report(&self) -> Value {
+        json!({
+            "verdict": self.verdict,
+            "scenario": self.scenario,
+            "last_good_scenario": self.last_good,
+            "detected_at_utc": self.at_utc,
+            "detail": self.detail,
+            "assets": self.assets,
+            "payload_bytes": self.payload_bytes,
+            "partial_workloads": self.partial,
+        })
+    }
+}
+
+/// The probes between loads: the service is alive (HSP-173 AC1) and an
+/// authorised request is still answered (AC2). A failure is `(verdict, detail)`.
+async fn check_replica(
+    service: &mut Service,
+    client: &reqwest::Client,
+    base: &str,
+    token: &str,
+) -> Result<(), (&'static str, String)> {
+    const DIED: &str = "INVALID_SERVICE_DIED";
+    if let Ok(Some(status)) = service.child.try_wait() {
+        return Err((DIED, format!("the service process exited ({status})")));
+    }
+    match client
+        .get(format!("{base}/health/live"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => {}
+        Ok(response) => {
+            return Err((DIED, format!("liveness answered {}", response.status())));
+        }
+        Err(error) => return Err((DIED, format!("liveness probe failed: {error}"))),
+    }
+    match client
+        .get(format!("{base}/api/v1/catalog/repositories"))
+        .bearer_auth(token)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Err(error) => Err((
+            "INVALID_PERMISSION_PROBE",
+            format!("permission probe has status 0 (no response): {error}"),
+        )),
+        Ok(response) if matches!(response.status().as_u16(), 401 | 403) => Err((
+            "INVALID_PERMISSION_PROBE",
+            format!("permission probe answered {}", response.status()),
+        )),
+        Ok(response) => {
+            if !response.status().is_success() {
+                eprintln!(
+                    "[perf-lab] permission probe answered {} (not an authorisation failure)",
+                    response.status()
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+/// Measures one (scale, payload size) on a fresh namespace and a fresh service.
+// The last checkpoint assigns `last_good` and nobody reads it: the run is over.
+#[allow(unused_assignments)]
+async fn run_scale(
+    scale: usize,
+    size: usize,
+    options: &Options,
+    last_good_run: &str,
+) -> Result<Value, Box<Fault>> {
+    let setup_fault = |detail: String| {
+        let mut fault = Fault::setup(scale, size, detail);
+        fault.last_good = last_good_run.to_string();
+        Box::new(fault)
+    };
     let deployment = Deployment::new();
     deployment.write_policy(&the_policy());
-    let service = deployment.start(&[]);
+    let mut service = deployment.start(&[]);
     let base = format!("http://127.0.0.1:{}", service.port);
     let token = support::token(FIRST_ACCOUNT, "alice");
     let client = reqwest::Client::builder()
         .pool_max_idle_per_host(options.concurrency)
         .timeout(Duration::from_secs(60))
         .build()
-        .map_err(|error| format!("http client: {error}"))?;
+        .map_err(|error| setup_fault(format!("http client: {error}")))?;
 
     let created = client
         .post(format!("{base}/api/v1/catalog/repositories"))
@@ -313,22 +602,55 @@ async fn run_scale(scale: usize, options: &Options) -> Result<Value, String> {
         .json(&json!({"name": REPOSITORY, "format": "raw", "mode": "hosted"}))
         .send()
         .await
-        .map_err(|error| format!("create repository: {error}"))?;
+        .map_err(|error| setup_fault(format!("create repository: {error}")))?;
     if created.status().as_u16() != 201 {
-        return Err(format!(
+        return Err(setup_fault(format!(
             "the repository was not created ({}); service log:\n{}",
             created.status(),
             deployment.the_log()
-        ));
+        )));
     }
 
-    let size = options.payload_bytes;
     let delay = options.inject_delay_ms;
     let c = options.concurrency;
     let samples = options.samples;
+    let plan = AccessPlan::new(options, scale);
+    let pid = service.child.id();
+    let kill = |workload: &str| (options.inject_kill.as_deref() == Some(workload)).then_some(pid);
 
-    eprintln!("[perf-lab] scale {scale}: publish {scale} assets");
-    let publish = drive(scale, c, delay, |index| {
+    let mut last_good = format!("setup(assets={scale},payload={size})");
+    let mut partial = serde_json::Map::new();
+    // Records what a load measured, then probes the replica: a dead replica
+    // aborts at once, naming the scenario and the last good one.
+    macro_rules! checkpoint {
+        ($name:expr, $outcome:expr) => {{
+            partial.insert($name.to_string(), summarize(&$outcome));
+            if let Err((verdict, detail)) =
+                check_replica(&mut service, &client, &base, &token).await
+            {
+                return Err(Box::new(Fault {
+                    verdict,
+                    scenario: format!("{}(assets={scale},payload={size})", $name),
+                    last_good,
+                    at_utc: chrono::Utc::now().to_rfc3339(),
+                    detail,
+                    assets: scale,
+                    payload_bytes: size,
+                    partial,
+                }));
+            }
+            last_good = format!("{}(assets={scale},payload={size})", $name);
+        }};
+    }
+    // The replica must be healthy before the first load.
+    if let Err((verdict, detail)) = check_replica(&mut service, &client, &base, &token).await {
+        let mut fault = setup_fault(detail);
+        fault.verdict = verdict;
+        return Err(fault);
+    }
+
+    eprintln!("[perf-lab] scale {scale} / {size} B: publish {scale} assets");
+    let publish = drive(scale, c, delay, kill("publish"), |index| {
         let (client, token) = (client.clone(), token.clone());
         let url = format!("{base}/repository/{REPOSITORY}/{}", asset_path(index));
         async move {
@@ -346,10 +668,14 @@ async fn run_scale(scale: usize, options: &Options) -> Result<Value, String> {
         }
     })
     .await;
+    checkpoint!("publish", publish);
 
-    eprintln!("[perf-lab] scale {scale}: read {samples} assets");
-    let read = drive(samples, c, delay, |n| {
-        let index = sample_index(n, scale);
+    eprintln!(
+        "[perf-lab] scale {scale} / {size} B: read {samples} assets ({})",
+        options.dist.name()
+    );
+    let read = drive(samples, c, delay, kill("read"), |n| {
+        let index = plan.at(n);
         let (client, token) = (client.clone(), token.clone());
         let url = format!("{base}/repository/{REPOSITORY}/{}", asset_path(index));
         async move {
@@ -374,20 +700,22 @@ async fn run_scale(scale: usize, options: &Options) -> Result<Value, String> {
         }
     })
     .await;
+    checkpoint!("read", read);
 
-    eprintln!("[perf-lab] scale {scale}: search by text {samples} times");
-    let search_text = drive(samples, c, delay, |n| {
-        let index = sample_index(n, scale);
+    eprintln!("[perf-lab] scale {scale} / {size} B: search by text {samples} times");
+    let search_text = drive(samples, c, delay, kill("search_text"), |n| {
+        let index = plan.at(n);
         let (client, token) = (client.clone(), token.clone());
         let url =
             format!("{base}/api/v1/search?repository={REPOSITORY}&text=asset-{index:08}&limit=20");
         async move { search_finds(&client, &token, &url, &asset_path(index)).await }
     })
     .await;
+    checkpoint!("search_text", search_text);
 
-    eprintln!("[perf-lab] scale {scale}: search by digest {samples} times");
-    let search_digest = drive(samples, c, delay, |n| {
-        let index = sample_index(n, scale);
+    eprintln!("[perf-lab] scale {scale} / {size} B: search by digest {samples} times");
+    let search_digest = drive(samples, c, delay, kill("search_digest"), |n| {
+        let index = plan.at(n);
         let (client, token) = (client.clone(), token.clone());
         let url = format!(
             "{base}/api/v1/search?repository={REPOSITORY}&digest=sha256:{}&limit=20",
@@ -396,13 +724,14 @@ async fn run_scale(scale: usize, options: &Options) -> Result<Value, String> {
         async move { search_finds(&client, &token, &url, &asset_path(index)).await }
     })
     .await;
+    checkpoint!("search_digest", search_digest);
 
-    let outcomes = [publish, read, search_text, search_digest];
-    let mut workloads = serde_json::Map::new();
-    for (name, outcome) in WORKLOADS.iter().zip(outcomes.iter()) {
-        workloads.insert((*name).to_string(), summarize(outcome));
-    }
-    Ok(json!({ "assets": scale, "workloads": workloads }))
+    Ok(json!({
+        "assets": scale,
+        "payload_bytes": size,
+        "access": plan.report(options),
+        "workloads": partial,
+    }))
 }
 
 /// One search that must answer 200 and name the asset it was asked about.
@@ -463,17 +792,26 @@ fn hardware() -> Value {
     })
 }
 
-/// The p95 of (scale, workload) in a result document.
-fn p95_of(document: &Value, scale: u64, workload: &str) -> Option<(f64, u64)> {
-    let entry = document["scales"]
-        .as_array()?
-        .iter()
-        .find(|entry| entry["assets"].as_u64() == Some(scale))?;
-    let workload = &entry["workloads"][workload];
+/// The row of (scale, payload size, distribution) in a result document. Rows
+/// of the schema 1 baseline carry neither field: they are 1 KiB and uniform.
+fn row_of<'a>(document: &'a Value, assets: u64, payload: u64, dist: &str) -> Option<&'a Value> {
+    document["scales"].as_array()?.iter().find(|entry| {
+        entry["assets"].as_u64() == Some(assets)
+            && entry["payload_bytes"]
+                .as_u64()
+                .unwrap_or(DEFAULT_PAYLOAD as u64)
+                == payload
+            && entry["access"]["dist"].as_str().unwrap_or("uniform") == dist
+    })
+}
+
+/// The p95 of a workload of a row, with its error count.
+fn p95_of(row: &Value, workload: &str) -> Option<(f64, u64)> {
+    let workload = &row["workloads"][workload];
     Some((workload["p95_ms"].as_f64()?, workload["errors"].as_u64()?))
 }
 
-/// The verdict of `--compare`: one line per shared (scale, workload), and the
+/// The verdict of `--compare`: one line per shared row and workload, and the
 /// list of regressions.
 fn compare(
     current: &Value,
@@ -482,39 +820,42 @@ fn compare(
     min_delta_ms: f64,
 ) -> Vec<String> {
     let mut failures = Vec::new();
-    let Some(scales) = current["scales"].as_array() else {
+    let Some(rows) = current["scales"].as_array() else {
         return vec!["the current result has no scales".to_string()];
     };
-    for entry in scales {
-        let Some(scale) = entry["assets"].as_u64() else {
+    for row in rows {
+        let Some(assets) = row["assets"].as_u64() else {
             continue;
         };
+        let payload = row["payload_bytes"]
+            .as_u64()
+            .unwrap_or(DEFAULT_PAYLOAD as u64);
+        let dist = row["access"]["dist"].as_str().unwrap_or("uniform");
+        let label = format!("{assets} assets / {payload} B / {dist}");
         for workload in WORKLOADS {
-            let Some((now, errors)) = p95_of(current, scale, workload) else {
-                failures.push(format!("{scale} assets / {workload}: the run has no p95"));
+            let Some((now, errors)) = p95_of(row, workload) else {
+                failures.push(format!("{label} / {workload}: the run has no p95"));
                 continue;
             };
             if errors > 0 {
-                failures.push(format!(
-                    "{scale} assets / {workload}: {errors} failed requests"
-                ));
+                failures.push(format!("{label} / {workload}: {errors} failed requests"));
                 continue;
             }
-            let Some((before, _)) = p95_of(baseline, scale, workload) else {
-                eprintln!(
-                    "[compare] {scale} assets / {workload}: not in the baseline, not compared"
-                );
+            let Some((before, _)) =
+                row_of(baseline, assets, payload, dist).and_then(|row| p95_of(row, workload))
+            else {
+                eprintln!("[compare] {label} / {workload}: not in the baseline, not compared");
                 continue;
             };
             let limit = before * (1.0 + threshold_pct / 100.0);
             let regressed = now > limit && now - before > min_delta_ms;
             eprintln!(
-                "[compare] {scale} assets / {workload}: p95 {before:.3} ms -> {now:.3} ms (limit {limit:.3} ms, floor +{min_delta_ms} ms) {}",
+                "[compare] {label} / {workload}: p95 {before:.3} ms -> {now:.3} ms (limit {limit:.3} ms, floor +{min_delta_ms} ms) {}",
                 if regressed { "REGRESSION" } else { "ok" }
             );
             if regressed {
                 failures.push(format!(
-                    "{scale} assets / {workload}: p95 {before:.3} ms -> {now:.3} ms exceeds +{threshold_pct}%"
+                    "{label} / {workload}: p95 {before:.3} ms -> {now:.3} ms exceeds +{threshold_pct}%"
                 ));
             }
         }
@@ -548,38 +889,46 @@ fn main() {
         .build()
         .expect("the runtime builds");
     let result = runtime.block_on(async {
-        let mut scales = Vec::new();
+        let mut rows = Vec::new();
+        let mut last_good = "none".to_string();
         for scale in &options.scales {
-            scales.push(run_scale(*scale, &options).await?);
+            for size in &options.payload_bytes {
+                let row = run_scale(*scale, *size, &options, &last_good).await?;
+                last_good = format!("search_digest(assets={scale},payload={size})");
+                rows.push(row);
+            }
         }
-        Ok::<_, String>(scales)
+        Ok::<_, Box<Fault>>(rows)
     });
-    let scales = match result {
-        Ok(scales) => scales,
-        Err(error) => {
-            eprintln!("perf-lab: the run is invalid: {error}");
-            std::process::exit(1);
-        }
+    let (scales, fault) = match result {
+        Ok(scales) => (scales, None),
+        Err(fault) => (Vec::new(), Some(fault)),
     };
 
     let dirty = command_output("git", &["status", "--porcelain"]).is_some_and(|s| !s.is_empty());
     let document = json!({
         "schema_version": SCHEMA_VERSION,
-        "lab": "hsp319-graph-s1",
+        "lab": "hsp319-graph-s2",
         "recorded_at_utc": chrono::Utc::now().to_rfc3339(),
         "commit": command_output("git", &["rev-parse", "HEAD"]),
         "dirty_tree": dirty,
         "hardware": hardware(),
         "dgraph_image": std::env::var("HODEI_PERF_DGRAPH_IMAGE").ok(),
+        "replica": match &fault {
+            None => json!({"verdict": "VALID"}),
+            Some(fault) => fault.report(),
+        },
         "parameters": {
             "driver": "closed-loop (coordinated omission is not corrected)",
             "concurrency": options.concurrency,
             "samples_per_read_and_search": options.samples,
             "payload_bytes": options.payload_bytes,
+            "dist": options.dist.name(),
             "content_backend": "filesystem",
             "profile": "graph (RUN_MODE=dgraph)",
             "build": if cfg!(debug_assertions) { "debug (unoptimized service binary)" } else { "release" },
             "inject_delay_ms": options.inject_delay_ms,
+            "inject_kill": options.inject_kill,
         },
         "scales": scales,
         "not_run": [
@@ -597,6 +946,20 @@ fn main() {
         std::process::exit(1);
     }
 
+    if let Some(fault) = &fault {
+        // An invalid replica is evidence of the failure, never a measurement.
+        eprintln!(
+            "perf-lab: {}: {} at {} (last good scenario: {}); {}",
+            fault.verdict, fault.scenario, fault.at_utc, fault.last_good, fault.detail
+        );
+        if options.record.is_some() || options.compare.is_some() {
+            eprintln!(
+                "perf-lab: --record/--compare refused: an invalid replica never feeds an aggregate"
+            );
+        }
+        std::process::exit(1);
+    }
+
     let mut failed = false;
     // A request that failed makes the run invalid, with or without a baseline.
     for entry in document["scales"].as_array().into_iter().flatten() {
@@ -604,15 +967,15 @@ fn main() {
             let stats = &entry["workloads"][workload];
             if stats["errors"].as_u64().unwrap_or(0) > 0 {
                 eprintln!(
-                    "perf-lab: {} assets / {workload}: {} failed requests; first: {}",
-                    entry["assets"], stats["errors"], stats["first_error"]
+                    "perf-lab: {} assets / {} B / {workload}: {} failed requests; first: {}",
+                    entry["assets"], entry["payload_bytes"], stats["errors"], stats["first_error"]
                 );
                 failed = true;
             }
         }
     }
     if let Some(path) = &options.record {
-        if failed || options.inject_delay_ms > 0 {
+        if failed || options.inject_delay_ms > 0 || options.inject_kill.is_some() {
             eprintln!("perf-lab: refusing to record a baseline from an invalid or degraded run");
             std::process::exit(1);
         }
@@ -636,6 +999,13 @@ fn main() {
                 std::process::exit(2);
             }
         };
+        if baseline["replica"]["verdict"]
+            .as_str()
+            .is_some_and(|verdict| verdict != "VALID")
+        {
+            eprintln!("perf-lab: the baseline is from an invalid replica; refusing to compare");
+            std::process::exit(2);
+        }
         let failures = compare(
             &document,
             &baseline,
