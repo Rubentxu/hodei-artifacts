@@ -308,6 +308,32 @@ pipeline {
                         "--test playground_isolation",
                     ).joinToString(" ") + " -- --test-threads=1"
                 )
+                // HSP-314 F4 S2c-seed: las suites que sembraban el motor embebido,
+                // ahora sembradas por el catalogo real de Dgraph (tests/support/
+                // graph_profile.rs, graph_risk.rs). Hugging Face y formatos
+                // (siembra de repositorios y publicaciones), readiness con el alpha
+                // cortado en caliente (HSP-237), marcas de las politicas IAM, las
+                // consultas de investigacion y la frescura del ledger, y los hechos
+                // de riesgo y el ciclo CVE sobre el ledger de deltas de Dgraph.
+                sh(
+                    "cargo test --workspace " + listOf(
+                        "--test hsp218_hf_client",
+                        "--test hsp297_format_prefixes",
+                        "--test hsp297_trusted_listings",
+                        "--test hsp304_format_access",
+                        "--test hsp237_readiness",
+                        "--test iam_policy_timestamps",
+                        "--test hsp88_investigation_query",
+                        "--test hsp89_investigation_freshness",
+                        "--test hsp134_risk_facts_e2e",
+                        "--test hsp137_ciclo_cve_e2e",
+                    ).joinToString(" ") + " -- --test-threads=1"
+                )
+                // El arranque con S3 inalcanzable y el GC fenced: el barrido
+                // coordinado borra con If-Match, y LocalStack no implementa el
+                // DELETE condicional (501), asi que la suite levanta RustFS fijado
+                // por digest (HSP138_S3_CONTAINER pone el nombre del contenedor).
+                sh("cargo test --workspace --test hsp138_s3_arranque_e2e -- --test-threads=1")
                 // HSP-314 F4 S2b (lote A): el binario real sobre el perfil de grafo con
                 // los clientes de cada formato. Varios comandos para acotar el tiempo
                 // de cada uno (un namespace por despliegue: 1-3 s de alta).
@@ -556,34 +582,18 @@ pipeline {
                         "--test hsp118_bundle_contract",
                         "--test hsp126_capsule_oci",
                         "--test audit_events",
-                        // La readiness y la liveness son dos preguntas
-                        // distintas (HSP-237): con el almacen desconectado
-                        // en caliente, la readiness deja de ser 200 y la
-                        // liveness no. Arranca el motor embebido.
-                        "--test hsp237_readiness",
-                        "--test iam_policy_timestamps",
                         "--test repository_create",
                         "--test repository_read",
                         "--test har04_raw_hosted_contract",
                         "--test hsp113_search_e2e",
                         "--test hsp114_console_contract",
                         "--test hsp132_registry_list",
-                        "--test hsp88_investigation_query",
-                        "--test hsp89_investigation_freshness",
-                        "--test hsp134_risk_facts_e2e",
                         "--test hsp142_capability_matrix",
                         "--test blob_integrity_contract",
                         "--test doc9_uat",
                         "--test oci_pull_contract",
                         "--test oci_push_contract",
                         "--test oci_index_contract",
-                        "--test hsp297_format_prefixes",
-                        "--test hsp297_trusted_listings",
-                        // Hugging Face: siembra HF sin portar.
-                        "--test hsp218_hf_client",
-                        "--test hsp304_format_access",
-                        "--test hsp137_ciclo_cve_e2e",
-                        "--test hsp138_s3_arranque_e2e",
                     ).joinToString(" ")
                 )
                 // El informe del push OCI es la evidencia de la otra

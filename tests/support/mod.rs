@@ -48,6 +48,11 @@ pub mod graph_lab;
 /// real Dgraph per deployment, and the seeders over the real catalog store.
 pub mod graph_profile;
 
+/// The risk facts of a deployment on the graph profile (HSP-314 F4 S2c): the
+/// ledger of deltas and the materialized impact view, seeded through the real
+/// stores.
+pub mod graph_risk;
+
 /// Whether the deployments of this build run on the graph profile.
 ///
 /// Without `legacy` the embedded engine does not exist, so the answer is
