@@ -4,8 +4,7 @@
 //!
 //! Gated on HODEI_GRAPH_IT_ENDPOINT like every IT of the stack, and
 //! SERIALIZED: the tests share one authority and one outbox contract.
-//! What it proves, against the real engine and against the Surreal
-//! reference of the same port:
+//! What it proves, against the real engine:
 //!
 //! - **The claim is a compare-and-set**: two executors race for the same
 //!   intent and ONE wins; the loser constata (AC1).
@@ -23,8 +22,6 @@
 //!   intents of one CVE re-drive does not touch another scope's intents,
 //!   the watermark advances one receipt at a time with no gaps, and
 //!   every refusal is an explicit error (AC2).
-//! - **Parity**: the same port scenarios leave the SAME states in the
-//!   Dgraph store and in the Surreal reference.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -37,10 +34,7 @@ use hodei_reactive::intent::{Intent, IntentOrigin, IntentOutbox, Receipt};
 use hodei_reactive::runtime::ExecutionStore;
 use hodei_reactive::Event;
 use hodei_trust_policy_storage::dgraph::{DgraphIntentError, DgraphIntentStore};
-use hodei_trust_policy_storage::intents::SurrealIntentStore;
 use serde_json::{json, Value};
-use surrealdb::engine::local::{Db, Mem};
-use surrealdb::Surreal;
 
 /// The env configuration of the stack ITs, exactly as hsp199 and hsp203
 /// read it.
@@ -190,31 +184,6 @@ async fn the_state(client: &GraphClient, identity: &str) -> String {
         .to_owned()
 }
 
-/// Every intent and its state the graph holds under `prefix`, sorted by
-/// identity: the comparison the parity makes against the reference.
-async fn the_states(client: &GraphClient, prefix: &str) -> Vec<(String, String)> {
-    let query = "{ q(func: has(hodei.intent.key), orderasc: hodei.intent.key) { hodei.intent.key hodei.intent.state } }";
-    let response = client
-        .execute_dql(query)
-        .await
-        .expect("the states read answers");
-    let mut states: Vec<(String, String)> = response
-        .json
-        .get("q")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|node| {
-            let key = node.get("hodei.intent.key")?.as_str()?.to_owned();
-            let state = node.get("hodei.intent.state")?.as_str()?.to_owned();
-            key.contains(prefix).then_some((key, state))
-        })
-        .collect();
-    states.sort();
-    states
-}
-
 /// The consumer watermark of one scope: how many intents of the tenant
 /// have reached a terminal state. The re-drive must never move it back
 /// or make it jump.
@@ -301,16 +270,6 @@ async fn claim_markers(client: &GraphClient, identity: &str) -> usize {
         .and_then(Value::as_array)
         .map(|nodes| nodes.len())
         .unwrap_or(0)
-}
-
-/// The Surreal reference of the same port, on a throwaway store.
-async fn the_reference() -> SurrealIntentStore<Db> {
-    let db = Arc::new(Surreal::new::<Mem>(()).await.expect("the reference opens"));
-    db.use_ns("hodei")
-        .use_db("intents")
-        .await
-        .expect("the ns/db");
-    SurrealIntentStore::new(db)
 }
 
 static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -815,213 +774,6 @@ async fn the_re_drive_keeps_the_scope_and_the_watermark() {
         the_state(&client, &first.identity).await,
         "applied",
         "the refusals wrote nothing"
-    );
-}
-
-/// The port parity: the SAME scenarios leave the SAME states in the
-/// Dgraph store and in the Surreal reference — the claim race, the
-/// expired lease, the three receipts and the reconciliation.
-#[tokio::test]
-async fn the_port_leaves_the_same_states_in_both_stores() {
-    let Some((client, store)) = open_store().await else {
-        return;
-    };
-    let _guard = SERIAL.lock().await;
-    let scope = run_scope("parity");
-    let reference = the_reference().await;
-    let tenant = format!("{scope}-parity");
-
-    // The same intents, the same order, the same operations.
-    let race = an_intent(&scope, &tenant, "parity-race", "GHSA-p1");
-    let lease = an_intent(&scope, &tenant, "parity-lease", "GHSA-p2");
-    let retryable = an_intent(&scope, &tenant, "parity-retry", "GHSA-p3");
-    let unknown = an_intent(&scope, &tenant, "parity-unknown", "GHSA-p4");
-    for intent in [&race, &lease, &retryable, &unknown] {
-        store.put_pending(intent).await.expect("the graph says it");
-        reference
-            .put_pending(intent)
-            .await
-            .expect("the reference says it");
-    }
-    assert_eq!(
-        the_states(&client, &scope).await,
-        reference.states().await.expect("the reference states read"),
-        "said: the same four pending"
-    );
-
-    // The claim race: the winner is decided by the engine, the loser
-    // constata, and the states agree.
-    let until = Utc::now() + ChronoDuration::seconds(60);
-    let graph_one = store.clone();
-    let graph_two = store.clone();
-    let identity_one = race.identity.clone();
-    let identity_two = race.identity.clone();
-    let (first, second) = tokio::join!(
-        async move {
-            graph_one
-                .claim(&identity_one, "parity-a", until, Utc::now())
-                .await
-        },
-        async move {
-            graph_two
-                .claim(&identity_two, "parity-b", until, Utc::now())
-                .await
-        },
-    );
-    let graph_winner = match (first, second) {
-        (Ok(Some(one)), Ok(None)) => one,
-        (Ok(None), Ok(Some(one))) => one,
-        other => panic!("the race must have one winner on the graph: {other:?}"),
-    };
-    let reference_winner = reference
-        .claim(&race.identity, "parity-a", until, Utc::now())
-        .await
-        .expect("the reference claims")
-        .expect("the reference race has a winner");
-    assert_eq!(
-        graph_winner.identity, reference_winner.identity,
-        "both stores crown the same intent"
-    );
-    store
-        .record_receipt(&race.identity, &Receipt::Applied)
-        .await
-        .expect("the graph takes the receipt");
-    reference
-        .record_receipt(&race.identity, &Receipt::Applied)
-        .await
-        .expect("the reference takes the receipt");
-    assert_eq!(
-        the_states(&client, &scope).await,
-        reference.states().await.expect("the reference states read"),
-        "the race and its receipt leave the same states"
-    );
-
-    // The expired lease comes back to the market in both, in the same
-    // order.
-    let base = Utc::now();
-    store
-        .claim(
-            &lease.identity,
-            "parity-dead",
-            base - ChronoDuration::seconds(1),
-            base,
-        )
-        .await
-        .expect("the graph claims")
-        .expect("the graph worker takes it");
-    reference
-        .claim(
-            &lease.identity,
-            "parity-dead",
-            base - ChronoDuration::seconds(1),
-            base,
-        )
-        .await
-        .expect("the reference claims")
-        .expect("the reference worker takes it");
-    let graph_back = store
-        .recover_pending(base + ChronoDuration::seconds(1))
-        .await
-        .expect("the graph recovers");
-    let reference_back = reference
-        .recover_pending(base + ChronoDuration::seconds(1))
-        .await
-        .expect("the reference recovers");
-    // The shared authority holds the intents of every run and every
-    // test: the comparison is of THIS run's market, which is what the
-    // reference's throwaway store holds whole.
-    assert_eq!(
-        graph_back
-            .iter()
-            .map(|one| one.identity.clone())
-            .filter(|one| one.contains(&scope))
-            .collect::<Vec<_>>(),
-        reference_back
-            .iter()
-            .map(|one| one.identity.clone())
-            .collect::<Vec<_>>(),
-        "the expired lease is re-marketed the same way in both"
-    );
-    assert_eq!(
-        the_states(&client, &scope).await,
-        reference.states().await.expect("the reference states read"),
-        "the re-marketing leaves the same states"
-    );
-
-    // The three receipts: the retryable failure returns to pending, the
-    // permanent one stays failed, and the unknown one waits for the
-    // reconciliation. Step by step, the states agree.
-    for (intent, receipt, already) in [
-        (
-            &retryable,
-            &Receipt::Failed {
-                reason: "the case store is down".to_owned(),
-                retryable: true,
-            },
-            "pending",
-        ),
-        (
-            &unknown,
-            &Receipt::Unknown {
-                reason: "the answer never came".to_owned(),
-            },
-            "unknown",
-        ),
-    ] {
-        store
-            .claim(&intent.identity, "parity-a", until, Utc::now())
-            .await
-            .expect("the graph claims")
-            .expect("the graph takes it");
-        reference
-            .claim(&intent.identity, "parity-a", until, Utc::now())
-            .await
-            .expect("the reference claims")
-            .expect("the reference takes it");
-        store
-            .record_receipt(&intent.identity, receipt)
-            .await
-            .expect("the graph takes the receipt");
-        reference
-            .record_receipt(&intent.identity, receipt)
-            .await
-            .expect("the reference takes the receipt");
-        assert_eq!(the_state(&client, &intent.identity).await, already);
-        assert_eq!(
-            the_states(&client, &scope).await,
-            reference.states().await.expect("the reference states read"),
-            "the receipt leaves the same states"
-        );
-    }
-
-    // The reconciliation of the unknown, explicit, returns it to the
-    // market in both — and a permanent failure is not reconciled in
-    // either.
-    store
-        .reconcile(&unknown.identity)
-        .await
-        .expect("the graph reconciles");
-    reference
-        .reconcile(&unknown.identity)
-        .await
-        .expect("the reference reconciles");
-    let graph_failed = store
-        .record_receipt(
-            &retryable.identity,
-            &Receipt::Failed {
-                reason: "malformed".to_owned(),
-                retryable: false,
-            },
-        )
-        .await;
-    assert!(
-        graph_failed.is_err(),
-        "a receipt for an intent nobody holds a live claim on is refused by the graph"
-    );
-    assert_eq!(
-        the_states(&client, &scope).await,
-        reference.states().await.expect("the reference states read"),
-        "the reconciliation leaves the same states"
     );
 }
 

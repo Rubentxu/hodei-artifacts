@@ -8,17 +8,10 @@ license = "MIT"
 [dependencies]
 async-trait = { workspace = true }
 hodei-evidence = { path = "../hodei-evidence" }
-# HSP-213: sin el feature legacy del almacen de evidencia tampoco existe su
-# lector embebido, asi que el corte se propaga.
-hodei-evidence-storage = { path = "../hodei-evidence-storage", default-features = false }
+hodei-evidence-storage = { path = "../hodei-evidence-storage" }
 hodei-investigator = { path = "../hodei-investigator" }
 kernel = { path = "../kernel" }
-surrealdb = { workspace = true, optional = true }
 tracing = { workspace = true }
-
-[features]
-default = ["legacy"]
-legacy = ["dep:surrealdb", "hodei-evidence-storage/legacy"]
 
 [dev-dependencies]
 async-trait = { workspace = true }

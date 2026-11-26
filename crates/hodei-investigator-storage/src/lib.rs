@@ -16,7 +16,7 @@
 //!
 //! El nucleo del recuperador ([`InvestigationRetriever`]) pregunta a una
 //! [`GraphSource`] la generacion del mundo y las relaciones del sujeto;
-//! no sabe si detras hay Surreal o Dgraph. Eso es lo que hace
+//! no sabe que almacen hay detras. Eso es lo que hace
 //! **reproducible** el read-set: dos lecturas contra la misma watermark
 //! de la historia de deltas sellan el mismo manifiesto, porque el
 //! manifiesto es funcion del estado y de las claves estables --el
@@ -40,94 +40,11 @@ use hodei_investigator::scope::{
 };
 use kernel::Hrn;
 use kernel::application::ports::{EvaluationDecision, EvaluationRequest, IamPolicyEvaluator};
-#[cfg(feature = "legacy")]
-use surrealdb::Connection;
-
-/// El recuperador sobre el grafo y la evidencia reales.
-///
-/// Es el **borde de autorizacion** de la investigacion: autoriza el
-/// sujeto ANTES de leer nada, y cada recurso que traen los caminos se
-/// autoriza antes de entregarse. Un permiso denegado o un almacen que
-/// no contesta son puertas cerradas, nunca lecturas silenciosas.
-///
-/// Esta variante sirve el grafo Surreal del despliegue;
-/// [`DgraphEvidenceRetriever`] sirve la autoridad del grafo con el
-/// MISMO nucleo, el mismo presupuesto y el mismo read-set.
-///
-/// HSP-213: el lector sobre el motor embebido queda tras la feature
-/// `legacy`, que el binario productivo no declara.
-#[cfg(feature = "legacy")]
-pub struct GraphEvidenceRetriever<C: Connection> {
-    inner: InvestigationRetriever<SurrealSource<C>>,
-}
-
-/// La fuente Surreal: el grafo de la cuenta, con su generacion leida de
-/// la historia de deltas del mismo almacen.
-#[cfg(feature = "legacy")]
-struct SurrealSource<C: Connection>(Arc<hodei_evidence_storage::SurrealGraphStore<C>>);
-
-#[cfg(feature = "legacy")]
-#[async_trait]
-impl<C: Connection> GraphSource for SurrealSource<C> {
-    async fn generation(&self, tenant: &Hrn) -> Result<u64, String> {
-        self.0.generation(tenant).await
-    }
-
-    async fn relations_from(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String> {
-        GraphQuery::relations_from(self.0.as_ref(), tenant, node)
-            .await
-            .map_err(|error| error.to_string())
-    }
-
-    async fn relations_to(&self, tenant: &Hrn, node: &Hrn) -> Result<Vec<GraphRelation>, String> {
-        GraphQuery::relations_to(self.0.as_ref(), tenant, node)
-            .await
-            .map_err(|error| error.to_string())
-    }
-}
-
-#[cfg(feature = "legacy")]
-impl<C: Connection> GraphEvidenceRetriever<C> {
-    /// El recuperador sobre un almacen de evidencia, un almacen de
-    /// contenido, un grafo y el Authorizer compartido. Sin autorizador
-    /// no hay recuperador: sin permiso no se lee.
-    pub fn new(
-        evidence: Arc<dyn EvidenceStore>,
-        content: Arc<dyn ContentStore>,
-        graph: Arc<hodei_evidence_storage::SurrealGraphStore<C>>,
-        authorizer: Arc<dyn EvidenceReadAuthorizer>,
-        tenant: Hrn,
-    ) -> Self {
-        Self {
-            inner: InvestigationRetriever::new(
-                evidence,
-                content,
-                SurrealSource(graph),
-                authorizer,
-                tenant,
-            ),
-        }
-    }
-
-    /// El recuperador que tambien sabe de alcanzabilidad.
-    pub fn with_reachability(mut self, reachability: Arc<dyn ReachabilityFacts>) -> Self {
-        self.inner = self.inner.with_reachability(reachability);
-        self
-    }
-}
-
-#[cfg(feature = "legacy")]
-#[async_trait]
-impl<C: Connection> EvidenceRetriever for GraphEvidenceRetriever<C> {
-    async fn retrieve(&self, scope: &RetrievalScope) -> Result<RetrievedContext, RetrievalError> {
-        self.inner.retrieve(scope).await
-    }
-}
 
 /// El recuperador sobre la autoridad del grafo.
 ///
-/// Es el puerto Dgraph del read-set de investigacion (HSP-206): el MISMO
-/// nucleo que sirve a Surreal --la misma autorizacion previa, el mismo
+/// Es el puerto Dgraph del read-set de investigacion (HSP-206): el
+/// nucleo --la misma autorizacion previa, el mismo
 /// presupuesto, las mismas claves estables del manifiesto-- contra el
 /// grafo nativo y su historia de deltas. La generacion con la que se
 /// sella la lectura es la watermark de los deltas del tenant, el cursor
