@@ -30,7 +30,7 @@ use crate::features::create_policy::use_case::CreatePolicyUseCase;
 /// # Example
 ///
 /// ```rust,ignore
-/// let policy_repo = Arc::new(SurrealPolicyAdapter::new(db));
+/// let policy_repo = Arc::new(DgraphIamAdapter::new(client));
 /// let validator = hodei_policies_validate_port;
 ///
 /// let create_policy = create_policy_use_case(

@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex};
 /// use std::sync::Arc;
 ///
 /// // Composition root creates the adapter
-/// let schema_storage = Arc::new(SurrealSchemaStorage::new(db_client));
+/// let schema_storage = Arc::new(DgraphSchemaStore::new(client));
 ///
 /// // Factory receives the adapter and assembles the use cases
 /// let (entity_uc, action_uc, schema_uc) =

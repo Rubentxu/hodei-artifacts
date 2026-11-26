@@ -27,7 +27,7 @@ use crate::features::delete_policy::use_case::DeletePolicyUseCase;
 /// # Example
 ///
 /// ```rust,ignore
-/// let policy_repo = Arc::new(SurrealPolicyAdapter::new(db));
+/// let policy_repo = Arc::new(DgraphIamAdapter::new(client));
 ///
 /// let delete_policy = create_delete_policy_use_case(policy_repo);
 /// ```

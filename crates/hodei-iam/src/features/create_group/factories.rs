@@ -29,7 +29,7 @@ use kernel::HrnGenerator;
 /// # Example
 ///
 /// ```rust,ignore
-/// let group_repo = Arc::new(SurrealGroupAdapter::new(db));
+/// let group_repo = Arc::new(DgraphIamAdapter::new(client));
 /// let hrn_generator = Arc::new(DefaultHrnGenerator::new());
 ///
 /// let create_group = create_group_use_case(
