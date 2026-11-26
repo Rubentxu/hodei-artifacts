@@ -16,6 +16,100 @@ use crate::model::{
 };
 use crate::search::{SearchPage, SearchQuery};
 
+/// Durable identity of an APT group snapshot namespace.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AptSnapshotKey {
+    /// Owning account, used as the tenant boundary.
+    pub account: String,
+    /// Group repository key.
+    pub group: String,
+    /// Distribution within the group.
+    pub distribution: String,
+    /// Stable Cedar principal subject, not a display name.
+    pub principal_subject: String,
+}
+
+/// Typed CAS object identity and its verified byte length.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AptCasReference {
+    /// CAS location, including tenant, scope, and digest.
+    pub location: BlobLocation,
+    /// Expected object length.
+    pub size_bytes: u64,
+}
+
+/// Identity and content contributed by a member repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AptSnapshotMember {
+    /// Member repository key.
+    pub repository: String,
+    /// Package name contributed by the member.
+    pub package: String,
+    /// Package version contributed by the member.
+    pub version: String,
+    /// Immutable package content reference.
+    pub content: AptCasReference,
+}
+
+/// Immutable, fully materialized APT view, including all referenced CAS objects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AptGroupSnapshot {
+    /// Monotonic revision within the key namespace.
+    pub revision: u64,
+    /// Stable content digest identifying this revision.
+    pub digest: ContentDigest,
+    /// Release metadata reference.
+    pub release: AptCasReference,
+    /// Detached signature reference for the signed Release metadata.
+    pub signature: AptCasReference,
+    /// Packages indexes keyed by architecture.
+    pub packages_by_arch: std::collections::BTreeMap<String, AptCasReference>,
+    /// Package archives keyed by their canonical pool path.
+    pub pool_by_path: std::collections::BTreeMap<String, AptCasReference>,
+    /// Member identities and content used by the consumer to revalidate current membership.
+    pub members: Vec<AptSnapshotMember>,
+}
+
+/// Durable storage contract for immutable APT group generations.
+///
+/// This port only persists and retrieves data. Its consumer must re-evaluate current group
+/// membership and Cedar authorization on every request, including historical and by-hash reads;
+/// a stored snapshot is not an authorization grant and must not bypass revocation.
+#[async_trait]
+pub trait AptSnapshotStore: Send + Sync {
+    /// Read the current committed generation, if one exists.
+    async fn current_apt_snapshot(
+        &self,
+        key: &AptSnapshotKey,
+    ) -> Result<Option<AptGroupSnapshot>, CatalogError>;
+    /// Read an immutable generation by its monotonic revision.
+    async fn apt_snapshot_by_revision(
+        &self,
+        key: &AptSnapshotKey,
+        revision: u64,
+    ) -> Result<Option<AptGroupSnapshot>, CatalogError>;
+    /// Resolve a registered Packages generation for the given architecture and digest.
+    ///
+    /// The returned snapshot carries its member identities so the consumer can revalidate
+    /// them against the current Cedar-authorized group leaves before serving any bytes.
+    async fn apt_snapshot_by_packages_hash(
+        &self,
+        key: &AptSnapshotKey,
+        architecture: &str,
+        digest: &ContentDigest,
+    ) -> Result<Option<AptGroupSnapshot>, CatalogError>;
+    /// Atomically persist a generation and move its pointer iff the expected revision matches.
+    ///
+    /// A failed comparison returns `CatalogError::PreconditionFailed`; metadata and pointer
+    /// movement are one durable transaction. Referenced CAS bytes may have been written earlier.
+    async fn publish_apt_snapshot(
+        &self,
+        key: &AptSnapshotKey,
+        expected_revision: Option<u64>,
+        snapshot: AptGroupSnapshot,
+    ) -> Result<(), CatalogError>;
+}
+
 /// Lo que un principal quiere hacer con el catálogo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CatalogAction {
