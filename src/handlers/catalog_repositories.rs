@@ -425,6 +425,18 @@ fn the_config(body: &CreateRepositoryBody) -> Result<RepositoryConfig, CatalogRe
         }
         config.config_settings = settings.clone();
     }
+    // Admission (HSP-153) gates the hosted raw publication only. A declaration
+    // anywhere else would look gated and not be, so it is refused up front, and
+    // so is one that cannot be read (never interpreted generously).
+    if config.config_settings.get("admission").is_some() {
+        if body.mode != RepositoryMode::Hosted || body.format != RepositoryFormat::Raw {
+            return Err(CatalogRepositoryError::BadRequest(
+                "admission is only supported on hosted raw repositories".to_string(),
+            ));
+        }
+        crate::admission::AdmissionConfig::from_settings(&config.config_settings)
+            .map_err(CatalogRepositoryError::BadRequest)?;
+    }
     match body.mode {
         RepositoryMode::Hosted => Ok(config),
         RepositoryMode::Proxy => match UpstreamConfig::of(&config) {

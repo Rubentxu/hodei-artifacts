@@ -196,6 +196,24 @@ pub async fn publish(
     )
     .await?;
 
+    // Admission (HSP-153): a repository that declares it decides the digest
+    // **before** the catalog is written. A refusal returns here, so nothing is
+    // published; the unreferenced blob is the GC's, never served.
+    if let Err(refusal) =
+        crate::admission::gate(&state, context.account().as_str(), &repository, &digest).await
+    {
+        record_audit(
+            &state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            "admission.refused",
+            &format!("{}/{}", target.repository, digest),
+            AuditResult::Denied,
+            &correlation,
+        );
+        return Err(refusal);
+    }
+
     let publication = Publication {
         repository: target.repository.clone(),
         asset_path: target.asset_path.clone(),

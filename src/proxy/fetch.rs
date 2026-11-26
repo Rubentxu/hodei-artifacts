@@ -612,45 +612,7 @@ impl ProxyFetcher {
         if remaining.is_zero() {
             return Err(FetchError::Timeout);
         }
-        let entry = self.policy.check_url(url)?;
-        let port = url
-            .port_or_known_default()
-            .ok_or(EgressDenied::PortNotAllowed)?;
-
-        // A name is resolved here, validated and pinned. A literal IP
-        // was already validated in `check_url`.
-        let pinned: Option<(String, Vec<SocketAddr>)> = match url.host() {
-            Some(Host::Domain(domain)) => {
-                let addresses = tokio::time::timeout(
-                    self.limits.connect_timeout,
-                    self.resolver.resolve(domain, port),
-                )
-                .await
-                .map_err(|_| FetchError::Timeout)?
-                .map_err(|_| EgressDenied::Unresolved)?;
-                EgressPolicy::validate_addresses(entry, &addresses)?;
-                Some((
-                    domain.to_string(),
-                    addresses
-                        .into_iter()
-                        .map(|ip| SocketAddr::new(ip, port))
-                        .collect(),
-                ))
-            }
-            _ => None,
-        };
-
-        let mut builder = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .no_proxy()
-            .connect_timeout(self.limits.connect_timeout)
-            .timeout(remaining)
-            .pool_max_idle_per_host(0)
-            .user_agent(concat!("hodei-artifacts-proxy/", env!("CARGO_PKG_VERSION")));
-        if let Some((domain, addresses)) = &pinned {
-            builder = builder.resolve_to_addrs(domain, addresses);
-        }
-        let client = builder.build().map_err(|_| FetchError::Unreachable)?;
+        let client = self.pinned_client(url, remaining).await?;
 
         let mut request = client
             .get(url.clone())
@@ -719,6 +681,105 @@ impl ProxyFetcher {
                 FetchError::Unreachable
             }
         })
+    }
+
+    /// A client bound to the destination the egress policy admitted for `url`.
+    ///
+    /// A name is resolved here, validated and pinned, so the connection goes to
+    /// the validated addresses and a rebind has no window. A literal IP was
+    /// already judged by `check_url`. No redirects, no environment proxies.
+    async fn pinned_client(
+        &self,
+        url: &Url,
+        timeout: Duration,
+    ) -> Result<reqwest::Client, FetchError> {
+        let entry = self.policy.check_url(url)?;
+        let port = url
+            .port_or_known_default()
+            .ok_or(EgressDenied::PortNotAllowed)?;
+
+        // A name is resolved here, validated and pinned. A literal IP
+        // was already validated in `check_url`.
+        let pinned: Option<(String, Vec<SocketAddr>)> = match url.host() {
+            Some(Host::Domain(domain)) => {
+                let addresses = tokio::time::timeout(
+                    self.limits.connect_timeout,
+                    self.resolver.resolve(domain, port),
+                )
+                .await
+                .map_err(|_| FetchError::Timeout)?
+                .map_err(|_| EgressDenied::Unresolved)?;
+                EgressPolicy::validate_addresses(entry, &addresses)?;
+                Some((
+                    domain.to_string(),
+                    addresses
+                        .into_iter()
+                        .map(|ip| SocketAddr::new(ip, port))
+                        .collect(),
+                ))
+            }
+            _ => None,
+        };
+
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .connect_timeout(self.limits.connect_timeout)
+            .timeout(timeout)
+            .pool_max_idle_per_host(0)
+            .user_agent(concat!("hodei-artifacts-proxy/", env!("CARGO_PKG_VERSION")));
+        if let Some((domain, addresses)) = &pinned {
+            builder = builder.resolve_to_addrs(domain, addresses);
+        }
+        builder.build().map_err(|_| FetchError::Unreachable)
+    }
+
+    /// POSTs a JSON document to an administrator-allowed destination and reads
+    /// the answer under a byte budget (the admission providers' wire).
+    ///
+    /// It is the same egress as a proxy fetch: the destination must be in the
+    /// allow-list, is validated and pinned, and redirects are never followed.
+    /// The body is read in chunks and cut as soon as it passes `max_bytes`.
+    pub async fn post_json(
+        &self,
+        url: &Url,
+        document: &serde_json::Value,
+        timeout: Duration,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, FetchError> {
+        if self.offline {
+            return Err(FetchError::Offline);
+        }
+        let client = self.pinned_client(url, timeout).await?;
+        let mut response = client
+            .post(url.clone())
+            .json(document)
+            .send()
+            .await
+            .map_err(|error| {
+                if error.is_timeout() {
+                    FetchError::Timeout
+                } else {
+                    FetchError::Unreachable
+                }
+            })?;
+        if !response.status().is_success() {
+            return Err(FetchError::Status(response.status().as_u16()));
+        }
+        let mut bytes: Vec<u8> = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            if error.is_timeout() {
+                FetchError::Timeout
+            } else {
+                FetchError::Truncated
+            }
+        })? {
+            if bytes.len() as u64 + chunk.len() as u64 > max_bytes {
+                return Err(FetchError::TooLarge);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
     }
 
     /// Where a redirect leads, if going there is allowed.

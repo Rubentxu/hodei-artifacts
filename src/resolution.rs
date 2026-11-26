@@ -78,9 +78,28 @@ pub enum ResolutionError {
     Offline(&'static str),
     /// Path falls under a reserved namespace and is blocked from public upstreams.
     ReservedNamespace(String),
+    /// The admission pipeline refused to publish the digest (HSP-153).
+    Admission(AdmissionRefusal),
     /// Unexpected internal failure.
     Internal,
 }
+
+/// Why the admission pipeline did not admit a digest.
+///
+/// `quarantine` (the evidence is there and the gate said no) is a 403,
+/// `denied` (tampering proven) a 422, and `pending` (it could not be known:
+/// UNKNOWN is not PASS) a 503 with `Retry-After`: the three are told apart and
+/// none of them is a 404.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionRefusal {
+    /// `quarantine`, `denied` or `pending`.
+    pub state: &'static str,
+    /// The reasons, joined.
+    pub reasons: String,
+}
+
+/// Seconds a client waits before retrying a `pending` admission.
+const ADMISSION_RETRY_AFTER_SECS: u64 = 30;
 
 impl ResolutionError {
     /// Returns the canonical HTTP status code and plain message for this error.
@@ -126,6 +145,14 @@ impl ResolutionError {
             ),
             Self::Offline(reason) => (StatusCode::SERVICE_UNAVAILABLE, reason.to_string()),
             Self::ReservedNamespace(reason) => (StatusCode::FORBIDDEN, reason.clone()),
+            Self::Admission(refusal) => (
+                match refusal.state {
+                    "quarantine" => StatusCode::FORBIDDEN,
+                    "denied" => StatusCode::UNPROCESSABLE_ENTITY,
+                    _ => StatusCode::SERVICE_UNAVAILABLE,
+                },
+                format!("admission {}: {}", refusal.state, refusal.reasons),
+            ),
             Self::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal error".to_string(),
@@ -138,6 +165,9 @@ impl ResolutionError {
         match self {
             Self::Quota(crate::quota::QuotaRefusal::UploadsSaturated { retry_after_secs }) => {
                 Some(*retry_after_secs)
+            }
+            Self::Admission(refusal) if refusal.state == "pending" => {
+                Some(ADMISSION_RETRY_AFTER_SECS)
             }
             _ => None,
         }
