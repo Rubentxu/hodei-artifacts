@@ -1,29 +1,29 @@
-//! El registro **Cargo** en su variante sparse: la gramatica de rutas, del
-//! payload de publicacion y de las lineas de indice.
+//! The **Cargo** registry in its sparse variant: the grammar of paths, of the
+//! publish payload and of the index lines.
 //!
-//! Es puro: conoce el protocolo, no el almacen. El indexador solo necesita
-//! `serde_json` y `sha2`, las mismas herramientas con las que el cliente
-//! calcula el `cksum` que despues verificara al descargar.
+//! It is pure: it knows the protocol, not the store. The indexer only needs
+//! `serde_json` and `sha2`, the same tools the client uses to
+//! compute the `cksum` it will later verify on download.
 
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 
-/// Lo que el protocolo Cargo no admite sin decir por que.
+/// What the Cargo protocol does not accept, without saying why.
 #[derive(Debug, Error)]
 pub enum CargoError {
-    /// La ruta no es ninguna de las que habla el protocolo.
+    /// The path is none of those the protocol speaks.
     #[error("the path is not part of the cargo protocol: {0}")]
     InvalidPath(&'static str),
-    /// El nombre del crate no es admisible.
+    /// The crate name is not admissible.
     #[error("the crate name is not admissible: {0}")]
     InvalidName(&'static str),
-    /// El payload de publicacion no se entiende.
+    /// The publish payload is not understood.
     #[error("the publish payload is not admissible: {0}")]
     InvalidPayload(&'static str),
 }
 
 impl CargoError {
-    /// El motivo, tal y como se le dice al cliente.
+    /// The reason, as it is told to the client.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidPath(reason) => {
@@ -37,21 +37,21 @@ impl CargoError {
     }
 }
 
-/// Lo que el cliente puede pedir en `/cargo/{repositorio}/...`.
+/// What the client may request under `/cargo/{repositorio}/...`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Route {
-    /// La configuracion del indice sparse: `GET config.json`.
+    /// The sparse index configuration: `GET config.json`.
     Config,
-    /// La linea de indice de un crate: el camino determinista de sparse.
+    /// A crate's index line: the deterministic sparse path.
     Index {
-        /// El nombre ya normalizado del crate.
+        /// The already normalized crate name.
         name: String,
     },
-    /// Los bytes de una version: `GET api/v1/crates/{name}/{version}/download`.
+    /// The bytes of a version: `GET api/v1/crates/{name}/{version}/download`.
     Download {
-        /// El nombre del crate tal y como lo pidio el cliente.
+        /// The crate name exactly as the client requested it.
         name: String,
-        /// La version pedida.
+        /// The requested version.
         version: String,
     },
     /// `PUT api/v1/crates/new`.
@@ -59,7 +59,7 @@ pub enum Route {
 }
 
 impl Route {
-    /// La ruta del protocolo tras `{repositorio}/`, sin decodificar.
+    /// The protocol path after `{repositorio}/`, not decoded.
     pub fn parse(rest: &str) -> Result<Route, CargoError> {
         let Some(segments) = split(rest) else {
             return Err(CargoError::InvalidPath("the path escapes the repository"));
@@ -92,7 +92,7 @@ impl Route {
             && lower.starts_with(segments[0])
             && lower[2..].starts_with(segments[1])
         {
-            // El camino de los nombres de cuatro o mas: `{ab}/{cd}/{nombre}`.
+            // The path for names of four or more characters: `{ab}/{cd}/{nombre}`.
             return Ok(Route::Index {
                 name: segments[2].to_string(),
             });
@@ -132,8 +132,8 @@ impl Route {
         ))
     }
 
-    /// El camino sparse determinista del indice para un nombre, relativo al
-    /// repositorio. Con esto el servidor y el cliente calculan lo mismo.
+    /// The deterministic sparse index path for a name, relative to the
+    /// repository. With this the server and the client compute the same thing.
     pub fn index_path(name: &str) -> Result<String, CargoError> {
         let name = normalize(name)?;
         Ok(match name.len() {
@@ -144,7 +144,7 @@ impl Route {
         })
     }
 
-    /// El nombre del crate que la ruta busca, si es que busca uno.
+    /// The crate name the path is looking for, if it looks for one.
     pub fn crate_name(&self) -> Option<&str> {
         match self {
             Route::Index { name } | Route::Download { name, .. } => Some(name),
@@ -152,12 +152,12 @@ impl Route {
         }
     }
 
-    /// La ruta del catalogo donde vive el .crate de esta version.
+    /// The catalog path where the .crate of this version lives.
     pub fn crate_asset_path(name: &str, version: &str) -> String {
         format!("{name}/-/index/{version}.json")
     }
 
-    /// El prefijo bajo el que viven las versiones publicadas de un crate.
+    /// The prefix under which a crate's published versions live.
     pub fn version_prefix(name: &str) -> String {
         format!("{name}/-/index/")
     }
@@ -175,8 +175,8 @@ fn split(rest: &str) -> Option<Vec<&str>> {
     Some(segments)
 }
 
-/// Un nombre de crate valido: alfanumerico ASCII, guiones, maximo 64.
-/// Los guiones bajos solo valen en la forma `__`, que normaliza a guion.
+/// A valid crate name: ASCII alphanumeric, hyphens, max 64.
+/// Underscores are only valid in the `__` form, which normalizes to a hyphen.
 fn is_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -187,7 +187,7 @@ fn is_name(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// Los unicos guiones bajos que el protocolo admite son los dos de `__`.
+/// The only underscores the protocol accepts are the two of `__`.
 fn underscores_ok(name: &str) -> bool {
     match name.find('_') {
         None => true,
@@ -211,8 +211,8 @@ fn is_long(name: &str) -> bool {
     is_name(name) && underscores_ok(name) && name.len() >= 4
 }
 
-/// El nombre normalizado con el que el indice y el almacen conocen al crate:
-/// minusculas, y los guiones bajos dobles pasan a guiones simples.
+/// The normalized name by which the index and the store know the crate:
+/// lowercase, and double underscores become single hyphens.
 pub fn normalize(name: &str) -> Result<String, CargoError> {
     if !is_name(name) || !underscores_ok(name) {
         return Err(CargoError::InvalidName(
@@ -222,8 +222,8 @@ pub fn normalize(name: &str) -> Result<String, CargoError> {
     Ok(name.to_lowercase().replace("__", "-"))
 }
 
-/// El camino que pide el cliente resuelto a nombre: los caminos de indice
-/// siempre traen su prefijo determinista, menos `config.json`.
+/// The path the client requests resolved to a name: index paths
+/// always carry their deterministic prefix, except `config.json`.
 fn index_name(_last: &str) -> Result<String, CargoError> {
     Err(CargoError::InvalidPath(
         "index paths arrive with their deterministic prefix",
@@ -234,12 +234,12 @@ fn first_two(name: &str) -> String {
     name.chars().take(2).collect()
 }
 
-/// Lo que `cargo publish` manda en el cuerpo de `PUT api/v1/crates/new`:
-/// cabecera JSON y fichero .crate, cada uno preceded by su longitud u32 LE.
+/// What `cargo publish` sends in the body of `PUT api/v1/crates/new`:
+/// JSON header and .crate file, each preceded by its u32 LE length.
 pub struct NewCrate<'a> {
-    /// La cabecera tal y como la construyo el cliente desde su Cargo.toml.
+    /// The header as the client built it from its Cargo.toml.
     pub header: Map<String, Value>,
-    /// Los bytes exactos del .crate: su sha256 es el cksum del indice.
+    /// The exact bytes of the .crate: its sha256 is the index's cksum.
     pub file: &'a [u8],
 }
 
@@ -253,20 +253,20 @@ impl std::fmt::Debug for NewCrate<'_> {
     }
 }
 
-/// El documento inmutable que deja una publicacion, version a version.
+/// The immutable document a publication leaves behind, version by version.
 #[derive(Debug, Clone)]
 pub struct VersionDocument {
-    /// El nombre normalizado del crate.
+    /// The normalized crate name.
     pub name: String,
-    /// La version publicada.
+    /// The published version.
     pub version: String,
-    /// El JSON interno del indice, con la cabecera y el cksum.
+    /// The index's internal JSON, with the header and the cksum.
     pub line: Value,
-    /// Los bytes del .crate, para el download.
+    /// The .crate bytes, for the download.
     pub file: Vec<u8>,
 }
 
-/// Parte el cuerpo de una publicacion: cabecera JSON y fichero .crate.
+/// Splits a publication body: JSON header and .crate file.
 pub fn parse_publish(body: &[u8]) -> Result<NewCrate<'_>, CargoError> {
     let (header_bytes, rest) = take_u32_le(body)?;
     let header: Value = serde_json::from_slice(header_bytes)
@@ -300,15 +300,15 @@ fn take_u32_le(bytes: &[u8]) -> Result<(&[u8], &[u8]), CargoError> {
         .ok_or(CargoError::InvalidPayload("the payload is truncated"))
 }
 
-/// El sha256 en hex minusculas: el mismo campo `cksum` que el cliente
-/// calcula antes de publicar y verifica al descargar.
+/// The sha256 in lowercase hex: the same `cksum` field the client
+/// computes before publishing and verifies on download.
 pub fn cksum(bytes: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(bytes).value
 }
 
-/// La linea de indice de una version: la cabecera que mando el cliente, mas
-/// el cksum que el servicio calcula y el `yanked` que nadie puede cambiar
-/// sin reescribir la version.
+/// The index line of a version: the header the client sent, plus
+/// the cksum the service computes and the `yanked` that nobody can change
+/// without rewriting the version.
 pub fn index_line(header: &Map<String, Value>, cksum: &str) -> Result<Value, CargoError> {
     let name = header
         .get("name")
@@ -343,19 +343,19 @@ pub fn index_line(header: &Map<String, Value>, cksum: &str) -> Result<Value, Car
     Ok(Value::Object(line))
 }
 
-/// El documento `config.json` del indice sparse: donde el cliente va a
-/// buscar la descarga y la API.
+/// The `config.json` document of the sparse index: where the client will
+/// look for the download and the API.
 pub fn config_json(base: &str) -> Value {
     json!({
         "dl": format!("{base}/api/v1/crates/{{crate}}/{{version}}/download"),
         "api": base,
-        // Sin esto cargo no manda el token en las descargas y el registro
-        // privado responde 401: el protocolo lo exige para registros con auth.
+        // Without this cargo does not send the token on downloads and the private
+        // registry answers 401: the protocol requires it for registries with auth.
         "auth-required": true,
     })
 }
 
-/// Una version es la que cargo publica: semver estricto.
+/// A version is what cargo publishes: strict semver.
 pub fn valid_version(version: &str) -> bool {
     semver::Version::parse(version).is_ok()
 }

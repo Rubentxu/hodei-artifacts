@@ -1,11 +1,11 @@
-//! La gramatica y los documentos del formato Debian (APT), puros y sin
-//! efectos: aqui se abre un `.deb`, se lee su `control`, se pintan los
-//! indices `Packages` y `Release`. Nada de esto toca el almacen ni la
-//! red: el handler decide cuando esos bytes salen o entran.
+//! The grammar and documents of the Debian (APT) format, pure and free of
+//! effects: this is where a `.deb` is opened, its `control` is read, and the
+//! `Packages` and `Release` indexes are rendered. None of this touches the store or the
+//! network: the handler decides when those bytes go out or come in.
 //!
-//! El contrato es el de `dpkg-scanpackages` y `apt-ftparchive`, que es
-//! lo que `apt-get` espera leer. Un indice mal formado no es un matiz:
-//! apt lo descarta y el cliente real deja de ver el paquete.
+//! The contract is that of `dpkg-scanpackages` and `apt-ftparchive`, which is
+//! what `apt-get` expects to read. A malformed index is not a nuance:
+//! apt discards it and the real client stops seeing the package.
 
 use crate::model::RepositoryConfig;
 use crate::proxy::UpstreamConfigError;
@@ -15,21 +15,21 @@ use std::collections::BTreeMap;
 use std::io::Read as _;
 use thiserror::Error;
 
-/// Los fallos del formato: todo lo que huea a archive roto o a control
-/// inservible, dicho con nombre y razon.
+/// The format failures: everything that smells of a broken archive or an unusable
+/// control, stated with a name and a reason.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AptError {
-    /// El contenedor `ar` no es un `.deb`: magicos que faltan, un
-    /// tamano que no es numero o un miembro que se sale del archive.
+    /// The `ar` container is not a `.deb`: missing magic bytes, a
+    /// size that is not a number or a member that goes beyond the archive.
     #[error("the archive is not a valid deb container: {0}")]
     BadArchive(&'static str),
-    /// No hay miembro `control` en el archive: sin el no hay paquete.
+    /// There is no `control` member in the archive: without it there is no package.
     #[error("the control member is missing or unreadable")]
     NoControl,
-    /// Falta un campo obligatorio del `control`: dpkg no lo admite.
+    /// A mandatory `control` field is missing: dpkg does not accept it.
     #[error("the control file lacks the required field {0}")]
     MissingField(&'static str),
-    /// El identificador no cabe en una ruta segura del pool.
+    /// The identifier does not fit in a safe pool path.
     #[error("the package identity is not filesystem safe: {0}")]
     BadIdentity(String),
     /// Upstream Release or Packages metadata is malformed or expired.
@@ -37,39 +37,39 @@ pub enum AptError {
     InvalidMetadata(String),
 }
 
-/// Lo que un `.deb` declara de si mismo: los campos del `control` que
-/// APT necesita para elegir y para instalar.
+/// What a `.deb` declares about itself: the `control` fields that
+/// APT needs to choose and to install.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DebControl {
-    /// Nombre del paquete, minusculo por convencion de dpkg.
+    /// Package name, lowercase by dpkg convention.
     pub package: String,
-    /// Version debian completa, con epoch y `+dfsg` si los hay.
+    /// Full Debian version, with epoch and `+dfsg` if present.
     pub version: String,
-    /// Arquitectura del binario: `amd64`, `arm64`, `all`...
+    /// Binary architecture: `amd64`, `arm64`, `all`...
     pub architecture: String,
-    /// Clausula `Depends` tal cual la entiende dpkg.
+    /// `Depends` clause exactly as dpkg understands it.
     pub depends: Option<String>,
-    /// Responsable declarado del paquete.
+    /// Declared maintainer of the package.
     pub maintainer: Option<String>,
-    /// Descripcion completa: resumen en la primera linea y parrafos
-    /// de detalle a continuacion, con sus espacios iniciales.
+    /// Full description: summary on the first line and detail paragraphs
+    /// following, with their leading spaces.
     pub description: String,
-    /// Seccion del archive.
+    /// Archive section.
     pub section: Option<String>,
-    /// Prioridad del paquete.
+    /// Package priority.
     pub priority: Option<String>,
 }
 
-/// El miembro de un contenedor `ar`: nombre y bytes, nada mas.
+/// A member of an `ar` container: name and bytes, nothing more.
 struct ArMember {
     name: String,
     data: Vec<u8>,
 }
 
-/// Abre un contenedor `ar` (el envoltorio de todo `.deb`) y devuelve
-/// sus miembros por nombre. El formato son 8 bytes de magicos y luego
-/// cabeceras de 60: nombre(16) mtime(12) uid(6) gid(6) modo(8)
-/// tamano(10) "`\n"(2), con el cuerpo padding a par.
+/// Opens an `ar` container (the wrapper of every `.deb`) and returns
+/// its members by name. The format is 8 bytes of magic and then
+/// 60-byte headers: name(16) mtime(12) uid(6) gid(6) mode(8)
+/// size(10) "`\n"(2), with the body padded to even length.
 fn ar_members(bytes: &[u8]) -> Result<Vec<ArMember>, AptError> {
     if bytes.len() < 8 || &bytes[..8] != b"!<arch>\n" {
         return Err(AptError::BadArchive("missing the !<arch> magic"));
@@ -105,9 +105,9 @@ fn ar_members(bytes: &[u8]) -> Result<Vec<ArMember>, AptError> {
     Ok(members)
 }
 
-/// Deshace `gzip`: el `GzDecoder` de flate2 lee el formato completo
-/// (magicos, cabecera con los campos opcionales de GNU, cuerpo y CRC),
-/// asi que aqui solo se comprueba que el miembro sea gzip de verdad.
+/// Undoes `gzip`: flate2's `GzDecoder` reads the full format
+/// (magic, header with GNU's optional fields, body and CRC),
+/// so here it is only checked that the member really is gzip.
 fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, AptError> {
     if bytes.len() < 2 || bytes[0] != 0x1f || bytes[1] != 0x8b {
         return Err(AptError::BadArchive("the data member is not gzip"));
@@ -119,8 +119,8 @@ fn gunzip(bytes: &[u8]) -> Result<Vec<u8>, AptError> {
     Ok(out)
 }
 
-/// Recorre un tar ustar de 512 en 512 y devuelve el contenido del
-/// primer miembro cuyo nombre coincida exactamente.
+/// Walks a ustar tar in 512-byte steps and returns the content of the
+/// first member whose name matches exactly.
 fn tar_member(tar: &[u8], wanted: &str) -> Option<Vec<u8>> {
     let mut cursor = 0usize;
     while cursor + 512 <= tar.len() {
@@ -131,7 +131,7 @@ fn tar_member(tar: &[u8], wanted: &str) -> Option<Vec<u8>> {
         let name = String::from_utf8_lossy(&header[0..100])
             .trim_end_matches('\0')
             .to_string();
-        // El tamanho esta en octal ASCII, 12 bytes con campo de sobra.
+        // The size is in ASCII octal, 12 bytes with spare field.
         let size_field = &header[124..136];
         let size_str = String::from_utf8_lossy(size_field)
             .trim_end_matches('\0')
@@ -150,9 +150,9 @@ fn tar_member(tar: &[u8], wanted: &str) -> Option<Vec<u8>> {
     None
 }
 
-/// Lee el `control` de un `.deb`: la secuencia de miembros `ar`, el
-/// `control.tar` (según lo comprima dpkg: plano, gzip o xz) y los
-/// campos de cabecera.
+/// Reads the `control` of a `.deb`: the sequence of `ar` members, the
+/// `control.tar` (depending on how dpkg compresses it: plain, gzip or xz) and the
+/// header fields.
 pub fn read_deb_control(deb: &[u8]) -> Result<DebControl, AptError> {
     let members = ar_members(deb)?;
     let data_member = members
@@ -176,9 +176,9 @@ pub fn read_deb_control(deb: &[u8]) -> Result<DebControl, AptError> {
     parse_control(&String::from_utf8_lossy(&raw))
 }
 
-/// Analiza el texto de un `control`: campos simples y la descripción
-/// multilínea. Las líneas que empiezan en blanco o `.` Continúan el
-/// campo anterior, que es como dpkg las junta.
+/// Parses the text of a `control`: simple fields and the multiline
+/// description. Lines that start with a blank or `.` continue the
+/// previous field, which is how dpkg joins them.
 fn parse_control(text: &str) -> Result<DebControl, AptError> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut last = String::new();
@@ -188,8 +188,8 @@ fn parse_control(text: &str) -> Result<DebControl, AptError> {
         }
         if line.starts_with(' ') || line.starts_with('\t') || line == "." {
             let entry = fields.get_mut(&last).ok_or(AptError::NoControl)?;
-            // La linea de continuacion se conserva tal cual: el espacio
-            // inicial es parte del parrafo, no escape de formato.
+            // The continuation line is kept as is: the leading space
+            // is part of the paragraph, not a formatting escape.
             entry.push('\n');
             entry.push_str(line);
         } else if let Some((key, value)) = line.split_once(':') {
@@ -218,8 +218,8 @@ fn parse_control(text: &str) -> Result<DebControl, AptError> {
     })
 }
 
-/// Como dpkg comprime el `control.tar` de un `.deb` de prueba: sin
-/// comprimir, gzip o el xz que trae por defecto desde hace décadas.
+/// How dpkg compresses the `control.tar` of a test `.deb`: uncompressed,
+/// gzip or the xz it has used by default for decades.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ControlCompression {
@@ -228,11 +228,11 @@ pub(crate) enum ControlCompression {
     Xz,
 }
 
-/// Construye un `.deb` de prueba: un contenedor `ar` con un
-/// `debian-binary`, un `control.tar` con el control dado y el
-/// comprimido pedidos, y un `data.tar.gz` vacio. Solo para pruebas;
-/// no es un paquete instalable, pero apt y nuestro lector lo parsean
-/// igual.
+/// Builds a test `.deb`: an `ar` container with a
+/// `debian-binary`, a `control.tar` with the given control and the
+/// requested compression, and an empty `data.tar.gz`. For tests only;
+/// it is not an installable package, but apt and our reader parse it
+/// all the same.
 #[cfg(test)]
 pub(crate) fn build_test_deb(control_text: &str) -> Vec<u8> {
     build_test_deb_compressed(control_text, ControlCompression::Plain)
@@ -246,8 +246,8 @@ pub(crate) fn build_test_deb_compressed(
     fn ar_header(name: &str, size: usize) -> Vec<u8> {
         let mut header = format!("{name:<16}0           0     0     644      {size:<10}`\n");
         if header.len() != 60 {
-            // Las cabeceras `ar` miden 60 exactos; el nombre largo se
-            // recorta porque en las pruebas los nombres son cortos.
+            // The `ar` headers are exactly 60 bytes; the long name is
+            // truncated because in the tests the names are short.
             header.truncate(60);
         }
         header.into_bytes()
@@ -257,7 +257,7 @@ pub(crate) fn build_test_deb_compressed(
         block[0..name.len()].copy_from_slice(name.as_bytes());
         let size = format!("{:07o}\0", data.len());
         block[124..132].copy_from_slice(size.as_bytes());
-        block[156] = b'0'; // tipo fichero regular
+        block[156] = b'0'; // regular file type
         block.extend_from_slice(data);
         let pad = (512 - data.len() % 512) % 512;
         block.extend(std::iter::repeat_n(0, pad));
@@ -265,7 +265,7 @@ pub(crate) fn build_test_deb_compressed(
     }
 
     let mut control_tar = tar_block("./control", control_text.as_bytes());
-    control_tar.extend(vec![0u8; 1024]); // dos bloques de cero de cierre
+    control_tar.extend(vec![0u8; 1024]); // two zero blocks as terminator
     let mut data_tar = vec![0u8; 1024];
     {
         use flate2::Compression;
@@ -310,11 +310,11 @@ pub(crate) fn build_test_deb_compressed(
     deb
 }
 
-/// Pinta el registro `Packages` de un binario: los campos del control
-/// en el orden que respeta dpkg, mas los de indice que solo conoce el
-/// repositorio (tamanho, suma, path). Es el formato de `apt-ftparchive
-/// packages`, clave para que el gestor encuentre el paquete y lo
-/// descargue.
+/// Renders the `Packages` record of a binary: the control fields
+/// in the order dpkg respects, plus the index fields that only the
+/// repository knows (size, sum, path). It is the format of `apt-ftparchive
+/// packages`, key for the manager to find the package and
+/// download it.
 pub fn packages_record(control: &DebControl, pool_path: &str, size: u64, sha256: &str) -> String {
     fn push_opt(record: &mut String, name: &str, value: Option<&str>) {
         if let Some(value) = value {
@@ -337,18 +337,18 @@ pub fn packages_record(control: &DebControl, pool_path: &str, size: u64, sha256:
     record.push_str(&format!("Filename: {pool_path}\n"));
     record.push_str(&format!("Size: {size}\n"));
     record.push_str(&format!("SHA256: {sha256}\n"));
-    // El campo de cabecera del bloque descriptivo; multilineas aparte.
+    // The header field of the descriptive block; multilines handled separately.
     record.push_str(&format!("Description: {}\n", control.description));
     record.push('\n');
     record
 }
 
-/// La cabecera `Release` del dist: el origen, la suite y la codename
-/// (igual que el dist pedido: apt avisa si no coinciden), la componente
-/// y los ficheros de indice con su suma y su tamanho, tal y como los
-/// verifica `apt`. Solo SHA256: es lo que `apt-ftparchive` emite por
-/// defecto hoy y lo unico que apt exige. Los indices ya estan
-/// renderizados; aqui solo se pintan las filas.
+/// The `Release` header of the dist: the origin, the suite and the codename
+/// (same as the requested dist: apt warns if they do not match), the component
+/// and the index files with their sum and size, exactly as
+/// `apt` verifies them. SHA256 only: it is what `apt-ftparchive` emits by
+/// default today and the only thing apt requires. The indexes are already
+/// rendered; here only the rows are drawn.
 pub fn release_header(dist: &str, date: &str, indexes: &[(&str, &[u8])]) -> String {
     release_header_with_options(dist, date, indexes, false)
 }
@@ -382,21 +382,21 @@ fn release_header_with_options(
     out
 }
 
-/// Las arquitecturas que se indexan por defecto: el bucle de APT y su
-/// empaquetado, que es lo que corre en esta plataforma.
+/// The architectures indexed by default: the APT loop and its
+/// packaging, which is what runs on this platform.
 pub const ARCHITECTURES: &[&str] = &["amd64", "arm64"];
 
-/// La fila de un indice dentro de `Release`: suma, tamanho y nombre,
-/// con la sangria de un espacio que el formato exige.
+/// The row of an index inside `Release`: sum, size and name,
+/// with the one-space indentation that the format requires.
 fn line_for(name: &str, bytes: &[u8]) -> String {
     let sum = format!("{:x}", sha2::Sha256::digest(bytes));
     format!("{sum} {} {name}", bytes.len())
 }
 
-/// La ruta del pool donde vive un binario: es la que se pinta en
-/// `Filename:` y la que apt recorrera para descargarlo. Se rechaza
-/// cualquier identificador que pueda escapar de la raiz del
-/// repositorio o que no sea transportable por HTTP.
+/// The pool path where a binary lives: it is the one rendered in
+/// `Filename:` and the one apt will walk to download it. Any
+/// identifier that could escape the root of the
+/// repository or that is not transportable over HTTP is rejected.
 pub fn pool_path_for(package: &str, version: &str, architecture: &str) -> Result<String, AptError> {
     let candidate = format!("{package}_{version}_{architecture}.deb");
     let safe = candidate.bytes().all(|byte| {
@@ -408,9 +408,9 @@ pub fn pool_path_for(package: &str, version: &str, architecture: &str) -> Result
     Ok(format!("pool/main/{package}/{candidate}"))
 }
 
-/// El sufijo con el que un binario del pool guarda su registro de
-/// indice: los bytes del `.deb` y su ficha `Packages` son dos assets
-/// inmutables, y la ficha es lo que se lee para ensamblar el indice.
+/// The suffix with which a pool binary stores its index
+/// record: the bytes of the `.deb` and its `Packages` record are two immutable
+/// assets, and the record is what is read to assemble the index.
 pub fn record_path_for(pool_path: &str) -> String {
     format!("{pool_path}.record")
 }
@@ -446,21 +446,21 @@ impl PackagesCompression {
     }
 }
 
-/// Las rutas que la superficie apt sabe servir, ya interpretadas.
+/// The paths the apt surface knows how to serve, already interpreted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// El binario en si, en `pool/.../{archivo}.deb`.
+    /// The binary itself, at `pool/.../{archivo}.deb`.
     Pool {
-        /// La ruta del binario dentro del repositorio.
+        /// The path of the binary within the repository.
         path: String,
     },
-    /// El indice de una arquitectura de una distribucion.
+    /// The index of an architecture of a distribution.
     Packages {
-        /// La distribucion: `stable`, `bookworm`, `trixie`...
+        /// The distribution: `stable`, `bookworm`, `trixie`...
         dist: String,
         /// The component (`main`, `contrib`, ...), or `None` for flat/monolithic layout.
         component: Option<String>,
-        /// La arquitectura del indice pedido.
+        /// The architecture of the requested index.
         architecture: String,
         /// Index compression (`Packages`, `Packages.gz`, `Packages.xz`).
         compression: PackagesCompression,
@@ -483,17 +483,17 @@ pub enum Route {
         /// Distribution name.
         dist: String,
     },
-    /// La cabecera firmada de una distribucion.
+    /// The signed header of a distribution.
     Release {
-        /// La distribucion de la cabecera.
+        /// The distribution of the header.
         dist: String,
     },
-    /// La firma separada de esa cabecera: `Release.gpg`.
+    /// The detached signature of that header: `Release.gpg`.
     ReleaseSignature {
-        /// La distribucion firmada.
+        /// The signed distribution.
         dist: String,
     },
-    /// La clave publica del hub en armored, el `signed-by` de apt.
+    /// The hub's public key in armored form, the `signed-by` of apt.
     Key,
 }
 
@@ -588,8 +588,8 @@ impl Route {
         }
     }
 
-    /// Interpreta el resto de `/apt/{repositorio}/...`, crudo: apt no
-    /// escapa nombres, y un `%` aqui es un nombre imposible.
+    /// Interprets the rest of `/apt/{repositorio}/...`, raw: apt does not
+    /// escape names, and a `%` here is an impossible name.
     pub fn parse(rest: &str) -> Result<Route, AptError> {
         if rest == "key.asc" {
             return Ok(Route::Key);
@@ -609,8 +609,8 @@ impl Route {
                 path: format!("pool/{path}"),
             });
         }
-        // Todo lo demas cuelga de dists/{dist}/. El nombre de la
-        // distribucion es un identificador: sin barras ni puntos.
+        // Everything else hangs from dists/{dist}/. The name of the
+        // distribution is an identifier: no slashes or dots.
         let dist_part = rest
             .strip_prefix("dists/")
             .ok_or_else(|| AptError::BadIdentity(rest.to_string()))?;
@@ -664,8 +664,8 @@ impl Route {
         }
     }
 
-    /// La fecha `Date:` de `Release` en el formato que apt parsea con
-    /// strptime: RFC 1123 con la zona dicha en letras, no en numero.
+    /// The `Date:` of `Release` in the format that apt parses with
+    /// strptime: RFC 1123 with the zone spelled in letters, not in numbers.
     pub fn release_date(moment: &chrono::DateTime<chrono::Utc>) -> String {
         moment.format("%a, %d %b %Y %H:%M:%S UTC").to_string()
     }
@@ -1112,9 +1112,9 @@ mod tests {
         build_test_deb(FULL_CONTROL)
     }
 
-    /// El dpkg real comprime el `control.tar` en gzip o en xz: si el
-    /// lector no abre esos formatos, un `.deb` construido por la distro
-    /// no se puede publicar.
+    /// The real dpkg compresses `control.tar` in gzip or xz: if the
+    /// reader does not open those formats, a `.deb` built by the distro
+    /// cannot be published.
     #[test]
     fn a_compressed_control_tar_still_yields_its_control() {
         for compression in [ControlCompression::Gz, ControlCompression::Xz] {
@@ -1134,7 +1134,7 @@ mod tests {
         assert_eq!(control.architecture, "amd64");
         assert_eq!(control.depends.as_deref(), Some("libc6 (>= 2.34)"));
         assert_eq!(control.section.as_deref(), Some("utils"));
-        // La descripcion es el campo completo con sus continuaciones.
+        // The description is the complete field with its continuations.
         assert!(control.description.starts_with("A tiny hello package\n"));
         assert!(
             control
@@ -1176,7 +1176,7 @@ mod tests {
         assert!(record.contains("Depends: libc6 (>= 2.34)\n"));
         assert!(record.contains("Filename: pool/main/h/hello.deb\nSize: 4096\n"));
         assert!(record.ends_with('\n'));
-        // El bloque termina en la linea en blanco: apt separa registros.
+        // The block ends at the blank line: apt separates records.
         assert!(record.ends_with("\n\n"));
     }
 
@@ -1188,8 +1188,8 @@ mod tests {
             "Tue, 17 Nov 2026 18:00:00 UTC",
             &[("main/binary-amd64/Packages", index)],
         );
-        // Suite y Codename tienen que decir el dist pedido: si no,
-        // apt suelta un `Conflicting distribution` en cada update.
+        // Suite and Codename must state the requested dist: otherwise,
+        // apt emits a `Conflicting distribution` on every update.
         assert!(release.starts_with(
             "Origin: Hodei\nSuite: stable\nCodename: stable\nDate: Tue, 17 Nov 2026 18:00:00 UTC\n"
         ));
@@ -1210,7 +1210,7 @@ mod tests {
         assert!(pool_path_for("..x", "1.0", "amd64").is_err());
         assert!(pool_path_for("he/llo", "1.0", "amd64").is_err());
         assert!(pool_path_for("", "1.0", "amd64").is_err());
-        // Las versiones debianas legitimas con `+` y `~` pasan.
+        // Legitimate Debian versions with `+` and `~` pass.
         assert!(pool_path_for("pkg", "1:2.3+dfsg~b1", "arm64").is_ok());
     }
 
@@ -1225,7 +1225,7 @@ mod tests {
                 compression: PackagesCompression::Plain,
             }
         );
-        // La forma que apt siempre usa: con la componente delante.
+        // The form that apt always uses: with the component first.
         assert_eq!(
             Route::parse("dists/stable/main/binary-arm64/Packages").unwrap(),
             Route::Packages {

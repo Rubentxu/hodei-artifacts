@@ -1,120 +1,120 @@
-//! La parte pura del formato PyPI: los nombres normalizados (PEP 503), las
-//! distribuciones, el documento de un proyecto y las dos formas de
-//! publicarlo (el HTML de PEP 503 y el JSON de PEP 691).
+//! The pure part of the PyPI format: normalized names (PEP 503),
+//! distributions, a project's document and the two ways of
+//! publishing it (the PEP 503 HTML and the PEP 691 JSON).
 //!
-//! Nada aqui toca disco, red ni catalogo: son funciones sobre cadenas y
-//! JSON, y por eso se prueban sin infraestructura.
+//! Nothing here touches disk, network or catalog: these are functions over strings and
+//! JSON, and that is why they are tested without infrastructure.
 //!
-//! # El documento de un proyecto
+//! # A project's document
 //!
-//! El indice de un proyecto es lo que el cliente ve: los ficheros que hay,
-//! con su hash, su tamano, la version de Python que necesitan y si estan
-//! marcados como *yanked*. Es un **documento**, no una vista del catalogo:
-//! se escribe cuando se publica y se vuelve a escribir cuando una version
-//! se retira. Los bytes de las distribuciones viven aparte, en su propia
-//! ruta, y no se tocan al reescribir el documento.
+//! A project's index is what the client sees: the files that exist,
+//! with their hash, their size, the Python version they need and whether they are
+//! marked as *yanked*. It is a **document**, not a view of the catalog:
+//! it is written when published and rewritten when a version
+//! is withdrawn. The distribution bytes live separately, at their own
+//! path, and are not touched when the document is rewritten.
 //!
-//! # Los dos formatos
+//! # The two formats
 //!
-//! - **HTML** (PEP 503): una pagina con un enlace por fichero. El hash va
-//!   en el fragmento (`#sha256=...`) y la version de Python en
+//! - **HTML** (PEP 503): a page with one link per file. The hash goes
+//!   in the fragment (`#sha256=...`) and the Python version in
 //!   `data-requires-python`.
-//! - **JSON** (PEP 691): un documento con `meta`, `name` y `files`. El hash
-//!   va en `hashes` y la version de Python en `requires-python`.
+//! - **JSON** (PEP 691): a document with `meta`, `name` and `files`. The hash
+//!   goes in `hashes` and the Python version in `requires-python`.
 //!
-//! Los dos dicen lo mismo: un fichero que aparece en el HTML aparece en el
-//! JSON con el mismo hash y el mismo estado *yanked*. Lo que se negocia es
-//! la representacion, no el contenido.
+//! Both say the same thing: a file that appears in the HTML appears in the
+//! JSON with the same hash and the same *yanked* state. What is negotiated is
+//! the representation, not the content.
 //!
-//! # El HTML es nuestro, no del upstream
+//! # The HTML is ours, not the upstream's
 //!
-//! Un indice que viene de otro se vuelve a pintar aqui: el HTML que sale
-//! de este servicio lo escribe esta pagina, con los valores escapados. Un
-//! upstream puede publicar lo que quiera en su HTML; lo que el cliente
-//! recibe de aqui no lo puede inyectar.
+//! An index that comes from another one is repainted here: the HTML that comes out
+//! of this service is written by this page, with the values escaped. An
+//! upstream may publish whatever it wants in its HTML; what the client
+//! receives from here it cannot inject.
 
 use serde_json::{Map, Value};
 
-/// El sufijo de las coordenadas del documento de un proyecto.
+/// The suffix of a project document's coordinates.
 ///
-/// El `#` no puede aparecer en un nombre de proyecto, asi que las
-/// coordenadas del documento nunca chocan con las de una distribucion.
+/// The `#` cannot appear in a project name, so the
+/// document's coordinates never collide with those of a distribution.
 pub const PROJECT_COORDINATES_SUFFIX: &str = "#project";
 
-/// El tipo de contenido de la Simple API en JSON (PEP 691).
+/// The Simple API content type in JSON (PEP 691).
 pub const JSON_CONTENT_TYPE: &str = "application/vnd.pypi.simple.v1+json";
 
-/// El tipo de contenido de la Simple API en HTML (PEP 503).
+/// The Simple API content type in HTML (PEP 503).
 pub const HTML_CONTENT_TYPE: &str = "application/vnd.pypi.simple.v1+html";
 
-/// El tipo de contenido de la Simple API en JSON, en su version *latest*.
+/// The Simple API content type in JSON, in its *latest* version.
 ///
-/// PEP 691 lo define como la misma representacion que la version `1.0`,
-/// y un cliente puede pedirla en vez de la otra.
+/// PEP 691 defines it as the same representation as version `1.0`,
+/// and a client may request it instead of the other.
 pub const LATEST_JSON_CONTENT_TYPE: &str = "application/vnd.pypi.simple.latest+json";
 
-/// La version de la Simple API que se anuncia.
+/// The Simple API version that is advertised.
 pub const API_VERSION: &str = "1.0";
 
-/// La longitud maxima de un nombre de proyecto.
+/// The maximum length of a project name.
 pub const MAX_PROJECT_LEN: usize = 255;
 
-/// Por que un nombre, un fichero, una version o un documento no se admiten.
+/// Why a name, a file, a version or a document is not accepted.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PypiError {
-    /// El nombre del proyecto no cumple las reglas de PEP 503.
+    /// The project name does not meet the PEP 503 rules.
     #[error("the project name is not valid: {0}")]
     InvalidName(String),
-    /// El nombre del fichero no es el de una distribucion.
+    /// The file name is not that of a distribution.
     #[error("the file name is not a valid distribution: {0}")]
     InvalidFileName(String),
-    /// La version no es una version de PEP 440.
+    /// The version is not a PEP 440 version.
     #[error("the version is not valid: {0}")]
     InvalidVersion(String),
-    /// A la subida le falta un campo obligatorio.
+    /// The upload is missing a required field.
     #[error("the upload is missing the field {0}")]
     MissingField(&'static str),
-    /// A la subida le falta el fichero.
+    /// The upload is missing the file.
     #[error("the upload does not carry the distribution")]
     MissingFile,
-    /// Lo que declara la subida no coincide con el fichero.
+    /// What the upload declares does not match the file.
     #[error("the upload does not match the distribution: {0}")]
     Mismatch(String),
-    /// El hash declarado no es el de los bytes recibidos.
+    /// The declared hash is not that of the received bytes.
     #[error("the digest of the upload does not match its content")]
     DigestMismatch,
-    /// El documento no se entiende.
+    /// The document is not understood.
     #[error("the project document is not valid: {0}")]
     InvalidDocument(String),
-    /// El fichero ya esta en el proyecto.
+    /// The file is already in the project.
     #[error("the distribution is already published in this project")]
     FileExists,
-    /// El proyecto no tiene ese fichero.
+    /// The project does not have that file.
     #[error("the project does not have that distribution")]
     UnknownFile(String),
-    /// La ruta no es ninguna de las que habla el protocolo.
+    /// The path is none of those the protocol speaks.
     #[error("the path is not part of the PyPI surface: {0}")]
     InvalidPath(String),
 }
 
 impl PypiError {
-    /// El motivo, tal y como se le dice al cliente.
+    /// The reason, as it is told to the client.
     pub fn message(&self) -> String {
         self.to_string()
     }
 }
 
-/// Normaliza un nombre de proyecto (PEP 503).
+/// Normalizes a project name (PEP 503).
 ///
-/// Las mayusculas dejan de distinguir y cualquier racha de `-`, `_` o `.`
-/// es un solo `-`: `Flask`, `flask`, `flask_login` y `flask.login` son el
-/// mismo proyecto.
+/// Uppercase stops mattering and any run of `-`, `_` or `.`
+/// is a single `-`: `Flask`, `flask`, `flask_login` and `flask.login` are the
+/// same project.
 pub fn normalize(name: &str) -> String {
     let mut normalized = String::with_capacity(name.len());
     let mut separator = false;
     for character in name.chars() {
         if matches!(character, '-' | '_' | '.') {
-            // Una racha es un separador, y uno solo.
+            // A run is a separator, and a single one.
             if !separator {
                 normalized.push('-');
             }
@@ -127,7 +127,7 @@ pub fn normalize(name: &str) -> String {
     normalized
 }
 
-/// Un nombre de proyecto ya normalizado.
+/// An already normalized project name.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProjectName(String);
 
@@ -138,10 +138,10 @@ impl std::fmt::Display for ProjectName {
 }
 
 impl ProjectName {
-    /// Lee un nombre y lo normaliza.
+    /// Reads a name and normalizes it.
     ///
-    /// El nombre normalizado es el que se usa en la ruta del indice; el
-    /// cliente puede pedir el que quiera, porque todos son el mismo.
+    /// The normalized name is the one used in the index path; the
+    /// client may request whichever it wants, because they are all the same.
     pub fn parse(raw: &str) -> Result<Self, PypiError> {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -159,8 +159,8 @@ impl ProjectName {
             ));
         }
         let normalized = normalize(trimmed);
-        // El nombre de una distribucion empieza y acaba en alfanumerico:
-        // es lo que dice el nombre canonico de los metadatos.
+        // A distribution name starts and ends with an alphanumeric:
+        // that is what the canonical metadata name says.
         if normalized.is_empty()
             || !normalized
                 .chars()
@@ -178,44 +178,44 @@ impl ProjectName {
         Ok(Self(normalized))
     }
 
-    /// El nombre normalizado.
+    /// The normalized name.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// De que tipo de distribucion se trata.
+/// What kind of distribution it is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DistributionKind {
-    /// Un *wheel*: un directorio zip con la version de Python en el nombre.
+    /// A *wheel*: a zip directory with the Python version in the name.
     Wheel,
-    /// Un *sdist*: el tarball o zip con el codigo fuente.
+    /// An *sdist*: the tarball or zip with the source code.
     Sdist,
 }
 
-/// Una distribucion de un proyecto, con su nombre de fichero.
+/// A project's distribution, with its file name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Distribution {
-    /// El nombre del fichero, tal y como se publico.
+    /// The file name, as it was published.
     pub filename: String,
-    /// El proyecto al que pertenece.
+    /// The project it belongs to.
     pub project: ProjectName,
-    /// La version que declara.
+    /// The version it declares.
     pub version: String,
-    /// De que tipo es.
+    /// What kind it is.
     pub kind: DistributionKind,
 }
 
 impl Distribution {
-    /// Lee el nombre de un fichero de distribucion.
+    /// Reads the name of a distribution file.
     ///
-    /// El nombre de un wheel es
+    /// A wheel's name is
     /// `{distribucion}-{version}(-{build})?-{python}-{abi}-{plataforma}.whl`
-    /// y el de un sdist `{nombre}-{version}.tar.gz` (o `.zip`).
+    /// and an sdist's `{nombre}-{version}.tar.gz` (or `.zip`).
     ///
-    /// Las partes tienen que ser las que son: un nombre que el `pip` no
-    /// acepta no se anuncia, porque un enlace que el cliente no puede
-    /// instalar es un enlace roto.
+    /// The parts have to be what they are: a name `pip` does not
+    /// accept is not advertised, because a link the client cannot
+    /// install is a broken link.
     pub fn parse(filename: &str) -> Result<Self, PypiError> {
         if filename.is_empty() || filename.len() > 255 {
             return Err(PypiError::InvalidFileName(filename.to_string()));
@@ -224,8 +224,8 @@ impl Distribution {
             return Err(PypiError::InvalidFileName(filename.to_string()));
         }
         if let Some(stem) = filename.strip_suffix(".whl") {
-            // Ni una parte mas ni una menos: el nombre de un wheel tiene
-            // cinco partes, o seis con etiqueta de compilacion.
+            // Not one part more or less: a wheel name has
+            // five parts, or six with a build tag.
             let parts: Vec<&str> = stem.split('-').collect();
             let (version_text, tags) = match parts.len() {
                 5 => (&parts[1], &parts[2..]),
@@ -237,7 +237,7 @@ impl Distribution {
                 }
                 _ => return Err(PypiError::InvalidFileName(filename.to_string())),
             };
-            // Las tres etiquetas: version de Python, ABI y plataforma.
+            // The three tags: Python version, ABI and platform.
             if tags.len() != 3 || !tags.iter().all(|tag| valid_tag(tag)) {
                 return Err(PypiError::InvalidFileName(filename.to_string()));
             }
@@ -272,12 +272,12 @@ impl Distribution {
     }
 }
 
-/// La etiqueta de compilacion de un wheel: un numero y, detras, lo que
-/// sea.
+/// A wheel's build tag: a number followed by whatever
+/// comes after.
 ///
-/// PEP 427 dice que tiene que empezar por un digito, y el `pip` tambien:
-/// su regla es un digito y, detras, cualquier cosa que no sea un guion.
-/// Por eso `1.5` y `1abc` son etiquetas de compilacion validas.
+/// PEP 427 says it has to start with a digit, and `pip` does too:
+/// its rule is a digit followed by anything that is not a hyphen.
+/// That is why `1.5` and `1abc` are valid build tags.
 fn valid_build(build: &str) -> bool {
     let Some(first) = build.as_bytes().first() else {
         return false;
@@ -285,32 +285,32 @@ fn valid_build(build: &str) -> bool {
     first.is_ascii_digit() && !build.contains('-')
 }
 
-/// Una etiqueta de un wheel: version de Python, ABI o plataforma.
+/// A wheel tag: Python version, ABI or platform.
 ///
-/// Cada etiqueta es un conjunto de etiquetas sueltas separadas por un
-/// punto: `py2.py3`, `cp39.cp310`, `manylinux_2_17_x86_64`.
+/// Each tag is a set of single tags separated by a
+/// dot: `py2.py3`, `cp39.cp310`, `manylinux_2_17_x86_64`.
 ///
-/// Lo que se acepta es lo que acepta el `pip`: la etiqueta es una lista de
-/// etiquetas sueltas separadas por puntos, y el `pip` no mira los
-/// caracteres de cada una. Esta superficie tampoco los mira: lo que se
-/// anuncia tiene que poder instalarse, no parecerse a lo que se parece.
+/// What is accepted is what `pip` accepts: the tag is a list of
+/// single tags separated by dots, and `pip` does not look at the
+/// characters of each one. This surface does not look at them either: what is
+/// advertised has to be installable, not merely resemble what is.
 fn valid_tag(tag: &str) -> bool {
     !tag.is_empty() && !tag.contains('-')
 }
 
-/// La clase de una *pre release*.
+/// The kind of a *pre release*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum PreKind {
-    /// Una alfa.
+    /// An alpha.
     Alpha,
-    /// Una beta.
+    /// A beta.
     Beta,
-    /// Una *release candidate*.
+    /// A *release candidate*.
     Rc,
 }
 
 impl PreKind {
-    /// La letra con la que se escribe.
+    /// The letter it is written with.
     fn letter(self) -> &'static str {
         match self {
             Self::Alpha => "a",
@@ -320,49 +320,49 @@ impl PreKind {
     }
 }
 
-/// Una version de PEP 440.
+/// A PEP 440 version.
 ///
-/// La PEP define la gramatica y la forma **canonica**. Lo que se guarda y
-/// lo que se compara es la forma canonica, porque un cliente puede escribir
-/// la version como le plazca (`1.0-2`, `1.0.rc1`, `v1.0`) y el nombre del
-/// fichero la lleva canonica (`1.0.post2`, `1.0rc1`, `1.0`).
+/// The PEP defines the grammar and the **canonical** form. What is stored and
+/// what is compared is the canonical form, because a client may write
+/// the version however it likes (`1.0-2`, `1.0.rc1`, `v1.0`) and the file name
+/// carries it canonical (`1.0.post2`, `1.0rc1`, `1.0`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Version {
-    /// La epoca.
+    /// The epoch.
     epoch: u64,
-    /// La release: sus numeros.
+    /// The release: its numbers.
     release: Vec<u64>,
-    /// La pre release: su clase y su numero.
+    /// The pre release: its kind and number.
     pre: Option<(PreKind, u64)>,
-    /// El post release.
+    /// The post release.
     post: Option<u64>,
-    /// La *development release*.
+    /// The *development release*.
     dev: Option<u64>,
-    /// La version local, ya normalizada.
+    /// The local version, already normalized.
     local: Option<String>,
 }
 
 impl Version {
-    /// Lee una version de PEP 440.
+    /// Reads a PEP 440 version.
     ///
-    /// `None` si lo que hay no es una version de PEP 440.
+    /// `None` if what is there is not a PEP 440 version.
     pub fn parse(raw: &str) -> Option<Self> {
         let text = raw.trim();
         if text.is_empty() {
             return None;
         }
-        // El prefijo `v` es de la PEP: `v1.0` es `1.0`.
+        // The `v` prefix is from the PEP: `v1.0` is `1.0`.
         let text = text.strip_prefix(['v', 'V']).unwrap_or(text);
-        // La gramatica de la PEP no distingue mayusculas: `1.0RC1` es
-        // `1.0rc1`. Las minusculas son ademas la forma canonica, asi que
-        // se normaliza una vez y se trabaja siempre en minusculas.
+        // The PEP grammar is case-insensitive: `1.0RC1` is
+        // `1.0rc1`. Lowercase is also the canonical form, so
+        // it is normalized once and we always work in lowercase.
         let lowered = text.to_ascii_lowercase();
-        // La version local va al final y separated por un `+`.
+        // The local version goes last and is separated by a `+`.
         let (text, local) = match lowered.split_once('+') {
             Some((head, local)) => (head, Some(normalize_local(local)?)),
             None => (lowered.as_str(), None),
         };
-        // La epoca: `1!2.0`.
+        // The epoch: `1!2.0`.
         let (epoch, text) = match text.split_once('!') {
             Some((epoch, tail)) => {
                 if epoch.is_empty() || !epoch.bytes().all(|byte| byte.is_ascii_digit()) {
@@ -372,13 +372,13 @@ impl Version {
             }
             None => (0, text),
         };
-        // La release: `1`, `1.0`, `1.0.0`.
+        // The release: `1`, `1.0`, `1.0.0`.
         let end = text
             .find(|character: char| !character.is_ascii_digit() && character != '.')
             .unwrap_or(text.len());
         let (mut release_text, mut rest) = text.split_at(end);
-        // El punto que separa la release de su sufijo (`1.0.dev1`) no es
-        // parte de la release: es el separador del sufijo.
+        // The dot that separates the release from its suffix (`1.0.dev1`) is not
+        // part of the release: it is the suffix separator.
         if let Some(stripped) = release_text.strip_suffix('.') {
             release_text = stripped;
             rest = &text[end - 1..];
@@ -390,8 +390,8 @@ impl Version {
             }
             release.push(part.parse().ok()?);
         }
-        // Los sufijos van en este orden y cada uno una vez: una *pre
-        // release*, un *post release* y una *development release*.
+        // The suffixes go in this order and each one once: a *pre
+        // release*, a *post release* and a *development release*.
         let mut pre = None;
         let mut post = None;
         let mut dev = None;
@@ -423,10 +423,10 @@ impl Version {
         })
     }
 
-    /// La forma canonica de la version.
+    /// The canonical form of the version.
     ///
-    /// Es la que lleva el nombre del fichero: `1.0-2` es `1.0.post2`, y
-    /// `1.0+Ubuntu-1` es `1.0+ubuntu.1`.
+    /// It is the one the file name carries: `1.0-2` is `1.0.post2`, and
+    /// `1.0+Ubuntu-1` is `1.0+ubuntu.1`.
     pub fn canonical(&self) -> String {
         let mut version = String::new();
         if self.epoch != 0 {
@@ -456,11 +456,11 @@ impl Version {
 }
 
 impl Ord for Version {
-    /// El orden de PEP 440.
+    /// The PEP 440 ordering.
     ///
-    /// Una *pre release* va antes que su release, un *post release* va
-    /// despues, una *development release* va antes que las dos, y la
-    /// version local va despues de la misma version sin ella.
+    /// A *pre release* goes before its release, a *post release* goes
+    /// after, a *development release* goes before both, and the
+    /// local version goes after the same version without it.
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         self.epoch
@@ -479,7 +479,7 @@ impl Ord for Version {
             })
             .then_with(|| match (self.pre, other.pre) {
                 (None, None) => Ordering::Equal,
-                // Sin pre release es la mas nueva.
+                // Without a pre release it is the newest.
                 (None, Some(_)) => Ordering::Greater,
                 (Some(_), None) => Ordering::Less,
                 (Some(left), Some(right)) => left.cmp(&right),
@@ -487,14 +487,14 @@ impl Ord for Version {
             .then_with(|| self.post.cmp(&other.post))
             .then_with(|| match (self.dev, other.dev) {
                 (None, None) => Ordering::Equal,
-                // Sin development release es la mas nueva.
+                // Without a development release it is the newest.
                 (None, Some(_)) => Ordering::Greater,
                 (Some(_), None) => Ordering::Less,
                 (Some(left), Some(right)) => left.cmp(&right),
             })
             .then_with(|| match (&self.local, &other.local) {
                 (None, None) => Ordering::Equal,
-                // La version local es mas nueva que la misma sin ella.
+                // The local version is newer than the same one without it.
                 (None, Some(_)) => Ordering::Less,
                 (Some(_), None) => Ordering::Greater,
                 (Some(left), Some(right)) => left.cmp(right),
@@ -508,9 +508,9 @@ impl PartialOrd for Version {
     }
 }
 
-/// Las marcas de una *pre release*, de la mas larga a la mas corta.
+/// The markers of a *pre release*, from longest to shortest.
 ///
-/// El orden importa: `alpha` antes que `a`, y `preview` antes que `pre`.
+/// Order matters: `alpha` before `a`, and `preview` before `pre`.
 const PRE_MARKERS: &[(&str, PreKind)] = &[
     ("alpha", PreKind::Alpha),
     ("a", PreKind::Alpha),
@@ -522,35 +522,35 @@ const PRE_MARKERS: &[(&str, PreKind)] = &[
     ("rc", PreKind::Rc),
 ];
 
-/// Las marcas de un *post release*, de la mas larga a la mas corta.
+/// The markers of a *post release*, from longest to shortest.
 const POST_MARKERS: &[&str] = &["post", "rev", "r"];
 
-/// Las marcas de una *development release*.
+/// The markers of a *development release*.
 const DEV_MARKERS: &[&str] = &["dev"];
 
-/// La forma canonica de una version.
+/// The canonical form of a version.
 ///
-/// `None` si lo que hay no es una version de PEP 440.
+/// `None` if what is there is not a PEP 440 version.
 pub fn canonical_version(raw: &str) -> Option<String> {
     Version::parse(raw).map(|version| version.canonical())
 }
 
-/// Si una version es una version de PEP 440.
+/// Whether a version is a PEP 440 version.
 ///
-/// No es el comparador (de eso se encarga el cliente), es el filtro: un
-/// indice con una version que no existe no se sirve.
+/// It is not the comparator (the client takes care of that), it is the filter: an
+/// index with a version that does not exist is not served.
 pub fn valid_version(version: &str) -> bool {
     canonical_version(version).is_some()
 }
 
-/// La parte local de una version, normalizada.
+/// The local part of a version, normalized.
 ///
-/// Los segmentos se separan por `.`, `-` o `_` y se escriben en
-/// minusculas: `1.0+Ubuntu-1` es `1.0+ubuntu.1`.
+/// Segments are separated by `.`, `-` or `_` and are written in
+/// lowercase: `1.0+Ubuntu-1` is `1.0+ubuntu.1`.
 ///
-/// Un segmento numerico se escribe sin ceros a la izquierda: `01` es `1` y
-/// `00` es `0`. La PEP lo dice asi, y por eso `1.0+01` y `1.0+1` son la
-/// misma version y el mismo fichero.
+/// A numeric segment is written without leading zeros: `01` is `1` and
+/// `00` is `0`. The PEP says so, and that is why `1.0+01` and `1.0+1` are the
+/// same version and the same file.
 fn normalize_local(local: &str) -> Option<String> {
     if local.is_empty() {
         return None;
@@ -576,7 +576,7 @@ fn normalize_local(local: &str) -> Option<String> {
     Some(segments.join("."))
 }
 
-/// Un numero al principio del texto.
+/// A number at the start of the text.
 fn take_number(text: &str) -> Option<(u64, &str)> {
     let end = text
         .find(|character: char| !character.is_ascii_digit())
@@ -590,7 +590,7 @@ fn take_number(text: &str) -> Option<(u64, &str)> {
         .map(|number| (number, &text[end..]))
 }
 
-/// El separador de una marca: `.`, `-` o `_`.
+/// A marker's separator: `.`, `-` or `_`.
 fn take_separator(text: &str) -> &str {
     match text.as_bytes().first() {
         Some(b'.' | b'-' | b'_') => &text[1..],
@@ -598,10 +598,10 @@ fn take_separator(text: &str) -> &str {
     }
 }
 
-/// El numero que va detras de una marca, si lo hay.
+/// The number that follows a marker, if there is one.
 ///
-/// Sin separador, el numero tiene que empezar por un digito: `rc1` lleva
-/// un numero y `rcx` no lo lleva.
+/// Without a separator, the number has to start with a digit: `rc1` carries
+/// a number and `rcx` does not.
 fn take_optional_number(text: &str) -> (u64, &str) {
     let separated = take_separator(text);
     if separated.len() != text.len() {
@@ -616,11 +616,11 @@ fn take_optional_number(text: &str) -> (u64, &str) {
     }
 }
 
-/// Una marca con su numero opcional.
+/// A marker with its optional number.
 ///
-/// El separador va delante de la marca y es opcional; el numero va detras
-/// de un separador opcional. Si la marca no esta, no se consume nada: el
-/// separador es de la marca que venga.
+/// The separator goes before the marker and is optional; the number goes after
+/// an optional separator. If the marker is not there, nothing is consumed: the
+/// separator belongs to whichever marker comes.
 fn take_marker<'a>(
     text: &'a str,
     names: &[(&'static str, PreKind)],
@@ -644,11 +644,11 @@ fn take_marker<'a>(
     None
 }
 
-/// Una marca que no tiene clase: la del *post release* y la de la
+/// A marker that has no kind: that of the *post release* and that of the
 /// *development release*.
 ///
-/// Es la misma regla que [`take_marker`], sin la clase: el *post release*
-/// y la *development release* no se distinguen por su letra.
+/// It is the same rule as [`take_marker`], without the kind: the *post release*
+/// and the *development release* are not distinguished by their letter.
 fn take_named_marker<'a>(text: &'a str, names: &[&'static str]) -> Option<(u64, &'a str)> {
     let separated = take_separator(text);
     if separated.len() != text.len() {
@@ -669,43 +669,43 @@ fn take_named_marker<'a>(text: &'a str, names: &[&'static str]) -> Option<(u64, 
     None
 }
 
-/// El *post release* implicito: `1.0-1`.
+/// The implicit *post release*: `1.0-1`.
 ///
-/// El guion va pegado y el numero tambien: `1.0-1` es un post release y
-/// `1.0-r1` es otra cosa.
+/// The hyphen is attached and so is the number: `1.0-1` is a post release and
+/// `1.0-r1` is something else.
 fn take_implicit_post(text: &str) -> Option<(u64, &str)> {
     let tail = text.strip_prefix('-')?;
     take_number(tail)
 }
 
-/// Un fichero de un proyecto, tal y como lo ve el indice.
+/// A project's file, as the index sees it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileEntry {
-    /// El nombre del fichero.
+    /// The file name.
     pub filename: String,
-    /// El hash SHA-256, en hexadecimal.
+    /// The SHA-256 hash, in hexadecimal.
     pub sha256: String,
-    /// El tamano en bytes, si se sabe.
+    /// The size in bytes, if known.
     pub size: Option<u64>,
-    /// La version de Python que necesita, si la declara.
+    /// The Python version it needs, if it declares one.
     pub requires_python: Option<String>,
-    /// El motivo del *yank*, si la version esta retirada.
+    /// The reason for the *yank*, if the version is withdrawn.
     ///
-    /// `None` es que la version sigue viva; `Some("")` es que esta retirada
-    /// sin motivo escrito.
+    /// `None` means the version is still live; `Some("")` means it is withdrawn
+    /// with no written reason.
     pub yanked: Option<String>,
-    /// De donde sale el contenido cuando no es de este servicio.
+    /// Where the content comes from when it is not from this service.
     ///
-    /// En un proxy es la URL del upstream; en un hosted no hay ninguna y el
-    /// contenido esta en el catalogo.
+    /// In a proxy it is the upstream URL; in a hosted repository there is none and the
+    /// content is in the catalog.
     pub source: Option<String>,
 }
 
 impl FileEntry {
-    /// El JSON de la entrada, en la forma del documento guardado.
+    /// The entry's JSON, in the shape of the stored document.
     ///
-    /// El documento guardado es un documento de la Simple API (PEP 691):
-    /// el hash va en `hashes` y la URL del fichero en `url`.
+    /// The stored document is a Simple API document (PEP 691):
+    /// the hash goes in `hashes` and the file URL in `url`.
     fn to_value(&self, url: &str) -> Value {
         let mut entry = Map::new();
         entry.insert("filename".into(), Value::String(self.filename.clone()));
@@ -733,7 +733,7 @@ impl FileEntry {
         Value::Object(entry)
     }
 
-    /// Lee la entrada de un documento de la Simple API.
+    /// Reads the entry of a Simple API document.
     fn from_value(value: &Value) -> Result<Self, PypiError> {
         let object = value
             .as_object()
@@ -764,8 +764,8 @@ impl FileEntry {
             Some(Value::Bool(true)) => Some(String::new()),
             _ => None,
         };
-        // La URL del documento es de donde sale el contenido cuando el
-        // documento no es de este servicio.
+        // The document's URL is where the content comes from when the
+        // document is not from this service.
         let source = object
             .get("url")
             .and_then(Value::as_str)
@@ -781,17 +781,17 @@ impl FileEntry {
     }
 }
 
-/// El documento de un proyecto: lo que el indice sabe de el.
+/// A project's document: what the index knows about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectDocument {
-    /// El nombre normalizado del proyecto.
+    /// The project's normalized name.
     pub name: String,
-    /// Los ficheros del proyecto.
+    /// The project's files.
     pub files: Vec<FileEntry>,
 }
 
 impl ProjectDocument {
-    /// Un documento vacio.
+    /// An empty document.
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -799,10 +799,10 @@ impl ProjectDocument {
         }
     }
 
-    /// Anade un fichero al documento.
+    /// Adds a file to the document.
     ///
-    /// Un fichero con el mismo nombre no se anade dos veces: el documento
-    /// describe lo que hay, no lo que se ha pedido.
+    /// A file with the same name is not added twice: the document
+    /// describes what is there, not what was requested.
     pub fn add(&mut self, entry: FileEntry) -> Result<(), PypiError> {
         if self
             .files
@@ -815,12 +815,12 @@ impl ProjectDocument {
         Ok(())
     }
 
-    /// El fichero de ese nombre, si esta.
+    /// The file of that name, if present.
     pub fn file(&self, filename: &str) -> Option<&FileEntry> {
         self.files.iter().find(|file| file.filename == filename)
     }
 
-    /// Las versiones del proyecto, sin repetir y en orden.
+    /// The project's versions, without repeats and in order.
     pub fn versions(&self) -> Vec<String> {
         let mut versions: Vec<String> = Vec::new();
         for file in &self.files {
@@ -835,10 +835,10 @@ impl ProjectDocument {
         versions
     }
 
-    /// Retira (o devuelve a la vida) una version entera.
+    /// Withdraws (or brings back to life) an entire version.
     ///
-    /// El estado es de la *release*, no del fichero: todos los ficheros de
-    /// una version quedan igual, como manda PEP 592.
+    /// The state belongs to the *release*, not the file: all the files of
+    /// a version stay the same, as PEP 592 mandates.
     pub fn set_yanked(&mut self, version: &str, yanked: Option<String>) -> bool {
         let mut changed = false;
         for file in &mut self.files {
@@ -856,11 +856,11 @@ impl ProjectDocument {
         changed
     }
 
-    /// El JSON del documento, tal y como se guarda.
+    /// The document's JSON, as it is stored.
     ///
-    /// El documento guardado es un documento de la Simple API (PEP 691):
-    /// lo que el indice muestra y lo que el cliente descarga son la misma
-    /// cosa. `files_base` es el prefijo donde viven los ficheros
+    /// The stored document is a Simple API document (PEP 691):
+    /// what the index shows and what the client downloads are the same
+    /// thing. `files_base` is the prefix where the files live
     /// (`/pypi/repositorio/files`).
     pub fn to_value(&self, files_base: &str) -> Value {
         let mut document = Map::new();
@@ -888,7 +888,7 @@ impl ProjectDocument {
         Value::Object(document)
     }
 
-    /// Lee el documento guardado.
+    /// Reads the stored document.
     pub fn from_value(value: &Value) -> Result<Self, PypiError> {
         let object = value
             .as_object()
@@ -910,34 +910,34 @@ impl ProjectDocument {
     }
 }
 
-/// Lo que el cliente pide en la superficie PyPI.
+/// What the client requests on the PyPI surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// `GET /simple/`: el indice de los proyectos.
+    /// `GET /simple/`: the project index.
     Root,
-    /// `GET /simple/{proyecto}/`: la pagina de un proyecto.
+    /// `GET /simple/{proyecto}/`: a project's page.
     Project {
         /// The project whose page is asked for.
         project: ProjectName,
     },
-    /// `GET /files/{proyecto}/{fichero}`: la distribucion.
+    /// `GET /files/{proyecto}/{fichero}`: the distribution.
     File {
         /// The project the distribution belongs to.
         project: ProjectName,
         /// The name of the file of the distribution.
         filename: String,
     },
-    /// `POST /`: la subida.
+    /// `POST /`: the upload.
     Upload,
-    /// `POST /yank`: retirar una version.
+    /// `POST /yank`: withdraw a version.
     Yank,
 }
 
-/// Lee el resto de la ruta de `/pypi/{repositorio}/{resto}`.
+/// Reads the rest of the path of `/pypi/{repositorio}/{resto}`.
 ///
-/// El proyecto va normalizado en la URL, pero el cliente puede pedirlo con
-/// el nombre que quiera: `Flask` y `flask` son el mismo proyecto y se
-/// contestan igual.
+/// The project goes normalized in the URL, but the client may request it with
+/// whatever name it wants: `Flask` and `flask` are the same project and are
+/// answered the same.
 pub fn route(rest: &str) -> Result<Route, PypiError> {
     let rest = rest.trim_end_matches('/');
     if rest.is_empty() {
@@ -976,10 +976,10 @@ pub fn route(rest: &str) -> Result<Route, PypiError> {
     Err(PypiError::InvalidPath(rest.to_string()))
 }
 
-/// Decodifica un segmento de ruta.
+/// Decodes a path segment.
 ///
-/// Un `%2F` no es un separador: es un `/` dentro del nombre, y un nombre
-/// de fichero no lo tiene.
+/// A `%2F` is not a separator: it is a `/` inside the name, and a file
+/// name does not have one.
 pub fn decode_segment(segment: &str) -> Result<String, PypiError> {
     let bytes = segment.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -1003,21 +1003,21 @@ pub fn decode_segment(segment: &str) -> Result<String, PypiError> {
     String::from_utf8(decoded).map_err(|_| PypiError::InvalidPath(segment.to_string()))
 }
 
-/// Compara dos versiones de PEP 440 por su parte numerica.
+/// Compares two PEP 440 versions by their numeric part.
 ///
-/// El indice no decide que version es la mas nueva: el cliente lo hace con
-/// su propio comparador. Aqui solo se ordena lo que se enseña, y de forma
-/// que `1.10` vaya despues de `1.9`.
+/// The index does not decide which version is the newest: the client does so with
+/// its own comparator. Here we only order what is displayed, so
+/// that `1.10` goes after `1.9`.
 pub fn compare_versions(left: &str, right: &str) -> std::cmp::Ordering {
     match (Version::parse(left), Version::parse(right)) {
         (Some(left), Some(right)) => left.cmp(&right),
-        // Una version que no es de PEP 440 se ordena como texto: no la
-        // sabe nadie mas, y al menos el orden es estable.
+        // A version that is not PEP 440 is ordered as text: nobody
+        // else knows it, and at least the order is stable.
         _ => left.cmp(right),
     }
 }
 
-/// Como se negocia la representacion del indice.
+/// How the index representation is negotiated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Representation {
     /// HTML (PEP 503).
@@ -1026,11 +1026,11 @@ pub enum Representation {
     Json,
 }
 
-/// Elige la representacion que pide el cliente.
+/// Chooses the representation the client asks for.
 ///
-/// `pip` de hoy pide JSON primero; un cliente antiguo o un navegador piden
-/// HTML. Sin cabecera `Accept` se responde HTML, que es lo que entiende
-/// todo el mundo.
+/// Today's `pip` asks for JSON first; an old client or a browser asks for
+/// HTML. Without an `Accept` header HTML is returned, which is what
+/// everyone understands.
 pub fn negotiate(accept: Option<&str>) -> Representation {
     let Some(accept) = accept else {
         return Representation::Html;
@@ -1056,8 +1056,8 @@ pub fn negotiate(accept: Option<&str>) -> Representation {
         let Some(representation) = representation else {
             continue;
         };
-        // Una calidad de cero es una negativa: el cliente dice que no
-        // quiere esa representacion.
+        // A quality of zero is a refusal: the client says it does not
+        // want that representation.
         if quality <= 0.0 {
             continue;
         }
@@ -1069,9 +1069,9 @@ pub fn negotiate(accept: Option<&str>) -> Representation {
         .unwrap_or(Representation::Html)
 }
 
-/// La URL de un fichero, tal y como la ve el cliente.
+/// A file's URL, as the client sees it.
 ///
-/// El `base` es la raiz de la superficie (`http://host/pypi/repositorio`).
+/// The `base` is the root of the surface (`http://host/pypi/repositorio`).
 pub fn file_url(base: &str, project: &str, filename: &str) -> String {
     format!(
         "{}/files/{}/{}",
@@ -1081,7 +1081,7 @@ pub fn file_url(base: &str, project: &str, filename: &str) -> String {
     )
 }
 
-/// La URL de un fichero con su hash, que es como lo publica el indice.
+/// A file's URL with its hash, which is how the index publishes it.
 pub fn file_url_with_hash(base: &str, project: &str, filename: &str, sha256: &str) -> String {
     format!(
         "{}/files/{}/{}#sha256={}",
@@ -1092,7 +1092,7 @@ pub fn file_url_with_hash(base: &str, project: &str, filename: &str, sha256: &st
     )
 }
 
-/// Escapa un texto para meterlo en HTML.
+/// Escapes a text to embed it in HTML.
 pub fn escape_html(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for character in text.chars() {
@@ -1108,7 +1108,7 @@ pub fn escape_html(text: &str) -> String {
     escaped
 }
 
-/// Codifica un segmento de ruta.
+/// Encodes a path segment.
 fn encode_segment(text: &str) -> String {
     let mut encoded = String::with_capacity(text.len());
     for byte in text.bytes() {
@@ -1122,7 +1122,7 @@ fn encode_segment(text: &str) -> String {
     encoded
 }
 
-/// El HTML de la pagina de un proyecto (PEP 503).
+/// The HTML of a project's page (PEP 503).
 pub fn render_project_html(document: &ProjectDocument, base: &str) -> String {
     let mut page = String::new();
     page.push_str("<!DOCTYPE html>\n<html>\n  <head>\n");
@@ -1156,7 +1156,7 @@ pub fn render_project_html(document: &ProjectDocument, base: &str) -> String {
     page
 }
 
-/// El JSON de la pagina de un proyecto (PEP 691).
+/// The JSON of a project's page (PEP 691).
 pub fn render_project_json(document: &ProjectDocument, base: &str) -> Value {
     let mut files = Vec::new();
     for file in &document.files {
@@ -1180,8 +1180,8 @@ pub fn render_project_json(document: &ProjectDocument, base: &str) -> Value {
                 Value::String(requires_python.clone()),
             );
         }
-        // El estado *yanked* se dice siempre: `false` es que la version
-        // sigue viva, y el motivo es que esta retirada.
+        // The *yanked* state is always stated: `false` means the version
+        // is still live, and the reason means it is withdrawn.
         match &file.yanked {
             Some(yanked) => {
                 entry.insert("yanked".into(), Value::String(yanked.clone()));
@@ -1208,7 +1208,7 @@ pub fn render_project_json(document: &ProjectDocument, base: &str) -> Value {
     Value::Object(page)
 }
 
-/// El HTML del indice general (PEP 503).
+/// The HTML of the general index (PEP 503).
 pub fn render_root_html(projects: &[String], base: &str) -> String {
     let mut page = String::new();
     page.push_str("<!DOCTYPE html>\n<html>\n  <head>\n");
@@ -1233,7 +1233,7 @@ pub fn render_root_html(projects: &[String], base: &str) -> String {
     page
 }
 
-/// El JSON del indice general (PEP 691).
+/// The JSON of the general index (PEP 691).
 pub fn render_root_json(projects: &[String]) -> Value {
     let mut page = Map::new();
     let mut meta = Map::new();
@@ -1255,29 +1255,29 @@ pub fn render_root_json(projects: &[String]) -> Value {
     Value::Object(page)
 }
 
-/// Lo que declara una subida.
+/// What an upload declares.
 ///
-/// Los campos son los que manda `twine`: el nombre, la version, el hash y
-/// la version de Python que necesita el paquete.
+/// The fields are those `twine` sends: the name, the version, the hash and
+/// the Python version the package needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upload {
-    /// El proyecto, ya normalizado.
+    /// The project, already normalized.
     pub project: ProjectName,
-    /// La version.
+    /// The version.
     pub version: String,
-    /// El nombre del fichero.
+    /// The file name.
     pub filename: String,
-    /// El hash SHA-256 del contenido.
+    /// The SHA-256 hash of the content.
     pub sha256: String,
-    /// La version de Python que necesita, si la declara.
+    /// The Python version it needs, if it declares one.
     pub requires_python: Option<String>,
 }
 
-/// Lee los campos de una subida y los comprueba contra el fichero.
+/// Reads an upload's fields and checks them against the file.
 ///
-/// La comprobacion es contra los bytes, no contra lo que dice el cliente:
-/// el hash declarado tiene que ser el de lo recibido, y el nombre y la
-/// version tienen que ser los del nombre del fichero.
+/// The check is against the bytes, not against what the client says:
+/// the declared hash has to be that of what was received, and the name and
+/// version have to be those of the file name.
 pub fn parse_upload(
     fields: &[(String, String)],
     filename: &str,
@@ -1321,10 +1321,10 @@ pub fn parse_upload(
             "the name {declared_name:?} is not the project of the file"
         )));
     }
-    // La version que declara el cliente y la del nombre del fichero se
-    // comparan en su forma canonica: el cliente puede escribirla como le
-    // plazca (`1.0-2`, `1.0.rc1`, `v1.0`) y el nombre del fichero la
-    // lleva canonica (`1.0.post2`, `1.0rc1`, `1.0`).
+    // The version the client declares and that of the file name are
+    // compared in their canonical form: the client may write it however
+    // it likes (`1.0-2`, `1.0.rc1`, `v1.0`) and the file name
+    // carries it canonical (`1.0.post2`, `1.0rc1`, `1.0`).
     let declared_version = canonical_version(declared_version)
         .ok_or_else(|| PypiError::InvalidVersion(declared_version.to_string()))?;
     if declared_version != distribution.version {
@@ -1528,11 +1528,11 @@ mod tests {
                 source: None,
             })
             .expect("a file");
-        // El JSON dice que no esta retirada: el cliente decide con el.
+        // The JSON says it is not withdrawn: the client decides with it.
         let json = render_project_json(&document, "http://localhost");
         let files = json.get("files").and_then(Value::as_array).expect("files");
         assert_eq!(files[0].get("yanked"), Some(&Value::Bool(false)));
-        // Y el HTML no pone el atributo, que es lo mismo.
+        // And the HTML does not set the attribute, which is the same.
         let html = render_project_html(&document, "http://localhost");
         assert!(!html.contains("data-yanked"));
     }
@@ -1576,12 +1576,12 @@ mod tests {
             Representation::Html
         );
         assert_eq!(negotiate(Some("application/json")), Representation::Html);
-        // La version `latest` del JSON es la misma representacion.
+        // The JSON `latest` version is the same representation.
         assert_eq!(
             negotiate(Some("application/vnd.pypi.simple.latest+json")),
             Representation::Json
         );
-        // Una calidad de cero es una negativa.
+        // A quality of zero is a refusal.
         assert_eq!(
             negotiate(Some("application/vnd.pypi.simple.v1+json;q=0")),
             Representation::Html
@@ -1607,14 +1607,14 @@ mod tests {
             ("1.0+ubuntu-1", "1.0+ubuntu.1"),
             ("01.0", "1.0"),
             ("1.0.dev", "1.0.dev0"),
-            // La gramatica de la PEP no distingue mayusculas.
+            // The PEP grammar is case-insensitive.
             ("1.0RC1", "1.0rc1"),
             ("1.0A1", "1.0a1"),
             ("1.0B1", "1.0b1"),
             ("1.0POST1", "1.0.post1"),
             ("1.0DEV1", "1.0.dev1"),
             ("1.0+ABC", "1.0+abc"),
-            // Y un segmento numerico de la version local no lleva ceros.
+            // And a numeric segment of the local version carries no zeros.
             ("1.0+01", "1.0+1"),
             ("1.0+abc.01", "1.0+abc.1"),
             ("1.0+00", "1.0+0"),
@@ -1643,8 +1643,8 @@ mod tests {
 
     #[test]
     fn a_version_is_compared_in_its_canonical_form() {
-        // El cliente escribe la version como le plazca; el nombre del
-        // fichero la lleva canonica.
+        // The client writes the version however it likes; the file
+        // name carries it canonical.
         let sha = "e".repeat(64);
         let mut fields = vec![
             (":action".to_string(), "file_upload".to_string()),
@@ -1656,7 +1656,7 @@ mod tests {
         let upload =
             parse_upload(&fields, "labpkg-1.0.post2.tar.gz", &sha).expect("a valid upload");
         assert_eq!(upload.version, "1.0.post2");
-        // Y una version que no es la del fichero se rechaza.
+        // And a version that is not the file's is rejected.
         fields[3].1 = "1.0-3".to_string();
         assert!(matches!(
             parse_upload(&fields, "labpkg-1.0.post2.tar.gz", &sha),
@@ -1666,7 +1666,7 @@ mod tests {
 
     #[test]
     fn a_wheel_that_the_client_would_reject_is_not_a_distribution() {
-        // Las partes de un wheel son las que son: ni una mas ni una menos.
+        // A wheel's parts are what they are: not one more or less.
         assert!(Distribution::parse("labpkg-1.0-py3-none-any.whl").is_ok());
         assert!(Distribution::parse("labpkg-1.0-1-py3-none-any.whl").is_ok());
         assert!(Distribution::parse("labpkg-1.0-py3-none-any-extra.whl").is_err());
@@ -1677,9 +1677,9 @@ mod tests {
 
     #[test]
     fn a_wheel_that_the_client_would_install_is_a_distribution() {
-        // La regla es la del `pip`: la etiqueta de compilacion empieza por
-        // un digito y detras va lo que sea, y las tres etiquetas son las
-        // que son. Un nombre que el `pip` instala no se rechaza aqui.
+        // The rule is `pip`'s: the build tag starts with
+        // a digit and anything may follow, and the three tags are
+        // what they are. A name that `pip` installs is not rejected here.
         assert!(Distribution::parse("labpkg-1.0-1.5-py3-none-any.whl").is_ok());
         assert!(Distribution::parse("labpkg-1.0-1abc-py3-none-any.whl").is_ok());
         assert!(Distribution::parse("labpkg-1.0-py3-none-any+mips.whl").is_ok());
@@ -1753,7 +1753,7 @@ mod tests {
         assert_eq!(read.files[0].sha256, document.files[0].sha256);
         assert_eq!(read.files[0].size, document.files[0].size);
         assert_eq!(read.files[0].yanked, Some(String::new()));
-        // La URL guardada es la de la superficie, no la de un upstream.
+        // The stored URL is that of the surface, not of an upstream.
         assert_eq!(
             read.files[0].source.as_deref(),
             Some("/pypi/repo/files/labpkg/labpkg-1.0-py3-none-any.whl")

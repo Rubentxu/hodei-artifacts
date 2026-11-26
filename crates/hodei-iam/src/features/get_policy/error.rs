@@ -4,15 +4,15 @@ use thiserror::Error;
 
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum GetPolicyError {
-    /// La política no fue encontrada
+    /// The policy was not found
     #[error("Policy not found: {0}")]
     PolicyNotFound(String),
 
-    /// Error al acceder al repositorio
+    /// Error accessing the repository
     #[error("Repository error: {0}")]
     RepositoryError(String),
 
-    /// Error de validación del HRN
+    /// HRN validation error
     #[error("Invalid HRN: {0}")]
     InvalidHrn(String),
 }

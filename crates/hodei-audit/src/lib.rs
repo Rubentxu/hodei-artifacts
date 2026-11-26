@@ -1,47 +1,47 @@
-//! La auditoría de Hodei: el evento, el sink, el outbox y el dispatcher.
+//! The audit of Hodei: the event, the sink, the outbox and the dispatcher.
 //!
-//! Este crate es **un contrato**, no un servicio: no guarda nada y no
-//! escribe en ninguna base de datos. Lo que define es de qué manera se
-//! dice una mutación crítica, dónde espera el evento hasta que se entrega,
-//! y qué significa que la entrega ocurriera.
+//! This crate is **a contract**, not a service: it stores nothing and does not
+//! write to any database. What it defines is how a critical
+//! mutation is stated, where the event waits until it is delivered,
+//! and what it means for the delivery to have happened.
 //!
-//! # Las tres piezas y por qué son tres
+//! # The three pieces and why there are three
 //!
-//! - **El evento** ([`AuditEvent`]) es la afirmación: quién actuó, en qué
-//!   cuenta, qué hizo, sobre qué recurso, con qué contenido, cómo acabó y
-//!   con qué correlación. No lleva nunca una credencial.
-//! - **El sink** ([`AuditSink`]) es a dónde va el evento cuando se
-//!   entrega. El sink por defecto escribe campos estructurados en
-//!   `tracing`; un sink durable escribe en el almacén de auditoría.
-//! - **El outbox** ([`AuditOutbox`]) es dónde **espera** el evento entre
-//!   que se dice y que se entrega, con estados que se pueden leer.
+//! - **The event** ([`AuditEvent`]) is the statement: who acted, in which
+//!   account, what they did, on which resource, with what content, how it ended and
+//!   with what correlation. It never carries a credential.
+//! - **The sink** ([`AuditSink`]) is where the event goes when it is
+//!   delivered. The default sink writes structured fields to
+//!   `tracing`; a durable sink writes to the audit store.
+//! - **The outbox** ([`AuditOutbox`]) is where the event **waits** between
+//!   being stated and being delivered, with states that can be read.
 //!
-//! La separación importa porque las tres fallan de manera distinta: un
-//! evento mal formado es un evento que no se puede decir, un sink caído
-//! es una entrega que no ocurrió, y un outbox que nadie mira es una
-//! entrega que nadie sabe que está pendiente.
+//! The separation matters because the three fail in different ways: a
+//! malformed event is an event that cannot be stated, a sink that is down
+//! is a delivery that did not happen, and an outbox that nobody watches is a
+//! delivery that nobody knows is pending.
 //!
-//! # El outbox y la frontera única
+//! # The outbox and the single boundary
 //!
-//! El outbox existe para que el evento y la mutación que lo provoca
-//! compartan **una sola frontera de commit**: si la escritura del evento
-//! falla, la mutación tampoco ocurrió, y no queda un hecho sin su
-//! rastro. Quien publica escribe la fila del outbox **dentro** de la
-//! transacción que publica; quien entrega la toma después, y solo la
-//! marca entregada cuando el sink lo dice.
+//! The outbox exists so that the event and the mutation that causes it
+//! share **a single commit boundary**: if writing the event
+//! fails, the mutation did not happen either, and there is no fact left without its
+//! trail. The publisher writes the outbox row **inside** the
+//! transaction that publishes; the deliverer takes it afterwards, and only
+//! marks it delivered when the sink says so.
 //!
-//! # La reentrega y el efecto lógico
+//! # Redelivery and the logical effect
 //!
-//! Un evento lleva un `event_id` estable, y ese identificador es la clave
-//! de idempotencia: **reentregar un evento es el mismo evento**, no otro.
-//! Por eso el contrato del sink exige que trate el `event_id` como clave
-//! de idempotencia, y por eso una caída entre la entrega y la marca no
-//! duplica el efecto lógico: duplica el envío, que no es lo mismo.
+//! An event carries a stable `event_id`, and that identifier is the idempotency
+//! key: **redelivering an event is the same event**, not another one.
+//! For that reason the sink contract requires it to treat the `event_id` as the idempotency
+//! key, and for that reason a crash between delivery and the mark does not
+//! duplicate the logical effect: it duplicates the send, which is not the same thing.
 //!
-//! La cadena, dicha sin adornos: el outbox entrega **al menos una vez**,
-//! la reentrega lleva **el mismo** `event_id`, y el **almacén de
-//! auditoría** guarda por ese identificador. El efecto lógico es del
-//! almacén; el outbox pone la condición para que pueda haber uno solo.
+//! The chain, stated plainly: the outbox delivers **at least once**,
+//! redelivery carries **the same** `event_id`, and the **audit
+//! store** stores by that identifier. The logical effect belongs to the
+//! store; the outbox sets the condition so that there can be only one.
 
 #![forbid(unsafe_code)]
 

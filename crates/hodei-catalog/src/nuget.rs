@@ -1,34 +1,34 @@
-//! La gramatica **NuGet v3**: identidades, versiones y documentos.
+//! The **NuGet v3** grammar: identities, versions and documents.
 //!
-//! Es la parte pura del protocolo: lo que necesita efectos (el
-//! almacen, el proxy, la autorizacion) vive en el handler. Aqui se
-//! decide que es una ruta valida, que dos versiones son la misma
-//! version y que dice cada documento, sin tocar una sola coma del
-//! exterior.
+//! It is the pure part of the protocol: whatever needs effects (the
+//! store, the proxy, authorization) lives in the handler. Here we
+//! decide what a valid path is, which two versions are the same
+//! version and what each document says, without touching a single comma of the
+//! outside world.
 //!
-//! NuGet es **insensible a mayusculas** por contrato: el identificador
-//! y la version viajan por URL siempre normalizados (minusculas), y la
-//! direccion canonica del paquete es `flatcontainer/{id}/{version}`.
-//! Pedir la ruta sin normalizar no nombra nada: es un 404, no un
+//! NuGet is **case-insensitive** by contract: the identifier
+//! and the version travel in URLs always normalized (lowercase), and the
+//! canonical package address is `flatcontainer/{id}/{version}`.
+//! Requesting the path without normalizing names nothing: it is a 404, not an
 //! alias.
 
 use serde_json::{Value, json};
 
-/// Lo que el protocolo no acepta, con el motivo para el cliente.
+/// What the protocol does not accept, with the reason for the client.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NugetError {
-    /// La ruta no pertenece a la gramatica NuGet v3.
+    /// The path does not belong to the NuGet v3 grammar.
     InvalidPath(String),
-    /// El identificador de paquete no es valido.
+    /// The package identifier is not valid.
     InvalidId(String),
-    /// La version no es una version NuGet.
+    /// The version is not a NuGet version.
     InvalidVersion(String),
-    /// El cuerpo del paquete no es un nupkg utilizable.
+    /// The package body is not a usable nupkg.
     InvalidPackage(String),
 }
 
 impl NugetError {
-    /// El mensaje que ve el cliente.
+    /// The message the client sees.
     pub fn message(&self) -> String {
         match self {
             Self::InvalidPath(what) => {
@@ -42,20 +42,20 @@ impl NugetError {
         }
     }
 
-    /// Si el fallo es de gramatica: el cliente no nombro nada, que es
-    /// distinto de nombrar algo mal.
+    /// Whether the failure is a grammar one: the client named nothing, which is
+    /// different from naming something wrong.
     pub fn is_path_error(&self) -> bool {
         matches!(self, Self::InvalidPath(_))
     }
 }
 
-/// El identificador de un paquete, ya normalizado: minusculas.
+/// A package identifier, already normalized: lowercase.
 pub fn normalize_id(id: &str) -> String {
     id.to_ascii_lowercase()
 }
 
-/// Si el identificador es de los que NuGet admite: letras, digitos,
-/// punto y guion, empezando y terminando en alfanumerico.
+/// Whether the identifier is one NuGet admits: letters, digits,
+/// dot and hyphen, starting and ending with an alphanumeric.
 pub fn valid_id(id: &str) -> Result<(), NugetError> {
     let bad = |why: &str| NugetError::InvalidId(format!("{id}: {why}"));
     if id.is_empty() || id.len() > 128 {
@@ -75,21 +75,21 @@ pub fn valid_id(id: &str) -> Result<(), NugetError> {
     Ok(())
 }
 
-/// La ruta de protocolo de una version: la identidad del paquete en el
-/// flat container. `registrations/{id}` y el indice de versiones
-/// viven alrededor de ella.
+/// The protocol path of a version: the package identity in the
+/// flat container. `registrations/{id}` and the version index
+/// live around it.
 pub fn package_asset_path(id: &str, version: &str) -> String {
     format!("flatcontainer/{id}/{version}/{id}.nupkg")
 }
 
 // ---------------------------------------------------------------------------
-// Versiones NuGet
+// NuGet versions
 // ---------------------------------------------------------------------------
 
-/// Una version NuGet: uno a cuatro numeros y, si acaso, una etiqueta
-/// de previos. La etiqueta de compilacion (`+...`) no es identidad:
-/// dos paquetes con la misma version y distinta etiqueta son la misma
-/// version, y el protocolo la descarta al normalizar.
+/// A NuGet version: one to four numbers and, optionally, a prerelease
+/// label. The build label (`+...`) is not identity:
+/// two packages with the same version and a different label are the same
+/// version, and the protocol discards it when normalizing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NuGetVersion {
     numbers: [u64; 4],
@@ -97,19 +97,19 @@ pub struct NuGetVersion {
 }
 
 impl NuGetVersion {
-    /// El numero en la posicion pedida.
+    /// The number at the requested position.
     pub fn number(&self, index: usize) -> u64 {
         self.numbers[index]
     }
 
-    /// Si es un previos: la version sin etiqueta va primero.
+    /// Whether it is a prerelease: the version without a label comes first.
     pub fn is_prerelease(&self) -> bool {
         !self.pre.is_empty()
     }
 
-    /// La cadena con la que el protocolo nombra a la version:
-    /// tres partes como minimo, la cuarta solo si trae algo, y sin
-    /// etiqueta de compilacion.
+    /// The string the protocol uses to name the version:
+    /// at least three parts, the fourth only if it carries something, and no
+    /// build label.
     pub fn normalized(&self) -> String {
         let mut core = if self.numbers[3] != 0 {
             format!(
@@ -129,10 +129,10 @@ impl NuGetVersion {
         core
     }
 
-    /// El orden de NuGet: primero los numeros, luego la etiqueta
-    /// (sin etiqueta gana a con etiqueta, y entre etiquetas se
-    /// comparan segmentos numericos como numeros y los demas como
-    /// texto, en minusculas).
+    /// NuGet's ordering: numbers first, then the label
+    /// (no label beats having a label, and between labels
+    /// numeric segments are compared as numbers and the others as
+    /// text, in lowercase).
     pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         for index in 0..4 {
@@ -158,9 +158,9 @@ impl NuGetVersion {
     }
 }
 
-/// Dos segmentos de etiqueta de previos: los numericos se comparan
-/// como numeros (y van antes que los textuales), el resto como texto
-/// en minusculas.
+/// Two prerelease label segments: numeric ones are compared
+/// as numbers (and come before textual ones), the rest as text
+/// in lowercase.
 fn compare_pre(left: &str, right: &str) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let left_number = left.parse::<u64>().ok();
@@ -173,7 +173,7 @@ fn compare_pre(left: &str, right: &str) -> std::cmp::Ordering {
     }
 }
 
-/// El parser de versiones: `major[.minor[.patch[.revision]]][-prerelease][+build]`.
+/// The version parser: `major[.minor[.patch[.revision]]][-prerelease][+build]`.
 pub fn parse_version(text: &str) -> Option<NuGetVersion> {
     let (core, _build) = text.split_once('+').unwrap_or((text, ""));
     let (core, pre) = match core.find('-') {
@@ -211,30 +211,30 @@ pub fn parse_version(text: &str) -> Option<NuGetVersion> {
     Some(NuGetVersion { numbers, pre })
 }
 
-/// La version normalizada tal y como la escribe el protocolo: la ruta
-/// del flat container la pide asi.
+/// The normalized version exactly as the protocol writes it: the
+/// flat container path asks for it this way.
 pub fn normalize_version(text: &str) -> Option<String> {
     parse_version(text).map(|version| version.normalized())
 }
 
 // ---------------------------------------------------------------------------
-// El paquete: nupkg y nuspec
+// The package: nupkg and nuspec
 // ---------------------------------------------------------------------------
 
-/// Lo que el servidor necesita saber de un `.nupkg` subido: quien es
-/// y que version declara por dentro.
+/// What the server needs to know about an uploaded `.nupkg`: who it is
+/// and which version it declares inside.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackageIdentity {
-    /// El identificador normalizado del paquete.
+    /// The normalized package identifier.
     pub id: String,
-    /// La version normalizada que declara el nuspec.
+    /// The normalized version declared by the nuspec.
     pub version: String,
 }
 
-/// El identificador XML mas simple que vale aqui: dentro del `metadata`
-/// del nuspec, `<id>` y `<version>` son elementos de texto plano sin
-/// atributos ni anidados. Buscar el cierre mas cercano al inicio es
-/// suficiente y no arrastra un parser XML al nucleo puro.
+/// The simplest XML identifier that works here: inside the `metadata`
+/// of the nuspec, `<id>` and `<version>` are plain-text elements without
+/// attributes or nesting. Looking for the closest closing tag from the start is
+/// enough and does not drag an XML parser into the pure core.
 fn tag_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let start = xml.find(&open)? + open.len();
@@ -242,8 +242,8 @@ fn tag_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     Some(xml[start..end].trim())
 }
 
-/// El nuspec dentro del zip: el nombre exacto es `{id}.nuspec`, pero
-/// aqui basta con el unico `.nuspec` que todo paquete lleva.
+/// The nuspec inside the zip: the exact name is `{id}.nuspec`, but
+/// here the only `.nuspec` every package carries is enough.
 fn nuspec_of(zip: &[u8]) -> Result<String, NugetError> {
     use std::io::Read;
     let reader = std::io::Cursor::new(zip);
@@ -267,8 +267,8 @@ fn nuspec_of(zip: &[u8]) -> Result<String, NugetError> {
     ))
 }
 
-/// La identidad que declara el interior del paquete. Es la autoridad
-/// en la publicacion: la URL no manda sobre lo que dice el nuspec.
+/// The identity declared by the package interior. It is the authority
+/// on publication: the URL does not override what the nuspec says.
 pub fn package_identity(zip: &[u8]) -> Result<PackageIdentity, NugetError> {
     let xml = nuspec_of(zip)?;
     let id = tag_text(&xml, "id")
@@ -288,10 +288,10 @@ pub fn package_identity(zip: &[u8]) -> Result<PackageIdentity, NugetError> {
     })
 }
 
-/// El nupkg dentro del `multipart/form-data` que el cliente real usa
-/// para publicar: `dotnet nuget push` manda el paquete como un trozo
-/// del formulario, no como cuerpo crudo. Se devuelve **solo** el zip,
-/// nunca el sobre: la identidad y el digest se miden sobre el nupkg.
+/// The nupkg inside the `multipart/form-data` that the real client uses
+/// to publish: `dotnet nuget push` sends the package as a part
+/// of the form, not as a raw body. **Only** the zip is returned,
+/// never the envelope: identity and digest are measured on the nupkg.
 pub fn multipart_package(body: &[u8]) -> Result<Vec<u8>, NugetError> {
     let no_package =
         || NugetError::InvalidPackage("the upload is a form without a nupkg file part".to_string());
@@ -356,14 +356,14 @@ pub fn multipart_package(body: &[u8]) -> Result<Vec<u8>, NugetError> {
 }
 
 // ---------------------------------------------------------------------------
-// Documentos de protocolo
+// Protocol documents
 // ---------------------------------------------------------------------------
 
-/// El `index.json` del flat container: el contrato v3 lo define como un
-/// array de **cadenas** (`{"versions": ["1.0.0"]}`), no de objetos: el
-/// cliente NuGet deserializa `versions` como `List<string>` y un objeto
-/// le sabe a JSON roto. La ultima version, al final. Las identidades ya
-/// estan normalizadas.
+/// The `index.json` of the flat container: the v3 contract defines it as an
+/// array of **strings** (`{"versions": ["1.0.0"]}`), not of objects: the
+/// NuGet client deserializes `versions` as `List<string>` and an object
+/// tastes like broken JSON to it. The latest version goes last. The identities are already
+/// normalized.
 pub fn version_index(versions: &[String]) -> Value {
     json!({
         "count": versions.len(),
@@ -396,10 +396,10 @@ pub fn registration_document(id: &str, latest_version: &str, items: Vec<Value>) 
     })
 }
 
-/// La hoja de registro de un paquete: los `items` por version con su
-/// direccion flatcontainer. El catalogo entero (registration index y
-/// leaf con dependencias completas) es alcance futuro; esta hoja es
-/// lo que el cliente necesita para resolver id y version.
+/// The registration leaf of a package: the `items` per version with their
+/// flatcontainer address. The whole catalog (registration index and
+/// leaf with full dependencies) is future scope; this leaf is
+/// what the client needs to resolve id and version.
 pub fn registration_leaf(id: &str, versions: &[String]) -> Value {
     let items = versions
         .iter()
@@ -500,30 +500,30 @@ pub fn service_index_resources(doc: &Value) -> Option<ServiceIndexResources> {
     })
 }
 
-/// Que pide la ruta del flat container, si es que pide algo:
-/// `flatcontainer/{id}/{version}/{id}.nupkg` o `{id}/index.json`.
-/// Todo va minusculas; mayusculas sin normalizar no nombran nada.
+/// What the flat container path asks for, if it asks for anything:
+/// `flatcontainer/{id}/{version}/{id}.nupkg` or `{id}/index.json`.
+/// Everything is lowercase; unnormalized uppercase names nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlatRequest {
-    /// La lista de versiones del paquete.
+    /// The package's version list.
     Versions {
-        /// El paquete, en minusculas.
+        /// The package, in lowercase.
         id: String,
     },
-    /// Un fichero concreto de una version: el nupkg y companeros
-    /// como las `.nuspec` sueltas que algunos clientes piden.
+    /// A specific file of a version: the nupkg and companions
+    /// such as the loose `.nuspec` files some clients request.
     File {
-        /// El paquete, en minusculas.
+        /// The package, in lowercase.
         id: String,
-        /// La version, tal y como la nombra la ruta.
+        /// The version, as the path names it.
         version: String,
-        /// El nombre del fichero dentro de la version.
+        /// The file name inside the version.
         file: String,
     },
 }
 
-/// El parser de la ruta flat: separa identidad de fichero sin tocar
-/// el almacen.
+/// The flat path parser: separates identity from file without touching
+/// the store.
 pub fn parse_flat(path: &str) -> Result<FlatRequest, NugetError> {
     let rest = path
         .strip_prefix("flatcontainer/")
@@ -564,36 +564,36 @@ pub fn parse_flat(path: &str) -> Result<FlatRequest, NugetError> {
 }
 
 // ---------------------------------------------------------------------------
-// Rutas y service index
+// Paths and service index
 // ---------------------------------------------------------------------------
 
-/// Lo que pide una ruta de `/nuget/{repositorio}/...`.
+/// What a `/nuget/{repositorio}/...` path asks for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NuGetRoute {
-    /// El indice de servicios: que hay en este feed y donde.
+    /// The service index: what is in this feed and where.
     ServiceIndex,
-    /// Algo del flat container: la lista de versiones o un fichero.
+    /// Something from the flat container: the version list or a file.
     Flat(FlatRequest),
-    /// La hoja de registro del paquete.
+    /// The package's registration leaf.
     Registration {
-        /// El paquete, en minusculas.
+        /// The package, in lowercase.
         id: String,
     },
-    /// La publicacion de un paquete por el endpoint Publish. La
-    /// identidad en la URL es opcional porque el cliente real hace
-    /// `PUT {publish}/` con el nupkg dentro de un formulario multipart
-    /// y **sin** id ni version en la ruta: el nuspec manda.
+    /// Publishing a package through the Publish endpoint. The
+    /// identity in the URL is optional because the real client does
+    /// `PUT {publish}/` with the nupkg inside a multipart form
+    /// and **without** id or version in the path: the nuspec rules.
     Publish {
-        /// El paquete pedido, normalizado, si la URL lo promete.
+        /// The requested package, normalized, if the URL promises it.
         id: Option<String>,
-        /// La version pedida, normalizada, si la URL la lleva.
+        /// The requested version, normalized, if the URL carries it.
         version: Option<String>,
     },
 }
 
 impl NuGetRoute {
-    /// El paquete al que apunta la ruta, si apunta a alguno: es lo que
-    /// registra la auditoria.
+    /// The package the path points to, if it points to one: it is what
+    /// the audit records.
     pub fn package(&self) -> Option<&str> {
         match self {
             Self::ServiceIndex => None,
@@ -605,8 +605,8 @@ impl NuGetRoute {
     }
 }
 
-/// El parser de rutas: el indice, el flat container, los registros y el
-/// endpoint de publicacion. La ruta llega sin decodificar y en crudo.
+/// The path parser: the index, the flat container, the registrations and the
+/// publish endpoint. The path arrives undecoded and raw.
 pub fn parse_route(rest: &str) -> Result<NuGetRoute, NugetError> {
     let rest = rest.trim_start_matches('/');
     if rest.is_empty() || rest == "v3/index.json" || rest == "index.json" {
@@ -628,8 +628,8 @@ pub fn parse_route(rest: &str) -> Result<NuGetRoute, NugetError> {
         return Ok(NuGetRoute::Registration { id: id.to_string() });
     }
     if let Some(publish) = rest.strip_prefix("package/") {
-        // El cliente real publica contra la direccion vacia: el nuspec
-        // es la unica identidad en juego.
+        // The real client publishes against the empty address: the nuspec
+        // is the only identity in play.
         if publish.trim_end_matches('/').is_empty() {
             return Ok(NuGetRoute::Publish {
                 id: None,
@@ -653,10 +653,10 @@ pub fn parse_route(rest: &str) -> Result<NuGetRoute, NugetError> {
     Err(NugetError::InvalidPath(rest.to_string()))
 }
 
-/// El indice de servicios del feed. Las direcciones que declara son
-/// absolutas, tal y como el cliente las ve: el flat container es la
-/// operacion que resuelve versiones, los registros la que las lista
-/// para buscar, y el Publish la que escribe.
+/// The feed's service index. The addresses it declares are
+/// absolute, as the client sees them: the flat container is the
+/// operation that resolves versions, the registrations the one that lists them
+/// for search, and Publish the one that writes.
 pub fn service_index(base: &str) -> Value {
     json!({
         "@context": { "@vocab": "http://schema.nuget.org/services#" },
@@ -738,7 +738,7 @@ mod tests {
             version("1.0.0.2").compare(&version("1.0.1")),
             Ordering::Less
         );
-        // sin etiqueta gana a con etiqueta
+        // no label beats having a label
         assert_eq!(
             version("1.0.0").compare(&version("1.0.0-beta")),
             Ordering::Greater
@@ -747,7 +747,7 @@ mod tests {
             version("1.0.0-beta").compare(&version("1.0.0-beta.1")),
             Ordering::Less
         );
-        // los segmentos numericos de etiqueta van antes que los textuales
+        // numeric label segments come before textual ones
         assert_eq!(
             version("1.0.0-alpha").compare(&version("1.0.0-1")),
             Ordering::Greater
@@ -818,7 +818,7 @@ mod tests {
                 file: "sample.lib.nupkg".to_string(),
             }
         );
-        // mayusculas sin normalizar no nombran nada: gramatica, no identidad
+        // unnormalized uppercase names nothing: grammar, not identity
         assert!(
             parse_flat("flatcontainer/Sample.Lib/13.0.1/index.json")
                 .unwrap_err()
@@ -835,7 +835,7 @@ mod tests {
                 .is_path_error()
         );
         assert!(parse_flat("others/sample.lib").unwrap_err().is_path_error());
-        // un id con barra no es un id: la gramatica lo rechaza antes
+        // an id with a slash is not an id: the grammar rejects it first
         assert!(parse_flat("flatcontainer/acr/id/13.0.1/index.json").is_err());
     }
 
@@ -858,7 +858,7 @@ mod tests {
         );
     }
 
-    /// Un zip de juguete con el nuspec dentro, comprimido o no.
+    /// A toy zip with the nuspec inside, compressed or not.
     fn nupkg(entries: &[(&str, &str)], deflate: bool) -> Vec<u8> {
         use std::io::Write;
         let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -939,7 +939,7 @@ mod tests {
                 id: "sample.lib".to_string()
             }
         );
-        // El push nombra como quiere: la ruta se normaliza, no se rechaza.
+        // The push names it however it wants: the path is normalized, not rejected.
         assert_eq!(
             parse_route("package/Sample.Lib/01.2.0+meta").unwrap(),
             NuGetRoute::Publish {
@@ -947,8 +947,8 @@ mod tests {
                 version: Some("1.2.0".to_string()),
             }
         );
-        // El cliente real no nombra nada en la URL: la direccion de
-        // publicacion a secas tambien es una ruta de push valida.
+        // The real client names nothing in the URL: the bare publish
+        // address is also a valid push path.
         assert_eq!(
             parse_route("package/").unwrap(),
             NuGetRoute::Publish {
@@ -973,8 +973,8 @@ mod tests {
         body.extend(zip.clone());
         body.extend(b"\r\n--7ca4--\r\n".iter().copied());
         assert_eq!(multipart_package(&body).expect("the nupkg part"), zip);
-        // Un cuerpo que no es formulario no se toca: el zip crudo se
-        // reconoce por su cabecera, no por adivinar.
+        // A body that is not a form is left alone: the raw zip is
+        // recognized by its header, not by guessing.
         assert!(multipart_package(&zip).is_err());
         assert!(
             multipart_package(

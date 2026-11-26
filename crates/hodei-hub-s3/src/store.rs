@@ -1,4 +1,4 @@
-//! El almacen de contenido sobre un Object Store que habla S3.
+//! The content store on top of an Object Store that speaks S3.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -17,49 +17,49 @@ use hodei_hub::reclaim::{
 };
 use sha2::{Digest, Sha256};
 
-/// El prefijo bajo el que vive el contenido dentro del cubo.
+/// The prefix under which content lives inside the bucket.
 const BLOB_PREFIX: &str = "blobs";
 
-/// El prefijo bajo el que vive el staging: las subidas multiples en
-/// curso y los restos que un fallo dejo entre el complete y la copia.
+/// The prefix under which staging lives: in-progress multipart uploads and
+/// the leftovers that a failure left between the complete and the copy.
 const STAGING_PREFIX: &str = "staging";
 
-/// La clave bajo la que el almacen estampa el digest del objeto. El ETag
-/// no sirve —en un multipart no es el sha256 del cuerpo—, y una publicacion
-/// que no se distingue de un resto ajeno obliga a releer para deduplicar.
-/// El sello es una ayuda para no reescribir lo que ya esta bien; lo que
-/// manda, cuando hay que decidir en serio, son los bytes.
+/// The key under which the store stamps the object's digest. The ETag
+/// is no use (in a multipart it is not the body's sha256), and a publication
+/// that cannot be told apart from a foreign leftover forces a re-read to deduplicate.
+/// The stamp is an aid to avoid rewriting what is already right; what
+/// rules, when a serious decision must be made, are the bytes.
 const DIGEST_METADATA: &str = "hodei-sha256";
 
-/// Hasta donde merece la pena releer un preexistente sin sello para
-/// comprobar si es el contenido: por encima de esto, la lectura entera
-/// cuesta mas que la copia que se quiere evitar, y se repara escribiendo.
+/// How far it is worth re-reading a pre-existing object without a stamp to
+/// check whether it is the content: above this, reading it whole
+/// costs more than the copy being avoided, and it is repaired by writing.
 const MAX_VERIFY_ON_STAMP_MISS: u64 = 64 * 1024 * 1024;
 
-/// Lo que el constructor del almacen declaro mal.
+/// What the store constructor declared wrongly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum S3BlobConfigError {
-    /// El tamano de trozo esta por debajo del minimo que S3 acepta
-    /// para todo trozo que no sea el ultimo: cinco megabytes.
+    /// The part size is below the minimum that S3 accepts
+    /// for every part that is not the last: five megabytes.
     PartTooSmall { given: usize, minimum: usize },
-    /// No puede haber trozos en vuelo simultaneos.
+    /// There cannot be zero simultaneous in-flight parts.
     NoInflightParts,
 }
 
-/// Como se comporta este almacen.
+/// How this store behaves.
 #[derive(Clone)]
 pub struct S3BlobConfig {
-    /// El cubo donde vive el contenido.
+    /// The bucket where the content lives.
     pub bucket: String,
-    /// El tamano de los trozos de la subida multiple. La memoria en vuelo
-    /// por sesion esta acotada por `part_size * max_inflight_parts`.
+    /// The part size of the multipart upload. In-flight memory
+    /// per session is bounded by `part_size * max_inflight_parts`.
     pub part_size: usize,
-    /// Cuantos trozos admite en vuelo una sesion antes de esperar.
+    /// How many parts a session allows in flight before waiting.
     pub max_inflight_parts: usize,
 }
 
 impl S3BlobConfig {
-    /// La configuracion con los valores por defecto del despliegue.
+    /// The configuration with the deployment's default values.
     pub fn new(bucket: impl Into<String>) -> Self {
         Self {
             bucket: bucket.into(),
@@ -68,7 +68,7 @@ impl S3BlobConfig {
         }
     }
 
-    /// El techo de memoria por sesion en curso, en bytes.
+    /// The memory ceiling per in-progress session, in bytes.
     pub fn the_memory_budget(&self) -> usize {
         self.part_size * self.max_inflight_parts
     }
@@ -88,17 +88,17 @@ impl S3BlobConfig {
     }
 }
 
-/// El almacen de contenido en un Object Store S3-compatible.
+/// The content store on an S3-compatible Object Store.
 ///
-/// El cliente llega construido de fuera, con la cadena de credenciales que
-/// el despliegue eligio: el almacen no ve secretos y por eso no puede
-/// filtrarlos. El `Debug` imprime la configuracion publica y el cubo, nunca
-/// el cliente.
+/// The client arrives built from outside, with the credential chain that
+/// the deployment chose: the store sees no secrets and therefore cannot
+/// leak them. `Debug` prints the public configuration and the bucket, never
+/// the client.
 pub struct S3BlobStore {
     client: Client,
     config: S3BlobConfig,
-    /// La barrera entre publicar un blob y recolectarlo, la misma
-    /// garantida por el almacen de ficheros dentro del proceso.
+    /// The barrier between publishing a blob and collecting it, the same one
+    /// guaranteed in-process by the file store.
     gate: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -114,7 +114,7 @@ impl std::fmt::Debug for S3BlobStore {
 }
 
 impl S3BlobStore {
-    /// El almacen sobre un cliente ya configurado.
+    /// The store over an already configured client.
     pub fn new(client: Client, config: S3BlobConfig) -> Result<Self, S3BlobConfigError> {
         config.check()?;
         Ok(Self {
@@ -124,13 +124,13 @@ impl S3BlobStore {
         })
     }
 
-    /// La clave de un contenido.
+    /// The key of a content item.
     pub fn the_key_of(&self, digest: &ContentDigest) -> String {
         blob_key(digest)
     }
 
-    /// El digest que dice una clave, si la clave es de un blob de este
-    /// almacen. Cualquier otra cosa no se lista ni se borra.
+    /// The digest that a key states, if the key belongs to a blob of this
+    /// store. Anything else is neither listed nor deleted.
     fn digest_of_key(key: &str) -> Option<ContentDigest> {
         let name = key
             .strip_prefix(&format!("{BLOB_PREFIX}/"))?
@@ -146,30 +146,30 @@ impl S3BlobStore {
         Some(ContentDigest::sha256(name))
     }
 
-    /// El MD5 en base64 de un trozo, la condicion de integridad que S3
-    /// comprueba en el servidor antes de dar el trozo por bueno.
+    /// The base64 MD5 of a part, the integrity condition that S3
+    /// checks on the server before accepting the part as good.
     fn content_md5(chunk: &[u8]) -> String {
         use base64::Engine;
         use md5::Digest;
         base64::engine::general_purpose::STANDARD.encode(md5::Md5::digest(chunk).as_slice())
     }
 
-    /// El ultimo modificado de S3, como edad desde ahora.
+    /// S3's last-modified, as age from now.
     fn age_of(last_modified: Option<&aws_smithy_types::DateTime>) -> Option<Duration> {
         let epoch = std::time::UNIX_EPOCH.elapsed().ok()?;
         let then = Duration::from_secs(last_modified?.secs().max(0) as u64);
         Some(epoch.saturating_sub(then))
     }
 
-    /// El error de servicio con el que hay que hablar: lo que no esta es
-    /// `NotFound`; lo demas es que el almacen no estuvo disponible.
+    /// The service error to deal with: what is missing is
+    /// `NotFound`; everything else means the store was not available.
     fn unavailable(operation: &str, detail: impl std::fmt::Display) -> BlobError {
         BlobError::Unavailable(format!("the object store failed to {operation}: {detail}"))
     }
 
-    /// La cabecera cruda de una clave, con `None` si no esta. Es el HEAD
-    /// que la decision de no-sobrescritura necesita, y distingue "no
-    /// esta" de "no puedo mirar" —lo segundo no se maquilla de lo primero.
+    /// The raw header of a key, with `None` if it is not there. It is the HEAD
+    /// that the no-overwrite decision needs, and it distinguishes "it is not
+    /// there" from "I cannot look" (the latter is not disguised as the former).
     async fn head_key(
         &self,
         key: &str,
@@ -188,34 +188,34 @@ impl S3BlobStore {
         }
     }
 
-    /// Que hacer cuando un PUT o una copia condicionada rechaza escribir
-    /// porque la clave ya existe. Es el punto donde el CAS se juega su
-    /// palabra: lo que hay ahi puede ser exactamente el contenido (una
-    /// deduplicacion legitima, no se toca) o puede ser otra cosa (un
-    /// resto truncado, un objeto plantado por fuera, corruption). Lo
-    /// primero se informa; lo segundo **no se presenta como dedupe**:
-    /// se repara escribiendo el contenido bueno por la via normal.
+    /// What to do when a PUT or a conditional copy refuses to write
+    /// because the key already exists. This is the point where the CAS stakes its
+    /// word: what is there may be exactly the content (a
+    /// legitimate deduplication, it is not touched) or it may be something else (a
+    /// truncated leftover, an object planted from outside, corruption). The
+    /// former is reported; the latter **is not presented as dedupe**:
+    /// it is repaired by writing the good content through the normal path.
     ///
-    /// La comprobacion empieza por el sello de metadatos —barata, un
-    /// HEAD—, y solo si el preexistente no lleva sello (fue escrito por
-    /// otra mano y su procedencia no consta) se leen los bytes, con el
-    /// techo de `MAX_VERIFY_ON_STAMP_MISS`: por encima, releer cuesta
-    /// mas que reescribir, y la reparacion por escritura sale gratis
-    /// sea lo que sea lo que habia. Un preexistente verificado como
-    /// bueno y sin sello se renueva con sello: la siguiente publicacion
-    /// deduplica por HEAD, no por lectura.
+    /// The check starts with the metadata stamp (cheap, one
+    /// HEAD), and only if the pre-existing object carries no stamp (it was written by
+    /// another hand and its provenance is unknown) are the bytes read, with the
+    /// ceiling of `MAX_VERIFY_ON_STAMP_MISS`: above it, re-reading costs
+    /// more than rewriting, and repair by writing comes free
+    /// whatever was there. A pre-existing object verified as
+    /// good and without a stamp is renewed with a stamp: the next publication
+    /// deduplicates by HEAD, not by reading.
     ///
-    /// La precondicion de confianza del sello hay que decirla con todas
-    /// las letras: **el sello vale porque lo estampa quien verifico
-    /// antes de escribir**, y eso solo lo garantizan los almacenes de
-    /// este crate. Un cubo compartido con manos que escribes metadata
-    /// a su antojo —otro servicio, un `aws s3 cp` con `--metadata`, un
-    /// operador con acceso— puede plantar un sello mentiroso y esta
-    /// decision lo aceptaria sin releer. La topologia soportada es el
-    /// cubo exclusivo de este servicio (la que Hodei despliega); si al
-    /// gun dia un backend multiinquilino entra en el contrato, el sello
-    /// pasa a ser una optimizacion sospechosa y esto exige lectura
-    /// siempre —lo decide quien despliega, no un refactor.
+    /// The trust precondition of the stamp must be spelled out in
+    /// full: **the stamp is valid because it is stamped by whoever verified
+    /// before writing**, and only the stores of this crate guarantee that.
+    /// A bucket shared with hands that write metadata
+    /// at will (another service, an `aws s3 cp` with `--metadata`, an
+    /// operator with access) can plant a lying stamp and this
+    /// decision would accept it without re-reading. The supported topology is the
+    /// exclusive bucket of this service (the one Hodei deploys); if
+    /// one day a multi-tenant backend enters the contract, the stamp
+    /// becomes a suspect optimization and this requires reading
+    /// always (the deployer decides that, not a refactor).
     async fn settle_a_refused_write(
         &self,
         digest: &ContentDigest,
@@ -224,33 +224,33 @@ impl S3BlobStore {
     ) -> Result<(), BlobError> {
         let key = self.the_key_of(digest);
         let Some(head) = self.head_key(&key).await? else {
-            // El preexistente se fue entre el rechazo y el HEAD: la
-            // ventana del concurrente. Reparar (escribir) es el camino
-            // correcto —nadie ha publicado el contenido todavia.
+            // The pre-existing object went away between the rejection and the HEAD: the
+            // concurrent window. Repairing (writing) is the right
+            // path (nobody has published the content yet).
             return repair.await;
         };
         match the_stamp_of(&head) {
-            // Con sello propio, la identidad del contenido la garantiza
-            // quien lo escribio verificandolo antes de sellar.
+            // With its own stamp, the identity of the content is guaranteed by
+            // whoever wrote it, verifying before stamping.
             Some(stamped) if stamped == *digest => return Ok(()),
             Some(_) => {
-                // Lleva el sello de OTRO digest en la clave de este: la
-                // clave y el contenido discrepan. Se repara escribiendo
-                // lo que se envio; quien llame y quiera el veredicto de
-                // integridad, que pregunte despues con `verify`.
+                // It carries the stamp of ANOTHER digest under this one's key: the
+                // key and the content disagree. It is repaired by writing
+                // what was sent; whoever calls and wants the integrity
+                // verdict should ask afterwards with `verify`.
                 return repair.await;
             }
             None => {}
         }
-        // Sin sello: no consta que sea lo que dice la clave.
+        // No stamp: it is not known to be what the key says.
         let length = head.content_length.unwrap_or(0).max(0) as u64;
         let cheap_to_check = length <= MAX_VERIFY_ON_STAMP_MISS;
         if let Some(expected) = bytes.filter(|_| cheap_to_check) {
             if self.read(digest, None).await?.as_slice() == expected {
-                // Es el contenido. Se estampa sin mover un byte: la
-                // copia sobre si misma con directiva REPLACE de
-                // metadatos es la unica reescritura del objeto que no
-                // necesita subir el cuerpo otra vez.
+                // It is the content. It is stamped without moving a byte: the
+                // copy onto itself with the REPLACE metadata directive
+                // is the only rewrite of the object that does not
+                // need to upload the body again.
                 self.client
                     .copy_object()
                     .bucket(&self.config.bucket)
@@ -265,31 +265,31 @@ impl S3BlobStore {
             }
             return repair.await;
         }
-        // O no tenemos los bytes (la via de la sesion) o el objeto es
-        // grande: verificar es mas caro que reparar, y la reparacion es
-        // segura —la autoridad del CAS es el digest de lo que se envia.
+        // Either we do not have the bytes (the session path) or the object is
+        // large: verifying is more expensive than repairing, and repair is
+        // safe (the CAS authority is the digest of what is sent).
         repair.await
     }
 
-    /// El mapa de metadatos que sella un objeto con su digest.
+    /// The metadata map that stamps an object with its digest.
     fn the_stamp_map(digest: &ContentDigest) -> HashMap<String, String> {
         let mut items = HashMap::new();
         items.insert(DIGEST_METADATA.to_string(), digest.value.clone());
         items
     }
 
-    /// Un PUT con la condicion que el backend ofrece. Con `only_if_absent`
-    /// el servidor rechaza (412) si la clave ya existe —la escritura
-    /// condicional medida en AC4—; sin ella es el PUT normal de siempre.
-    /// En ambas formas el objeto sale sellado con su digest: la condicion
-    /// de no-sobrescritura solo vale si despues hay con que probar que lo
-    /// que hay es lo que se publico.
+    /// A PUT with the condition that the backend offers. With `only_if_absent`
+    /// the server rejects (412) if the key already exists (the conditional
+    /// write measured in AC4); without it, it is the usual normal PUT.
+    /// In both forms the object goes out stamped with its digest: the
+    /// no-overwrite condition is only worth anything if afterwards there is something to prove that
+    /// what is there is what was published.
     ///
-    /// El error viaja encajado: el `SdkError` del PUT pesa cientos de
-    /// bytes, y esta funcion se llama en el camino caliente de cada
-    /// publicacion —el Result ancho costaria mas moverlo que el error
-    /// que describe. Quien solo mira el codigo (`is_precondition_failed`)
-    /// ni lo nota.
+    /// The error travels boxed: the PUT's `SdkError` weighs hundreds of
+    /// bytes, and this function is called on the hot path of every
+    /// publication (the wide Result would cost more to move than the error
+    /// it describes). Whoever only looks at the code (`is_precondition_failed`)
+    /// does not even notice.
     async fn conditional_put(
         &self,
         digest: &ContentDigest,
@@ -313,27 +313,27 @@ impl S3BlobStore {
         request.send().await.map(|_| ()).map_err(Box::new)
     }
 
-    /// El segado del staging: los restos que un fallo o un proceso
-    /// matado dejaron entre el `create` y la publicacion, en el cubo
-    /// S3. Es el equivalente del `clean_expired_staging` del almacen de
-    /// ficheros, y cumple su misma palabra: **no toca una subida viva**.
+    /// The staging reaper: the leftovers that a failure or a killed
+    /// process left between the `create` and the publication, in the S3
+    /// bucket. It is the equivalent of the file store's `clean_expired_staging`,
+    /// and keeps the same promise: **it does not touch a live upload**.
     ///
-    /// Aqui la prueba de vida es mas fuerte que el lock del fichero:
-    /// una sesion abandona sin abortar dejo su `upload_id` en el
-    /// almacén, y lo que la distingue de una subida en curso es que
-    /// nadie escribe en ella. Se pide la fecha del ultimo trozo subido
-    /// (y la del propio `create` si no hay trozos), y solo lo que lleva
-    /// mas de `max_age` sin un byte nuevo es un resto: se aborta. El
-    /// abort es el unico borrado —un multipart a medias no es un
-    /// objeto, y sus trozos no se listan como tales; no hay nada que
-    /// `list_blobs` pueda ver y el recolector pueda reclamar.
+    /// Here the liveness test is stronger than the file lock:
+    /// a session abandoned without aborting left its `upload_id` in the
+    /// store, and what distinguishes it from an in-progress upload is that
+    /// nobody writes to it. The date of the last uploaded part is requested
+    /// (and that of the `create` itself if there are no parts), and only what carries
+    /// more than `max_age` without a new byte is a leftover: it is aborted. The
+    /// abort is the only deletion (a half-done multipart is not an
+    /// object, and its parts are not listed as such; there is nothing
+    /// that `list_blobs` can see and the collector can reclaim).
     ///
-    /// Un fallo puntual abortando **no** es un fallo del segado: se
-    /// cuenta y se sigue, igual que en el directorio, porque lo que no
-    /// se pudo borrar hoy se vuelve a intentar en el arranque de
-    /// manana. Y un `upload_id` sin fecha util tampoco se toca: sin
-    /// reloj no hay mayoria de edad, y borrar a ciegas es peor que
-    /// dejar.
+    /// An isolated failure while aborting is **not** a failure of the reaping: it is
+    /// counted and the pass continues, as in the directory, because what
+    /// could not be deleted today is retried at tomorrow's
+    /// startup. And an `upload_id` without a usable date is not touched either: without a
+    /// clock there is no age of majority, and deleting blindly is worse than
+    /// leaving it.
     pub async fn clean_staging(&self, max_age: Duration) -> Result<StagingCleanup, BlobError> {
         let mut cleanup = StagingCleanup::default();
         let mut key_marker: Option<String> = None;
@@ -359,20 +359,20 @@ impl S3BlobStore {
                 let (Some(key), Some(upload_id)) = (upload.key(), upload.upload_id()) else {
                     continue;
                 };
-                // La clave tiene que ser de este almacen: `staging/<pid>-…`.
-                // Cualquier otra cosa bajo el prefijo no es nuestra y no
-                // se toca —la misma regla que `list_blobs` con las claves.
+                // The key must belong to this store: `staging/<pid>-…`.
+                // Anything else under the prefix is not ours and
+                // is not touched (the same rule as `list_blobs` with keys).
                 if !is_a_staging_key(key) {
                     continue;
                 }
-                // La edad puede no poder pedirse —un 500 del servidor,
-                // una subida que se cierra justo mientras la miramos.
-                // La palabra del segado es que un fallo puntual **no**
-                // aborta la pasada: se cuenta, como el abort que falla,
-                // y se sigue con la siguiente subida. Perder una subida
-                // vieja hoy es un inconveniente; no segar nada porque un
-                // `ListParts` tuvo un mal día sería desobedecer el
-                // contrato de esta función.
+                // The age may not be obtainable (a server 500,
+                // an upload that closes just while we look at it).
+                // The reaping's promise is that an isolated failure does **not**
+                // abort the pass: it is counted, like the abort that fails,
+                // and the next upload is processed. Losing an old
+                // upload today is an inconvenience; not reaping anything because a
+                // `ListParts` had a bad day would be disobeying the
+                // contract of this function.
                 let age = match self
                     .the_age_of_the_upload(key, upload_id, upload.initiated())
                     .await
@@ -385,8 +385,8 @@ impl S3BlobStore {
                 };
                 let Some(age) = age else { continue };
                 if age < max_age {
-                    // Demasiado joven para ser un resto: puede estar
-                    // escribiendo alguien ahora mismo.
+                    // Too young to be a leftover: someone may be
+                    // writing to it right now.
                     cleanup.alive += 1;
                     continue;
                 }
@@ -400,9 +400,9 @@ impl S3BlobStore {
                     .await
                 {
                     Ok(_) => cleanup.removed += 1,
-                    // El upload se fue entre el listado y el abort:
-                    // alguien (el dueno, o el Drop de su sesion) lo
-                    // cerro. No es un fallo, y no se cuenta.
+                    // The upload went away between the listing and the abort:
+                    // someone (the owner, or the Drop of its session) closed
+                    // it. It is not a failure, and it is not counted.
                     Err(error) if is_not_found(&error) => {}
                     Err(error) => cleanup.failed.push((key.to_string(), error.to_string())),
                 }
@@ -416,10 +416,10 @@ impl S3BlobStore {
                 break;
             }
         }
-        // Los objetos de staging que quedaron entre el complete y la
-        // copia de una publicacion interrumpida: un objeto normal bajo
-        // el prefijo, ya sin upload_id, que nadie lista como blob y que
-        // nadie va a leer nunca. Su fecha es `Last-Modified`.
+        // The staging objects that remained between the complete and the
+        // copy of an interrupted publication: a normal object under
+        // the prefix, already without upload_id, that nobody lists as a blob and that
+        // nobody will ever read. Its date is `Last-Modified`.
         let mut token: Option<String> = None;
         loop {
             let mut request = self
@@ -467,10 +467,10 @@ impl S3BlobStore {
         Ok(cleanup)
     }
 
-    /// La edad de una subida: la mas reciente entre su creacion y su
-    /// ultimo trozo. Una sesion viva actualiza el reloj con cada
-    /// `upload_part`, y por eso una subida de horas de `create` pero de
-    /// minutos de trozo no es un resto.
+    /// The age of an upload: the most recent between its creation and its
+    /// last part. A live session updates the clock with every
+    /// `upload_part`, and therefore an upload that is hours old from `create` but
+    /// minutes old from its last part is not a leftover.
     async fn the_age_of_the_upload(
         &self,
         key: &str,
@@ -492,8 +492,8 @@ impl S3BlobStore {
             }
             let page = match request.send().await {
                 Ok(page) => page,
-                // La subida se cerro entre el listado y la pregunta:
-                // ya no existe, no es un resto que segar.
+                // The upload closed between the listing and the query:
+                // it no longer exists, it is not a leftover to reap.
                 Err(error) if is_not_found(&error) => return Ok(Some(Duration::ZERO)),
                 Err(error) => {
                     return Err(Self::unavailable(
@@ -515,13 +515,13 @@ impl S3BlobStore {
                 break;
             }
         }
-        // Sin ninguna fecha util, no se decide: la edad desconocida no
-        // es mayoria de edad.
+        // Without any usable date, no decision is made: unknown age is not
+        // age of majority.
         Ok(ages.into_iter().min())
     }
 }
 
-/// Si el error de servicio dice que el contenido no esta.
+/// Whether the service error says the content is not there.
 fn is_not_found(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) -> bool {
     matches!(
         ProvideErrorMetadata::code(error),
@@ -529,8 +529,8 @@ fn is_not_found(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) 
     )
 }
 
-/// Si el error de servicio es la precondicion de no-sobrescritura: el
-/// objeto ya estaba cuando el PUT condicionado intento crearlo.
+/// Whether the service error is the no-overwrite precondition: the
+/// object was already there when the conditional PUT tried to create it.
 fn is_precondition_failed(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) -> bool {
     matches!(
         ProvideErrorMetadata::code(error),
@@ -538,19 +538,19 @@ fn is_precondition_failed(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorM
     )
 }
 
-/// Si la clave es una escritura en curso de este almacen.
+/// Whether the key is an in-progress write of this store.
 ///
-/// El patron lo pone `new_staging_key`: `staging/<pid>-<nanos:x>-<counter:x>`,
-/// el mismo del almacen de ficheros sin el `.part`. Una clave con otra
-/// forma bajo el prefijo del staging no es de este almacen: no se lista,
-/// no se aborta y no se cuenta —podria ser el staging de otra aplicacion
-/// compartiendo el cubo, y borrar lo ajeno no entra en el contrato.
+/// The pattern is set by `new_staging_key`: `staging/<pid>-<nanos:x>-<counter:x>`,
+/// the same as the file store's without the `.part`. A key with another
+/// shape under the staging prefix does not belong to this store: it is not listed,
+/// not aborted and not counted (it could be another application's staging
+/// sharing the bucket, and deleting what belongs to others is not part of the contract).
 ///
-/// El discriminador es formal, no de propiedad: otra aplicacion que
-/// eligiera el mismo patron por casualidad veria abortadas sus subidas
-/// viejas. Es la misma precondicion que el sello de digest —el cubo es
-/// de este servicio—, y con pid y nanos el empate real exige un reloj y
-/// un numero de proceso identicos en dos maquinas contra el mismo cubo.
+/// The discriminator is formal, not ownership-based: another application that
+/// chose the same pattern by chance would see its old uploads
+/// aborted. It is the same precondition as the digest stamp (the bucket is
+/// this service's), and with pid and nanos a real tie requires an identical clock and
+/// process number on two machines against the same bucket.
 fn is_a_staging_key(key: &str) -> bool {
     let Some(stem) = key.strip_prefix(&format!("{STAGING_PREFIX}/")) else {
         return false;
@@ -569,9 +569,9 @@ fn is_a_staging_key(key: &str) -> bool {
         && counter.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// El sello de digest que este almacen estampa en cada objeto, o `None`
-/// si el objeto no lleva sello —un preexistente de otra mano, un resto
-/// que aun no se escribia con condicion.
+/// The digest stamp that this store stamps on each object, or `None`
+/// if the object carries no stamp (a pre-existing one from another hand, a leftover
+/// that was not yet written conditionally).
 fn the_stamp_of(
     head: &aws_sdk_s3::operation::head_object::HeadObjectOutput,
 ) -> Option<ContentDigest> {
@@ -594,20 +594,20 @@ fn the_stamp_of(
 impl BlobStore for S3BlobStore {
     async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError> {
         let digest = ContentDigest::of_bytes(bytes);
-        // En un CAS la clave es el digest del contenido que se envia, asi
-        // que publicar dos veces el mismo contenido no es un error y no
-        // guarda dos veces. Lo que la escritura condicionada aporta sobre
-        // la simple es la garantia de que el objeto que ya estaba **es**
-        // el contenido: el PUT solo entra si la clave esta libre, y si el
-        // servidor la rechaza, `settle_a_refused_write` comprueba el
-        // preexistente en vez de dar por bueno un HEAD. Lo que no cuadra
-        // se repara, nunca se deduplica.
+        // In a CAS the key is the digest of the content being sent, so
+        // publishing the same content twice is not an error and does not
+        // store twice. What the conditional write adds over
+        // the plain one is the guarantee that the object that was already there **is**
+        // the content: the PUT only goes in if the key is free, and if the
+        // server rejects it, `settle_a_refused_write` checks the
+        // pre-existing object instead of trusting a HEAD. What does not add up
+        // is repaired, never deduplicated.
         match self.conditional_put(&digest, bytes, true).await {
             Ok(()) => Ok(digest),
             Err(error) if is_precondition_failed(&error) => {
-                // El `bytes.to_vec()` solo se paga en el camino del
-                // rechazo, que en un CAS sano es la excepcion (un
-                // preexistente sin sello o corrupto), no la dedupe.
+                // The `bytes.to_vec()` is only paid on the
+                // rejection path, which in a healthy CAS is the exception (a
+                // pre-existing object without a stamp or corrupt), not the dedupe.
                 let owned = bytes.to_vec();
                 let repair = {
                     let digest = digest.clone();
@@ -638,9 +638,9 @@ impl BlobStore for S3BlobStore {
     }
 
     async fn begin(&self) -> Result<Box<dyn BlobWriteSession>, BlobError> {
-        // La escritura en curso nace como una subida multiple en una clave
-        // de staging, fuera del espacio de los blobs: nada de lo que aqui
-        // se sube es visible hasta el commit.
+        // The in-progress write is born as a multipart upload on a staging
+        // key, outside the blob space: nothing uploaded here
+        // is visible until the commit.
         let staging_key = new_staging_key();
         let created = self
             .client
@@ -678,19 +678,19 @@ impl BlobStore for S3BlobStore {
         }))
     }
 
-    /// Reabrir una subida multiple en curso a partir del handle del
-    /// journal: `staging/<pid>-<nanos>-<counter>` y su `upload_id`.
+    /// Reopen an in-progress multipart upload from the journal's
+    /// handle: `staging/<pid>-<nanos>-<counter>` and its `upload_id`.
     ///
-    /// El almacén es la autoridad de lo que hay: se listan los trozos y
-    /// se toma el **prefijo** —ordenado por numero— cuya suma es
-    /// exactamente el offset que el journal declara. Un multipart con
-    /// mas bytes que los declarados no es un error mientras exista ese
-    /// prefijo: los trozos que la autoridad no registro son los de un
-    /// proceso que murio entre el upload y el avance, se quedan fuera de
-    /// la lista del complete y no se publican nunca; el ciclo de vida
-    /// del cubo los recoge. Si ningun prefijo suma lo declarado —bytes
-    /// solapados de dos escritoras—, el resume falla y la subida se
-    /// rehace: publicar por delante de la autoridad esta prohibido.
+    /// The store is the authority on what is there: the parts are listed and
+    /// the **prefix** is taken (ordered by number) whose sum is
+    /// exactly the offset that the journal declares. A multipart with
+    /// more bytes than declared is not an error as long as that prefix
+    /// exists: the parts that the authority did not record are those of a
+    /// process that died between the upload and the advance, they stay out of
+    /// the complete's list and are never published; the bucket's lifecycle
+    /// collects them. If no prefix sums to what was declared (overlapping
+    /// bytes from two writers), the resume fails and the upload is
+    /// redone: publishing ahead of the authority is forbidden.
     async fn resume(
         &self,
         handle: &str,
@@ -699,9 +699,9 @@ impl BlobStore for S3BlobStore {
         let (key, upload_id) = handle.split_once('\u{0}').ok_or_else(|| {
             BlobError::Unavailable("the session handle is not a multipart".to_owned())
         })?;
-        // Solo staging propio: una clave ajena bajo el prefijo no es una
-        // subida que este almacen reanude, y tocarla no entra en el
-        // contrato.
+        // Only own staging: a foreign key under the prefix is not an
+        // upload that this store resumes, and touching it is not part of the
+        // contract.
         if !is_a_staging_key(key) {
             return Err(BlobError::Unavailable(
                 "the session handle is not a staging upload of this store".to_owned(),
@@ -780,8 +780,8 @@ impl BlobStore for S3BlobStore {
             hasher: Sha256::new(),
             written,
             open: true,
-            // El journal es la autoridad del staging; el hasher local no
-            // vio los trozos que ya estaban.
+            // The journal is the staging authority; the local hasher did not
+            // see the parts that were already there.
             durable: true,
             covers_all: written == 0,
         }))
@@ -816,10 +816,10 @@ impl BlobStore for S3BlobStore {
         offset: u64,
         length: u64,
     ) -> Result<Vec<u8>, BlobError> {
-        // La longitud total se consulta antes de pedir el tramo: S3
-        // devuelve gustosamente un tramo truncado, y un cliente que pide
-        // 100 bytes y recibe 40 no puede saber que le faltan 60. El
-        // contrato del puerto no admite ese trato.
+        // The total length is queried before requesting the range: S3
+        // happily returns a truncated range, and a client that asks for
+        // 100 bytes and receives 40 cannot know that 60 are missing. The
+        // port contract does not allow that treatment.
         let size = self.length(digest).await?;
         if length == 0 {
             return Ok(Vec::new());
@@ -840,9 +840,9 @@ impl BlobStore for S3BlobStore {
         let range = format!("bytes={}-{}", offset, offset + length - 1);
         let bytes = self.read(digest, Some(&range)).await?;
         if bytes.len() as u64 != length {
-            // El objeto cambio de tamano entre el HEAD y el GET: el tramo
-            // pedido ya no es el que hay. Se dice cuanto hay, no se
-            // devuelve un tramo a medias.
+            // The object changed size between the HEAD and the GET: the requested
+            // range is no longer what is there. It says how much there is, it does not
+            // return a half range.
             return Err(BlobError::LengthMismatch {
                 expected: length,
                 found: bytes.len() as u64,
@@ -864,12 +864,12 @@ impl BlobStore for S3BlobStore {
     }
 }
 
-/// Si el error de servicio es la precondicion de `If-Match` (412): la
-/// version actual no es la que el recolector marque.
+/// Whether the service error is the `If-Match` precondition (412): the
+/// current version is not the one the collector marked.
 fn is_conditional_mismatch(error: &aws_sdk_s3::error::SdkError<impl ProvideErrorMetadata>) -> bool {
     match ProvideErrorMetadata::code(error) {
         Some("PreconditionFailed") => true,
-        // S3 devuelve 412 tambien como `If-Match` puro segun endpoint.
+        // S3 also returns 412 as a pure `If-Match` depending on the endpoint.
         Some(status) => status.contains("Precondition"),
         None => false,
     }
@@ -878,13 +878,13 @@ fn is_conditional_mismatch(error: &aws_sdk_s3::error::SdkError<impl ProvideError
 #[async_trait::async_trait]
 impl ConditionalBlob for S3BlobStore {
     fn supports_conditional_delete(&self) -> bool {
-        // La ultima generacion de S3 (y los endpoints S3-compatibles
-        // que lo implementan) acepta `If-Match` en DELETE y
-        // `x-amz-copy-source-if-match` en COPY. El recolector pregunta
-        // aqui, en el tipo del almacen; no en una bandera que se pueda
-        // poner mal. Un endpoint que no lo soporte se prueba en la
-        // primera condicion fallida: la copia devuelve 412 y NO toca
-        // nada, que es exactamente el contrato de fail-closed.
+        // The latest S3 generation (and the S3-compatible endpoints
+        // that implement it) accepts `If-Match` on DELETE and
+        // `x-amz-copy-source-if-match` on COPY. The collector asks
+        // here, in the store's type; not in a flag that can be
+        // set wrongly. An endpoint that does not support it is detected at the
+        // first failed condition: the copy returns 412 and touches
+        // nothing, which is exactly the fail-closed contract.
         true
     }
 
@@ -960,9 +960,9 @@ impl ConditionalBlob for S3BlobStore {
             ));
         }
         let source = self.the_key_of(digest);
-        // Paso 1: COPIA condicionada a la version marcada. Un 412 aqui
-        // significa que la clave original NO es lo que la pasada vio:
-        // no se toca nada. Un 404 significa que ya no esta.
+        // Step 1: COPY conditional on the marked version. A 412 here
+        // means that the original key is NOT what the pass saw:
+        // nothing is touched. A 404 means it is no longer there.
         let copied = self
             .client
             .copy_object()
@@ -984,10 +984,10 @@ impl ConditionalBlob for S3BlobStore {
                 return Err(Self::unavailable("quarantine the marked version", error));
             }
         }
-        // Paso 2: DELETE condicionado a la misma ETag. Si entre la copia
-        // y el delete alguien reescribio la clave, el delete falla con
-        // 412 y la cuarentena queda como copia exacta de la version
-        // marcada: reconciliable, nunca perdida.
+        // Step 2: DELETE conditional on the same ETag. If between the copy
+        // and the delete someone rewrote the key, the delete fails with
+        // 412 and the quarantine remains as an exact copy of the marked
+        // version: reconcilable, never lost.
         match self
             .client
             .delete_object()
@@ -1008,7 +1008,7 @@ impl ConditionalBlob for S3BlobStore {
 }
 
 impl S3BlobStore {
-    /// La cabecera del blob: longitud y fecha, o `NotFound`.
+    /// The blob header: length and date, or `NotFound`.
     async fn head(&self, digest: &ContentDigest) -> Result<Option<u64>, BlobError> {
         match self
             .client
@@ -1024,7 +1024,7 @@ impl S3BlobStore {
         }
     }
 
-    /// Leer el contenido, entero o por tramo.
+    /// Read the content, whole or by range.
     async fn read(
         &self,
         digest: &ContentDigest,
@@ -1052,14 +1052,14 @@ impl S3BlobStore {
     }
 }
 
-/// La clave de un contenido dentro del prefijo de blobs.
+/// The key of a content item inside the blob prefix.
 fn blob_key(digest: &ContentDigest) -> String {
     let hex = &digest.value;
     format!("{BLOB_PREFIX}/{}/{}/{}", &hex[..2], &hex[2..4], hex)
 }
 
-/// La clave de una escritura en curso: vive en el prefijo del staging,
-/// fuera del espacio de los blobs, hasta que el commit la publique.
+/// The key of an in-progress write: it lives in the staging prefix,
+/// outside the blob space, until the commit publishes it.
 fn new_staging_key() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1071,23 +1071,23 @@ fn new_staging_key() -> String {
     format!("staging/{}-{nanos:x}-{counter:x}", std::process::id())
 }
 
-/// El resultado de subir un trozo: su numero y el etag que devolvio el
-/// almacén, con el que el commit lo reclama.
+/// The result of uploading a part: its number and the etag that the
+/// store returned, with which the commit claims it.
 type UploadedPart = Result<CompletedPart, BlobError>;
 
-/// Una escritura en curso sobre una subida multiple.
+/// An in-progress write over a multipart upload.
 ///
-/// Los bytes se acumulan en un buffer hasta `part_size`; al llenarse, el
-/// trozo sale volando hacia el almacén **con su Content-MD5**, para que la
-/// condicion de integridad la compruebe el servidor y no nosotros al
-/// final. En vuelo no puede haber mas de `max_inflight_parts` trozos: ese
-/// es el presupuesto de memoria de la sesion, y excederlo es esperar, no
-/// acumular.
+/// The bytes accumulate in a buffer up to `part_size`; when it fills, the
+/// part flies to the store **with its Content-MD5**, so that the
+/// integrity condition is checked by the server and not by us at the
+/// end. There cannot be more than `max_inflight_parts` parts in flight: that
+/// is the session's memory budget, and exceeding it means waiting, not
+/// accumulating.
 ///
-/// El commit **no completa nada que no cuadre**: espera los trozos en
-/// vuelo, comprueba largo y digest contra lo declarado y, si algo
-/// discrepancy, aborta la subida entera. Un abort borra el staging del
-/// almacén: no queda ninguna referencia visible, ni un objeto a medias.
+/// The commit **completes nothing that does not add up**: it waits for the parts in
+/// flight, checks length and digest against what was declared and, if anything
+/// differs, aborts the whole upload. An abort deletes the store's staging:
+/// no visible reference remains, not even a half object.
 pub struct S3BlobWriteSession {
     client: Client,
     config: S3BlobConfig,
@@ -1101,19 +1101,19 @@ pub struct S3BlobWriteSession {
     hasher: Sha256,
     written: u64,
     open: bool,
-    /// El journal del registro es quien decide el destino del multipart:
-    /// el Drop del mango **no** lo aborta.
+    /// The registry's journal is what decides the multipart's destination:
+    /// the handle's Drop does **not** abort it.
     durable: bool,
-    /// Si el hasher local cubre el staging entero. Un multipart reabierto
-    /// en frio no vuelve a ver los trozos que ya volaron: su digest local
-    /// es parcial, y el commit tiene que comprobar los bytes contra el
-    /// almacen, no contra el hasher.
+    /// Whether the local hasher covers the whole staging. A multipart reopened
+    /// cold does not see again the parts that already flew: its local digest
+    /// is partial, and the commit has to check the bytes against the
+    /// store, not against the hasher.
     covers_all: bool,
 }
 
 impl S3BlobWriteSession {
-    /// Lanza el trozo completo que llena el buffer, esperando si ya hay
-    /// demasiados en vuelo.
+    /// Launches the complete part that fills the buffer, waiting if there are already
+    /// too many in flight.
     async fn flush_part(&mut self, last: bool) -> Result<(), BlobError> {
         if self.buffer.is_empty() {
             return Ok(());
@@ -1121,7 +1121,7 @@ impl S3BlobWriteSession {
         if !last && self.buffer.len() < self.config.part_size {
             return Ok(());
         }
-        // El presupuesto de memoria se cumple esperando, no acumulando.
+        // The memory budget is enforced by waiting, not by accumulating.
         while self.pending.len() >= self.config.max_inflight_parts {
             let oldest = self
                 .pending
@@ -1158,7 +1158,7 @@ impl S3BlobWriteSession {
         Ok(())
     }
 
-    /// Recoge un trozo terminado y lo apunta para el commit.
+    /// Collects a finished part and records it for the commit.
     fn collect_part(
         &mut self,
         joined: Result<Result<UploadedPart, tokio::task::JoinError>, tokio::time::error::Elapsed>,
@@ -1179,7 +1179,7 @@ impl S3BlobWriteSession {
         Ok(())
     }
 
-    /// Descarta la escritura en curso: aborta la subida y no publica nada.
+    /// Discards the in-progress write: aborts the upload and publishes nothing.
     async fn discard(&mut self) {
         self.open = false;
         self.buffer.clear();
@@ -1202,28 +1202,28 @@ impl S3BlobWriteSession {
         .await;
     }
 
-    /// Publica el contenido validado bajo su clave de digest.
+    /// Publishes the validated content under its digest key.
     ///
-    /// S3 completa la subida multiple en la clave donde nacio —la de
-    /// staging—, asi que publicar son dos pasos atomicos de servidor:
-    /// completar, y copiar el resultado a la clave del digest. La copia
-    /// es server-side: los bytes no vuelven a pasar por el proceso. Y el
-    /// staging se borra justo despues: lo que no se borro lo caduca el
-    /// ciclo de vida del cubo, nunca el recolector de blobs.
+    /// S3 completes the multipart upload on the key where it was born (the
+    /// staging one), so publishing is two atomic server-side steps:
+    /// complete, and copy the result to the digest key. The copy
+    /// is server-side: the bytes do not pass through the process again. And the
+    /// staging is deleted right afterwards: what was not deleted is expired by the
+    /// bucket lifecycle, never by the blob collector.
     ///
-    /// La copia va con la condicion de no-sobrescritura que el backend
-    /// ofrezca (medida, HSP-139: `If-None-Match: *` sobre el destino en
-    /// RustFS y en LocalStack; si un backend no la soporta, el backend
-    /// degrada a la copia sin condicion —deduplicar por contenido sigue
-    /// siendo cierto, dejar de pisar no—). El 412 no es un fallo: dos
-    /// sesiones concurrentes del mismo contenido es exactamente el caso
-    /// que la condicion resuelve, y el perdedor comprueba al ganador con
-    /// el mismo criterio honesto que la via `put`.
+    /// The copy goes with the no-overwrite condition that the backend
+    /// offers (measured, HSP-139: `If-None-Match: *` on the destination in
+    /// RustFS and LocalStack; if a backend does not support it, the backend
+    /// degrades to the copy without condition: deduplicating by content remains
+    /// true, not overwriting does not). The 412 is not a failure: two
+    /// concurrent sessions of the same content is exactly the case
+    /// that the condition resolves, and the loser checks the winner with
+    /// the same honest criterion as the `put` path.
     async fn publish(&self, target: &str, digest: &ContentDigest) -> Result<(), BlobError> {
         if self.completed.is_empty() {
-            // Ni un byte: no hay nada que completar, y S3 no admite
-            // subidas multiples vacias. El contenido vacio se publica
-            // con un PUT normal, condicionado como el resto.
+            // Not a single byte: there is nothing to complete, and S3 does not allow
+            // empty multipart uploads. Empty content is published
+            // with a normal PUT, conditional like the rest.
             let answer = self
                 .client
                 .put_object()
@@ -1237,13 +1237,13 @@ impl S3BlobWriteSession {
             return match answer {
                 Ok(_) => Ok(()),
                 Err(error) if is_precondition_failed(&error) => {
-                    // Alguien publico antes en esta clave, y aqui la
-                    // asimetria con la via `put` no tiene defensa: el
-                    // 412 de un cuerpo vacio se comprueba con el mismo
-                    // criterio honesto que cualquier otro rechazo. Con
-                    // las bytes sabidas —vacías— la comprobacion es la
-                    // mas barata posible, y reparar es repetir el PUT
-                    // sin condicion.
+                    // Someone published earlier on this key, and here the
+                    // asymmetry with the `put` path has no defense: the
+                    // 412 of an empty body is checked with the same
+                    // honest criterion as any other rejection. With
+                    // the bytes known (empty) the check is the
+                    // cheapest possible, and repairing is repeating the PUT
+                    // without condition.
                     let store = S3BlobStore {
                         client: self.client.clone(),
                         config: self.config.clone(),
@@ -1285,15 +1285,15 @@ impl S3BlobWriteSession {
             .send()
             .await
             .map_err(|error| S3BlobStore::unavailable("complete the upload", error))?;
-        // La verificacion honesta de una sesion reabierta en frio —la
-        // marca `covers_all` del mango: su hasher local no paso por los
-        // trozos que otra réplica subio, asi que el commit no pudo
-        // comparar un digest parcial contra lo declarado (daria un
-        // `DigestMismatch` falso y abortaria una subida buena). Se lee
-        // el objeto staging ya completado y se comprueba contra lo
-        // declarado **antes** de copiarlo a la clave del blob. Lo que
-        // no cuadra no se publica: se borra el staging y no queda
-        // referencia.
+        // The honest verification of a cold-reopened session (the
+        // handle's `covers_all` flag): its local hasher did not pass through the
+        // parts that another replica uploaded, so the commit could not
+        // compare a partial digest against what was declared (it would give a false
+        // `DigestMismatch` and abort a good upload). The already completed
+        // staging object is read and checked against what was
+        // declared **before** copying it to the blob key. What
+        // does not add up is not published: the staging is deleted and no
+        // reference remains.
         if !self.covers_all {
             let staged = self
                 .client
@@ -1312,9 +1312,9 @@ impl S3BlobWriteSession {
                 .to_vec();
             let found = ContentDigest::of_bytes(&bytes);
             if found != *digest {
-                // El contenido no es el declarado: el staging se borra
-                // y no se copia nada. Un blob con un digest que no es el
-                // suyo no es un blob.
+                // The content is not the declared one: the staging is deleted
+                // and nothing is copied. A blob with a digest that is not
+                // its own is not a blob.
                 let _ = self
                     .client
                     .delete_object()
@@ -1331,8 +1331,8 @@ impl S3BlobWriteSession {
         let copied = if self.written > MAX_SIMPLE_COPY {
             self.copy_as_multipart(target, digest, true).await
         } else {
-            // La copia es server-side: los bytes no vuelven a pasar por
-            // el proceso, y solo entra si el destino esta libre.
+            // The copy is server-side: the bytes do not pass through
+            // the process again, and it only goes in if the destination is free.
             match self
                 .client
                 .copy_object()
@@ -1351,16 +1351,16 @@ impl S3BlobWriteSession {
             }
         };
         let copied = match copied {
-            // El camino normal: la copia entro, o el fallo ya esta dicho.
+            // The normal path: the copy went in, or the failure is already stated.
             Ok(true) => Ok(()),
-            // Alguien publico primero. Que sea ESTE contenido lo
-            // comprueba la misma decision honesta que la via `put`:
-            // sello, o lectura; lo que no cuadre, se repara. Aqui no
-            // tenemos los bytes en el proceso —estan en el almacén,
-            // bajo la clave de staging ya completada—, asi que la
-            // reparacion es volver a copiar sin condicion. La vista del
-            // store es barata (el cliente es un Arc) y comparte la
-            // barrera: quien llama sostiene el gate desde el commit.
+            // Someone published first. Whether it is THIS content is
+            // checked by the same honest decision as the `put` path:
+            // stamp, or read; what does not add up is repaired. Here we do not
+            // have the bytes in the process (they are in the store,
+            // under the already completed staging key), so the
+            // repair is to copy again without condition. The store
+            // view is cheap (the client is an Arc) and shares the
+            // barrier: the caller holds the gate since the commit.
             Ok(false) => {
                 let store = S3BlobStore {
                     client: self.client.clone(),
@@ -1384,8 +1384,8 @@ impl S3BlobWriteSession {
         staging_cleanup.map(|_| ())
     }
 
-    /// La copia server-side sin la condicion: el camino de la reparacion
-    /// de una publicacion, cuando el preexistente no es el contenido.
+    /// The server-side copy without the condition: the repair path
+    /// of a publication, when the pre-existing object is not the content.
     async fn copy_unconditioned(
         &self,
         target: &str,
@@ -1410,16 +1410,16 @@ impl S3BlobWriteSession {
             .map_err(|error| S3BlobStore::unavailable("repair the published blob", error))
     }
 
-    /// Copiar un objeto de mas de cinco gigabytes: `CopyObject` no llega
-    /// alli, asi que la copia se hace trozo a trozo, con ranges sobre la
-    /// clave de staging. Es lo mismo que hace el desplegador maduro con
-    /// s3-sr-copy y aqui no puede ser un paso externo: el commit es o todo
-    /// o nada.
+    /// Copy an object of more than five gigabytes: `CopyObject` does not reach
+    /// that far, so the copy is done part by part, with ranges over the
+    /// staging key. It is the same as what the mature deployer does with
+    /// s3-sr-copy and here it cannot be an external step: the commit is all
+    /// or nothing.
     ///
-    /// La condicion de no-sobrescritura va sobre el `Complete`: el
-    /// destino no existe hasta que la copia multiple cierra, que es el
-    /// punto atomico que S3 promete. Devuelve si la copia escribio:
-    /// `false` es el 412, el "ya estaba" que el llamante resuelve.
+    /// The no-overwrite condition goes on the `Complete`: the
+    /// destination does not exist until the multipart copy closes, which is the
+    /// atomic point that S3 promises. It returns whether the copy wrote:
+    /// `false` is the 412, the "it was already there" that the caller resolves.
     async fn copy_as_multipart(
         &self,
         target: &str,
@@ -1506,13 +1506,13 @@ impl S3BlobWriteSession {
         match request.send().await {
             Ok(_) => Ok(true),
             Err(error) if only_if_absent && is_precondition_failed(&error) => {
-                // El destino ya estaba: la copia no hizo falta. Pero el
-                // multipart que abrimos **sobre la clave de destino**
-                // sigue vivo en el servidor, y su clave no es de
-                // staging —el segado no la mira y `list_blobs` no la
-                // ve—. Se aborta aqui, antes de ceder el veredicto al
-                // llamante; dejarla seria cambiar una carrera
-                // inocua por una fuga permanente de trozos pagados.
+                // The destination was already there: the copy was not needed. But the
+                // multipart that we opened **on the destination key**
+                // is still alive on the server, and its key is not
+                // a staging one (the reaper does not look at it and `list_blobs` does not
+                // see it). It is aborted here, before yielding the verdict to the
+                // caller; leaving it would trade a harmless race for a
+                // permanent leak of paid-for parts.
                 let _ = self
                     .client
                     .abort_multipart_upload()
@@ -1528,11 +1528,11 @@ impl S3BlobWriteSession {
     }
 }
 
-/// Cuanto puede tardar un trozo antes de que la sesion lo de por perdido.
+/// How long a part may take before the session gives it up for lost.
 const UPLOAD_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Lo que `CopyObject` sirve de una sola vez: por encima, la publicacion
-/// necesita una copia multiple. Cinco gigabytes, el maximo del servidor.
+/// What `CopyObject` serves in one go: above it, the publication
+/// needs a multipart copy. Five gigabytes, the server maximum.
 const MAX_SIMPLE_COPY: u64 = 5 * 1024 * 1024 * 1024;
 
 #[async_trait::async_trait]
@@ -1562,8 +1562,8 @@ impl BlobWriteSession for S3BlobWriteSession {
                 expectation.digest.algorithm.to_string(),
             ));
         }
-        // Lo ultimo que queda en el buffer es el trozo final, y el trozo
-        // final es el unico que puede ser mas corto que el presupuesto.
+        // What remains last in the buffer is the final part, and the final
+        // part is the only one that may be shorter than the budget.
         self.flush_part(true).await?;
         while let Some(handle) = self.pending.pop_front() {
             self.collect_part(tokio::time::timeout(UPLOAD_TIMEOUT, handle).await)?;
@@ -1577,15 +1577,15 @@ impl BlobWriteSession for S3BlobWriteSession {
             });
         }
 
-        // La comprobacion honesta del digest. Cuando el mango paso por
-        // todos los bytes, el hasher local es la verdad y se compara
-        // aqui, barato. Cuando la sesion se reablo en frio —el journal
-        // la declaro y otra réplica escribio los primeros trozos—, el
-        // hasher local es **parcial**: compararlo contra lo declarado
-        // daria un `DigestMismatch` falso y abortaria una subida buena.
-        // En ese caso la comprobacion la hace `publish` contra el
-        // staging ya completado: la misma verificacion honesta, una
-        // sola vez, al publicar.
+        // The honest digest check. When the handle passed through
+        // all the bytes, the local hasher is the truth and is compared
+        // here, cheaply. When the session was reopened cold (the journal
+        // declared it and another replica wrote the first parts), the
+        // local hasher is **partial**: comparing it against what was declared
+        // would give a false `DigestMismatch` and abort a good upload.
+        // In that case the check is made by `publish` against the
+        // already completed staging: the same honest verification, once,
+        // at publication.
         let declared = expectation.digest;
         if self.covers_all {
             let found = ContentDigest::sha256(hex_of(&self.hasher.clone().finalize()));
@@ -1598,7 +1598,7 @@ impl BlobWriteSession for S3BlobWriteSession {
             }
         }
 
-        // Desde aqui hasta publicar, el recolector no puede borrar nada.
+        // From here until publication, the collector cannot delete anything.
         let barrier = self.gate.lock().await;
         let target = blob_key(&declared);
         let outcome = self.publish(&target, &declared).await;
@@ -1618,7 +1618,7 @@ impl BlobWriteSession for S3BlobWriteSession {
             handle.abort();
         }
         if self.completed.is_empty() && self.written == 0 {
-            // Nada subido: tampoco hay nada que abortar en el almacén.
+            // Nothing uploaded: there is also nothing to abort in the store.
             return Ok(());
         }
         self.client
@@ -1636,9 +1636,9 @@ impl BlobWriteSession for S3BlobWriteSession {
         self.written
     }
 
-    /// Lo que el almacén tiene: los bytes en vuelo no son durable hasta
-    /// que el servidor los confirma, y lo que queda en el buffer no salio
-    /// del proceso. Es el offset que el journal puede declarar.
+    /// What the store has: bytes in flight are not durable until
+    /// the server confirms them, and what remains in the buffer has not left
+    /// the process. It is the offset that the journal can declare.
     fn the_durable_offset(&self) -> u64 {
         self.written - self.buffer.len() as u64
     }
@@ -1651,27 +1651,27 @@ impl BlobWriteSession for S3BlobWriteSession {
         None
     }
 
-    /// El handle del journal: la clave de staging y el `upload_id`, unidos
-    /// por un cero que ninguno de los dos puede llevar.
+    /// The journal handle: the staging key and the `upload_id`, joined
+    /// by a zero that neither of the two can carry.
     fn the_staging_handle(&self) -> Option<String> {
         Some(format!("{}\u{0}{}", self.staging_key, self.upload_id))
     }
 
-    /// Un multipart reabierto en frio no volvio a ver sus trozos: su
-    /// hasher local es parcial, y el commit tiene que comprobar los bytes
-    /// contra el almacén.
+    /// A cold-reopened multipart has not seen its parts again: its
+    /// local hasher is partial, and the commit has to check the bytes
+    /// against the store.
     fn the_digest_covers_all(&self) -> bool {
         self.covers_all
     }
 
-    /// Suelta el mango **solo si no queda nada en el buffer**.
+    /// Releases the handle **only if nothing remains in the buffer**.
     ///
-    /// El multipart no tiene un staging intermedio al que puedan volver
-    /// los bytes del buffer: soltarse con bytes dentro los perderia, y
-    /// la autoridad del journal no los declaro. Con el buffer vacio y
-    /// las partes en vuelo ya recogidas por `flush_durable`, soltar es
-    /// cerrar sin abortar: el multipart sigue vivo y el proximo `PATCH`
-    /// lo retoma por su handle, aqui o en otra réplica.
+    /// The multipart has no intermediate staging to which the buffer's bytes
+    /// can return: releasing with bytes inside would lose them, and
+    /// the journal's authority did not declare them. With an empty buffer and
+    /// the in-flight parts already collected by `flush_durable`, releasing is
+    /// closing without aborting: the multipart stays alive and the next `PATCH`
+    /// resumes it by its handle, here or on another replica.
     fn detach(&mut self) -> Result<(), BlobError> {
         if !self.buffer.is_empty() {
             return Err(BlobError::Unavailable(
@@ -1686,24 +1686,24 @@ impl BlobWriteSession for S3BlobWriteSession {
         Ok(())
     }
 
-    /// El journal toma la propiedad del multipart: el Drop ya no lo aborta.
+    /// The journal takes ownership of the multipart: the Drop no longer aborts it.
     ///
-    /// Un mango soltado o un proceso que muere NO aborta la subida de
-    /// otra réplica; su destino lo decide la autoridad: commit, abort
-    /// explicito o barrido. El resume comprueba contra `ListParts` que
-    /// el almacén tiene exactamente los bytes que la autoridad declara
-    /// y rehacer la subida es el unico camino si un trozo duplicado puso
-    /// el staging por delante del journal. No se publica nunca por
-    /// delante de la autoridad.
+    /// A released handle or a process that dies does NOT abort another
+    /// replica's upload; its destination is decided by the authority: commit, explicit
+    /// abort or sweep. The resume checks against `ListParts` that
+    /// the store has exactly the bytes that the authority declares
+    /// and redoing the upload is the only path if a duplicated part put
+    /// the staging ahead of the journal. It is never published ahead
+    /// of the authority.
     fn mark_durable(&mut self) {
         self.durable = true;
     }
 
-    /// Recoge las partes en vuelo y declara el offset durable.
+    /// Collects the in-flight parts and declares the durable offset.
     ///
-    /// Lo confirmado por el servidor es durable; lo que queda en el
-    /// buffer no sale del proceso, y el cliente lo reenvia contra el
-    /// `Range` que la autoridad declara.
+    /// What the server confirmed is durable; what remains in the
+    /// buffer does not leave the process, and the client resends it against the
+    /// `Range` that the authority declares.
     async fn flush_durable(&mut self) -> Result<u64, BlobError> {
         while let Some(handle) = self.pending.pop_front() {
             self.collect_part(tokio::time::timeout(UPLOAD_TIMEOUT, handle).await)?;
@@ -1717,17 +1717,17 @@ impl Drop for S3BlobWriteSession {
         if !self.open {
             return;
         }
-        // La sesion se abandono sin commitear ni abortar: el staging no
-        // puede sobrevivir a quien lo abrio. El abort va al runtime en
-        // curso; si no hay runtime, el ciclo de vida del cubo (o la
-        // politica de ciclo de vida del staging) lo recoge.
+        // The session was abandoned without committing or aborting: the staging
+        // cannot outlive whoever opened it. The abort goes to the current
+        // runtime; if there is no runtime, the bucket lifecycle (or the
+        // staging lifecycle policy) collects it.
         self.open = false;
         for handle in self.pending.drain(..) {
             handle.abort();
         }
-        // Con journal, el destino del multipart lo decide la autoridad:
-        // un mango local que muere (cache desalojado, réplica que sigue)
-        // NO aborta la subida de otra réplica.
+        // With a journal, the multipart's destination is decided by the authority:
+        // a local handle that dies (evicted cache, replica that continues)
+        // does NOT abort another replica's upload.
         if self.durable {
             return;
         }
@@ -1769,14 +1769,14 @@ impl BlobReclaim for S3BlobStore {
                 .await
                 .map_err(|error| Self::unavailable("list the blobs", error))?;
             for object in page.contents() {
-                // Lo que no tiene forma de blob de este almacen no es de
-                // este almacen: no se lista y, por tanto, no se borra.
+                // What has no blob shape of this store is not of
+                // this store: it is not listed and, therefore, not deleted.
                 let Some(key) = object.key() else { continue };
                 let Some(digest) = Self::digest_of_key(key) else {
                     continue;
                 };
-                // Sin fecha no hay edad, y sin edad no se decide nada:
-                // un objeto sin Last-Modified no se ofrece al recolector.
+                // Without a date there is no age, and without age nothing is decided:
+                // an object without Last-Modified is not offered to the collector.
                 let Some(age) = Self::age_of(object.last_modified()) else {
                     continue;
                 };
@@ -1822,8 +1822,8 @@ impl BlobReclaim for S3BlobStore {
             Err(error) if is_not_found(&error) => return Ok(Reclaimed::Gone),
             Err(error) => return Err(Self::unavailable("look up the blob", error)),
         };
-        // La edad se mira con la barrera tomada: lo que se comprueba aqui
-        // sigue siendo cierto cuando se borra abajo.
+        // The age is checked with the barrier held: what is checked here
+        // remains true when it is deleted below.
         let Some(age) = Self::age_of(head.last_modified()) else {
             return Err(Self::unavailable(
                 "check the blob age",
@@ -1849,7 +1849,7 @@ impl BlobReclaim for S3BlobStore {
     }
 }
 
-/// El hexadecimal de los bytes.
+/// The hexadecimal of the bytes.
 fn hex_of(bytes: &[u8]) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(bytes.len() * 2);

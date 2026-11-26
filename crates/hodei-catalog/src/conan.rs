@@ -1,39 +1,39 @@
-//! La gramatica **conan** del protocolo de remote de Conan 2.
+//! The **conan** grammar of the Conan 2 remote protocol.
 //!
-//! Aqui vive lo **puro**: la tabla de rutas que el cliente Conan 2 habla
-//! contra un remote con revisiones, y el mapa entre esas rutas y las rutas
-//! de asset del catalogo. El dialecto lo fija el cliente
-//! (`conan/internal/rest/rest_routes.py` de Conan 2.20.1) y lo verifico el
-//! spike contra un remote de referencia: `conan/internal/rest/client_routes.py`
-//! ensambla las URLs sobre `{remote}/v2/`, y el ping vive en `/v1/ping`.
+//! The **pure** part lives here: the route table that the Conan 2 client speaks
+//! against a remote with revisions, and the map between those routes and the
+//! catalog's asset paths. The dialect is fixed by the client
+//! (`conan/internal/rest/rest_routes.py` of Conan 2.20.1) and was verified by the
+//! spike against a reference remote: `conan/internal/rest/client_routes.py`
+//! assembles the URLs on `{remote}/v2/`, and the ping lives at `/v1/ping`.
 //!
-//! La identidad versionada es la del propio protocolo: la **recipe revision**
-//! (`rrev`) y la **package revision** (`prev`) son segmentos de ruta opacos
-//! que el servidor conserva tal cual. El `package_id` viaja en su propia
-//! posicion y los binarios de un `package_id` viven bajo un prefijo que solo
-//! es suyo: nada mezcla los bytes de dos `package_id` del mismo recipe.
+//! The versioned identity is that of the protocol itself: the **recipe revision**
+//! (`rrev`) and the **package revision** (`prev`) are opaque path segments
+//! that the server keeps as is. The `package_id` travels in its own
+//! position and the binaries of a `package_id` live under a prefix that is only
+//! its own: nothing mixes the bytes of two `package_id`s of the same recipe.
 
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde_json::{Value, json};
 
-/// El identificador versionado de un recipe: `name/version@user/channel`.
+/// The versioned identifier of a recipe: `name/version@user/channel`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecipeRef {
-    /// El nombre del paquete conan.
+    /// The name of the conan package.
     pub name: String,
-    /// La version.
+    /// The version.
     pub version: String,
-    /// El usuario, `_` cuando el cliente no lleva.
+    /// The user, `_` when the client carries none.
     pub user: String,
-    /// El canal, `_` cuando el cliente no lleva.
+    /// The channel, `_` when the client carries none.
     pub channel: String,
 }
 
 impl RecipeRef {
-    /// La referencia tal y como la imprime el cliente en los listados.
+    /// The reference exactly as the client prints it in listings.
     ///
-    /// `_` significa "sin usuario" y "sin canal": el cliente los vuelve a
-    /// quitar al leer.
+    /// `_` means "no user" and "no channel": the client strips them
+    /// again when reading.
     pub fn render(&self) -> String {
         format!(
             "{}/{}@{}/{}",
@@ -41,7 +41,7 @@ impl RecipeRef {
         )
     }
 
-    /// El prefijo de asset de un recipe (sin revision ni fichero).
+    /// The asset prefix of a recipe (without revision or file).
     pub fn recipe_prefix(&self) -> String {
         format!(
             "recipes/{}/{}/{}/{}",
@@ -49,22 +49,22 @@ impl RecipeRef {
         )
     }
 
-    /// El prefijo de asset de una revision del recipe.
+    /// The asset prefix of a recipe revision.
     pub fn revision_prefix(&self, revision: &str) -> String {
         format!("{}/{revision}", self.recipe_prefix())
     }
 
-    /// La ruta de asset de un fichero del recipe.
+    /// The asset path of a recipe file.
     pub fn recipe_file_path(&self, revision: &str, file: &str) -> String {
         format!("{}/{file}", self.revision_prefix(revision))
     }
 
-    /// El prefijo de asset de los packages de una revision del recipe.
+    /// The asset prefix of the packages of a recipe revision.
     ///
-    /// Los binarios viven en su propio arbol, al lado del de las recipes:
-    /// `packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`. Un
-    /// `package_id` no comparte prefijo con otro, y ninguno comparte
-    /// prefijo con los ficheros del recipe.
+    /// The binaries live in their own tree, next to the one of the recipes:
+    /// `packages/{n}/{v}/{u}/{c}/{rrev}/{pid}/{prev}/{file}`. A
+    /// `package_id` does not share a prefix with another, and none shares a
+    /// prefix with the recipe files.
     pub fn packages_prefix(&self, revision: &str) -> String {
         format!(
             "packages/{}/{}/{}/{}/{}",
@@ -72,12 +72,12 @@ impl RecipeRef {
         )
     }
 
-    /// El prefijo de asset de un package_id de una revision.
+    /// The asset prefix of a package_id of a revision.
     pub fn package_prefix(&self, revision: &str, package_id: &str) -> String {
         format!("{}/{package_id}", self.packages_prefix(revision))
     }
 
-    /// El prefijo de asset de una revision de package.
+    /// The asset prefix of a package revision.
     pub fn package_revision_prefix(
         &self,
         revision: &str,
@@ -90,7 +90,7 @@ impl RecipeRef {
         )
     }
 
-    /// La ruta de asset de un fichero de un package.
+    /// The asset path of a file of a package.
     pub fn package_file_path(
         &self,
         revision: &str,
@@ -105,66 +105,66 @@ impl RecipeRef {
     }
 }
 
-/// La marca de tiempo que devuelve el remote en los documentos de
-/// revisiones, en el formato que el cliente lee (`datetime.fromisoformat`
-/// acepta el `Z` final).
+/// The timestamp that the remote returns in the revision
+/// documents, in the format the client reads (`datetime.fromisoformat`
+/// accepts the trailing `Z`).
 pub fn the_timestamp(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
-/// Lo que se puede pedir en la superficie conan.
+/// What can be requested on the conan surface.
 ///
-/// La tabla es la de `rest_routes.py` del cliente: el oraculo del
-/// dialecto. Un nombre de recipe se repite en cada ruta porque el
-/// cliente no usa rutas cortas.
+/// The table is that of the client's `rest_routes.py`: the oracle of the
+/// dialect. A recipe name is repeated in every route because the
+/// client does not use short routes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// `GET /v1/ping`: el cliente lee las capacidades de la cabecera.
+    /// `GET /v1/ping`: the client reads the capabilities from the header.
     Ping,
-    /// `GET /v2/users/authenticate`: Basic de entrada, token de salida.
+    /// `GET /v2/users/authenticate`: Basic in, token out.
     Authenticate,
-    /// `GET /v2/users/check_credentials`: comprueba el token.
+    /// `GET /v2/users/check_credentials`: checks the token.
     CheckCredentials,
-    /// `GET /v2/conans/search`: la busqueda de recipes, con su patron `q`.
+    /// `GET /v2/conans/search`: the recipe search, with its `q` pattern.
     Search,
-    /// `GET /v2/conans/{n}/{v}/{u}/{c}/latest`: la ultima recipe revision.
+    /// `GET /v2/conans/{n}/{v}/{u}/{c}/latest`: the latest recipe revision.
     RecipeLatest(RecipeRef),
-    /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions`: las recipe revisions.
+    /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions`: the recipe revisions.
     RecipeRevisions(RecipeRef),
-    /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/files`: el
-    /// snapshot del recipe.
+    /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/files`: the
+    /// recipe snapshot.
     RecipeSnapshot(RecipeRef, String),
     /// `GET|PUT /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/files/{path}`:
-    /// un fichero del recipe, con su ruta relativa tal cual.
+    /// a recipe file, with its relative path as is.
     RecipeFile(RecipeRef, String, String),
-    /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages`: los
-    /// package ids de una revision del recipe.
+    /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages`: the
+    /// package ids of a recipe revision.
     PackageIds(RecipeRef, String),
     /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages/search`:
-    /// la busqueda de package ids (la del cliente).
+    /// the package id search (the client's).
     PackageSearch(RecipeRef, String),
     /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages/{pid}/latest`:
-    /// la ultima package revision de ese package id.
+    /// the latest package revision of that package id.
     PackageLatest(RecipeRef, String, String),
     /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages/{pid}/revisions`:
-    /// las package revisions de ese package id.
+    /// the package revisions of that package id.
     PackageRevisions(RecipeRef, String, String),
     /// `GET /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages/{pid}/revisions/{prev}/files`:
-    /// el snapshot del package.
+    /// the package snapshot.
     PackageSnapshot(RecipeRef, String, String, String),
     /// `GET|PUT /v2/conans/{n}/{v}/{u}/{c}/revisions/{rrev}/packages/{pid}/revisions/{prev}/files/{path}`:
-    /// un fichero del package.
+    /// a package file.
     PackageFile(RecipeRef, String, String, String, String),
 }
 
-/// Un nombre de componente del protocolo conan: recipe name, version,
+/// A component name of the conan protocol: recipe name, version,
 /// user, channel, revision, package id.
 ///
-/// Conan los escribe en el camino sin codificar, y un `..` o un segmento
-/// vacio no es un nombre: es una ruta disfrazada. Las revisiones y los
-/// package ids son hexadecimales en la practica, pero cualquier token sin
-/// barra es lo que el servidor acepta: quien inventa el valor es el
-/// cliente, no el servidor.
+/// Conan writes them in the path without encoding, and a `..` or an empty
+/// segment is not a name: it is a disguised path. Revisions and
+/// package ids are hexadecimal in practice, but any token without a
+/// slash is what the server accepts: whoever invents the value is the
+/// client, not the server.
 pub fn valid_component(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 128
@@ -175,10 +175,10 @@ pub fn valid_component(text: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'+'))
 }
 
-/// Un fichero del recipe o del package.
+/// A file of the recipe or of the package.
 ///
-/// Los ficheros pueden anidar (`metadata/sign`), pero cada segmento es un
-/// nombre literal: sin barra, sin escape escondido, sin vacio.
+/// Files can nest (`metadata/sign`), but each segment is a
+/// literal name: no slash, no hidden escape, no empty segment.
 pub fn valid_file_path(text: &str) -> bool {
     !text.is_empty() && text.len() <= 255 && text.split('/').all(valid_component)
 }
@@ -197,11 +197,11 @@ fn the_ref(name: &str, version: &str, user: &str, channel: &str) -> Option<Recip
     })
 }
 
-/// La ruta pedida, ya interpretada.
+/// The requested path, already interpreted.
 ///
-/// La entrada es lo que queda de `/conan/{repositorio}/` en la URI, sin
-/// decodificar: la gramatica del protocolo es la unica que puede mirar
-/// un `%2f`. La query no viene aqui.
+/// The input is what remains of `/conan/{repositorio}/` in the URI, without
+/// decoding: the protocol grammar is the only one that may look at
+/// a `%2f`. The query does not come here.
 pub fn parse(rest: &str) -> Option<Route> {
     let segments: Vec<&str> = rest.trim_start_matches('/').split('/').collect();
     match segments.as_slice() {
@@ -379,11 +379,11 @@ pub fn parse(rest: &str) -> Option<Route> {
     }
 }
 
-/// La respuesta del snapshot de un recipe o de un package.
+/// The response of a recipe or package snapshot.
 ///
-/// El cliente lee `files` y descarta el resto; los `url` relativos son los
-/// que él ensambla desde las rutas de la tabla, y el servidor no necesita
-/// decirle nada que el dialecto ya fija.
+/// The client reads `files` and discards the rest; the relative `url`s are the
+/// ones it assembles from the routes of the table, and the server does not need to
+/// tell it anything that the dialect already fixes.
 pub fn snapshot_document(files: &[(String, u64)]) -> Value {
     let files: Value = files
         .iter()
@@ -393,7 +393,7 @@ pub fn snapshot_document(files: &[(String, u64)]) -> Value {
     json!({ "files": files, "download_urls": {} })
 }
 
-/// El documento de una lista de revisiones (recipe o package).
+/// The document of a revision list (recipe or package).
 pub fn revisions_document(revisions: &[(String, DateTime<Utc>)]) -> Value {
     json!({
         "revisions": revisions
@@ -405,21 +405,21 @@ pub fn revisions_document(revisions: &[(String, DateTime<Utc>)]) -> Value {
     })
 }
 
-/// El documento de la ultima revision: uno solo, con su tiempo.
+/// The document of the latest revision: just one, with its time.
 pub fn revision_document(revision: &str, time: DateTime<Utc>) -> Value {
     json!({ "revision": revision, "time": the_timestamp(time) })
 }
 
-/// La respuesta de la busqueda de recipes.
+/// The response of the recipe search.
 pub fn search_document(results: &[RecipeRef]) -> Value {
     json!({ "results": results.iter().map(RecipeRef::render).collect::<Vec<_>>() })
 }
 
-/// El patron `q` de la query de busqueda.
+/// The `q` pattern of the search query.
 ///
-/// La query llega en la forma del wire (`q=hello%2F%2A`); el valor se
-/// decodifica **una** vez y sin interpretar nada mas: el patron es texto
-/// de glob, no una expresion que el servidor invente.
+/// The query arrives in wire form (`q=hello%2F%2A`); the value is
+/// decoded **once** and without interpreting anything else: the pattern is glob
+/// text, not an expression that the server invents.
 pub fn the_query_of(query: &str) -> Option<String> {
     query.split('&').find_map(|pair| {
         let (name, value) = pair.split_once('=')?;
@@ -430,7 +430,7 @@ pub fn the_query_of(query: &str) -> Option<String> {
     })
 }
 
-/// Un valor de query decodificado, una vez.
+/// A query value decoded, once.
 pub fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -453,19 +453,19 @@ pub fn percent_decode(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// La busqueda de recipes del cliente, aplicada a las recetas conocidas.
+/// The client's recipe search, applied to the known recipes.
 ///
-/// El patron es el que el cliente manda en `q`: una referencia con
-/// comodines (`hello/*`, `*/1.0.0@hodei/stable`). El match es el de glob
-/// sobre la referencia impresa; sin patron, todo.
+/// The pattern is what the client sends in `q`: a reference with
+/// wildcards (`hello/*`, `*/1.0.0@hodei/stable`). The match is a glob
+/// over the printed reference; without a pattern, everything.
 pub fn the_search_matches(pattern: &str, reference: &RecipeRef) -> bool {
     if pattern.is_empty() {
         return true;
     }
     let rendered = reference.render();
-    // El cliente pide la comparacion sin distinguir mayusculas (el remote
-    // de referencia la aplica en su motor de busqueda); aqui la aplicamos
-    // igual: un listado es una lectura, no una identidad.
+    // The client asks for the comparison without distinguishing case (the reference
+    // remote applies it in its search engine); here we apply it
+    // the same way: a listing is a read, not an identity.
     the_glob(
         &rendered.to_ascii_lowercase(),
         &pattern.to_ascii_lowercase(),

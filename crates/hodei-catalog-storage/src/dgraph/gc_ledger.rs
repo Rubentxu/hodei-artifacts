@@ -1,45 +1,45 @@
-//! El libro de la recoleccion coordinada sobre el grafo nativo (HSP-192).
+//! The ledger of coordinated collection over the native graph (HSP-192).
 //!
-//! El claim del GC **vive en la autoridad**, no en la memoria del
-//! worker. Dos replicas sobre el mismo scope se excluyen por el token
-//! de la generacion vigente; un zombie con la generacion vencida no
-//! puede marcar, ni confirmar, ni cerrar, ni renovar.
+//! The GC claim **lives in the authority**, not in the worker's
+//! memory. Two replicas on the same scope exclude each other through the
+//! token of the current generation; a zombie holding an expired generation
+//! cannot mark, confirm, close, or renew.
 //!
-//! Las reglas que porta este modulo:
+//! The rules this module carries:
 //!
-//! 1. **El claim es un CAS durable.** La fila-lease del scope lleva
-//!    `generation`, `token`, `owner` y `lease_until`. La guarda va en
-//!    el `@filter` del upsert sobre el (token, lease) que se acaba de
-//!    leer: el concurrente que leyo lo mismo ve su bloque vacio. Un
-//!    lease vencido se take-over con generacion y token NUEVOS. El
-//!    veredicto del claim sale de la **relectura post-commit**
-//!    (HSP-205), no del hecho de que el commit saliera bien.
-//! 2. **La marca es transaccional con guarda** (patron frontier,
-//!    HSP-199): la guarda del claim vigente va en el `@filter` del
-//!    query del upsert y la marca se escribe condicionada a esa guarda,
-//!    en la MISMA transaccion. La intencion de borrado lleva ADEMAS la
-//!    guarda de referencias en esa misma transaccion: tres variables
-//!    por familia del plano de datos cuentan las filas que nombran el
-//!    digest y, si alguna aparece entre la revalidacion y el commit,
-//!    la intencion no se escribe. Lo que se barra es lo que la
-//!    autoridad devolvio leido despues del commit.
-//! 3. **El fence es el token vigente, no el stamp.** Toda operacion de
-//!    pasada (marcar, reconfirmar, confirmar, cuarentenar, renovar,
-//!    cerrar) comprueba el claim antes de escribir: si no es el suyo,
-//!    `PreconditionFailed` y la pasada deja de borrar (AC1). Un
-//!    take-over de un lease muerto SI puede reanudar la marca durable
-//!    de la generacion anterior — eso es la durabilidad — pero solo
-//!    presentando el token vivo.
-//! 4. **El censo va por paginas** (AC3): `root_page` recorre las tres
-//!    familias del plano de datos del owner con `first(limit+1)`
-//!    ordenadas por digest y cursor estricto; los empates del corte se
-//!    completan para que paginas sucesivas sean disjuntas y
-//!    convergentes. Nunca se materializa el grafo completo, y no hay
-//!    censo global: el censo por membresia del legacy se declara
-//!    indisponible y obliga al paginado por scope.
-//! 5. **Las referencias vivas se cuentan frescas** (revalidacion
-//!    post-censo): `live_reference_count` pregunta por cada familia sin
-//!    scan global; un candidato con nombre vivo no se marca ni se barre.
+//! 1. **The claim is a durable CAS.** The scope's lease row carries
+//!    `generation`, `token`, `owner` and `lease_until`. The guard goes in
+//!    the upsert's `@filter` on the (token, lease) that was just
+//!    read: the concurrent writer that read the same thing sees its block empty. An
+//!    expired lease is taken over with a NEW generation and token. The
+//!    claim verdict comes from the **post-commit re-read**
+//!    (HSP-205), not from the fact that the commit went through.
+//! 2. **The mark is transactional and guarded** (frontier pattern,
+//!    HSP-199): the guard of the current claim goes in the `@filter` of the
+//!    upsert query and the mark is written conditioned on that guard,
+//!    in the SAME transaction. The deletion intent ALSO carries the
+//!    reference guard in that same transaction: three variables
+//!    per data-plane family count the rows that name the
+//!    digest and, if any shows up between revalidation and commit,
+//!    the intent is not written. What gets swept is what the
+//!    authority returned when read after the commit.
+//! 3. **The fence is the current token, not the stamp.** Every pass
+//!    operation (mark, reconfirm, confirm, quarantine, renew,
+//!    close) checks the claim before writing: if it is not its own,
+//!    `PreconditionFailed` and the pass stops deleting (AC1). A
+//!    take-over of a dead lease CAN resume the durable mark
+//!    of the previous generation — that is durability — but only
+//!    by presenting the live token.
+//! 4. **The census is paged** (AC3): `root_page` walks the three
+//!    data-plane families of the owner with `first(limit+1)`
+//!    ordered by digest and a strict cursor; ties at the cut are
+//!    completed so that successive pages are disjoint and
+//!    convergent. The full graph is never materialized, and there is no
+//!    global census: the legacy membership census is declared
+//!    unavailable and forces per-scope paging.
+//! 5. **Live references are counted fresh** (post-census
+//!    revalidation): `live_reference_count` asks each family without a
+//!    global scan; a candidate with a live name is neither marked nor swept.
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -57,28 +57,28 @@ use super::{
     DgraphCatalogStore, key_part, node_digest, node_option_text, node_text, node_u64, single_row,
 };
 
-/// El tipo de grafo del lease de una pasada coordinada.
+/// The graph type of the lease of a coordinated pass.
 pub const GC_LEASE_TYPE: &str = "GcLease";
-/// El tipo de grafo de la marca durable de una pasada.
+/// The graph type of the durable mark of a pass.
 pub const GC_RUN_TYPE: &str = "GcRun";
-/// El tipo de grafo del rastro de un borrado.
+/// The graph type of the trace of a deletion.
 pub const GC_TOMBSTONE_TYPE: &str = "GcTombstone";
-/// El tipo de grafo de una cuarentena versionada.
+/// The graph type of a versioned quarantine.
 pub const GC_QUARANTINE_TYPE: &str = "GcQuarantine";
-/// El tipo de grafo de una retencion.
+/// The graph type of a retention.
 pub const GC_HOLD_TYPE: &str = "GcHold";
 
 const LEASE_FIELDS: &str = "hodei.gc.lease.scope hodei.gc.lease.generation \
      hodei.gc.lease.token hodei.gc.lease.owner hodei.gc.lease.lease_until";
 
-/// El DDL aditivo del libro de la recoleccion sobre Dgraph. Cada clave
-/// es indice exacto y `@upsert`: el servidor —no una pre-lectura—
-/// arbitra dos escritores de la misma clave dentro y fuera de la
-/// transaccion.
+/// The additive DDL of the collection ledger over Dgraph. Each key
+/// is an exact index and `@upsert`: the server —not a pre-read—
+/// arbitrates two writers of the same key inside and outside the
+/// transaction.
 pub fn gc_schema_dql() -> String {
     let mut ddl = String::new();
     for (predicate, kind, index) in [
-        // El lease del scope: la cota de fencing.
+        // The scope's lease: the fencing bound.
         ("hodei.gc.lease.key", "string", "@index(exact) @upsert"),
         ("hodei.gc.lease.scope", "string", "@index(exact)"),
         ("hodei.gc.lease.generation", "int", ""),
@@ -86,7 +86,7 @@ pub fn gc_schema_dql() -> String {
         ("hodei.gc.lease.owner", "string", ""),
         ("hodei.gc.lease.lease_until", "datetime", ""),
         ("hodei.gc.lease.renewed_at", "datetime", ""),
-        // La marca durable de la pasada.
+        // The durable mark of the pass.
         ("hodei.gc.run.key", "string", "@index(exact) @upsert"),
         ("hodei.gc.run.run_id", "string", "@index(exact)"),
         ("hodei.gc.run.scope", "string", "@index(exact)"),
@@ -98,18 +98,18 @@ pub fn gc_schema_dql() -> String {
         ("hodei.gc.run.bytes_freed", "int", ""),
         ("hodei.gc.run.marked_at", "datetime", ""),
         ("hodei.gc.run.swept_at", "datetime", ""),
-        // La marca puede tener N candidatos: el predicado es una LISTA
-        // de uid. Declararlo escalar haria que cada arista nueva pise a
-        // la anterior y la relectura post-commit no vea el rastro.
+        // The mark can have N candidates: the predicate is a LIST
+        // of uid. Declaring it scalar would make each new edge overwrite
+        // the previous one and the post-commit re-read would not see the trace.
         ("hodei.gc.run.candidate", "[uid]", ""),
-        // Los candidatos de la marca. La clave compuesta
-        // `digest_key|run_id` hace que dos pasadas no se pisen un
-        // candidato y que la relectura los ordene de forma estable.
+        // The mark's candidates. The composite key
+        // `digest_key|run_id` keeps two passes from overwriting a
+        // candidate and makes the re-read order them stably.
         ("hodei.gc.candidate.key", "string", "@index(exact) @upsert"),
         ("hodei.gc.candidate.digest_of", "string", "@index(exact)"),
         ("hodei.gc.candidate.run_id", "string", "@index(exact)"),
         ("hodei.gc.candidate.length", "int", ""),
-        // El rastro del borrado, por digests.
+        // The deletion trace, by digests.
         ("hodei.gc.tombstone.key", "string", "@index(exact) @upsert"),
         ("hodei.gc.tombstone.digest_of", "string", "@index(exact)"),
         ("hodei.gc.tombstone.algorithm", "string", ""),
@@ -121,7 +121,7 @@ pub fn gc_schema_dql() -> String {
         ("hodei.gc.tombstone.state", "string", ""),
         ("hodei.gc.tombstone.marker", "string", ""),
         ("hodei.gc.tombstone.at", "datetime", ""),
-        // La cuarentena versionada, por pasada (AC2).
+        // The versioned quarantine, per pass (AC2).
         ("hodei.gc.quarantine.key", "string", "@index(exact) @upsert"),
         ("hodei.gc.quarantine.run_id", "string", "@index(exact)"),
         ("hodei.gc.quarantine.digest_of", "string", "@index(exact)"),
@@ -129,7 +129,7 @@ pub fn gc_schema_dql() -> String {
         ("hodei.gc.quarantine.quarantine_key", "string", ""),
         ("hodei.gc.quarantine.marker", "string", ""),
         ("hodei.gc.quarantine.at", "datetime", ""),
-        // Las retenciones del censo.
+        // The census retentions.
         ("hodei.gc.hold.key", "string", "@index(exact) @upsert"),
         ("hodei.gc.hold.hold_id", "string", "@index(exact)"),
         ("hodei.gc.hold.scope_kind", "string", "@index(exact)"),
@@ -188,17 +188,17 @@ pub fn gc_schema_dql() -> String {
     ddl
 }
 
-/// La clave del lease de un scope: unica por scope.
+/// The key of a scope's lease: unique per scope.
 pub fn gc_lease_key(scope: &str) -> String {
     format!("lease|{}", key_part(scope))
 }
 
-/// La clave del run.
+/// The run key.
 fn gc_run_key(run_id: &str) -> String {
     format!("run|{}", key_part(run_id))
 }
 
-/// La parte de digests de una clave compuesta: `algoritmo|valor`.
+/// The digests part of a composite key: `algorithm|value`.
 fn digest_key(digest: &ContentDigest) -> String {
     format!(
         "{}|{}",
@@ -207,12 +207,12 @@ fn digest_key(digest: &ContentDigest) -> String {
     )
 }
 
-/// La clave del candidato de una pasada.
+/// The candidate key of a pass.
 fn gc_candidate_key(digest: &ContentDigest, run_id: &str) -> String {
     format!("{}|{}", digest_key(digest), key_part(run_id))
 }
 
-/// Desmonta una clave de digests: `algoritmo|valor`.
+/// Unpacks a digests key: `algorithm|value`.
 fn split_digest_key(digest_of: &str) -> Option<ContentDigest> {
     let (algorithm, value) = digest_of.split_once('|')?;
     let algorithm = match algorithm {
@@ -236,8 +236,8 @@ fn parse_stamp(field: &str, text: &str) -> Result<DateTime<Utc>, CatalogError> {
         .map_err(|_| CatalogError::corrupt("gc ledger", field, format!("'{text}' is not a time")))
 }
 
-/// El error del grafo dicho como error del libro: la perdida de la
-/// carrera `@upsert` es un conflicto; lo demas, indisponibilidad.
+/// The graph error expressed as a ledger error: losing the
+/// `@upsert` race is a conflict; anything else, unavailability.
 fn graph_error(error: GraphClientError) -> CatalogError {
     match error {
         GraphClientError::UpsertConflict { detail } => {
@@ -247,7 +247,7 @@ fn graph_error(error: GraphClientError) -> CatalogError {
     }
 }
 
-/// El claim vigente como lo porta el grafo.
+/// The current claim as the graph carries it.
 fn lease_from(node: &serde_json::Value) -> Result<GcLease, CatalogError> {
     Ok(GcLease {
         generation: node_u64(node, "hodei.gc.lease.generation")?,
@@ -259,7 +259,7 @@ fn lease_from(node: &serde_json::Value) -> Result<GcLease, CatalogError> {
     })
 }
 
-/// El blank node estable de un candidato.
+/// The stable blank node of a candidate.
 fn blank_of(key: &str) -> String {
     format!(
         "_:c_{}",
@@ -269,7 +269,7 @@ fn blank_of(key: &str) -> String {
     )
 }
 
-/// El cursor del paginado es la impresion del digests: `algoritmo:valor`.
+/// The paging cursor is the digests fingerprint: `algorithm:value`.
 fn cursor_of_digest(cursor: &str) -> Result<ContentDigest, CatalogError> {
     let (algorithm, value) = cursor
         .split_once(':')
@@ -289,16 +289,16 @@ fn cursor_of_digest(cursor: &str) -> Result<ContentDigest, CatalogError> {
     })
 }
 
-/// El owner del censo: si el scope es una HRN, su cuenta; si no, el
-/// propio scope. La cuenta es lo que particiona las filas del plano de
-/// datos — el censo JAMAS es global.
+/// The census owner: if the scope is an HRN, its account; otherwise the
+/// scope itself. The account is what partitions the data-plane
+/// rows — the census is NEVER global.
 fn scope_owner(scope: &str) -> String {
     Hrn::from_string(scope)
         .map(|hrn| hrn.account_id().to_owned())
         .unwrap_or_else(|| scope.to_owned())
 }
 
-/// Las familias del plano de datos que mantienen vivo un digest.
+/// The data-plane families that keep a digest alive.
 #[derive(Clone, Copy)]
 enum Family {
     Asset,
@@ -337,7 +337,7 @@ impl Family {
     }
 }
 
-/// Una fila del censo leida del grafo, ordenable por (digest, clave).
+/// A census row read from the graph, sortable by (digest, key).
 struct CensusRow {
     row_key: String,
     root: ContentRoot,
@@ -381,18 +381,18 @@ impl CensusRow {
 
 impl DgraphCatalogStore {
     // -----------------------------------------------------------------------
-    // Claim fenced (AC1).
+    // Fenced claim (AC1).
     // -----------------------------------------------------------------------
 
-    /// Toma o renueva el lease durable del scope.
+    /// Takes or renews the scope's durable lease.
     ///
-    /// Lee el claim vigente y el upsert lleva la guarda CAS en el
-    /// `@filter` sobre lo que acabo de ver: un claim ajeno vigente se
-    /// responde ocupado sin escribir; el propio holder renueva con el
-    /// MISMO token; un lease vencido (o sin fila) se take-over con
-    /// generacion nueva y token NUEVO. El veredicto sale de la
-    /// relectura: si el token vigente no es el que este upsert dejo,
-    /// otro gano la carrera y no soy el holder.
+    /// Reads the current claim and the upsert carries the CAS guard in the
+    /// `@filter` on what I just saw: a live foreign claim is
+    /// answered as busy without writing; the holder itself renews with the
+    /// SAME token; an expired lease (or no row) is taken over with a
+    /// new generation and a NEW token. The verdict comes from the
+    /// re-read: if the current token is not the one this upsert left,
+    /// someone else won the race and I am not the holder.
     pub async fn claim_gc_pass_here(
         &self,
         scope: &str,
@@ -410,22 +410,22 @@ impl DgraphCatalogStore {
         let until = now + lease_for;
         let key = gc_lease_key(scope);
         let seen = self.lease_row(&key).await?;
-        // El veredicto del claim sale de la relectura post-commit
-        // (HSP-205); la escritura va guardada por la fila que este
-        // claim leyo: el query liga la (clave, token) vistos y, en el
-        // take-over, solo si el lease ya vencia a `now`. Si otro gano
-        // la carrera entre la lectura y el commit, la guarda no liga
-        // nada y el bloque queda inerte.
+        // The claim verdict comes from the post-commit re-read
+        // (HSP-205); the write is guarded by the row this
+        // claim read: the query binds the (key, token) seen and, on
+        // take-over, only if the lease had already expired at `now`. If someone else won
+        // the race between the read and the commit, the guard binds
+        // nothing and the block stays inert.
         let (query, set, cond);
         let expected_token;
         let expected_generation;
         match &seen {
             None => {
-                // Sin fila: la primera generacion, con su propio token.
-                // La creacion se arbitra con la ausencia de fila y el
-                // `@upsert` de la clave: dos escritores de la primera
-                // generacion pierden o ganan por el indice, no por el
-                // orden de lectura.
+                // No row: the first generation, with its own token.
+                // Creation is arbitrated by the absence of a row and the
+                // key's `@upsert`: two writers of the first
+                // generation win or lose by the index, not by
+                // read order.
                 let token = format!("{}-{}", self.identity.new_id(), stamp(now));
                 expected_token = token.clone();
                 expected_generation = 1;
@@ -470,17 +470,17 @@ impl DgraphCatalogStore {
                         ),
                     ));
                 }
-                // La guarda del claim visto se liga en el query del
-                // upsert con el token Y el estado de lease que este
-                // claim leyo: una renovacion que prolonga un lease
-                // vivo mantiene el token (el fence no la detectaria),
-                // y un take-over que cambia el token la borra. Con
-                // ambos, la carrera queda arbitrada por la autoridad
-                // en el snapshot de la transaccion; la relectura
-                // post-commit dice quien gano.
+                // The guard of the seen claim is bound in the upsert
+                // query with the token AND the lease state this
+                // claim read: a renewal that extends a live
+                // lease keeps the token (the fence would not detect it),
+                // and a take-over that changes the token clears it. With
+                // both, the race is arbitrated by the authority
+                // in the transaction snapshot; the post-commit
+                // re-read says who won.
                 if seen_until > now {
-                    // El propio holder renueva: mismo token, lease mas
-                    // largo.
+                    // The holder itself renews: same token, longer
+                    // lease.
                     query = format!(
                         "{{ gl as var(func: eq(hodei.gc.lease.key, {})) \
                          @filter(eq(hodei.gc.lease.token, {}) AND \
@@ -499,7 +499,7 @@ impl DgraphCatalogStore {
                         at = stamp(now),
                     );
                 } else {
-                    // Take-over: generacion nueva y token NUEVO.
+                    // Take-over: new generation and NEW token.
                     query = format!(
                         "{{ gl as var(func: eq(hodei.gc.lease.key, {})) \
                          @filter(eq(hodei.gc.lease.token, {}) AND \
@@ -533,10 +533,10 @@ impl DgraphCatalogStore {
             commit_now: true,
         };
         self.client.upsert(transaction).await.map_err(graph_error)?;
-        // Relectura post-commit: el veredicto del claim lo dice la
-        // autoridad despues del commit, no el hecho de que el commit
-        // saliera bien (HSP-205). Si el claim vigente no es el que se
-        // pretendio dejar, otro gano la carrera: ocupado.
+        // Post-commit re-read: the claim verdict is stated by the
+        // authority after the commit, not by the fact that the commit
+        // went through (HSP-205). If the current claim is not the one that
+        // was meant to be left, someone else won the race: busy.
         let back = self
             .current_gc_lease_here(scope, Utc::now())
             .await?
@@ -551,7 +551,7 @@ impl DgraphCatalogStore {
         Ok(back)
     }
 
-    /// El claim vigente del scope, leido. `None` si no hay o vencio.
+    /// The scope's current claim, read. `None` if there is none or it expired.
     pub async fn current_gc_lease_here(
         &self,
         scope: &str,
@@ -574,8 +574,8 @@ impl DgraphCatalogStore {
         single_row(json.get("q"), "gc lease", key.to_owned())
     }
 
-    /// El fence de la autoridad: el token presentado es el claim
-    /// vigente del scope. Si no, `PreconditionFailed` (AC1).
+    /// The authority's fence: the presented token is the scope's
+    /// current claim. Otherwise, `PreconditionFailed` (AC1).
     async fn the_fence(
         &self,
         scope: &str,
@@ -622,16 +622,16 @@ impl DgraphCatalogStore {
     }
 
     // -----------------------------------------------------------------------
-    // Marca fenced (HSP-199) y reanudacion.
+    // Fenced mark (HSP-199) and resumption.
     // -----------------------------------------------------------------------
 
-    /// Escribe la marca de la pasada en UNA transaccion guardada.
+    /// Writes the pass's mark in ONE guarded transaction.
     ///
-    /// La guarda del claim va en el `@filter` del query del upsert: si
-    /// el token presentado no es el vigente, `gl` queda vacio y ningun
-    /// n-quad se aplica. Tras el commit la marca se relee: lo que se
-    /// barra es lo que la autoridad confirmo, y una marca que no es de
-    /// esta generacion es `PreconditionFailed`.
+    /// The claim guard goes in the upsert query's `@filter`: if
+    /// the presented token is not the current one, `gl` stays empty and no
+    /// n-quad is applied. After the commit the mark is re-read: what gets
+    /// swept is what the authority confirmed, and a mark that is not from
+    /// this generation is `PreconditionFailed`.
     pub async fn mark_run_fenced_here(
         &self,
         scope: &str,
@@ -675,13 +675,13 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// La marca de `run_id` reconfirmada bajo el claim vigente.
+    /// The mark of `run_id` reconfirmed under the current claim.
     ///
-    /// El fence es por token vigente, no por el stamp de la marca: un
-    /// take-over de un lease muerto puede reanudar la marca durable de
-    /// la generacion anterior (eso es la durabilidad), pero solo
-    /// presentando el token vivo. Un zombie recibe aqui
-    /// `PreconditionFailed` y no puede barrer.
+    /// The fence is by current token, not by the mark's stamp: a
+    /// take-over of a dead lease can resume the durable mark of
+    /// the previous generation (that is durability), but only
+    /// by presenting the live token. A zombie gets
+    /// `PreconditionFailed` here and cannot sweep.
     pub async fn mark_of_run_here(
         &self,
         scope: &str,
@@ -693,7 +693,7 @@ impl DgraphCatalogStore {
         Ok(run.filter(|run| run.scope.as_deref() == Some(scope)))
     }
 
-    /// La pasada marcada y no completada del scope, leida del grafo.
+    /// The marked, not-completed pass of the scope, read from the graph.
     pub async fn pending_scoped_run_here(
         &self,
         scope: &str,
@@ -720,12 +720,12 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// Renueva el lease de la generacion vigente para su propio owner.
+    /// Renews the lease of the current generation for its own owner.
     ///
-    /// El fence primero; el upsert esta guardado por el token. Tras el
-    /// commit se relee: si el scope paso a otra generacion entre el
-    /// fence y la relectura, esto es `PreconditionFailed` y la pasada
-    /// deja de barrer — un zombie no continua con el token nuevo.
+    /// The fence first; the upsert is guarded by the token. After the
+    /// commit it is re-read: if the scope moved to another generation between the
+    /// fence and the re-read, this is `PreconditionFailed` and the pass
+    /// stops sweeping — a zombie does not continue with the new token.
     pub async fn renew_gc_lease_here(
         &self,
         scope: &str,
@@ -853,7 +853,7 @@ impl DgraphCatalogStore {
         Ok(accounts)
     }
 
-    /// Cierra la pasada bajo el claim vigente.
+    /// Closes the pass under the current claim.
     pub async fn complete_scoped_run_here(
         &self,
         scope: &str,
@@ -897,18 +897,18 @@ impl DgraphCatalogStore {
     }
 
     // -----------------------------------------------------------------------
-    // Rastro y cuarentena fenced.
+    // Fenced trace and quarantine.
     // -----------------------------------------------------------------------
 
-    /// El rastro fenced de un borrado. El fence primero; la escritura
-    /// va guardada por el token y por la guarda de referencias en el
-    /// MISMO upsert (patron frontier, HSP-199): tres variables ligas
-    /// por igualdad de digest sobre las tres familias del plano de
-    /// datos, contadas en el snapshot de la transaccion. Un publisher
-    /// concurrente que nombro el blob entre la revalidacion del
-    /// llamante y este commit deja la intencion sin escribir — el
-    /// veredicto sale de la relectura post-commit (HSP-205). Un
-    /// zombie con lease vencido no puede ni anotar que borro.
+    /// The fenced trace of a deletion. The fence first; the write
+    /// is guarded by the token and by the reference guard in the
+    /// SAME upsert (frontier pattern, HSP-199): three variables bound
+    /// by digest equality over the three data-plane
+    /// families, counted in the transaction snapshot. A concurrent
+    /// publisher that named the blob between the caller's
+    /// revalidation and this commit leaves the intent unwritten — the
+    /// verdict comes from the post-commit re-read (HSP-205). A
+    /// zombie with an expired lease cannot even note that it deleted.
     pub async fn record_deletion_fenced_here(
         &self,
         scope: &str,
@@ -952,7 +952,7 @@ impl DgraphCatalogStore {
         self.verdict_tombstone(deletion).await
     }
 
-    /// El rastro de un digests, leido.
+    /// The trace of a digests, read.
     pub async fn deletion_of_here(
         &self,
         digest: &ContentDigest,
@@ -1017,9 +1017,9 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// La cuarentena fenced (AC2): los bytes marcados se copiaron a un
-    /// nombre NUEVO y la clave original queda reservada en el libro
-    /// hasta reconciliar — la reserva es el rastro de cuarentena.
+    /// The fenced quarantine (AC2): the marked bytes were copied to a
+    /// NEW name and the original key stays reserved in the ledger
+    /// until reconciled — the reservation is the quarantine trace.
     pub async fn record_quarantine_here(
         &self,
         scope: &str,
@@ -1066,7 +1066,7 @@ impl DgraphCatalogStore {
         }
     }
 
-    /// Las cuarentenas de una pasada (reserva de clave, reconciliacion).
+    /// The quarantines of a pass (key reservation, reconciliation).
     pub async fn quarantines_of_run_here(
         &self,
         run_id: &str,
@@ -1106,20 +1106,20 @@ impl DgraphCatalogStore {
     }
 
     // -----------------------------------------------------------------------
-    // Censo paginado (AC3).
+    // Paged census (AC3).
     // -----------------------------------------------------------------------
 
-    /// Una pagina acotada de raices del scope, ordenada por digests.
+    /// A bounded page of the scope's roots, ordered by digests.
     ///
-    /// Cada familia del plano de datos del owner se lee con
-    /// `first(limit+1)`, `order: digest` y cursor estricto `gt`; las
-    /// paginas son disjuntas y convergentes. El corte puede empatar el
-    /// ultimo digests de la pagina con filas de otra familia: esas
-    /// filas se completan en la MISMA pagina y el cursor las deja
-    /// atras, o `has_more` seguiria prometiendo una pagina infinita.
-    /// El cursor de salida es la impresion del ultimo digests de la
-    /// pagina; `has_more` solo es cierto si queda algo despues del
-    /// limite.
+    /// Each data-plane family of the owner is read with
+    /// `first(limit+1)`, `order: digest` and a strict `gt` cursor; the
+    /// pages are disjoint and convergent. The cut may tie the
+    /// last digests of the page with rows of another family: those
+    /// rows are completed in the SAME page and the cursor leaves them
+    /// behind, or `has_more` would keep promising an infinite page.
+    /// The output cursor is the fingerprint of the page's last digests;
+    /// `has_more` is only true if something remains after the
+    /// limit.
     pub async fn root_page_here(
         &self,
         scope: &str,
@@ -1148,7 +1148,7 @@ impl DgraphCatalogStore {
                 .then_with(|| a.row_key.cmp(&b.row_key))
         });
         if fetched.len() <= limit {
-            // La ventana entera cabe: son todas las raices que hay.
+            // The whole window fits: these are all the roots there are.
             return Ok(RootPage {
                 roots: fetched.into_iter().map(|row| row.root).collect(),
                 has_more: false,
@@ -1156,12 +1156,12 @@ impl DgraphCatalogStore {
         }
         fetched.truncate(limit);
         let boundary = fetched[limit - 1].digest.value.clone();
-        // Empates del limite: las filas de otra familia con el mismo
-        // digests del corte se completan en la MISMA pagina — el
-        // cursor de salida las deja atras y si no se completaran,
-        // `has_more` prometeria una pagina que siempre devuelve el
-        // mismo digests. Se leen de la autoridad por igualdad exacta,
-        // no de la ventana truncada.
+        // Limit ties: rows of another family with the same
+        // digests as the cut are completed in the SAME page — the
+        // output cursor leaves them behind and if they were not completed,
+        // `has_more` would promise a page that always returns the
+        // same digests. They are read from the authority by exact equality,
+        // not from the truncated window.
         for family in [
             Family::Asset,
             Family::Version,
@@ -1180,8 +1180,8 @@ impl DgraphCatalogStore {
                 .cmp(&b.digest.value)
                 .then_with(|| a.row_key.cmp(&b.row_key))
         });
-        // Hay mas si algo, en cualquier familia, queda estrictamente
-        // despues del digests limite.
+        // There is more if anything, in any family, remains strictly
+        // after the limit digests.
         let mut has_more = false;
         for family in [
             Family::Asset,
@@ -1200,12 +1200,12 @@ impl DgraphCatalogStore {
         })
     }
 
-    /// La ventana de una familia estrictamente despues del cursor:
+    /// The window of a family strictly after the cursor:
     /// `first: {window}` + `orderasc: digest` + `@filter(gt(digest,
-    /// cursor))` — el idiom de paginado del repo, nunca un scan sin
-    /// cota. `after:` no vale aqui: en DQL corta por UID, no por el
-    /// valor del orden. El `has` y el `gt` comparten UN solo
-    /// `@filter` unido por AND: dos filtros en la raiz son "Repeated
+    /// cursor))` — the repo's paging idiom, never an unbounded
+    /// scan. `after:` does not work here: in DQL it cuts by UID, not by the
+    /// order value. The `has` and the `gt` share ONE single
+    /// `@filter` joined by AND: two filters at the root are "Repeated
     /// filter at root".
     async fn census_window(
         &self,
@@ -1249,7 +1249,7 @@ impl DgraphCatalogStore {
             .collect()
     }
 
-    /// Las filas de una familia con el digests del corte exacto.
+    /// The rows of a family with the exact cut digests.
     async fn census_equal(
         &self,
         account: &str,
@@ -1280,7 +1280,7 @@ impl DgraphCatalogStore {
             .collect()
     }
 
-    /// Queda algo estrictamente despues de este digests en la familia.
+    /// Something remains strictly after this digests in the family.
     async fn census_any_gt(
         &self,
         account: &str,
@@ -1301,11 +1301,11 @@ impl DgraphCatalogStore {
             .is_some_and(|array| !array.is_empty()))
     }
 
-    /// Cuantas filas del plano de datos nombran este digests, leido
-    /// fresco por membresia — nunca por scan global (revalidacion
-    /// post-censo, guarda de referencias). El indice `exact` de
-    /// `{family}.digest` resuelve la consulta por clave; no se
-    /// materializa nada: solo se cuenta la respuesta.
+    /// How many data-plane rows name this digests, read
+    /// fresh by membership — never by global scan (post-census
+    /// revalidation, reference guard). The `exact` index of
+    /// `{family}.digest` resolves the query by key; nothing is
+    /// materialized: only the response is counted.
     pub async fn live_reference_count_here(
         &self,
         digest: &ContentDigest,
@@ -1334,7 +1334,7 @@ impl DgraphCatalogStore {
     }
 
     // -----------------------------------------------------------------------
-    // Lecturas internas compartidas.
+    // Shared internal reads.
     // -----------------------------------------------------------------------
 
     async fn the_run_row(&self, run_id: &str) -> Result<Option<GcRun>, CatalogError> {
@@ -1400,10 +1400,10 @@ impl DgraphCatalogStore {
     }
 }
 
-/// Las lineas de query de la guarda de referencias de un digest: una
-/// variable por familia del plano de datos, ligada por igualdad exacta
-/// de digest. Cuentan en el snapshot de la transaccion; el bloque las
-/// nombra en su condicion para que DQL no las descarte como muertas.
+/// The query lines of a digest's reference guard: one
+/// variable per data-plane family, bound by exact digest equality.
+/// They count in the transaction snapshot; the block names them
+/// in its condition so DQL does not discard them as dead.
 fn reference_guard_lines(digest: &ContentDigest) -> String {
     [
         Family::Asset,
@@ -1425,7 +1425,7 @@ fn reference_guard_lines(digest: &ContentDigest) -> String {
     .join(" \n")
 }
 
-/// La condición de la guarda: ninguna fila nombra el digest.
+/// The guard condition: no row names the digest.
 fn no_live_reference() -> String {
     "eq(len(rv0), 0) AND eq(len(rv1), 0) AND eq(len(rv2), 0) AND eq(len(rv3), 0)".to_owned()
 }
@@ -1452,8 +1452,8 @@ mod reference_guard_tests {
     }
 }
 
-/// Los n-quads de la marca de una pasada: el run, sus candidatos y las
-/// aristas run→candidato. Devuelve el conjunto y la clave del run.
+/// The n-quads of a pass's mark: the run, its candidates and the
+/// run→candidate edges. Returns the set and the run key.
 fn run_mark_nquads(scope: &str, lease: &GcLease, run: &GcRun) -> (String, String) {
     let key = gc_run_key(&run.id);
     let mut set = format!(
@@ -1494,7 +1494,7 @@ fn run_mark_nquads(scope: &str, lease: &GcLease, run: &GcRun) -> (String, String
     (set, key)
 }
 
-/// Los n-quads del rastro de un borrado.
+/// The n-quads of a deletion trace.
 fn tombstone_nquads(subject: &str, tkey: &str, deletion: &GcDeletion, create: bool) -> String {
     let type_line = if create {
         format!("{subject} <dgraph.type> \"{GC_TOMBSTONE_TYPE}\" .\n")
@@ -1543,7 +1543,7 @@ fn tombstone_nquads(subject: &str, tkey: &str, deletion: &GcDeletion, create: bo
     )
 }
 
-/// Los n-quads de una cuarentena versionada.
+/// The n-quads of a versioned quarantine.
 fn quarantine_nquads(subject: &str, qkey: &str, quarantine: &Quarantined, create: bool) -> String {
     let type_line = if create {
         format!("{subject} <dgraph.type> \"{GC_QUARANTINE_TYPE}\" .\n")
@@ -1576,7 +1576,7 @@ fn quarantine_nquads(subject: &str, qkey: &str, quarantine: &Quarantined, create
 }
 
 // ---------------------------------------------------------------------------
-// El contrato del libro sobre el grafo.
+// The ledger's contract over the graph.
 // ---------------------------------------------------------------------------
 
 #[async_trait]
@@ -1585,9 +1585,9 @@ impl ContentLedger for DgraphCatalogStore {
         true
     }
 
-    /// El censo global materializado NO existe en esta autoridad:
-    /// seria el scan prohibido por HSP-220. La pasada coordinada usa
-    /// `root_page`, que recorre por paginas acotadas por scope.
+    /// The materialized global census does NOT exist in this authority:
+    /// it would be the scan forbidden by HSP-220. The coordinated pass uses
+    /// `root_page`, which walks bounded pages per scope.
     async fn content_roots(&self) -> Result<Vec<ContentRoot>, CatalogError> {
         Err(CatalogError::unavailable(
             "content_roots materializes the whole census: use the paged root_page by scope instead (HSP-220)",
@@ -1663,9 +1663,9 @@ impl ContentLedger for DgraphCatalogStore {
             HoldScope::Account { account } => ("account", Some(account.clone()), None, None),
         };
         let key = format!("hold|{}", key_part(&hold.id));
-        // El cuerpo va sujeto a un blank node en la creacion y al uid
-        // ligado en la actualizacion: la misma fila escrita dos veces
-        // por dos escritores no deja campos viejos del scope anterior.
+        // The body is bound to a blank node on creation and to the uid
+        // bound on update: the same row written twice
+        // by two writers leaves no stale fields from the previous scope.
         let body = |subject: &str| -> String {
             let mut set = format!(
                 "{subject} <hodei.gc.hold.hold_id> {id_q} .\n\
@@ -1760,9 +1760,9 @@ impl ContentLedger for DgraphCatalogStore {
         Ok(true)
     }
 
-    /// La marca pendiente global NO existe en esta autoridad: la
-    /// pasada legacy sin scope no tiene donde apoyarse aqui. El modo
-    /// coordinado usa `pending_scoped_run`.
+    /// The global pending mark does NOT exist in this authority: the
+    /// legacy scopeless pass has nothing to rely on here. The
+    /// coordinated mode uses `pending_scoped_run`.
     async fn pending_run(&self) -> Result<Option<GcRun>, CatalogError> {
         Err(CatalogError::unavailable(
             "pending_run is a global scan: the Dgraph ledger only knows scoped pending runs (pending_scoped_run)",
@@ -1789,18 +1789,18 @@ impl ContentLedger for DgraphCatalogStore {
         }
     }
 
-    /// Abrir una pasada sin claim solo vale si ya existe un claim
-    /// vigente para su generacion — si no, el modo legacy no tiene
-    /// donde apoyarse en esta autoridad.
+    /// Opening a pass without a claim is only valid if a live claim
+    /// already exists for its generation — otherwise legacy mode has nothing
+    /// to rely on in this authority.
     async fn open_run(&self, run: &GcRun) -> Result<(), CatalogError> {
         let Some(scope) = run.scope.as_deref() else {
             return Err(CatalogError::unavailable(
                 "open_run without a scope needs a coordinated claim (HSP-192)",
             ));
         };
-        // La marca solo se abre bajo el claim VIGENTE del scope: sin
-        // lease vivo no hay generacion que abrir, y un lease vencido
-        // es la sena de que otra replica manda ahora.
+        // The mark is only opened under the scope's LIVE claim: without a
+        // live lease there is no generation to open, and an expired lease
+        // is the sign that another replica is in charge now.
         let now = Utc::now();
         let row = self
             .lease_row(&gc_lease_key(scope))
@@ -1870,8 +1870,8 @@ impl ContentLedger for DgraphCatalogStore {
         Ok(())
     }
 
-    /// El rastro legacy, sin claim: igual que el coordinado pero sin
-    /// la guarda del lease. La revalidacion es del llamante.
+    /// The legacy trace, without a claim: like the coordinated one but without
+    /// the lease guard. Revalidation is the caller's job.
     async fn record_deletion(&self, deletion: &GcDeletion) -> Result<(), CatalogError> {
         let tkey = format!("tomb|{}", digest_key(&deletion.digest));
         let create = tombstone_nquads("_:td", &tkey, deletion, true);
@@ -1923,8 +1923,8 @@ impl ContentLedger for DgraphCatalogStore {
         run: &GcRun,
         candidate_digests: &[ContentDigest],
     ) -> Result<Vec<RunCandidate>, CatalogError> {
-        // La guarda de referencias vive EN la marca: se preguntan
-        // antes del commit por cada digests que el plan propuso.
+        // The reference guard lives IN the mark: they are asked
+        // before the commit for each digests the plan proposed.
         for digest in candidate_digests {
             let live = self.live_reference_count_here(digest).await?;
             if live > 0 {

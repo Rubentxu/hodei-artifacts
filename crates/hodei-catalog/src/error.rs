@@ -1,130 +1,130 @@
-//! Los errores del catálogo.
+//! Catalog errors.
 //!
-//! La distinción que más importa aquí es la de **Missing**, **Denied** y
-//! **Corrupt**, porque los tres se parecen y no son lo mismo:
+//! The distinction that matters most here is between **Missing**, **Denied** and
+//! **Corrupt**, because all three look alike and are not the same thing:
 //!
-//! - **Missing**: no hay nada ahí. La petición es válida y el recurso no
-//!   existe.
-//! - **Denied**: hay algo ahí y este principal no puede verlo. La petición
-//!   es válida y el permiso no.
-//! - **Corrupt**: hay algo ahí y no se puede leer bien. La petición es
-//!   válida y el dato está roto.
+//! - **Missing**: there is nothing there. The request is valid and the resource
+//!   does not exist.
+//! - **Denied**: there is something there and this principal cannot see it. The
+//!   request is valid and the permission is not.
+//! - **Corrupt**: there is something there and it cannot be read properly. The
+//!   request is valid and the data is broken.
 //!
-//! Confundirlos es peor que no responder: un `Missing` donde había un
-//! `Denied` hace que el cliente repita; un `Corrupt` donde había un
-//! `Missing` hace que el cliente borre algo que no era suyo.
+//! Confusing them is worse than not answering: a `Missing` where there was a
+//! `Denied` makes the client retry; a `Corrupt` where there was a
+//! `Missing` makes the client delete something that was not theirs.
 
 use thiserror::Error;
 
 use crate::model::RepositoryMode;
 
-/// Lo que puede fallar en el catálogo.
+/// What can fail in the catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum CatalogError {
-    /// No existe lo que se pidió.
+    /// What was requested does not exist.
     #[error("there is no {kind} for {key}")]
     Missing {
-        /// Qué se pidió.
+        /// What was requested.
         kind: &'static str,
-        /// Con qué coordenadas se pidió.
+        /// With which coordinates it was requested.
         key: String,
     },
 
-    /// El principal no tiene permiso.
+    /// The principal does not have permission.
     #[error("the principal is not allowed to {action} the {kind} {key}: {reason}")]
     Denied {
-        /// Qué se quiso hacer.
+        /// What was attempted.
         action: &'static str,
-        /// Sobre qué.
+        /// On what.
         kind: &'static str,
-        /// Con qué coordenadas.
+        /// With which coordinates.
         key: String,
-        /// Por qué no.
+        /// Why not.
         reason: String,
     },
 
-    /// El registro existe pero no se puede leer bien.
+    /// The record exists but cannot be read properly.
     #[error("the {kind} {key} is corrupt: {detail}")]
     Corrupt {
-        /// Qué se pidió.
+        /// What was requested.
         kind: &'static str,
-        /// Con qué coordenadas.
+        /// With which coordinates.
         key: String,
-        /// Qué está roto.
+        /// What is broken.
         detail: String,
     },
 
-    /// Ya hay algo ahí con otro contenido.
+    /// There is already something there with different content.
     ///
-    /// Es un conflicto y no un fallo: la base de datos se niega a
-    /// sobrescribir, y el catálogo no inventa una regla para hacerlo.
+    /// This is a conflict and not a failure: the database refuses to
+    /// overwrite, and the catalog does not invent a rule to do so.
     #[error("the {kind} {key} already exists with different content: {detail}")]
     Conflict {
-        /// Qué se quiso escribir.
+        /// What was attempted to be written.
         kind: &'static str,
-        /// Con qué coordenadas.
+        /// With which coordinates.
         key: String,
-        /// En qué se diferencia de lo que hay.
+        /// How it differs from what is there.
         detail: String,
     },
 
-    /// La condición que el cliente exigía no se cumple.
+    /// The condition the client required is not met.
     ///
-    /// No es un conflicto: el conflicto dice que hay algo distinto de lo
-    /// que se publica, y la precondición dice que **lo que hay** no es lo
-    /// que el cliente esperaba. La diferencia importa porque el cliente
-    /// los trata distinto: un conflicto se resuelve cambiando lo que se
-    /// publica, y una precondición releyendo lo que hay.
+    /// This is not a conflict: a conflict says there is something different from
+    /// what is being published, and the precondition says that **what is there** is not
+    /// what the client expected. The difference matters because the client
+    /// treats them differently: a conflict is resolved by changing what is
+    /// published, and a precondition by re-reading what is there.
     #[error("the precondition for the {kind} {key} does not hold: {detail}")]
     PreconditionFailed {
-        /// Sobre qué.
+        /// On what.
         kind: &'static str,
-        /// Con qué coordenadas.
+        /// With which coordinates.
         key: String,
-        /// En qué se diferencia de lo que el cliente esperaba.
+        /// How it differs from what the client expected.
         detail: String,
     },
 
-    /// El modo del repositorio no lo sirve esta release.
+    /// The repository mode is not served by this release.
     #[error("the repository mode {mode} is not served by this release")]
     ModeNotImplemented {
-        /// El modo pedido.
+        /// The requested mode.
         mode: RepositoryMode,
     },
 
-    /// La petición no tiene sentido.
+    /// The request makes no sense.
     #[error("the request is not valid: {detail}")]
     InvalidRequest {
-        /// Por qué no.
+        /// Why not.
         detail: String,
     },
 
-    /// El almacén tiene un esquema que esta build no entiende.
+    /// The store has a schema that this build does not understand.
     ///
-    /// No es un fallo del almacenamiento: es un almacén que se escribió
-    /// con una versión más nueva que esta. Declarar el esquema encima no
-    /// lo arregla (las definiciones que ya están no se rehacen), así que
-    /// la única respuesta honesta es no seguir y decirlo.
+    /// This is not a storage failure: it is a store that was written
+    /// with a newer version than this one. Declaring the schema on top does not
+    /// fix it (existing definitions are not redone), so
+    /// the only honest response is to stop and say so.
     #[error(
         "the catalog storage has the schema version {found} and this build understands {expected}"
     )]
     SchemaMismatch {
-        /// La versión que hay en el almacén.
+        /// The version found in the store.
         found: i64,
-        /// La versión que entiende esta build.
+        /// The version this build understands.
         expected: i64,
     },
 
-    /// El almacenamiento no pudo responder.
+    /// Storage could not respond.
     #[error("the catalog storage is unavailable: {detail}")]
     Unavailable {
-        /// Lo que dijo el almacenamiento.
+        /// What storage said.
         detail: String,
     },
 }
 
 impl CatalogError {
-    /// El error de "no hay nada ahí".
+    /// The "there is nothing there" error.
     pub fn missing(kind: &'static str, key: impl Into<String>) -> Self {
         CatalogError::Missing {
             kind,
@@ -132,7 +132,7 @@ impl CatalogError {
         }
     }
 
-    /// El error de "hay algo ahí y está roto".
+    /// The "there is something there and it is broken" error.
     pub fn corrupt(kind: &'static str, key: impl Into<String>, detail: impl Into<String>) -> Self {
         CatalogError::Corrupt {
             kind,
@@ -141,7 +141,7 @@ impl CatalogError {
         }
     }
 
-    /// El error de "ya hay algo ahí con otro contenido".
+    /// The "there is already something there with different content" error.
     pub fn conflict(kind: &'static str, key: impl Into<String>, detail: impl Into<String>) -> Self {
         CatalogError::Conflict {
             kind,
@@ -150,14 +150,14 @@ impl CatalogError {
         }
     }
 
-    /// El error de "la petición no tiene sentido".
+    /// The "the request makes no sense" error.
     pub fn invalid(detail: impl Into<String>) -> Self {
         CatalogError::InvalidRequest {
             detail: detail.into(),
         }
     }
 
-    /// El error de "la condición que el cliente exigía no se cumple".
+    /// The "the condition the client required is not met" error.
     pub fn precondition_failed(
         kind: &'static str,
         key: impl Into<String>,
@@ -170,7 +170,7 @@ impl CatalogError {
         }
     }
 
-    /// El error de "el almacenamiento no pudo responder".
+    /// The "storage could not respond" error.
     pub fn unavailable(detail: impl Into<String>) -> Self {
         CatalogError::Unavailable {
             detail: detail.into(),

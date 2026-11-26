@@ -1,80 +1,80 @@
-//! El modelo: el puerto por el que se pregunta, y el prompt que se le
-//! lleva.
+//! The model: the port through which it is asked, and the prompt that is
+//! carried to it.
 //!
-//! El prompt separa lo que el sistema dice de lo que los terceros
-//! escriben, y lo de los terceros va **delimitado y declarado como
-//! dato**. Un delimitador no es una garantia (un modelo puede obedecer
-//! un texto delimitado), y por eso la garantia no esta ahi: esta en que
-//! **lo que el modelo dice se comprueba con las herramientas** y en que
-//! **el modelo no tiene por donde actuar**.
+//! The prompt separates what the system says from what third parties
+//! write, and what comes from third parties goes **delimited and declared as
+//! data**. A delimiter is not a guarantee (a model may obey
+//! delimited text), and that is why the guarantee is not there: it is in that
+//! **what the model says is checked with the tools** and in that
+//! **the model has no way to act**.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::scope::{FactStatus, ScopedFact};
 
-/// La version de la plantilla del prompt.
+/// The version of the prompt template.
 ///
-/// Va en la traza de cada investigacion: sin ella, dos respuestas no se
-/// pueden comparar, porque no se sabe si salieron del mismo prompt.
+/// It goes in the trace of every investigation: without it, two answers cannot
+/// be compared, because it is not known whether they came from the same prompt.
 pub const PROMPT_VERSION: &str = "1.0.0";
 
-/// Lo que se le pregunta al modelo.
+/// What the model is asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRequest {
-    /// La instruccion del sistema.
+    /// The system instruction.
     ///
-    /// Es lo UNICO que es instruccion. Todo lo demas es dato.
+    /// It is the ONLY thing that is instruction. Everything else is data.
     pub system: String,
-    /// El contexto, con sus delimitadores.
+    /// The context, with its delimiters.
     pub context: String,
-    /// La pregunta.
+    /// The question.
     pub question: String,
 }
 
-/// Lo que contesta el modelo.
+/// What the model answers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelResponse {
-    /// El texto de la respuesta.
+    /// The text of the answer.
     pub text: String,
-    /// Quien contesto.
+    /// Who answered.
     pub provider: String,
-    /// El modelo.
+    /// The model.
     pub model: String,
-    /// La version del modelo, si la hay.
+    /// The model version, if there is one.
     pub model_version: Option<String>,
 }
 
-/// El puerto del proveedor del modelo.
+/// The model provider port.
 ///
-/// El puerto es de texto: el modelo no devuelve afirmaciones, devuelve
-/// texto, y lo que se hace con ese texto es **validarlo**. El modelo no
-/// tiene ningun otro camino al sistema, y por eso no puede cambiar el
-/// estado de confianza: no hay por donde.
+/// The port is text-based: the model does not return claims, it returns
+/// text, and what is done with that text is to **validate it**. The model has
+/// no other path into the system, and therefore it cannot change the
+/// trust state: there is no way for it to do so.
 #[async_trait::async_trait]
 pub trait ModelProvider: Send + Sync {
-    /// Le pregunta algo.
+    /// Asks it something.
     async fn complete(&self, request: &ModelRequest) -> Result<ModelResponse, String>;
 }
 
-/// El proveedor de mentira, para las pruebas y para el modo fixture.
+/// The fake provider, for tests and for fixture mode.
 ///
-/// Devuelve lo que le digan y dice quien es. La UAT corre con este: el
-/// Spike es sobre la **seguridad** del investigador, no sobre la calidad
-/// de un modelo comercial, y esa calidad no se puede medir sin el
-/// proveedor.
+/// It returns what it is told and says who it is. The UAT runs with this one: the
+/// Spike is about the investigator's **security**, not about the quality
+/// of a commercial model, and that quality cannot be measured without the
+/// provider.
 #[derive(Debug, Clone)]
 pub struct FixtureProvider {
-    /// La respuesta que da.
+    /// The answer it gives.
     pub answer: String,
-    /// Quien dice que es.
+    /// Who it says it is.
     pub provider: String,
-    /// El modelo que dice que es.
+    /// The model it says it is.
     pub model: String,
 }
 
 impl FixtureProvider {
-    /// Un proveedor que responde una cosa.
+    /// A provider that answers one thing.
     pub fn answering(answer: impl Into<String>) -> Self {
         Self {
             answer: answer.into(),
@@ -96,11 +96,11 @@ impl ModelProvider for FixtureProvider {
     }
 }
 
-/// La instruccion del sistema.
+/// The system instruction.
 ///
-/// Dice lo que el modelo puede hacer y, sobre todo, lo que **no** puede
-/// hacer: obedecer al contexto, y afirmar cosas que no estan en el
-/// contexto.
+/// It says what the model can do and, above all, what it **cannot**
+/// do: obey the context, and claim things that are not in the
+/// context.
 pub fn the_system_instruction() -> String {
     [
         "Eres el investigador de seguridad de Hodei.",
@@ -114,19 +114,19 @@ pub fn the_system_instruction() -> String {
     .join(" ")
 }
 
-/// El prompt, con el contexto delimitado.
+/// The prompt, with the delimited context.
 ///
-/// Cada hecho va entre delimitadores que llevan su identificador, y el
-/// texto va declarado como dato. Los delimitadores no son la garantia
-/// (la garantia es que lo que dice el modelo se comprueba), pero son la
-/// diferencia entre un texto de un atacante y un dato.
+/// Each fact goes between delimiters that carry its identifier, and the
+/// text is declared as data. The delimiters are not the guarantee
+/// (the guarantee is that what the model says is checked), but they are the
+/// difference between an attacker's text and a piece of data.
 pub fn the_prompt(question: &str, facts: &[ScopedFact]) -> ModelRequest {
     let mut context = String::new();
     for fact in facts {
-        // Un hecho que no se cargo NO lleva texto: el bloque dice su
-        // estado, y el estado NO es texto de evidencia que se pueda
-        // obedecer ni citar como contenido. Lo que no se leyo no se
-        // disfraza de contenido.
+        // A fact that was not loaded carries NO text: the block states its
+        // status, and the status is NOT evidence text that can be
+        // obeyed or cited as content. What was not read is not
+        // disguised as content.
         match fact.status {
             FactStatus::Loaded => {
                 context.push_str(&format!(
@@ -155,18 +155,18 @@ pub fn the_prompt(question: &str, facts: &[ScopedFact]) -> ModelRequest {
     }
 }
 
-/// El reloj del investigador, para que la traza sea reproducible.
+/// The investigator's clock, so that the trace is reproducible.
 pub fn now() -> DateTime<Utc> {
     Utc::now()
 }
 
-/// La forma de la respuesta estructurada del modelo.
+/// The shape of the model's structured answer.
 ///
-/// El modelo contesta con una lista de afirmaciones, y cada una dice de
-/// que tipo es y que cita. Una respuesta que no se puede leer en esta
-/// forma **no se presenta como respuesta**: se rechaza entera.
+/// The model answers with a list of claims, and each one says what
+/// type it is and what it cites. An answer that cannot be read in this
+/// shape **is not presented as an answer**: it is rejected entirely.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StructuredAnswer {
-    /// Las afirmaciones.
+    /// The claims.
     pub claims: Vec<crate::claim::AIClaim>,
 }

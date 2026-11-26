@@ -235,8 +235,8 @@ impl ScaleModel {
             let repository = format!("repo-{account_index}-{repository_index}");
 
             // The revisions of the repository and its builds are the same
-            // list, and the walk goes over the builds: asi el indice de
-            // la revision y el de sus construcciones no pueden separarse.
+            // list, and the walk goes over the builds: so the index of
+            // the revision and that of its builds cannot come apart.
             for (revision_index, builds) in shape.builds[repository_index].iter().enumerate() {
                 let revision = format!("rev-{account_index}-{repository_index}-{revision_index}");
                 pieces.push((

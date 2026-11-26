@@ -1,39 +1,39 @@
-//! La investigacion contrafactual: explicar por que algo esta bloqueado
-//! y que cambiaria bajo una hipotesis, **sin ejecutar nada**.
+//! The counterfactual investigation: explaining why something is blocked
+//! and what would change under a hypothesis, **without executing anything**.
 //!
-//! El investigador explica el mundo con citas de evidencia. La
-//! simulacion dice que pasaria si. Cada uno por su lado es una mitad
-//! de la respuesta que pide una release bloqueada; este crate los
-//! compone en un unico contrato auditable, y no añade una tercera
-//! verdad: el informe contrafactual **es** el informe de investigacion
-//! mas el resultado de simulacion, con las etiquetas epistemicas que
-//! dicen de donde sale cada enunciado.
+//! The investigator explains the world with evidence citations. The
+//! simulation says what would happen if. Each on its own is one half
+//! of the answer that a blocked release asks for; this crate composes
+//! them into a single auditable contract, and does not add a third
+//! truth: the counterfactual report **is** the investigation report
+//! plus the simulation result, with the epistemic labels that
+//! say where each statement comes from.
 //!
-//! # Las etiquetas, no la prosa
+//! # The labels, not the prose
 //!
-//! Un enunciado del informe lleva su clase: lo que el verificador
-//! determinista verifico (`verified`), lo que se observo con cita
-//! resoluble (`observed`), lo que solo vale bajo la hipotesis
-//! (`hypothetical`), lo que el modelo infirio (`inference`) y lo que no
-//! se sabe (`unknown`). Una recomendacion Jamas se atribuye al motor de
-//! politicas: el motor decide con reglas, y lo que aqui se recomienda
-//! lo dice quien pregunta, no las reglas.
+//! A statement of the report carries its class: what the deterministic
+//! verifier verified (`verified`), what was observed with a resolvable
+//! citation (`observed`), what only holds under the hypothesis
+//! (`hypothetical`), what the model inferred (`inference`) and what is not
+//! known (`unknown`). A recommendation is NEVER attributed to the policy
+//! engine: the engine decides with rules, and what is recommended here
+//! is said by whoever asks, not by the rules.
 //!
-//! # El sello compartido
+//! # The shared seal
 //!
-//! La investigacion y la simulacion leen el MISMO manifiesto de
-//! lecturas --[`hodei_evidence::domain::read_set`]--, y por eso el
-//! informe puede comprobar que ambas mitades hablan del mismo mundo:
-//! si una fuente aparece en los dos manifiestos con versiones
-//! distintas, la respuesta se rechaza como sello incoherente antes que
-//! publicarse.
+//! The investigation and the simulation read the SAME read manifest
+//! --[`hodei_evidence::domain::read_set`]--, and for that reason the
+//! report can check that both halves speak about the same world:
+//! if a source appears in both manifests with different
+//! versions, the answer is rejected as an incoherent seal before
+//! being published.
 //!
-//! # Fallar cerrado, sin filtrar
+//! # Fail closed, without leaking
 //!
-//! Una hipotesis de otra cuenta, caducada o calculada contra un mundo
-//! que ya no existe se rechaza con un motivo que no lleva identificadores
-//! ajenos, y el rechazo ocurre ANTES de recuperar nada: no se filtra
-//! dato alguno del mundo que la hipotesis decia tocar.
+//! A hypothesis from another account, expired or computed against a world
+//! that no longer exists is rejected with a reason that carries no foreign
+//! identifiers, and the rejection happens BEFORE retrieving anything: no
+//! data is leaked from the world that the hypothesis claimed to touch.
 
 #![forbid(unsafe_code)]
 

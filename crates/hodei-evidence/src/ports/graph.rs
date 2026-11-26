@@ -83,8 +83,8 @@ pub trait GraphQuery: Send + Sync {
 
     /// The artefacts of a repository.
     ///
-    /// It is the walk of three saltos: el repositorio, sus revisiones, las
-    /// construcciones que dispararon y los artefactos que produjeron.
+    /// It is the walk of three hops: the repository, its revisions, the
+    /// builds they triggered and the artifacts they produced.
     async fn artifacts_of_repository(
         &self,
         tenant: &Hrn,

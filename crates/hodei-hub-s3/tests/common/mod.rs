@@ -1,11 +1,11 @@
-//! El contrato comun de los backends del BlobStore.
+//! The common contract of the BlobStore backends.
 //!
-//! La suite se define una sola vez aqui; cada backend la pasa en su
-//! propio fichero de test. Lo que se afirma de uno, se afirma del otro:
-//! put/get/stat, digest, doble publicacion, error, cancelacion,
-//! streaming y tramos.
+//! The suite is defined once here; each backend runs it in its
+//! own test file. What is asserted of one is asserted of the other:
+//! put/get/stat, digest, double publication, error, cancellation,
+//! streaming and ranges.
 
-// Los binarios de test comparten este modulo: cada uno usa una parte.
+// The test binaries share this module: each one uses a part.
 #![allow(dead_code)]
 
 pub mod conformity;
@@ -15,12 +15,12 @@ pub mod rustfs;
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_hub::blob::{BlobError, BlobStore, CommitExpectation, ReadPolicy};
 
-/// El contenido de la suite: bytes distinguibles.
+/// The suite's content: distinguishable bytes.
 pub fn the_bytes() -> Vec<u8> {
     (0u8..=255).cycle().take(5000).collect()
 }
 
-/// put y get: lo que sale por el digest es exactamente lo que entro.
+/// put and get: what comes out by the digest is exactly what went in.
 async fn case_put_and_get_roundtrip(store: &dyn BlobStore) {
     let bytes = the_bytes();
     let digest = store.put(&bytes).await.expect("el contenido se guarda");
@@ -29,7 +29,7 @@ async fn case_put_and_get_roundtrip(store: &dyn BlobStore) {
     assert_eq!(read_back, bytes, "lo que sale es lo que entro");
 }
 
-/// stat: existir y medir longitudes sin leer el contenido.
+/// stat: existing and measuring lengths without reading the content.
 async fn case_stat(store: &dyn BlobStore) {
     let bytes = the_bytes();
     let digest = store.put(&bytes).await.expect("el contenido se guarda");
@@ -56,8 +56,8 @@ async fn case_stat(store: &dyn BlobStore) {
     );
 }
 
-/// El digest manda: pedir por un digest que no existe es un fallo,
-/// nunca un contenido ajeno.
+/// The digest rules: asking for a digest that does not exist is a failure,
+/// never someone else's content.
 async fn case_digest_is_the_identity(store: &dyn BlobStore) {
     let bytes = the_bytes();
     let digest = store.put(&bytes).await.expect("el contenido se guarda");
@@ -79,8 +79,8 @@ async fn case_digest_is_the_identity(store: &dyn BlobStore) {
     );
 }
 
-/// Doble publicacion: el mismo contenido dos veces no es un error y no
-/// guarda dos veces.
+/// Double publication: the same content twice is not an error and is not
+/// stored twice.
 async fn case_double_publishing(store: &dyn BlobStore) {
     let bytes = the_bytes();
     let first = store.put(&bytes).await.expect("la primera publicacion");
@@ -90,10 +90,10 @@ async fn case_double_publishing(store: &dyn BlobStore) {
     assert_eq!(read_back, bytes, "y sigue siendo el mismo");
 }
 
-/// El commit valida: lo declarado manda, y lo que no cuadra no se publica.
+/// The commit validates: what is declared rules, and what does not match is not published.
 async fn case_commit_validates(store: &dyn BlobStore) {
-    // Contenido propio de este caso: los anteriores ya publicaron
-    // `the_bytes()`, y preguntar por el de ellos no diria nada del commit.
+    // Content specific to this case: the previous ones already published
+    // `the_bytes()`, and asking about theirs would say nothing about the commit.
     let bytes = b"content that only this case tries to commit".to_vec();
     let lie = CommitExpectation {
         digest: ContentDigest::of_bytes(b"another content entirely"),
@@ -143,7 +143,7 @@ async fn case_commit_validates(store: &dyn BlobStore) {
         "el algoritmo ajeno se llama por su nombre: {error}"
     );
 
-    // Y ninguna de las tres negaciones dejo referencia visible.
+    // And none of the three denials left a visible reference.
     let uncommitted = ContentDigest::of_bytes(&bytes);
     assert!(
         !store
@@ -154,11 +154,11 @@ async fn case_commit_validates(store: &dyn BlobStore) {
     );
 }
 
-/// Cancelacion: abortar una sesion no publica nada, y la sesion muerta
-/// no admite mas operaciones.
+/// Cancellation: aborting a session publishes nothing, and the dead session
+/// admits no more operations.
 async fn case_cancellation(store: &dyn BlobStore) {
-    // Contenido propio: otros casos ya publicaron `the_bytes()`, y
-    // preguntar por el de ellos no diria nada de la cancelacion.
+    // Own content: other cases already published `the_bytes()`, and
+    // asking about theirs would say nothing about the cancellation.
     let bytes = b"content this case only appends, and then aborts".to_vec();
     let mut session = store.begin().await.expect("la sesion abre");
     session.append(&bytes).await.expect("los bytes entran");
@@ -178,8 +178,8 @@ async fn case_cancellation(store: &dyn BlobStore) {
     );
 }
 
-/// Streaming: el contenido entra por trozos y sale verificado por su
-/// digest, que la sesion conoce antes del commit.
+/// Streaming: the content enters in chunks and comes out verified by its
+/// digest, which the session knows before the commit.
 async fn case_streaming_session(store: &dyn BlobStore) {
     let bytes = the_bytes();
     let mut session = store.begin().await.expect("la sesion abre");
@@ -207,8 +207,8 @@ async fn case_streaming_session(store: &dyn BlobStore) {
     assert_eq!(store.get(&committed).await.expect("y se puede leer"), bytes);
 }
 
-/// Tramos: leer una parte sin traer el todo, y el tramo que no existe se
-/// dice con lo que hay.
+/// Ranges: reading a part without fetching the whole, and the range that does not exist is
+/// reported with what there is.
 async fn case_range_reads(store: &dyn BlobStore) {
     let bytes = the_bytes();
     let digest = store.put(&bytes).await.expect("el contenido se guarda");
@@ -236,7 +236,7 @@ async fn case_range_reads(store: &dyn BlobStore) {
     );
 }
 
-/// Cero bytes: el contenido vacio tambien tiene digest y tambien viaja.
+/// Zero bytes: empty content also has a digest and also travels.
 async fn case_empty_content(store: &dyn BlobStore) {
     let digest = store.put(&[]).await.expect("lo vacio se guarda");
     assert_eq!(digest, ContentDigest::of_bytes(&[]));
@@ -244,7 +244,7 @@ async fn case_empty_content(store: &dyn BlobStore) {
     assert_eq!(store.length(&digest).await.expect("lo vacio mide cero"), 0);
 }
 
-/// La suite entera, la misma para los dos backends.
+/// The whole suite, the same for both backends.
 pub async fn the_suite(store: &dyn BlobStore) {
     case_put_and_get_roundtrip(store).await;
     case_stat(store).await;

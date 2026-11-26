@@ -132,7 +132,7 @@ impl RelationType {
     ///
     /// The reading lives here for the same reason that the reading of the
     /// kinds lives here: a type that is added to the domain has to be read
-    /// everywhere, and not only en el sitio que alguien recordo.
+    /// everywhere, and not only in the place somebody remembered.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "has_revision" => Some(Self::HasRevision),
@@ -283,8 +283,8 @@ pub struct RelationClaim {
 /// The withdrawal of ONE support of ONE relation.
 ///
 /// A relation is asserted by the evidence that supports it, and one
-/// evidence can be withdrawn without touching the others: una evidencia
-/// supersedida retira SU apoyo, y los apoyos independientes se quedan.
+/// evidence can be withdrawn without touching the others: a superseded
+/// evidence withdraws ITS support, and independent supports stay.
 /// The withdrawal names the relation by its identity --the type and its
 /// two ends-- and the evidence whose support goes away.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,9 +346,9 @@ pub struct GraphChangeSet {
     /// withdraws, one support at a time, without touching the others.
     #[serde(default)]
     pub withdrawals: Vec<GraphRelationWithdrawal>,
-    /// What brought the change set, when it came from an event: la causa
-    /// es la identidad con la que los deltas de relacion se deduplican.
-    /// Un changeset sin causa no emite deltas.
+    /// What brought the change set, when it came from an event: the cause
+    /// is the identity with which relation deltas are deduplicated.
+    /// A changeset without a cause emits no deltas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<String>,
 }

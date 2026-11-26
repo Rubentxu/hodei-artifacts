@@ -8,9 +8,9 @@
 //! of the relations it names.
 //!
 //! A change that does not alter the meaning of a relation says NOTHING:
-//! re-decir un apoyo que ya esta dicho no es un cambio, y retirar un
-//! apoyo que nunca estuvo no lo retira. Ese es el trabajo que no se
-//! repite.
+//! re-saying a support that has already been said is not a change, and withdrawing a
+//! support that was never there does not withdraw it. That is the work that is not
+//! repeated.
 
 use std::collections::BTreeMap;
 
@@ -20,16 +20,16 @@ use crate::domain::graph::GraphChangeSet;
 use chrono::{DateTime, Utc};
 
 /// The supports that were there BEFORE the changeset, by the identity of
-/// their relation. The emitter compares against them: lo que ya estaba
-/// dicho no se vuelve a decir.
+/// their relation. The emitter compares against them: what was already
+/// said is not said again.
 pub type SupportSnapshot = BTreeMap<String, Vec<EvidenceId>>;
 
 /// The deltas a changeset says, against the supports that were there
 /// before it.
 ///
-/// The cause is the identity of what brings the changeset -- el evento
-/// o el changeset -- y es la clave de la deduplicacion aguas abajo: el
-/// mismo cause dicho dos veces es UN delta.
+/// The cause is the identity of what brings the changeset -- the event
+/// or the changeset -- and is the key of the downstream deduplication: the
+/// same cause said twice is ONE delta.
 pub fn relation_deltas(
     cause: &str,
     changes: &GraphChangeSet,
@@ -67,8 +67,8 @@ pub fn relation_deltas(
     }
 
     // What the changeset WITHDRAWS: only a support that WAS there is
-    // removed. Retirar lo que no esta no cambia nada, y lo que no
-    // cambia no se dice.
+    // removed. Withdrawing what is not there changes nothing, and what does not
+    // change is not said.
     for withdrawal in &changes.withdrawals {
         let identity = withdrawal.identity();
         let was_there = before

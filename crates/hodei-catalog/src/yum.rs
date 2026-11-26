@@ -1,60 +1,60 @@
-//! La gramatica y los documentos del formato RPM (yum/dnf), puros y
-//! sin efectos: aqui se abre un `.rpm`, se lee su header, se pintan la
-//! ficha `primary` y el `repomd`. Nada de esto toca el almacen ni la
-//! red: el handler decide cuando esos bytes salen o entran.
+//! The grammar and documents of the RPM format (yum/dnf), pure and
+//! effect-free: here an `.rpm` is opened, its header is read, and the
+//! `primary` entry and the `repomd` are rendered. None of this touches the store or the
+//! network: the handler decides when those bytes go out or come in.
 //!
-//! El contrato es el de `createrepo_c`, que es lo que `dnf` espera
-//! leer. Un indice mal formado no es un matiz: dnf descarta el
-//! repositorio y el cliente real deja de ver el paquete.
+//! The contract is `createrepo_c`'s, which is what `dnf` expects to
+//! read. A malformed index is not a nuance: dnf discards the
+//! repository and the real client stops seeing the package.
 
 use thiserror::Error;
 
-/// Los fallos del formato: todo lo que huele a rpm roto o a metadata
-/// inservible, dicho con nombre y razon.
+/// Format failures: everything that smells of a broken rpm or unusable
+/// metadata, stated with a name and a reason.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum YumError {
-    /// El fichero no es un `.rpm`: magicos que faltan, un header que
-    /// no esta donde debe o un indice que se sale del fichero.
+    /// The file is not an `.rpm`: missing magic numbers, a header that
+    /// is not where it should be or an index that runs outside the file.
     #[error("the file is not a valid rpm container: {0}")]
     BadContainer(&'static str),
-    /// Falta un campo obligatorio del header: sin el no hay paquete.
+    /// A mandatory header field is missing: without it there is no package.
     #[error("the rpm header lacks the required field {0}")]
     MissingField(&'static str),
-    /// El identificador no cabe en una ruta segura del pool.
+    /// The identifier does not fit in a safe pool path.
     #[error("the package identity is not filesystem safe: {0}")]
     BadIdentity(String),
 }
 
-/// Lo que un `.rpm` declara de si mismo en su header: los campos que
-/// dnf necesita para elegir y para instalar.
+/// What an `.rpm` declares about itself in its header: the fields
+/// dnf needs to choose and to install.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RpmMetadata {
-    /// Nombre del paquete.
+    /// Package name.
     pub name: String,
-    /// Epoch, si el spec la declara. Sin epoch, dnf la toma como 0.
+    /// Epoch, if the spec declares it. Without epoch, dnf takes it as 0.
     pub epoch: Option<u32>,
-    /// Version upstream.
+    /// Upstream version.
     pub version: String,
-    /// Release del empaquetado (`1.fc40`).
+    /// Packaging release (`1.fc40`).
     pub release: String,
-    /// Arquitectura del binario: `x86_64`, `aarch64`, `noarch`...
+    /// Binary architecture: `x86_64`, `aarch64`, `noarch`...
     pub architecture: String,
-    /// Resumen de una linea.
+    /// One-line summary.
     pub summary: String,
-    /// Descripcion larga, con sus parrafos.
+    /// Long description, with its paragraphs.
     pub description: String,
-    /// Licencia declarada (SPDX en las distros modernas).
+    /// Declared license (SPDX in modern distros).
     pub license: Option<String>,
-    /// Tamano instalado: `SIZE` del header, el que pinta dnf al buscar.
+    /// Installed size: the header's `SIZE`, the one dnf shows when searching.
     pub installed_size: u64,
-    /// Momento de construccion, en segundos Unix: es la fecha que
-    /// `createrepo` pone en `<time>` y por eso es del fichero, no del reloj.
+    /// Build time, in Unix seconds: it is the date that
+    /// `createrepo` puts in `<time>` and therefore belongs to the file, not to the clock.
     pub build_time: u32,
 }
 
-// Los numeros de tag son los de `rpmtag.h` de rpm, anclados y
-// estables desde los noventa: el reader se guia por el tag, no por el
-// campo tipo, igual que hacen las herramientas de la propia suite.
+// The tag numbers are those of rpm's `rpmtag.h`, pinned and
+// stable since the nineties: the reader is guided by the tag, not by the
+// type field, just as the suite's own tools do.
 const TAG_NAME: i32 = 1000;
 const TAG_VERSION: i32 = 1001;
 const TAG_RELEASE: i32 = 1002;
@@ -66,15 +66,15 @@ const TAG_SIZE: i32 = 1009;
 const TAG_LICENSE: i32 = 1014;
 const TAG_ARCH: i32 = 1022;
 
-/// Un indice del header: tag, tipo, offset dentro del store y count.
+/// A header index entry: tag, type, offset within the store and count.
 struct IndexEntry {
     tag: i32,
     offset: u32,
 }
 
-/// Los entries y el store de un header (`0x8e 0xad 0xe8`) en la
-/// posicion dada, con el final del store para poder alinear el
-/// siguiente header.
+/// The entries and the store of a header (`0x8e 0xad 0xe8`) at the
+/// given position, with the end of the store so the
+/// next header can be aligned.
 fn read_header(bytes: &[u8], at: usize) -> Result<(Vec<IndexEntry>, usize, usize), YumError> {
     let complaint = |reason| Err(YumError::BadContainer(reason));
     if at + 16 > bytes.len() {
@@ -110,7 +110,7 @@ fn read_header(bytes: &[u8], at: usize) -> Result<(Vec<IndexEntry>, usize, usize
     Ok((entries, store, store_end))
 }
 
-/// La cadena que el tag senala en el store, o nada si el tag no esta.
+/// The string the tag points at in the store, or nothing if the tag is missing.
 fn entry_string(bytes: &[u8], entries: &[IndexEntry], store: usize, tag: i32) -> Option<String> {
     let entry = entries.iter().find(|entry| entry.tag == tag)?;
     let start = store.checked_add(entry.offset as usize)?;
@@ -119,7 +119,7 @@ fn entry_string(bytes: &[u8], entries: &[IndexEntry], store: usize, tag: i32) ->
     Some(String::from_utf8_lossy(&text[..end]).into_owned())
 }
 
-/// El u32 que el tag senala en el store.
+/// The u32 the tag points at in the store.
 fn entry_u32(bytes: &[u8], entries: &[IndexEntry], store: usize, tag: i32) -> Option<u32> {
     let entry = entries.iter().find(|entry| entry.tag == tag)?;
     let start = store.checked_add(entry.offset as usize)?;
@@ -127,10 +127,10 @@ fn entry_u32(bytes: &[u8], entries: &[IndexEntry], store: usize, tag: i32) -> Op
     Some(u32::from_be_bytes(four.try_into().expect("four bytes")))
 }
 
-/// Abre un `.rpm`: el lead de 96 bytes, el header de firma (padding a
-/// 8 despues) y el header principal, del que salen los campos. Solo
-/// hace falta el principal para indexar: las firmas del payload son
-/// materia del gpgcheck de dnf, no de la gramatica del pool.
+/// Opens an `.rpm`: the 96-byte lead, the signature header (padded to
+/// 8 afterwards) and the main header, from which the fields come. Only
+/// the main one is needed to index: the payload signatures are
+/// a matter for dnf's gpgcheck, not for the pool grammar.
 pub fn parse_rpm(bytes: &[u8]) -> Result<RpmMetadata, YumError> {
     if bytes.len() < 96 {
         return Err(YumError::BadContainer("the file is shorter than the lead"));
@@ -138,8 +138,8 @@ pub fn parse_rpm(bytes: &[u8]) -> Result<RpmMetadata, YumError> {
     if &bytes[0..4] != b"\xed\xab\xee\xdb" {
         return Err(YumError::BadContainer("the lead magic is missing"));
     }
-    // Header de firma: puede estar vacio, pero su estructura debe
-    // abrirse para saber donde empieza el principal.
+    // Signature header: it may be empty, but its structure must
+    // be opened to know where the main one starts.
     let (_, _, signature_end) = read_header(bytes, 96)?;
     let main_at = signature_end + (8 - signature_end % 8) % 8;
     let (entries, store, _) = read_header(bytes, main_at)?;
@@ -171,8 +171,8 @@ pub fn parse_rpm(bytes: &[u8]) -> Result<RpmMetadata, YumError> {
     })
 }
 
-/// El nombre de fichero que la comunidad espera: `{name}-{epoch}:{ver}-{rel}.{arch}.rpm`,
-/// con el epoch solo cuando existe. Es el que `dnf` vera en `location`.
+/// The file name the community expects: `{name}-{epoch}:{ver}-{rel}.{arch}.rpm`,
+/// with the epoch only when it exists. It is the one `dnf` will see in `location`.
 pub fn rpm_filename(metadata: &RpmMetadata) -> String {
     let epoch = metadata
         .epoch
@@ -184,9 +184,9 @@ pub fn rpm_filename(metadata: &RpmMetadata) -> String {
     )
 }
 
-/// La ruta del pool donde vive el binario. Se rechaza cualquier
-/// identificador que pueda escapar de la raiz del repositorio o que no
-/// sea transportable por HTTP.
+/// The pool path where the binary lives. Any
+/// identifier that could escape the repository root or that is not
+/// transportable over HTTP is rejected.
 pub fn pool_path_for(metadata: &RpmMetadata) -> Result<String, YumError> {
     let candidate = rpm_filename(metadata);
     let safe = candidate.bytes().all(|byte| {
@@ -198,15 +198,15 @@ pub fn pool_path_for(metadata: &RpmMetadata) -> Result<String, YumError> {
     Ok(format!("pool/{candidate}"))
 }
 
-/// El sufijo con el que un binario del pool guarda su ficha de indice:
-/// los bytes del `.rpm` y su bloque `primary` son dos assets
-/// inmutables, y la ficha es lo que se lee para ensamblar el indice.
+/// The suffix with which a pool binary stores its index entry:
+/// the `.rpm` bytes and its `primary` block are two immutable
+/// assets, and the entry is what is read to assemble the index.
 pub fn record_path_for(pool_path: &str) -> String {
     format!("{pool_path}.record")
 }
 
-/// Escapa el texto para un elemento XML: la gramatica de dnf no admite
-/// `&` ni `<` sueltos en resumen, descripcion o licencia.
+/// Escapes text for an XML element: dnf's grammar does not admit
+/// bare `&` or `<` in summary, description or license.
 fn xml_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for ch in text.chars() {
@@ -221,10 +221,10 @@ fn xml_escape(text: &str) -> String {
     out
 }
 
-/// Pinta la ficha `<package>` de un binario: los campos del header mas
-/// los de indice que solo conoce el repositorio (ruta, tamano, suma).
-/// Es el fragmento de `createrepo_c` que dnf convierte en candidatos,
-/// guardado como registro inmutable junto al `.rpm` que describe.
+/// Renders the `<package>` entry of a binary: the header fields plus
+/// the index ones that only the repository knows (path, size, checksum).
+/// It is the `createrepo_c` fragment that dnf turns into candidates,
+/// stored as an immutable record next to the `.rpm` it describes.
 pub fn package_record(metadata: &RpmMetadata, pool_path: &str, size: u64, sha256: &str) -> String {
     let epoch = metadata
         .epoch
@@ -268,9 +268,9 @@ pub fn package_record(metadata: &RpmMetadata, pool_path: &str, size: u64, sha256
     )
 }
 
-/// El documento `primary.xml` completo: la cabecera comun y las fichas
-/// en el orden en que llegan (orden de ruta del catalogo), para que
-/// dos lecturas del mismo estado den los mismos bytes.
+/// The complete `primary.xml` document: the common header and the entries
+/// in the order they arrive (catalog path order), so that
+/// two reads of the same state give the same bytes.
 pub fn primary_document(records: &[&str]) -> String {
     let mut out = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -286,27 +286,27 @@ packages=\"{count}\">\n",
     out
 }
 
-/// La entrada de un fichero de indice dentro de `repomd.xml`.
+/// The entry of an index file inside `repomd.xml`.
 pub struct RepodataEntry<'a> {
-    /// El tipo logico: hoy, `primary`.
+    /// The logical type: today, `primary`.
     pub kind: &'static str,
-    /// La ruta relativa por la que se sirve.
+    /// The relative path under which it is served.
     pub location: &'a str,
-    /// SHA256 del fichero tal como se sirve (gzip incluido).
+    /// SHA256 of the file as served (gzip included).
     pub checksum: &'a str,
-    /// Tamano del fichero tal como se sirve.
+    /// Size of the file as served.
     pub size: u64,
-    /// SHA256 del texto sin comprimir.
+    /// SHA256 of the uncompressed text.
     pub open_checksum: &'a str,
-    /// Tamano del texto sin comprimir.
+    /// Size of the uncompressed text.
     pub open_size: u64,
-    /// El momento del estado que lo genero, en segundos Unix.
+    /// The moment of the state that generated it, in Unix seconds.
     pub timestamp: u64,
 }
 
-/// El documento `repomd.xml`: la lista de indices con su suma exacta.
-/// Es lo que `dnf` descarga primero y lo que va firmado en
-/// `repomd.xml.asc`, asi que cada byte cuenta.
+/// The `repomd.xml` document: the list of indexes with their exact checksum.
+/// It is what `dnf` downloads first and what is signed in
+/// `repomd.xml.asc`, so every byte counts.
 pub fn repomd_document(revision: u64, entries: &[RepodataEntry]) -> String {
     let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -339,39 +339,39 @@ xmlns:rpm=\"http://linux.duke.edu/metadata/rpm\">\n\
     out
 }
 
-/// El nombre con el que se sirve el `primary.xml.gz`: contenido
-/// direccionado por su propia SHA256, igual que en createrepo. Asi el
-/// fichero es inmutable y cacheable por siempre.
+/// The name under which `primary.xml.gz` is served: content
+/// addressed by its own SHA256, as in createrepo. This way the
+/// file is immutable and cacheable forever.
 pub fn primary_location(sha256: &str) -> String {
     format!("repodata/{sha256}-primary.xml.gz")
 }
 
-/// Las rutas que la superficie yum sabe servir, ya interpretadas.
+/// The routes the yum surface knows how to serve, already interpreted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    /// El binario en si, en `pool/{name}-{version}-{release}.{arch}.rpm`.
+    /// The binary itself, at `pool/{name}-{version}-{release}.{arch}.rpm`.
     Pool {
-        /// La ruta del binario dentro del repositorio.
+        /// The binary's path inside the repository.
         path: String,
     },
-    /// El `repomd.xml` del repositorio.
+    /// The repository's `repomd.xml`.
     Repomd,
-    /// La firma separada del `repomd.xml`: `repomd.xml.asc`.
+    /// The detached signature of `repomd.xml`: `repomd.xml.asc`.
     RepomdSignature,
-    /// El indice `primary` por su nombre de contenido.
+    /// The `primary` index by its content name.
     Primary {
-        /// El hexagono SHA256 con el que el cliente lo pidio.
+        /// The SHA256 hex with which the client requested it.
         checksum: String,
     },
-    /// La clave publica del hub en armored, el `gpgkey` de dnf.
+    /// The hub's public key in armor, dnf's `gpgkey`.
     Key,
 }
 
-/// Normaliza los escapes percent que el propio cliente anade al href del
-/// primary: `dnf5` (libcurl) escapa los caracteres reservados al construir
-/// la URL, asi que `:` llega como `%3a` y `+` como `%2b`. Solo se sustituyen
-/// las secuencias `%XX` con hex validos; un `%` suelto o con hex invalido
-/// se deja tal cual y cae fuera del charset en la validacion de la ruta.
+/// Normalizes the percent escapes that the client itself adds to the primary's
+/// href: `dnf5` (libcurl) escapes reserved characters when building
+/// the URL, so `:` arrives as `%3a` and `+` as `%2b`. Only `%XX`
+/// sequences with valid hex are replaced; a stray `%` or one with invalid hex
+/// is left as is and falls outside the charset in path validation.
 fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     if !bytes.contains(&b'%') {
@@ -391,8 +391,8 @@ fn percent_decode(text: &str) -> String {
             index += 1;
         }
     }
-    // Una secuencia que no decodifica a UTF-8 valido no es una ruta: se
-    // devuelve el crudo para que la validacion de charset lo rechace.
+    // A sequence that does not decode to valid UTF-8 is not a path: the
+    // raw one is returned so that charset validation rejects it.
     String::from_utf8(out).unwrap_or_else(|_| text.to_string())
 }
 
@@ -406,16 +406,16 @@ fn hex_value(byte: u8) -> Option<u8> {
 }
 
 impl Route {
-    /// Interpreta el resto de `/yum/{repositorio}/...`, crudo.
+    /// Interprets the rest of `/yum/{repository}/...`, raw.
     pub fn parse(rest: &str) -> Result<Route, YumError> {
         if rest == "key.asc" {
             return Ok(Route::Key);
         }
         if let Some(path) = rest.strip_prefix("pool/") {
-            // El charset de la gramatica es la frontera de seguridad: la
-            // ruta se normaliza primero (`percent_decode`) y se valida
-            // despues, de modo que un escape hostil (`%2e%2e`, `%2f`) no
-            // abre la puerta a nada que la forma cruda no abriera ya.
+            // The grammar charset is the security boundary: the
+            // path is normalized first (`percent_decode`) and validated
+            // afterwards, so that a hostile escape (`%2e%2e`, `%2f`) does not
+            // open the door to anything the raw form did not already open.
             let path = percent_decode(path);
             if !path.ends_with(".rpm")
                 || path.is_empty()
@@ -436,8 +436,8 @@ impl Route {
                 "repomd.xml" => return Ok(Route::Repomd),
                 "repomd.xml.asc" => return Ok(Route::RepomdSignature),
                 _ => {
-                    // `{sha256}-primary.xml.gz`: solo hex, guiones y el
-                    // sufijo; cualquier otro nombre es ruta imposible.
+                    // `{sha256}-primary.xml.gz`: only hex, hyphens and the
+                    // suffix; any other name is an impossible path.
                     if let Some(hex) = name.strip_suffix("-primary.xml.gz")
                         && hex.len() == 64
                         && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -454,45 +454,45 @@ impl Route {
     }
 }
 
-/// Los nombres de metadata que se sirven con el checksum en el nombre.
+/// The metadata names that are served with the checksum in the name.
 ///
-/// El layout de `createrepo` direcciona el metadata por su propio
-/// SHA256: `repodata/{sha256}-primary.xml.gz`. Ese nombre es una promesa
-/// sobre los bytes que se sirven, y por eso se puede comprobar sin
-/// preguntar a nadie.
+/// The `createrepo` layout addresses metadata by its own
+/// SHA256: `repodata/{sha256}-primary.xml.gz`. That name is a promise
+/// about the bytes served, and therefore it can be checked without
+/// asking anyone.
 const SHA256_HEX_LENGTH: usize = 64;
 
-/// Las rutas que la superficie yum sirve en modo **proxy**.
+/// The routes the yum surface serves in **proxy** mode.
 ///
-/// Un repositorio hospedado impone su layout: el `primary` se llama
-/// como sea y el pool es `pool/`. Un proxy no puede imponerlo: el
-/// upstream decide como se llama su metadata y el cliente lo pide por el
-/// nombre que el `repomd.xml` declara. Por eso son **dos** gramaticas y
-/// no una: la hosted sigue siendo estricta (un repositorio alojado no
-/// puede servir `Packages/...`), y la del proxy acepta lo que el
-/// upstream publica.
+/// A hosted repository imposes its layout: the `primary` is called
+/// whatever and the pool is `pool/`. A proxy cannot impose it: the
+/// upstream decides what its metadata is called and the client requests it by the
+/// name the `repomd.xml` declares. That is why there are **two** grammars and
+/// not one: the hosted one remains strict (a hosted repository cannot
+/// serve `Packages/...`), and the proxy's accepts what the
+/// upstream publishes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UpstreamRoute {
-    /// La clave publica del upstream, en armor: la que el cliente usa
-    /// para verificar la firma del upstream.
+    /// The upstream's public key, in armor: the one the client uses
+    /// to verify the upstream's signature.
     Key,
-    /// El `repomd.xml` del upstream, tal cual.
+    /// The upstream's `repomd.xml`, as is.
     Repomd,
-    /// La firma separada del `repomd.xml` del upstream.
+    /// The detached signature of the upstream's `repomd.xml`.
     RepomdSignature,
-    /// Un metadata o un paquete del upstream, por su ruta.
+    /// An upstream metadata file or package, by its path.
     Asset {
-        /// La ruta por la que se pide al upstream.
+        /// The path under which it is requested from the upstream.
         path: String,
     },
 }
 
 impl UpstreamRoute {
-    /// Interpreta el resto de `/yum/{repositorio}/...` en modo proxy.
+    /// Interprets the rest of `/yum/{repository}/...` in proxy mode.
     ///
-    /// La regla de seguridad es la del pool hospedado: sin `..`, sin
-    /// barra inicial, sin barras dobles y con un conjunto de caracteres
-    /// acotado. Lo que no la cumple no existe para ese proxy.
+    /// The security rule is the hosted pool's: no `..`, no leading
+    /// slash, no double slashes and with a bounded character set.
+    /// What does not comply does not exist for that proxy.
     pub fn parse(rest: &str) -> Result<Self, YumError> {
         match rest {
             "key.asc" => return Ok(Self::Key),
@@ -500,8 +500,8 @@ impl UpstreamRoute {
             "repodata/repomd.xml.asc" => return Ok(Self::RepomdSignature),
             _ => {}
         }
-        // El upstream decide el layout: su `repodata` puede tener mas
-        // indices que el `primary`, y su pool puede ser `Packages/`.
+        // The upstream decides the layout: its `repodata` may have more
+        // indexes than the `primary`, and its pool may be `Packages/`.
         let known = rest.starts_with("repodata/")
             || rest.starts_with("Packages/")
             || (rest.starts_with("pool/") && rest.ends_with(".rpm"));
@@ -514,11 +514,11 @@ impl UpstreamRoute {
     }
 }
 
-/// Si una ruta relativa es segura para pedirla a un upstream.
+/// Whether a relative path is safe to request from an upstream.
 ///
-/// Es la misma regla que el pool de un repositorio hospedado: sin
-/// segmentos de punto, sin barra inicial, sin barras dobles, sin final
-/// de barra y con un conjunto de caracteres acotado.
+/// It is the same rule as a hosted repository's pool: no
+/// dot segments, no leading slash, no double slashes, no trailing
+/// slash and with a bounded character set.
 fn is_safe_upstream_path(path: &str) -> bool {
     !path.is_empty()
         && !path.starts_with('/')
@@ -531,12 +531,12 @@ fn is_safe_upstream_path(path: &str) -> bool {
         })
 }
 
-/// El checksum que el **nombre** de una ruta declara, si lo declara.
+/// The checksum that a path's **name** declares, if it declares one.
 ///
-/// El nombre de un metadata de `createrepo` es su propio SHA256, y por
-/// eso el nombre es una promesa sobre los bytes. Un proxy que sirve unos
-/// bytes que no la cumplen esta sirviendo metadata corrupto como si
-/// fuera bueno.
+/// A `createrepo` metadata name is its own SHA256, and therefore
+/// the name is a promise about the bytes. A proxy that serves bytes
+/// that do not comply is serving corrupt metadata as if
+/// it were good.
 pub fn checksum_of_name(path: &str) -> Option<String> {
     let name = path.rsplit('/').next()?;
     let (hex, rest) = name.split_once('-')?;
@@ -549,21 +549,21 @@ pub fn checksum_of_name(path: &str) -> Option<String> {
     Some(hex.to_lowercase())
 }
 
-/// Un metadata que declara el `repomd.xml` de un upstream.
+/// A metadata file declared by an upstream's `repomd.xml`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclaredMetadata {
-    /// La ruta por la que se sirve.
+    /// The path under which it is served.
     pub location: String,
-    /// El SHA256 que el `repomd` declara.
+    /// The SHA256 the `repomd` declares.
     pub checksum: String,
 }
 
-/// Los metadata que un `repomd.xml` declara, con su checksum.
+/// The metadata files that a `repomd.xml` declares, with their checksum.
 ///
-/// El documento es de un upstream: se lee tal cual viene, y lo que se
-/// busca es el `location` y el `checksum` de cada `<data>`. Un `repomd`
-/// que no se entiende no declara nada, y lo que no declara no se
-/// sirve.
+/// The document comes from an upstream: it is read as it comes, and what is
+/// sought is the `location` and the `checksum` of each `<data>`. A `repomd`
+/// that is not understood declares nothing, and what it does not declare is not
+/// served.
 pub fn declared_metadata(repomd: &str) -> Vec<DeclaredMetadata> {
     let mut out = Vec::new();
     let mut cursor = 0usize;
@@ -597,7 +597,7 @@ pub fn declared_metadata(repomd: &str) -> Vec<DeclaredMetadata> {
     out
 }
 
-/// El checksum que un `repomd.xml` declara para una ruta, si la declara.
+/// The checksum that a `repomd.xml` declares for a path, if it declares one.
 pub fn declared_checksum(repomd: &str, location: &str) -> Option<String> {
     declared_metadata(repomd)
         .into_iter()
@@ -804,7 +804,7 @@ pub fn merge_package_entries(members: &[Vec<PackageEntry>]) -> Vec<PackageEntry>
     selected.into_values().collect()
 }
 
-/// La cabecera de un elemento y su texto: `<checksum type="sha256">abc`.
+/// The header of an element and its text: `<checksum type="sha256">abc`.
 fn element_of(text: &str, name: &str) -> Option<(String, String)> {
     let open = format!("<{name}");
     let start = text.find(&open)?;
@@ -818,7 +818,7 @@ fn element_of(text: &str, name: &str) -> Option<(String, String)> {
     ))
 }
 
-/// La etiqueta de apertura de un elemento: `<location href="..."/>`.
+/// The opening tag of an element: `<location href="..."/>`.
 fn tag_of(text: &str, name: &str) -> Option<String> {
     let open = format!("<{name}");
     let start = text.find(&open)?;
@@ -827,7 +827,7 @@ fn tag_of(text: &str, name: &str) -> Option<String> {
     Some(after[..head_end].to_string())
 }
 
-/// El valor de un atributo: `href="repodata/abc-primary.xml.gz"`.
+/// The value of an attribute: `href="repodata/abc-primary.xml.gz"`.
 fn attribute_of(text: &str, name: &str) -> Option<String> {
     let needle = format!("{name}=\"");
     let start = text.find(&needle)? + needle.len();
@@ -849,18 +849,18 @@ pub(crate) struct TestHeaderField<'a> {
     pub value: HeaderValue<'a>,
 }
 
-/// Construye un `.rpm` de prueba: lead, header de firma vacio y header
-/// principal con los campos pedidos. No es instalable (el payload es
-/// vacio), pero nuestro lector y la gramatica del pool lo ven como uno
-/// de verdad: la estructura de cabeceras es identica.
+/// Builds a test `.rpm`: lead, empty signature header and main
+/// header with the requested fields. It is not installable (the payload is
+/// empty), but our reader and the pool grammar see it as a real
+/// one: the header structure is identical.
 #[cfg(test)]
 pub(crate) fn build_test_rpm(fields: &[TestHeaderField]) -> Vec<u8> {
     let mut lead = vec![0u8; 96];
     lead[0..4].copy_from_slice(b"\xed\xab\xee\xdb");
-    lead[4] = 3; // version del formato
-    lead[6..8].copy_from_slice(&1u16.to_be_bytes()); // rpm binario
+    lead[4] = 3; // format version
+    lead[6..8].copy_from_slice(&1u16.to_be_bytes()); // binary rpm
 
-    // Firma: header vacio legitimo (los paquetes sin firma abundan).
+    // Signature: legitimate empty header (unsigned packages abound).
     let mut signature = vec![0x8e, 0xad, 0xe8, 1];
     signature.extend_from_slice(&[0u8; 4]); // reserved
     signature.extend_from_slice(&0u32.to_be_bytes()); // count
@@ -877,7 +877,7 @@ pub(crate) fn build_test_rpm(fields: &[TestHeaderField]) -> Vec<u8> {
                 (offset, 0u32)
             }
             HeaderValue::U32(number) => {
-                // Alineado a 4, como exige la especificacion del store.
+                // Aligned to 4, as the store specification requires.
                 let pad = (4 - store.len() % 4) % 4;
                 store.extend(std::iter::repeat_n(0, pad));
                 let offset = store.len() as u32;
@@ -909,7 +909,7 @@ pub(crate) fn build_test_rpm(fields: &[TestHeaderField]) -> Vec<u8> {
     rpm
 }
 
-/// Los campos que todo paquete real lleva, como los pinta rpm-build.
+/// The fields every real package carries, as rpm-build renders them.
 #[cfg(test)]
 pub(crate) fn rpm_fields<'a>(
     name: &'a str,
@@ -1084,9 +1084,9 @@ mod tests {
                 path: "pool/hello-hodei-1.0.0-1.fc40.x86_64.rpm".into()
             }
         );
-        // dnf5 escapa los reservados del href al pedir el paquete: la
-        // misma ruta llega con `%3a` (epoch) y `%2b` (plus) y debe
-        // interpretarse como la ruta cruda del catalogo.
+        // dnf5 escapes the href's reserved characters when requesting the package: the
+        // same path arrives with `%3a` (epoch) and `%2b` (plus) and must be
+        // interpreted as the catalog's raw path.
         assert_eq!(
             Route::parse("pool/hello-tilde-1%3a1.0.0~rc1%2bdfsg-1.x86_64.rpm").unwrap(),
             Route::Pool {
@@ -1097,20 +1097,20 @@ mod tests {
 
     #[test]
     fn percent_escapes_never_widen_the_path() {
-        // Un escape que produciria `..` cae igual que la forma cruda: la
-        // normalizacion no abre ninguna puerta.
+        // An escape that would produce `..` falls just like the raw form: the
+        // normalization opens no door.
         assert!(Route::parse("pool/%2e%2e/etc/passwd.rpm").is_err());
         assert!(Route::parse("pool/main/%2e%2e/secret.rpm").is_err());
-        // `%` suelto, hex invalido o secuencia incompleta: fuera del
-        // charset, jamas una ruta.
+        // Stray `%`, invalid hex or incomplete sequence: outside the
+        // charset, never a path.
         assert!(Route::parse("pool/a%zzb.rpm").is_err());
         assert!(Route::parse("pool/a%2.rpm").is_err());
         assert!(Route::parse("pool/a%b.rpm").is_err());
-        // Doble percent: una unica pasada, `%252e` deja `%` en la ruta y
-        // el charset lo rechaza.
+        // Double percent: a single pass, `%252e` leaves `%` in the path and
+        // the charset rejects it.
         assert!(Route::parse("pool/a%252eb.rpm").is_err());
-        // La invariante: lo que la forma escapada acepta es exactamente lo
-        // que aceptaria la forma cruda decodificada, ni mas ni menos.
+        // The invariant: what the escaped form accepts is exactly what
+        // the decoded raw form would accept, no more and no less.
         assert_eq!(
             Route::parse("pool/a%2fb.rpm").unwrap(),
             Route::parse("pool/a/b.rpm").unwrap()
