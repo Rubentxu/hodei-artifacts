@@ -242,6 +242,7 @@ pipeline {
                         "--test hsp208_simulation_dgraph_it",
                         "--test hsp314_dgraph_risk_facts_it",
                         "--test hsp314_f3b0_dgraph_ports_it",
+                        "--test hsp314_p2_dgraph_schema_it",
                         "--test hsp314_graph_risk_facts_it",
                         "--test hsp314_graph_evidence_reader_it",
                         "--test hsp314_f3b2_reactor_dgraph_it",
