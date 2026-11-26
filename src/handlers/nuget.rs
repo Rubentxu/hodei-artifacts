@@ -23,6 +23,8 @@
 //! byte a byte: un nupkg reescrito rompe su hash, y NuGet valida el
 //! paquete contra el `contentHash` del registro.
 
+use std::collections::HashMap;
+
 use axum::{
     body::Body,
     extract::{OriginalUri, State},
@@ -32,8 +34,8 @@ use axum::{
 use base64::Engine as _;
 use hodei_catalog::{
     CatalogError, PackageCoordinates, Publication, RepositoryDescriptor, RepositoryFormat,
-    UpstreamConfig,
-    nuget::{self, FlatRequest, NuGetRoute, NugetError},
+    RepositoryMode, UpstreamConfig,
+    nuget::{self, FlatRequest, NuGetRoute, NuGetVersion, NugetError},
 };
 use serde_json::{Value, json};
 
@@ -340,17 +342,11 @@ async fn read(
 ) -> Result<Response, Failure> {
     the_decision(state, context, crate::actions::download_asset(), repository)?;
     match repository.mode {
-        hodei_catalog::RepositoryMode::Proxy => {
+        RepositoryMode::Proxy => {
             return read_proxy(state, context, repository, route, head, correlation).await;
         }
-        // Un grupo de nuget todavia no sabe ensamblar listas de versiones
-        // entre sus miembros, y lo dice: no se convierte en un Raw que
-        // sirve rutas sueltas y finge ser un feed.
-        hodei_catalog::RepositoryMode::Group => {
-            return Err(RawApiError::MethodNotAllowed(
-                "this nuget repository is a group, and groups do not assemble package version lists yet",
-            )
-            .into());
+        RepositoryMode::Group => {
+            return read_group(state, context, repository, route, head, correlation).await;
         }
         _ => {}
     }
@@ -498,21 +494,314 @@ async fn read_asset_named(
 }
 
 // ---------------------------------------------------------------------------
-// Proxy
+// Group
 // ---------------------------------------------------------------------------
 
-/// Un proxy NuGet re-serva el documento del upstream tal cual: el
-/// flat container y los registros se cachean bajo su ruta de protocolo
-/// y un nupkg reescrito dejaria de casar con el `contentHash` que el
-/// propio upstream declara.
-async fn read_proxy(
+/// What a group member offers for a package id.
+enum Offering {
+    /// The member has these versions of the package.
+    Versions(Vec<(NuGetVersion, String)>),
+    /// The member does not have the package (upstream 404).
+    Missing,
+    /// The member is offline with no cached copy.
+    Offline(RawApiError),
+}
+
+/// Governed state of a NuGet group for a given package id.
+struct NuGetGroup<'a> {
+    group: &'a RepositoryDescriptor,
+    leaves: Vec<RepositoryDescriptor>,
+    denied: Vec<String>,
+    judgement: Option<hodei_catalog::Judgement>,
+}
+
+/// Resolves the governed leaves of a NuGet group for a package id,
+/// applying namespace reservation before consulting any member.
+async fn the_governed<'a>(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
-    repository: &RepositoryDescriptor,
+    group: &'a RepositoryDescriptor,
+    id: &str,
+) -> Result<NuGetGroup<'a>, Failure> {
+    let (leaves, denied, judgement) =
+        super::raw_group::the_governed_leaves(state, context, group, id)
+            .await
+            .map_err(Failure::from)?;
+    Ok(NuGetGroup {
+        group,
+        leaves,
+        denied,
+        judgement,
+    })
+}
+
+/// Fetches the versions of a package from a single member (hosted or proxy).
+async fn member_versions(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    member: &RepositoryDescriptor,
+    id: &str,
+    correlation: &str,
+) -> Result<Offering, Failure> {
+    if member.mode == RepositoryMode::Proxy {
+        let route = NuGetRoute::Flat(FlatRequest::Versions { id: id.to_string() });
+        let bytes = match proxy_bytes(state, context, member, &route, correlation).await {
+            Ok(bytes) => bytes,
+            Err(Failure::Raw(RawApiError::NotFound)) => return Ok(Offering::Missing),
+            Err(Failure::Raw(RawApiError::Offline(reason))) => {
+                return Ok(Offering::Offline(RawApiError::Offline(reason)));
+            }
+            Err(other) => return Err(other),
+        };
+        let doc: Value = serde_json::from_slice(&bytes).map_err(|_| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "the upstream flat container index is not valid JSON",
+            )
+        })?;
+        let mut versions = Vec::new();
+        if let Some(entries) = doc.get("versions").and_then(Value::as_array) {
+            for raw in entries.iter().filter_map(Value::as_str) {
+                if let Some(parsed) = nuget::parse_version(raw) {
+                    let normalized = parsed.normalized();
+                    versions.push((parsed, normalized));
+                }
+            }
+        }
+        return Ok(Offering::Versions(versions));
+    }
+    Ok(Offering::Versions(
+        hosted_versions(state, context, member, id).await?,
+    ))
+}
+
+/// Computes the union of versions across all governed leaves, attributing each
+/// version to the first member in precedence order that offers it.
+async fn group_version_owners(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    governed: &NuGetGroup<'_>,
+    id: &str,
+    correlation: &str,
+) -> Result<Vec<(NuGetVersion, String, RepositoryDescriptor)>, Failure> {
+    let mut owners: Vec<(NuGetVersion, String, RepositoryDescriptor)> = Vec::new();
+    let mut offline: Option<RawApiError> = None;
+
+    for member in &governed.leaves {
+        match member_versions(state, context, member, id, correlation).await? {
+            Offering::Versions(found) => {
+                for (parsed, normalized) in found {
+                    if !owners.iter().any(|(_, known, _)| known == &normalized) {
+                        owners.push((parsed, normalized, member.clone()));
+                    }
+                }
+            }
+            Offering::Missing => {}
+            Offering::Offline(error) => {
+                if offline.is_none() {
+                    offline = Some(error);
+                }
+            }
+        }
+    }
+
+    if owners.is_empty() {
+        if let Some(error) = offline {
+            return Err(Failure::Raw(error));
+        }
+        if !governed.denied.is_empty()
+            && let Some(judgement) = &governed.judgement
+        {
+            return Err(super::raw_group::the_group_reservation_explanation(
+                governed.group,
+                judgement,
+                &governed.denied,
+            )
+            .into());
+        }
+        return Err(Failure::plain(
+            StatusCode::NOT_FOUND,
+            "there is no package of that name in this group",
+        ));
+    }
+
+    owners.sort_by(|left, right| left.0.compare(&right.0));
+    Ok(owners)
+}
+
+/// Finds the deterministic owner (first member in configured precedence order)
+/// for a specific `(id, version)`.
+async fn the_owner_of(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    governed: &NuGetGroup<'_>,
+    id: &str,
+    version: &str,
+    correlation: &str,
+) -> Result<RepositoryDescriptor, Failure> {
+    let Some(target) = nuget::normalize_version(version) else {
+        return Err(Failure::plain(
+            StatusCode::NOT_FOUND,
+            "this package has no such version in this group",
+        ));
+    };
+    let mut offline: Option<RawApiError> = None;
+    for member in &governed.leaves {
+        let has = if member.mode == RepositoryMode::Proxy {
+            match member_versions(state, context, member, id, correlation).await? {
+                Offering::Versions(versions) => versions.iter().any(|(_, v)| v == &target),
+                Offering::Missing => false,
+                Offering::Offline(error) => {
+                    if offline.is_none() {
+                        offline = Some(error);
+                    }
+                    false
+                }
+            }
+        } else {
+            super::raw::the_current_asset(
+                state,
+                context,
+                &member.repo_key,
+                &nuget::package_asset_path(id, &target),
+            )
+            .await?
+            .is_some()
+        };
+        if has {
+            return Ok(member.clone());
+        }
+    }
+    if let Some(error) = offline {
+        return Err(Failure::Raw(error));
+    }
+    if !governed.denied.is_empty()
+        && let Some(judgement) = &governed.judgement
+    {
+        return Err(super::raw_group::the_group_reservation_explanation(
+            governed.group,
+            judgement,
+            &governed.denied,
+        )
+        .into());
+    }
+    Err(Failure::plain(
+        StatusCode::NOT_FOUND,
+        "this package has no such version in this group",
+    ))
+}
+
+/// Serves a NuGet v3 route from a group repository, composing version lists
+/// and registration leaves without mixing metadata and bytes from different members.
+async fn read_group(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    group: &RepositoryDescriptor,
     route: &NuGetRoute,
     head: bool,
     correlation: &str,
 ) -> Result<Response, Failure> {
+    let Some(id) = route.package() else {
+        return Err(RawApiError::NotFound.into());
+    };
+    let governed = the_governed(state, context, group, id).await?;
+    match route {
+        NuGetRoute::Flat(FlatRequest::Versions { id }) => {
+            let owners = group_version_owners(state, context, &governed, id, correlation).await?;
+            let versions: Vec<String> = owners.into_iter().map(|(_, v, _)| v).collect();
+            Ok(json_response(
+                StatusCode::OK,
+                &nuget::version_index(&versions),
+                None,
+                correlation,
+            ))
+        }
+        NuGetRoute::Registration { id } => {
+            let owners = group_version_owners(state, context, &governed, id, correlation).await?;
+            let latest = owners.last().map(|(_, v, _)| v.clone()).unwrap_or_default();
+            let mut proxy_docs: HashMap<String, Option<Value>> = HashMap::new();
+            let mut items = Vec::with_capacity(owners.len());
+            for (_, version, owner) in owners {
+                let item = if owner.mode == RepositoryMode::Proxy {
+                    if !proxy_docs.contains_key(&owner.repo_key) {
+                        let reg_route = NuGetRoute::Registration { id: id.clone() };
+                        let doc = match proxy_bytes(state, context, &owner, &reg_route, correlation)
+                            .await
+                        {
+                            Ok(bytes) => serde_json::from_slice::<Value>(&bytes).ok(),
+                            Err(Failure::Raw(RawApiError::NotFound)) => None,
+                            Err(other) => return Err(other),
+                        };
+                        proxy_docs.insert(owner.repo_key.clone(), doc);
+                    }
+                    proxy_docs
+                        .get(&owner.repo_key)
+                        .and_then(|opt| opt.as_ref())
+                        .and_then(|doc| nuget::extract_registration_item(doc, id, &version))
+                        .unwrap_or_else(|| nuget::registration_item(id, &version))
+                } else {
+                    nuget::registration_item(id, &version)
+                };
+                items.push(item);
+            }
+            Ok(json_response(
+                StatusCode::OK,
+                &nuget::registration_document(id, &latest, items),
+                None,
+                correlation,
+            ))
+        }
+        NuGetRoute::Flat(FlatRequest::File { id, version, file }) => {
+            let owner = the_owner_of(state, context, &governed, id, version, correlation).await?;
+            if owner.mode == RepositoryMode::Proxy {
+                return read_proxy(state, context, &owner, route, head, correlation).await;
+            }
+            let normalized = nuget::normalize_version(version).ok_or(RawApiError::NotFound)?;
+            if *file != format!("{id}.nupkg") && *file != format!("{id}.{version}.nupkg") {
+                return Err(Failure::plain(
+                    StatusCode::NOT_FOUND,
+                    "the flat container holds the nupkg of a published version, and nothing else",
+                ));
+            }
+            read_asset_named(
+                state,
+                context,
+                &owner,
+                &nuget::package_asset_path(id, &normalized),
+                "application/octet-stream",
+                head,
+                correlation,
+            )
+            .await
+        }
+        _ => Err(RawApiError::NotFound.into()),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proxy
+// ---------------------------------------------------------------------------
+
+/// Joins a relative path onto a base URL string discovered from a service index.
+fn join_resource_url(base: &str, relative: &str) -> Option<reqwest::Url> {
+    let mut url = reqwest::Url::parse(base).ok()?;
+    if !url.path().ends_with('/') {
+        let path = format!("{}/", url.path());
+        url.set_path(&path);
+    }
+    url.join(relative).ok()
+}
+
+/// Resolves the catalog asset path, upstream target URL, and content type for a
+/// NuGet proxy route. Supports both flat-layout upstreams and NuGet v3 service
+/// index URLs (such as `https://api.nuget.org/v3/index.json`).
+async fn proxy_target(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    route: &NuGetRoute,
+    correlation: &str,
+) -> Result<(String, reqwest::Url, &'static str), Failure> {
     let upstream = UpstreamConfig::of(&repository.config)
         .ok()
         .flatten()
@@ -530,7 +819,70 @@ async fn read_proxy(
         }
         _ => return Err(RawApiError::NotFound.into()),
     };
+
+    if upstream.base.path().ends_with("/index.json/") {
+        let mut index_url = upstream.base.clone();
+        let trimmed = index_url.path().trim_end_matches('/').to_string();
+        index_url.set_path(&trimmed);
+        let served = super::raw::the_proxy_asset_at(
+            state,
+            context,
+            repository,
+            "v3/index.json",
+            Some(index_url),
+            Some("application/json"),
+            correlation,
+        )
+        .await?;
+        let bytes = the_content_store(state)?
+            .get(&served.asset.digest)
+            .await
+            .map_err(|error| the_blob_error(&error))?;
+        let doc: Value = serde_json::from_slice(&bytes).map_err(|_| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "the upstream NuGet service index is not valid JSON",
+            )
+        })?;
+        let resources = nuget::service_index_resources(&doc).ok_or_else(|| {
+            Failure::plain(
+                StatusCode::BAD_GATEWAY,
+                "the upstream NuGet service index does not declare PackageBaseAddress",
+            )
+        })?;
+        let url = match route {
+            NuGetRoute::Flat(FlatRequest::Versions { id }) => {
+                join_resource_url(&resources.flat_container, &format!("{id}/index.json"))
+            }
+            NuGetRoute::Flat(FlatRequest::File { id, version, file }) => {
+                join_resource_url(&resources.flat_container, &format!("{id}/{version}/{file}"))
+            }
+            NuGetRoute::Registration { id } => {
+                let reg_base = resources
+                    .registrations
+                    .as_deref()
+                    .ok_or(RawApiError::NotFound)?;
+                join_resource_url(reg_base, &format!("{id}/index.json"))
+            }
+            _ => None,
+        }
+        .ok_or(RawApiError::NotFound)?;
+        return Ok((asset_path, url, content_type));
+    }
+
     let url = upstream.target(&asset_path).ok_or(RawApiError::NotFound)?;
+    Ok((asset_path, url, content_type))
+}
+
+/// Fetches and caches a NuGet proxy asset, returning its raw bytes after trust admission.
+async fn proxy_bytes(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    route: &NuGetRoute,
+    correlation: &str,
+) -> Result<Vec<u8>, Failure> {
+    let (asset_path, url, _) = proxy_target(state, context, repository, route, correlation).await?;
     let served = super::raw::the_proxy_asset_at(
         state,
         context,
@@ -541,6 +893,54 @@ async fn read_proxy(
         correlation,
     )
     .await?;
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        repository,
+        &served.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
+    let bytes = the_content_store(state)?
+        .get(&served.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?
+        .to_vec();
+    Ok(bytes)
+}
+
+/// Un proxy NuGet re-serva el documento del upstream tal cual: el
+/// flat container y los registros se cachean bajo su ruta de protocolo
+/// y un nupkg reescrito dejaria de casar con el `contentHash` que el
+/// propio upstream declara.
+async fn read_proxy(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    route: &NuGetRoute,
+    head: bool,
+    correlation: &str,
+) -> Result<Response, Failure> {
+    let (asset_path, url, content_type) =
+        proxy_target(state, context, repository, route, correlation).await?;
+    let served = super::raw::the_proxy_asset_at(
+        state,
+        context,
+        repository,
+        &asset_path,
+        Some(url),
+        Some("application/octet-stream"),
+        correlation,
+    )
+    .await?;
+    crate::trust::admit(
+        state,
+        context.account().as_str(),
+        repository,
+        &served.asset.digest,
+    )
+    .await
+    .map_err(the_admission_error)?;
     let bytes = if head {
         Vec::new()
     } else {

@@ -143,6 +143,7 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
             &["hsp120_nuget_e2e", "hsp120_dotnet_client"]
         }
         (RepositoryFormat::NuGet, RepositoryMode::Proxy) => &["hsp120_nuget_e2e"],
+        (RepositoryFormat::NuGet, RepositoryMode::Group) => &["hsp231_nuget_group"],
         (RepositoryFormat::Go, RepositoryMode::Hosted) => &["hsp121_go_e2e", "hsp121_go_client"],
         (RepositoryFormat::Go, RepositoryMode::Proxy) => &["hsp121_go_e2e", "hsp121_go_client"],
         (RepositoryFormat::Go, RepositoryMode::Group) => &["hsp232_go_group"],
@@ -174,11 +175,11 @@ fn evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'st
 /// and the meta-conformance client checks it like the accreditation
 /// suites: it exists, and it speaks of the format and the modality it
 /// refuses.
-fn refusal_evidence_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static [&'static str] {
-    match (format, mode) {
-        (RepositoryFormat::NuGet, RepositoryMode::Group) => &["hsp120_nuget_e2e"],
-        _ => &[],
-    }
+fn refusal_evidence_of(
+    _format: RepositoryFormat,
+    _mode: RepositoryMode,
+) -> &'static [&'static str] {
+    &[]
 }
 
 /// The limit a cell carries, when the refusal is a decision.
@@ -195,7 +196,7 @@ fn note_of(format: RepositoryFormat, mode: RepositoryMode) -> &'static str {
             "a go group resolves a version from a single member: its .info, .mod and .zip never come from two members, so the go.sum of the client describes one version"
         }
         (RepositoryFormat::NuGet, RepositoryMode::Group) => {
-            "a nuget group is refused in the dialect of nuget: it never degrades to a raw answer"
+            "a nuget group composes versions across members and resolves each id/version from a single member in configured precedence order, never mixing metadata and bytes from different origins"
         }
         (RepositoryFormat::Terraform, RepositoryMode::Proxy) => {
             "accredited by protocol evidence, not by a native client: hsp157_terraform_mirror \
@@ -754,24 +755,28 @@ mod tests {
         );
     }
 
-    /// A refusal proven in the dialect of the format: the nuget group suite
-    /// speaks of nuget and of the group it refuses.
+    /// A refusal proven in the dialect of the format: the refusal suite
+    /// speaks of the format and of the modality it refuses.
     #[test]
     fn a_refusal_suite_must_speak_of_the_format_and_the_modality() {
-        let nuget_group = cell(RepositoryFormat::NuGet, RepositoryMode::Group);
-        assert_eq!(nuget_group.refusal_evidence, &["hsp120_nuget_e2e"]);
-        accredits(&nuget_group, "hsp120_nuget_e2e", "a nuget group is refused")
-            .expect_err("accredits refuses what refuses is for");
-        refuses(
-            &nuget_group,
-            "hsp120_nuget_e2e",
-            "a nuget group is refused explicitly",
+        let mut cargo_group = cell(RepositoryFormat::Cargo, RepositoryMode::Group);
+        cargo_group.refusal_evidence = &["hsp156_cargo_group"];
+        accredits(
+            &cargo_group,
+            "hsp156_cargo_group",
+            "a cargo group is refused",
         )
-        .expect("the suite speaks of nuget and of the group it refuses");
+        .expect_err("accredits refuses what refuses is for");
+        refuses(
+            &cargo_group,
+            "hsp156_cargo_group",
+            "a cargo group is refused explicitly",
+        )
+        .expect("the suite speaks of cargo and of the group it refuses");
         let failure = refuses(
-            &nuget_group,
-            "hsp120_nuget_e2e",
-            "nuget, refusing a composed answer without naming it",
+            &cargo_group,
+            "hsp156_cargo_group",
+            "cargo, refusing a composed answer without naming it",
         )
         .expect_err("the suite does not name the modality it refuses");
         assert!(

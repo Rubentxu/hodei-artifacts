@@ -217,6 +217,7 @@ impl NamespacePolicy {
             // prefijo de segmento: "team" cubre "team/demo" y "team/demo/x",
             // y no cubre "teamx" ni "teammate".
             RepositoryFormat::Oci => self.judge_flat(path),
+            RepositoryFormat::NuGet => self.judge_nuget(path),
             // Los demas formatos no tienen una nocion de namespace con
             // alias: el primer segmento de la ruta es el nombre, y se
             // compara tal cual.
@@ -291,6 +292,34 @@ impl NamespacePolicy {
         for reserved in &self.reserved {
             if normalized == pypi::normalize(reserved) {
                 let alias_of = (project != *reserved).then(|| project.to_string());
+                return Judgement::Reserved {
+                    matched: reserved.clone(),
+                    alias_of,
+                };
+            }
+        }
+        Judgement::Unreserved
+    }
+
+    /// NuGet: package ids are case-insensitive, and proxy/catalog paths
+    /// carry the id under `flatcontainer/{id}/...` or `registrations/{id}/...`.
+    fn judge_nuget(&self, path: &str) -> Judgement {
+        let id = if let Some(rest) = path.strip_prefix("flatcontainer/") {
+            rest.split('/').next().unwrap_or_default()
+        } else if let Some(rest) = path.strip_prefix("registrations/") {
+            rest.split('/').next().unwrap_or_default()
+        } else if !path.contains('/') {
+            path
+        } else {
+            ""
+        };
+        if id.is_empty() {
+            return Judgement::Unreserved;
+        }
+        let normalized = id.to_ascii_lowercase();
+        for reserved in &self.reserved {
+            if normalized == reserved.to_ascii_lowercase() {
+                let alias_of = (id != *reserved).then(|| id.to_string());
                 return Judgement::Reserved {
                     matched: reserved.clone(),
                     alias_of,
@@ -552,6 +581,46 @@ mod tests {
                 matched: "com.acme".into(),
                 alias_of: None,
             }
+        );
+    }
+
+    #[test]
+    fn nuget_judges_package_ids_case_insensitively_across_routes() {
+        let policy = reserved(&["Acme.Internal"]);
+        assert_eq!(
+            policy.judge(RepositoryFormat::NuGet, "acme.internal"),
+            Judgement::Reserved {
+                matched: "Acme.Internal".into(),
+                alias_of: Some("acme.internal".into()),
+            }
+        );
+        assert_eq!(
+            policy.judge(
+                RepositoryFormat::NuGet,
+                "flatcontainer/acme.internal/1.0.0/acme.internal.nupkg"
+            ),
+            Judgement::Reserved {
+                matched: "Acme.Internal".into(),
+                alias_of: Some("acme.internal".into()),
+            }
+        );
+        assert_eq!(
+            policy.judge(
+                RepositoryFormat::NuGet,
+                "registrations/acme.internal/index.json"
+            ),
+            Judgement::Reserved {
+                matched: "Acme.Internal".into(),
+                alias_of: Some("acme.internal".into()),
+            }
+        );
+        assert_eq!(
+            policy.judge(RepositoryFormat::NuGet, "v3/index.json"),
+            Judgement::Unreserved
+        );
+        assert_eq!(
+            policy.judge(RepositoryFormat::NuGet, "acme.other"),
+            Judgement::Unreserved
         );
     }
 }

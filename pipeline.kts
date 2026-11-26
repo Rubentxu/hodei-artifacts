@@ -331,6 +331,7 @@ pipeline {
                         "--test hsp119_cargo_e2e",
                         "--test hsp120_dotnet_client",
                         "--test hsp120_nuget_e2e",
+                        "--test hsp231_nuget_group",
                         "--test hsp121_go_client",
                         "--test hsp121_helm_oci",
                         "--test hsp122_apt_client",
