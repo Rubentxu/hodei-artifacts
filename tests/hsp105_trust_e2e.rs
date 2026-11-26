@@ -1,14 +1,14 @@
-//! Las politicas de confianza en la distribucion (HSP-105 / HAR-11), contra
-//! el wire.
+//! Trust policies in the distribution (HSP-105 / HAR-11), against
+//! the wire.
 //!
-//! Cedar decide **quien** puede promover; la politica de confianza decide
-//! **que software** merece el canal trusted. Un artefacto que nadie ha
-//! promovido no aparece por ningun protocolo, ni por una etiqueta que se
-//! movio, ni por un alias, ni desde otra cuenta.
+//! Cedar decides **who** can promote; the trust policy decides
+//! **which software** deserves the trusted channel. An artifact nobody has
+//! promoted does not appear through any protocol, nor through a tag that
+//! was moved, nor through an alias, nor from another account.
 //!
-//! Las pruebas hablan con un proceso de verdad, un catalogo real, un
-//! almacen de bytes real y el motor de Cedar real. El canal del
-//! repositorio se fija al sembrar, como lo haria quien opera el despliegue.
+//! The tests talk to a real process, a real catalog, a real byte
+//! store and the real Cedar engine. The repository channel
+//! is set when seeding, as whoever operates the deployment would do.
 
 mod support;
 
@@ -18,15 +18,15 @@ use support::{Curl, Deployment, FIRST_ACCOUNT, FIRST_REPOSITORY, SECOND_ACCOUNT}
 const OCI_MANIFEST: &str = "application/vnd.oci.image.manifest.v1+json";
 const OCI_ARTIFACT: &str = "application/vnd.oci.artifact.manifest.v1+json";
 
-/// El repositorio que se queda en el canal abierto.
+/// The repository that stays in the open channel.
 const OPEN_REPOSITORY: &str = "lab";
 
-/// El digest de un contenido, sin el prefijo del algoritmo.
+/// The digest of a content, without the algorithm prefix.
 fn hex_of(content: &[u8]) -> String {
     hodei_evidence::ContentDigest::of_bytes(content).value
 }
 
-/// Una peticion cualquiera, con el cuerpo de la respuesta en un fichero.
+/// Any request, with the response body in a file.
 fn call(
     deployment: &Deployment,
     port: u16,
@@ -46,7 +46,7 @@ fn call(
         }
         None => (None, None),
     };
-    // `--request HEAD` espera un cuerpo que no llega: HEAD se pide con
+    // `--request HEAD` waits for a body that never arrives: HEAD is requested with
     // `--head`.
     let answer = if method == "HEAD" {
         Curl::describe(port, path, token).run()
@@ -57,7 +57,7 @@ fn call(
     (answer.status, text)
 }
 
-/// Sube un fichero crudo.
+/// Uploads a raw file.
 fn put_raw(deployment: &Deployment, port: u16, token: &str, path: &str, bytes: &[u8]) -> u16 {
     call(
         deployment,
@@ -70,7 +70,7 @@ fn put_raw(deployment: &Deployment, port: u16, token: &str, path: &str, bytes: &
     .0
 }
 
-/// Pide a promover y devuelve el codigo y el cuerpo.
+/// Asks to promote and returns the code and the body.
 fn promote(
     deployment: &Deployment,
     port: u16,
@@ -95,7 +95,7 @@ fn promote(
     )
 }
 
-/// Revoca por digest.
+/// Revokes by digest.
 fn revoke(
     deployment: &Deployment,
     port: u16,
@@ -119,7 +119,7 @@ fn revoke(
     )
 }
 
-/// Escribe un fichero de politica de confianza y devuelve su ruta.
+/// Writes a trust policy file and returns its path.
 fn trust_policy_file(deployment: &Deployment, requirements: Vec<Requirement>) -> String {
     let policy = TrustPolicy::new("default", "1", requirements);
     let path = deployment.directory.path().join("trust-policy.json");
@@ -127,12 +127,12 @@ fn trust_policy_file(deployment: &Deployment, requirements: Vec<Requirement>) ->
     path.to_string_lossy().into_owned()
 }
 
-/// Una politica que todo software cumple.
+/// A policy that all software satisfies.
 fn permissive(deployment: &Deployment) -> String {
     trust_policy_file(deployment, Vec::new())
 }
 
-/// Una politica que ninguna evidencia vacia cumple.
+/// A policy that no empty evidence satisfies.
 fn demanding(deployment: &Deployment) -> String {
     trust_policy_file(
         deployment,
@@ -144,14 +144,14 @@ fn demanding(deployment: &Deployment) -> String {
     )
 }
 
-/// Un despliegue con `releases` en el canal trusted y `lab` abierto.
+/// A deployment with `releases` in the trusted channel and `lab` open.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     deployment.seed_trusted(&[OPEN_REPOSITORY], &[FIRST_REPOSITORY]);
     deployment
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -162,7 +162,7 @@ fn raw(repository: &str, path: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// SEC-01: sin credencial no hay promocion.
+// SEC-01: without a credential there is no promotion.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -196,7 +196,7 @@ fn promoting_and_revoking_need_a_credential() {
 }
 
 // ---------------------------------------------------------------------------
-// SEC-03 y SEC-05: lo no promovido no sale por el canal trusted.
+// SEC-03 and SEC-05: what is not promoted does not come out through the trusted channel.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -207,13 +207,13 @@ fn an_unpromoted_upload_is_not_served_by_the_trusted_channel() {
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let bytes = b"quarantined build".to_vec();
 
-    // Se puede subir: la cuarentena no impide publicar.
+    // It can be uploaded: quarantine does not prevent publishing.
     let trusted = raw(FIRST_REPOSITORY, "app/build.bin");
     assert_eq!(
         put_raw(&deployment, service.port, &alice, &trusted, &bytes),
         201
     );
-    // Pero no se sirve, ni siquiera a quien lo subio.
+    // But it is not served, not even to whoever uploaded it.
     let (status, _) = call(&deployment, service.port, "GET", &trusted, &alice, None);
     assert_eq!(status, 404, "the quarantined upload was served");
     let described = Curl::describe(service.port, &trusted, &alice).run();
@@ -222,7 +222,7 @@ fn an_unpromoted_upload_is_not_served_by_the_trusted_channel() {
         "the quarantined upload was described"
     );
 
-    // El repositorio abierto no cambia: es el canal de siempre.
+    // The open repository does not change: it is the usual channel.
     let open = raw(OPEN_REPOSITORY, "app/build.bin");
     assert_eq!(
         put_raw(&deployment, service.port, &alice, &open, &bytes),
@@ -235,7 +235,7 @@ fn an_unpromoted_upload_is_not_served_by_the_trusted_channel() {
 }
 
 // ---------------------------------------------------------------------------
-// AC1 y AC2: quien promueve, y que se sirve despues.
+// AC1 and AC2: who promotes, and what is served afterwards.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -274,7 +274,7 @@ fn a_promoted_digest_is_served_and_a_revoked_one_stops_at_once() {
     assert_eq!(status, 200);
     assert_eq!(served.as_bytes(), bytes.as_slice());
 
-    // La revocacion tiene efecto en la peticion siguiente: no hay cache.
+    // Revocation takes effect on the next request: there is no cache.
     let (status, body) = revoke(&deployment, service.port, &alice, FIRST_REPOSITORY, &digest);
     assert_eq!(status, 200, "{body}");
     let revoked: serde_json::Value = serde_json::from_str(&body).expect("json");
@@ -282,7 +282,7 @@ fn a_promoted_digest_is_served_and_a_revoked_one_stops_at_once() {
     let (status, _) = call(&deployment, service.port, "GET", &path, &alice, None);
     assert_eq!(status, 404, "a revoked digest was served");
 
-    // Y una nueva promocion lo vuelve a conceder, con una decision nueva.
+    // And a new promotion grants it again, with a new decision.
     let (status, _) = promote(
         &deployment,
         service.port,
@@ -295,7 +295,7 @@ fn a_promoted_digest_is_served_and_a_revoked_one_stops_at_once() {
     let (status, _) = call(&deployment, service.port, "GET", &path, &alice, None);
     assert_eq!(status, 200);
 
-    // El log no lleva el token (SEC-08).
+    // The log does not carry the token (SEC-08).
     assert!(!deployment.the_log().contains(&alice));
     support::stop(&mut service);
 }
@@ -315,9 +315,9 @@ fn only_who_cedar_allows_can_promote_or_revoke() {
         201
     );
 
-    // Bob es de otra cuenta: su `releases` es otro repositorio. Lo que
-    // diga el cuerpo no cambia la cuenta, y la respuesta es la misma que
-    // si la ruta existiera: no hay canal lateral.
+    // Bob belongs to another account: his `releases` is a different repository. What
+    // the body says does not change the account, and the response is the same as
+    // if the route existed: there is no side channel.
     let (existing, _) = promote(
         &deployment,
         service.port,
@@ -337,7 +337,7 @@ fn only_who_cedar_allows_can_promote_or_revoke() {
     assert_eq!(existing, 403);
     assert_eq!(existing, missing);
 
-    // Un repositorio que no existe en su cuenta es un 404.
+    // A repository that does not exist in his account is a 404.
     let (status, _) = promote(
         &deployment,
         service.port,
@@ -351,7 +351,7 @@ fn only_who_cedar_allows_can_promote_or_revoke() {
     let (status, _) = revoke(&deployment, service.port, &bob, FIRST_REPOSITORY, &digest);
     assert_eq!(status, 403);
 
-    // Nada de lo anterior concedio nada.
+    // None of the above granted anything.
     let (status, _) = call(&deployment, service.port, "GET", &path, &alice, None);
     assert_eq!(status, 404);
     support::stop(&mut service);
@@ -403,7 +403,7 @@ fn a_header_does_not_confer_an_account_or_a_scope() {
 }
 
 // ---------------------------------------------------------------------------
-// La politica de confianza decide que software.
+// The trust policy decides which software.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -420,8 +420,8 @@ fn a_demanding_policy_refuses_with_reasons_and_serves_nothing() {
         201
     );
 
-    // Cedar permite a alice; aun asi, la politica no ve el riesgo
-    // establecido y rechaza: el permiso no es el visto bueno.
+    // Cedar allows alice; even so, the policy does not see the established
+    // risk and rejects: permission is not approval.
     let (status, body) = promote(
         &deployment,
         service.port,
@@ -447,7 +447,7 @@ fn a_demanding_policy_refuses_with_reasons_and_serves_nothing() {
 #[test]
 fn without_a_trust_policy_nothing_is_promoted() {
     let deployment = a_deployment();
-    // Sin `HODEI_TRUST__POLICY_FILE`: el registro esta vacio.
+    // Without `HODEI_TRUST__POLICY_FILE`: the registry is empty.
     let mut service = deployment.start(&[]);
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let path = raw(FIRST_REPOSITORY, "app/orphan.bin");
@@ -484,8 +484,8 @@ fn a_stale_digest_is_a_conflict_and_a_malformed_one_is_a_bad_request() {
         201
     );
 
-    // Se pide promover un contenido que la ruta no tiene: no se promueve
-    // lo que el cliente vio, ni tampoco lo que hay ahora.
+    // A promotion is requested for a content the route does not have: neither
+    // what the client saw nor what is there now is promoted.
     let stale = hex_of(b"what the client saw");
     let (status, _) = promote(
         &deployment,
@@ -518,7 +518,7 @@ fn a_stale_digest_is_a_conflict_and_a_malformed_one_is_a_bad_request() {
 }
 
 // ---------------------------------------------------------------------------
-// AC4: tag mutable, manifiesto alternativo, referrers y alias, por OCI.
+// AC4: mutable tag, alternative manifest, referrers and alias, over OCI.
 // ---------------------------------------------------------------------------
 
 fn oci(kind: &str, reference: &str) -> String {
@@ -556,8 +556,8 @@ fn image(config: &str, layer: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Publica una imagen bajo una etiqueta y devuelve el digest del
-/// manifiesto, el de su configuracion y el de su capa.
+/// Publishes an image under a tag and returns the digest of the
+/// manifest, that of its config and that of its layer.
 fn push_image(
     deployment: &Deployment,
     port: u16,
@@ -595,7 +595,7 @@ fn a_moved_tag_does_not_inherit_the_decision_of_the_digest_it_left() {
     let alice = support::token(FIRST_ACCOUNT, "alice");
 
     let (good, good_config, good_layer) = push_image(&deployment, port, &alice, "latest", "good");
-    // Antes de promover, ni la etiqueta ni el digest ni sus blobs salen.
+    // Before promoting, neither the tag nor the digest nor its blobs come out.
     for path in [
         oci("manifests", "latest"),
         oci("manifests", &format!("sha256:{good}")),
@@ -605,7 +605,7 @@ fn a_moved_tag_does_not_inherit_the_decision_of_the_digest_it_left() {
         assert_eq!(status, 404, "{path} was served before promotion");
     }
 
-    // Se promueve el manifiesto: abarca su configuracion y sus capas.
+    // The manifest is promoted: it covers its config and its layers.
     let (status, body) = promote(
         &deployment,
         port,
@@ -625,8 +625,8 @@ fn a_moved_tag_does_not_inherit_the_decision_of_the_digest_it_left() {
         assert_eq!(status, 200, "{path} was not served after promotion");
     }
 
-    // La etiqueta se mueve a otra imagen: el digest de ayer sigue
-    // servido, y el de hoy, que nadie ha promovido, no.
+    // The tag is moved to another image: yesterday's digest is still
+    // served, and today's, which nobody has promoted, is not.
     let (evil, _, evil_layer) = push_image(&deployment, port, &alice, "latest", "evil");
     assert_ne!(good, evil);
     let (status, _) = call(
@@ -666,7 +666,7 @@ fn a_moved_tag_does_not_inherit_the_decision_of_the_digest_it_left() {
     );
     assert_eq!(status, 200, "the promoted digest stopped being served");
 
-    // El listado de etiquetas no nombra lo que no se sirve.
+    // The tag listing does not name what is not served.
     let (status, tags) = call(&deployment, port, "GET", &oci("tags", "list"), &alice, None);
     assert_eq!(status, 200, "{tags}");
     assert!(
@@ -695,7 +695,7 @@ fn an_attachment_is_not_listed_until_it_is_promoted() {
     );
     assert_eq!(status, 200);
 
-    // Un SBOM que cuelga del manifiesto promovido, sin promover.
+    // An SBOM hanging off the promoted manifest, not promoted.
     let blob = push_blob(&deployment, port, &alice, b"sbom document");
     let attachment = serde_json::json!({
         "schemaVersion": 2,
@@ -785,14 +785,14 @@ fn a_virtual_alias_of_the_same_bytes_is_the_same_decision_and_different_bytes_ar
     );
     assert_eq!(status, 200);
 
-    // La concesion es del contenido: el mismo contenido bajo otro nombre
-    // es el mismo software. Otro contenido bajo un nombre parecido no.
+    // The grant belongs to the content: the same content under another name
+    // is the same software. Other content under a similar name is not.
     let (status, _) = call(&deployment, service.port, "GET", &alias, &alice, None);
     assert_eq!(status, 200);
     let (status, _) = call(&deployment, service.port, "GET", &other, &alice, None);
     assert_eq!(status, 404);
 
-    // Una ruta con disfraz de traversal no abre nada.
+    // A path disguised as traversal opens nothing.
     let (status, _) = call(
         &deployment,
         service.port,
@@ -806,12 +806,12 @@ fn a_virtual_alias_of_the_same_bytes_is_the_same_decision_and_different_bytes_ar
 }
 
 // ---------------------------------------------------------------------------
-// AC1: cada ruta de lectura, escritura, etiqueta, borrado y promocion exige
-// una identidad verificada y un permiso.
+// AC1: every read, write, tag, delete and promotion route requires
+// a verified identity and a permission.
 // ---------------------------------------------------------------------------
 
-/// Cada ruta, con su metodo. `exact` marca las que **tienen** que responder
-/// `401` sin credencial; en el resto un `405` tambien es una negativa.
+/// Each route, with its method. `exact` marks those that **must** respond
+/// `401` without a credential; for the rest a `405` is also a refusal.
 fn the_surface() -> Vec<(&'static str, String, bool)> {
     let repository = FIRST_REPOSITORY;
     let digest = format!("sha256:{}", hex_of(b"anything"));
@@ -869,8 +869,8 @@ fn every_route_asks_for_an_identity_and_a_permission() {
     let deployment = a_deployment();
     let policy = permissive(&deployment);
     let mut service = deployment.start(&[("HODEI_TRUST__POLICY_FILE", &policy)]);
-    // Una identidad verificada de la cuenta, a la que ninguna politica da
-    // permiso: existe, pero no puede nada.
+    // A verified identity of the account, to which no policy gives
+    // permission: it exists, but it can do nothing.
     let nobody = support::token(FIRST_ACCOUNT, "nobody");
     let digest = format!("sha256:{}", hex_of(b"anything"));
     let promote_body = serde_json::json!({
@@ -884,9 +884,9 @@ fn every_route_asks_for_an_identity_and_a_permission() {
     let generic = br#"{}"#.to_vec();
 
     for (method, path, exact) in the_surface() {
-        // Cada ruta de promocion lleva un cuerpo **valido**: con uno
-        // invalido la respuesta seria un 400 antes de llegar a Cedar y el
-        // test no mediria el permiso.
+        // Each promotion route carries a **valid** body: with an
+        // invalid one the response would be a 400 before reaching Cedar and the
+        // test would not measure the permission.
         let (body, promotion) = if path == "/api/v1/promotions" {
             (promote_body.as_bytes().to_vec(), true)
         } else if path == "/api/v1/promotions/revoke" {
@@ -928,7 +928,7 @@ fn every_route_asks_for_an_identity_and_a_permission() {
 }
 
 // ---------------------------------------------------------------------------
-// Los huecos que encontro la revision independiente.
+// The gaps found by the independent review.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -939,21 +939,21 @@ fn a_mount_does_not_carry_a_quarantined_blob_out_of_a_trusted_repository() {
     let port = service.port;
     let alice = support::token(FIRST_ACCOUNT, "alice");
 
-    // Un blob en cuarentena en el repositorio trusted.
+    // A quarantined blob in the trusted repository.
     let blob = push_blob(&deployment, port, &alice, b"quarantined layer");
     let mount =
         format!("/v2/{OPEN_REPOSITORY}/blobs/uploads/?mount=sha256:{blob}&from={FIRST_REPOSITORY}");
 
-    // Montarlo en el repositorio abierto no lo saca: cae a una subida
-    // normal (202), exactamente como si el blob no existiera, y el
-    // destino no lo sirve.
+    // Mounting it into the open repository does not take it out: it falls to a normal
+    // upload (202), exactly as if the blob did not exist, and the
+    // destination does not serve it.
     let (status, body) = call(&deployment, port, "POST", &mount, &alice, None);
     assert_eq!(status, 202, "a quarantined blob was mounted: {body}");
     let leaked = format!("/v2/{OPEN_REPOSITORY}/blobs/sha256:{blob}");
     let (status, _) = call(&deployment, port, "GET", &leaked, &alice, None);
     assert_eq!(status, 404, "the mounted blob was served");
 
-    // Promovido, es el mismo software y el montaje funciona.
+    // Once promoted, it is the same software and the mount works.
     let (status, body) = promote(
         &deployment,
         port,
@@ -997,8 +997,8 @@ fn the_not_found_of_a_manifest_does_not_say_it_is_in_quarantine() {
         None,
     );
     assert_eq!(status, 404);
-    // Ni el digest al que apunta la etiqueta, ni una frase que distinga
-    // la cuarentena de lo que no existe.
+    // Neither the digest the tag points to, nor a phrase that distinguishes
+    // quarantine from what does not exist.
     assert!(
         !by_tag.contains(&digest),
         "the tag answer names {digest}: {by_tag}"
@@ -1053,7 +1053,7 @@ fn revoking_an_image_withdraws_what_its_promotion_granted() {
         assert_eq!(status, 200, "{path} before the revocation");
     }
 
-    // Se revoca por el digest del manifiesto: todo lo que concedio cae.
+    // Revoked by the manifest digest: everything it granted falls.
     let (status, body) = revoke(&deployment, port, &alice, FIRST_REPOSITORY, &image_digest);
     assert_eq!(status, 200, "{body}");
     assert!(body.contains("\"revoked\":3"), "{body}");
@@ -1077,7 +1077,7 @@ fn a_same_account_principal_without_permission_learns_nothing() {
     let path = raw(FIRST_REPOSITORY, "app/inside.bin");
     assert_eq!(put_raw(&deployment, port, &alice, &path, &bytes), 201);
 
-    // Existe y no existe: la misma respuesta, y nada se concede.
+    // It exists and does not exist: the same response, and nothing is granted.
     let (existing, existing_body) = promote(
         &deployment,
         port,

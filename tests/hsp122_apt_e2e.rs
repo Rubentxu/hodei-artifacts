@@ -1,13 +1,13 @@
-//! APT hosted de HSP-122, a nivel HTTP.
+//! HSP-122 hosted APT, at the HTTP level.
 //!
-//! Se prueba: la subida de un `.deb` con la gramatica del pool, el
-//! ensamblado de los indices `Packages` por arquitectura, el aggregate
-//! `Release` reproducible, su firma `Release.gpg` verificada contra la
-//! `key.asc` servida con el **oraculo `gpgv`** (el mismo verificador que
-//! apt invoca), el ETag de las lecturas condicionales y la inmutabilidad
-//! de la version.
+//! Tested: the upload of a `.deb` with the pool grammar, the
+//! assembly of the per-architecture `Packages` indexes, the reproducible aggregate
+//! `Release`, its `Release.gpg` signature verified against the served
+//! `key.asc` with the **`gpgv` oracle** (the same verifier that
+//! apt invokes), the ETag of conditional reads and the immutability
+//! of the version.
 //!
-//! El cliente real (`apt-get`) vive en `hsp122_apt_client.rs`.
+//! The real client (`apt-get`) lives in `hsp122_apt_client.rs`.
 
 mod support;
 
@@ -75,8 +75,8 @@ fn text_of(answer: &Answer) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Un .deb minimo pero fiel al formato: contenedor `ar` con debian-binary,
-// control.tar (tar ustar con ./control) y data.tar vacio.
+// A minimal .deb faithful to the format: `ar` container with debian-binary,
+// control.tar (ustar tar with ./control) and an empty data.tar.
 // ---------------------------------------------------------------------------
 
 fn ar_header(name: &str, size: usize) -> Vec<u8> {
@@ -159,7 +159,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     let hello = hello_deb();
     let hello_sha = sha256_hex(&hello);
 
-    // La ruta la dicta el control: subir al sitio que apetezca es un no.
+    // The path is dictated by the control file: uploading to whatever place one likes is a no.
     let misplaced = call(
         port,
         "PUT",
@@ -175,7 +175,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
         text_of(&misplaced)
     );
 
-    // Un cuerpo que no es un contenedor `ar` no entra en el pool.
+    // A body that is not an `ar` container does not enter the pool.
     let junk = call(
         port,
         "PUT",
@@ -196,7 +196,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(published.status, 200, "{}", text_of(&published));
 
-    // El binario se sirve byte a byte por la ruta del indice.
+    // The binary is served byte for byte through the index path.
     let download = call(
         port,
         "GET",
@@ -208,8 +208,8 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     assert_eq!(download.status, 200, "{}", text_of(&download));
     assert_eq!(download.body, hello);
 
-    // El indice de amd64 describe el paquete con la suma y el tamano
-    // que apt verificara tras la descarga.
+    // The amd64 index describes the package with the sum and size
+    // that apt will verify after the download.
     let packages = call(
         port,
         "GET",
@@ -225,10 +225,10 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     assert!(index.contains(&format!("SHA256: {hello_sha}\n")));
     assert!(index.contains(&format!("Size: {}\n", hello.len())));
     assert!(index.contains("Depends: libc6 (>= 2.34)\n"));
-    // Los registros terminan en linea en blanco: separacion apt.
+    // Records end in a blank line: apt separation.
     assert!(index.ends_with("\n\n"));
 
-    // arm64 no ve al paquete amd64.
+    // arm64 does not see the amd64 package.
     let arm = call(
         port,
         "GET",
@@ -243,8 +243,8 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
         "arm64 must not list amd64 packages"
     );
 
-    // El Release menciona los dos indices con la suma exacta del
-    // cuerpo que se sirve, y su fecha es del estado, no del reloj.
+    // The Release mentions both indexes with the exact sum of the
+    // body that is served, and its date is from the state, not from the clock.
     let release = call(
         port,
         "GET",
@@ -269,7 +269,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert!(release_text.contains("main/binary-arm64/Packages\n"));
 
-    // Reproducible: la misma metadata, dos lecturas, mismo etag.
+    // Reproducible: the same metadata, two reads, same etag.
     let again = call(
         port,
         "GET",
@@ -284,7 +284,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     let etag = release.header("etag").expect("the Release carries an etag");
 
-    // Y condicional: si no cambio, 304.
+    // And conditional: if it did not change, 304.
     let not_modified = call(
         port,
         "GET",
@@ -295,8 +295,8 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(not_modified.status, 304, "the second read must answer 304");
 
-    // La clave publica y la firma: `gpgv`, el verificador que apt usa
-    // por detras, abre Release.gpg contra la key.asc servida.
+    // The public key and the signature: `gpgv`, the verifier apt uses
+    // behind the scenes, opens Release.gpg against the served key.asc.
     if which("gpgv").is_none() {
         eprintln!("skipping the signature check: gpgv is not installed");
     } else {
@@ -319,8 +319,8 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
         std::fs::write(dir.join("Release"), &release.body).expect("write release");
         std::fs::write(dir.join("Release.gpg"), &signature.body).expect("write signature");
         std::fs::write(dir.join("key.asc"), &key.body).expect("write key");
-        // `gpgv --keyring` habla en binario: el armor de apt se dearma
-        // aqui igual que lo dearma el `gpg --dearmor` del sysadmin.
+        // `gpgv --keyring` speaks binary: apt's armor is dearmored
+        // here the same way the sysadmin's `gpg --dearmor` dearmors it.
         std::fs::write(dir.join("keyring.bin"), dearmor(&text_of(&key))).expect("write keyring");
         let output = std::process::Command::new("gpgv")
             .arg("--keyring")
@@ -336,7 +336,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
             "gpgv said: {stderr}"
         );
 
-        // La firma no abre un Release alterado: es firma de estos bytes.
+        // The signature does not open a tampered Release: it is a signature of these bytes.
         std::fs::write(dir.join("tampered"), b"Origin: Nobody\n").expect("write tampered");
         let tampered = std::process::Command::new("gpgv")
             .arg("--keyring")
@@ -349,7 +349,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
         assert!(!tampered.status.success(), "a forged Release must not open");
     }
 
-    // Inmutabilidad: otros bytes en la misma ruta son un no con motivo.
+    // Immutability: other bytes at the same path are a no with a reason.
     let other = build_deb(concat!(
         "Package: hello-hodei\n",
         "Version: 1.0.0\n",
@@ -366,7 +366,7 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(conflict.status, 409, "{}", text_of(&conflict));
 
-    // La republicacion identica es el eco: 200 sin tocar nada.
+    // An identical republication is the echo: 200 without touching anything.
     let echo = call(
         port,
         "PUT",
@@ -377,8 +377,8 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
     assert_eq!(echo.status, 200, "{}", text_of(&echo));
 
-    // Una publicacion nueva mueve el indice y, con el, la fecha del
-    // Release: los registros `all` entran en las dos arquitecturas.
+    // A new publication moves the index and, with it, the date of the
+    // Release: the `all` records enter both architectures.
     let tools = tools_deb();
     let published_tools = call(
         port,
@@ -413,8 +413,8 @@ fn a_deb_is_published_indexed_and_its_metadata_signature_verifies() {
     );
 }
 
-/// El contenido binario de un bloque armor OpenPGP: las lineas base64
-/// entre los marcadores, sin la linea CRC que `gpg` escribe y nadie lee.
+/// The binary content of an OpenPGP armor block: the base64 lines
+/// between the markers, without the CRC line that `gpg` writes and nobody reads.
 fn dearmor(armored: &str) -> Vec<u8> {
     let body: String = armored
         .lines()
@@ -422,7 +422,7 @@ fn dearmor(armored: &str) -> Vec<u8> {
         .skip(1)
         .take_while(|line| !line.starts_with("-----END"))
         .filter(|line| !(line.trim().is_empty() || line.starts_with('=')))
-        // El blank que separa cabeceras armor del cuerpo tambien fuera.
+        // The blank that separates armor headers from the body is also out.
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .collect();

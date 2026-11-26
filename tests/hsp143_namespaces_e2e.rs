@@ -1,12 +1,12 @@
-//! La reserva de namespaces de HSP-143 / HAE-10, contra el wire.
+//! HSP-143 / HAE-10's namespace reservation, against the wire.
 //!
-//! El servicio es un proceso de verdad con catalogo, almacen y Cedar reales;
-//! el upstream es un servidor local que este fichero controla. Lo que se
-//! mide es lo que un cliente ve: una ruta reservada **nunca** sale del
-//! upstream publico, aunque su version sea mayor, aunque este en la cache,
-//! aunque no haya red, y aunque el grupo tenga otro espejo publico detras.
-//! La negativa se explica: el cuerpo nombra la reserva y las fuentes que
-//! quedaron fuera.
+//! The service is a real process with a real catalog, store and Cedar;
+//! the upstream is a local server that this file controls. What is
+//! measured is what a client sees: a reserved path **never** comes out of the
+//! public upstream, even if its version is higher, even if it is in the cache,
+//! even if there is no network, and even if the group has another public mirror behind it.
+//! The refusal is explained: the body names the reservation and the sources that
+//! were left out.
 
 mod support;
 
@@ -20,14 +20,14 @@ use support::{Curl, Deployment, FIRST_ACCOUNT, SECOND_ACCOUNT};
 const INTERNAL: &[u8] = b"content published in the internal hosted member";
 const PUBLIC: &[u8] = b"content that lives in the public upstream";
 
-/// Un documento que sirve el upstream.
+/// A document the upstream serves.
 #[derive(Clone)]
 struct Doc {
     body: Vec<u8>,
     etag: Option<String>,
 }
 
-/// El estado del upstream, que la prueba cambia mientras corre.
+/// The upstream's state, which the test changes while it runs.
 struct World {
     docs: Mutex<HashMap<String, Doc>>,
     seen: Mutex<Vec<String>>,
@@ -139,13 +139,13 @@ fn serve(mut stream: TcpStream, world: &World) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// La configuracion `proxy` de un repositorio: el upstream y su cache.
+/// The `proxy` configuration of a repository: the upstream and its cache.
 fn proxy_of(upstream: &Upstream) -> serde_json::Value {
     serde_json::json!({
         "upstream": {
@@ -164,8 +164,8 @@ struct Lab {
 }
 
 impl Lab {
-    /// `hosted`: repositorios hosted; `proxies`: (clave, politica de
-    /// namespaces o null); `groups`: (clave, miembros, politica o null).
+    /// `hosted`: hosted repositories; `proxies`: (key, namespace
+    /// policy or null); `groups`: (key, members, policy or null).
     fn new(
         hosted: &[&str],
         proxies: &[(&str, serde_json::Value)],
@@ -211,7 +211,7 @@ impl Lab {
         path
     }
 
-    /// Publica en un repositorio hosted y devuelve el codigo.
+    /// Publishes to a hosted repository and returns the code.
     fn publish(&self, port: u16, repository: &str, path: &str, body: &[u8]) -> u16 {
         let alice = support::token(FIRST_ACCOUNT, "alice");
         let file = self.file("upload.bin", body);
@@ -229,7 +229,7 @@ impl Lab {
     }
 }
 
-/// Una respuesta: codigo, cuerpo y las cabeceras que dicen quien sirvio.
+/// A response: code, body and the headers that say who served it.
 struct Reply {
     status: u16,
     body: Vec<u8>,
@@ -301,11 +301,11 @@ fn reserved_lab() -> serde_json::Value {
     serde_json::json!({ "reserved": ["lab"] })
 }
 
-/// AC#1: la reserva gana siempre, aunque la version publica sea mayor.
+/// AC#1: the reservation always wins, even if the public version is higher.
 ///
-/// El upstream tiene `lab/lib.bin` con mas contenido que el hosted: sin
-/// reserva, un grupo con el proxy delante lo serviria. Con la reserva, el
-/// proxy no se consulta y el hosted gana por ser interno.
+/// The upstream has `lab/lib.bin` with more content than the hosted: without a
+/// reservation, a group with the proxy in front would serve it. With the reservation, the
+/// proxy is not consulted and the hosted wins for being internal.
 #[test]
 fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
     let lab = Lab::new(
@@ -319,8 +319,8 @@ fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
     let port = service.port;
     assert!((200..300).contains(&lab.publish(port, "hos", "lab/lib.bin", INTERNAL)));
 
-    // Sin reserva: el orden del grupo manda y el proxy (que va primero)
-    // trae la version publica, mayor.
+    // Without a reservation: the group's order rules and the proxy (which goes first)
+    // brings the public version, the higher one.
     let before = get(&lab, port, "grp", "lab/lib.bin");
     assert_eq!(before.status, 200);
     assert_eq!(before.body, PUBLIC);
@@ -328,9 +328,9 @@ fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
     let asked = lab.upstream.hits("lab/lib.bin");
     assert!(asked > 0, "the upstream was never asked");
 
-    // La revision de politica reserva el namespace en el grupo y en el
-    // proxy; la version de su configuracion sube. El reconfigurador abre la
-    // base en su propio proceso: el servicio tiene que estar parado.
+    // The policy revision reserves the namespace in the group and in the
+    // proxy; its configuration version goes up. The reconfigurer opens the
+    // database in its own process: the service has to be stopped.
     support::stop(&mut service);
     lab.deployment.reconfigure_namespaces("pxy", reserved_lab());
     lab.deployment.reconfigure_namespaces("grp", reserved_lab());
@@ -341,8 +341,8 @@ fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
     let port = service.port;
     let hits_after_revision = lab.upstream.hits("lab/lib.bin");
 
-    // El proxy directo ya no sale al upstream ni sirve lo que tiene: la
-    // negativa nombra la reserva y el upstream que queda fuera.
+    // The direct proxy no longer goes out to the upstream nor serves what it has: the
+    // refusal names the reservation and the upstream that is left out.
     let direct = get(&lab, port, "pxy", "lab/lib.bin");
     assert_eq!(direct.status, 403, "{}", direct.text());
     assert!(direct.text().contains("lab"), "{}", direct.text());
@@ -357,8 +357,8 @@ fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
         direct.text()
     );
 
-    // En el grupo, lo interno sigue sirviendose: la reserva no toca al
-    // hosted, y no hay peticion nueva al upstream.
+    // In the group, internal content is still served: the reservation does not touch the
+    // hosted, and there is no new request to the upstream.
     let internal = get(&lab, port, "grp", "lab/lib.bin");
     assert_eq!(internal.status, 200, "{}", internal.text());
     assert_eq!(internal.body, INTERNAL);
@@ -369,14 +369,14 @@ fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
         "the upstream was asked for a reserved path"
     );
 
-    // Lo que solo tiene el upstream, reservado, es una negativa explicada:
-    // el upstream ni se entera de que se pidio.
+    // What only the upstream has, reserved, is an explained refusal:
+    // the upstream is none the wiser that it was requested.
     let denied = get(&lab, port, "grp", "lab/only-upstream.bin");
     assert_eq!(denied.status, 403, "{}", denied.text());
     assert!(denied.text().contains("lab"), "{}", denied.text());
     assert_eq!(lab.upstream.hits("lab/only-upstream.bin"), 0);
 
-    // Un path fuera de la reserva sigue resolviendo contra el upstream.
+    // A path outside the reservation still resolves against the upstream.
     lab.upstream.put("other/ok.bin", PUBLIC, None);
     let free = get(&lab, port, "grp", "other/ok.bin");
     assert_eq!(free.status, 200, "{}", free.text());
@@ -384,8 +384,8 @@ fn a_reserved_path_is_never_served_from_the_public_upstream_even_when_newer() {
     support::stop(&mut service);
 }
 
-/// AC#2: la negativa no se transforma en fallback cuando el grupo tiene
-/// otro espejo publico detras.
+/// AC#2: the refusal does not turn into a fallback when the group has
+/// another public mirror behind it.
 #[test]
 fn a_second_public_mirror_does_not_turn_the_deny_into_a_fallback() {
     let lab = Lab::new(
@@ -407,12 +407,12 @@ fn a_second_public_mirror_does_not_turn_the_deny_into_a_fallback() {
         "the denial does not name both sources: {}",
         denied.text()
     );
-    // Ningun upstream recibio nada por la ruta reservada.
+    // No upstream received anything for the reserved path.
     assert_eq!(lab.upstream.hits("lab/ghost.bin"), 0);
 
-    // Sin la reserva, el segundo espejo si sirve: es el comportamiento de
-    // siempre para lo no reservado. El reconfigurador necesita el servicio
-    // parado.
+    // Without the reservation, the second mirror does serve: it is the usual behavior
+    // for what is not reserved. The reconfigurer needs the service
+    // stopped.
     support::stop(&mut service);
     lab.deployment
         .reconfigure_namespaces("grp", serde_json::Value::Null);
@@ -426,8 +426,8 @@ fn a_second_public_mirror_does_not_turn_the_deny_into_a_fallback() {
     support::stop(&mut free);
 }
 
-/// AC#3: una revision de politica invalida la resolucion que la cache
-/// sostiene; y el modo offline no la esquiva.
+/// AC#3: a policy revision invalidates the resolution that the cache
+/// holds; and offline mode does not dodge it.
 #[test]
 fn a_policy_revision_invalidates_the_resolution_the_cache_holds() {
     let lab = Lab::new(&[], &[("pxy", serde_json::Value::Null)], &[]);
@@ -438,7 +438,7 @@ fn a_policy_revision_invalidates_the_resolution_the_cache_holds() {
         .start(&[("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())]);
     let port = service.port;
 
-    // La resolucion entra en la cache como hit.
+    // The resolution enters the cache as a hit.
     let first = get(&lab, port, "pxy", "lab/cached.bin");
     assert_eq!(first.status, 200);
     let cached = get(&lab, port, "pxy", "lab/cached.bin");
@@ -453,7 +453,7 @@ fn a_policy_revision_invalidates_the_resolution_the_cache_holds() {
     );
     support::stop(&mut service);
 
-    // La revision reserva el namespace: la resolucion guardada ya no vale.
+    // The revision reserves the namespace: the stored resolution is no longer valid.
     lab.deployment.reconfigure_namespaces("pxy", reserved_lab());
     let mut revised = lab
         .deployment
@@ -466,8 +466,8 @@ fn a_policy_revision_invalidates_the_resolution_the_cache_holds() {
         "the revised policy went to the upstream"
     );
 
-    // Y sin red tampoco se esquiva: el offline sirve lo que tiene, pero una
-    // ruta reservada no es "lo que tiene".
+    // And without network it is not dodged either: offline serves what it has, but a
+    // reserved path is not "what it has".
     support::stop(&mut revised);
     let mut offline = lab.deployment.start(&[
         ("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str()),
@@ -477,8 +477,8 @@ fn a_policy_revision_invalidates_the_resolution_the_cache_holds() {
     assert_eq!(offline_denied.status, 403, "{}", offline_denied.text());
     support::stop(&mut offline);
 
-    // Quitar la reserva vuelve a servir lo cacheado: la politica es la que
-    // manda, en las dos direcciones.
+    // Removing the reservation serves the cached content again: the policy is what
+    // rules, in both directions.
     lab.deployment
         .reconfigure_namespaces("pxy", serde_json::Value::Null);
     let mut restored = lab
@@ -490,14 +490,14 @@ fn a_policy_revision_invalidates_the_resolution_the_cache_holds() {
     support::stop(&mut restored);
 }
 
-/// AC#2: el alias normalizado de un nombre reservado no esquiva la
-/// reserva.
+/// AC#2: the normalized alias of a reserved name does not dodge the
+/// reservation.
 ///
-/// La reserva es del nombre normalizado (PEP 503): `Lab_Utils`,
-/// `lab.utils` y `lab-utils` son el mismo namespace, y la peticion que
-/// llega escrita como alias recibe la misma negativa que el nombre
-/// canonico. La superficie PyPI normaliza el nombre de la ruta, asi que el
-/// veredicto del dominio es el que decide.
+/// The reservation is of the normalized name (PEP 503): `Lab_Utils`,
+/// `lab.utils` and `lab-utils` are the same namespace, and the request that
+/// arrives written as an alias receives the same refusal as the
+/// canonical name. The PyPI surface normalizes the path's name, so the
+/// domain's verdict is what decides.
 #[test]
 fn the_normalized_alias_of_a_reserved_name_is_denied_like_the_canonical_one() {
     let upstream = Upstream::start();
@@ -513,7 +513,7 @@ fn the_normalized_alias_of_a_reserved_name_is_denied_like_the_canonical_one() {
     let port = service.port;
     let alice = support::token(FIRST_ACCOUNT, "alice");
 
-    // El alias normaliza igual: la misma negativa que el nombre canonico.
+    // The alias normalizes the same: the same refusal as the canonical name.
     for project in ["lab", "Lab", "LAB"] {
         let into = deployment.directory.path().join("pypi-response.txt");
         let answer = Curl::call(
@@ -536,15 +536,15 @@ fn the_normalized_alias_of_a_reserved_name_is_denied_like_the_canonical_one() {
     support::stop(&mut service);
 }
 
-/// AC#4: SSRF de configuracion. La URL del upstream no puede ser la puerta
-/// de salida a los metadatos internos de la nube: el egress la bloquea
-/// antes de conectar, y no queda recibo de nada.
+/// AC#4: configuration SSRF. The upstream's URL cannot be the exit door
+/// to the cloud's internal metadata: egress blocks it
+/// before connecting, and no receipt is left of anything.
 #[test]
 fn an_upstream_url_pointing_at_the_metadata_service_never_leaves() {
     let lab = Lab::new(&[], &[("pxy", serde_json::Value::Null)], &[]);
-    // Se reescribe la URL del upstream hacia el servicio de metadatos: la
-    // configuracion maliciosa no se detecta al sembrar (es una URL http
-    // valida), se bloquea al salir.
+    // The upstream's URL is rewritten towards the metadata service: the
+    // malicious configuration is not detected when seeding (it is a valid http
+    // URL), it is blocked on the way out.
     lab.deployment.reconfigure_proxy(
         "pxy",
         serde_json::json!({
@@ -557,7 +557,7 @@ fn an_upstream_url_pointing_at_the_metadata_service_never_leaves() {
             "cache": { "ttl": { "metadata_secs": 3600 } },
         }),
     );
-    // El host no esta en la lista de salida: nada sale sin autorizacion.
+    // The host is not in the egress list: nothing goes out without authorization.
     let mut service = lab.deployment.start(&[]);
     let port = service.port;
     let answer = get(&lab, port, "pxy", "latest/meta-data");
@@ -569,8 +569,8 @@ fn an_upstream_url_pointing_at_the_metadata_service_never_leaves() {
     support::stop(&mut service);
 }
 
-/// AC#4: sin filtracion entre cuentas. El grupo y sus miembros de una
-/// cuenta no existen para la otra, reserva o no reserva.
+/// AC#4: no leakage between accounts. An account's group and its members
+/// do not exist for the other, reserved or not.
 #[test]
 fn a_repository_of_another_account_does_not_exist_for_this_one() {
     let lab = Lab::new(
@@ -583,8 +583,8 @@ fn a_repository_of_another_account_does_not_exist_for_this_one() {
     let port = service.port;
     assert!((200..300).contains(&lab.publish(port, "hos", "lab/lib.bin", INTERNAL)));
 
-    // La cuenta de al lado no ve el grupo ni sus miembros, ni con el
-    // namespace reservado ni fuera de el.
+    // The neighboring account sees neither the group nor its members, neither with the
+    // namespace reserved nor without it.
     for (repository, path) in [
         ("grp", "lab/lib.bin"),
         ("hos", "lab/lib.bin"),

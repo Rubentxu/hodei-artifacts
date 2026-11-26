@@ -312,9 +312,9 @@ impl RepositoryReader for ContradictingReader {
     }
 }
 
-/// Lo que está guardado y no se puede leer se dice: una lista que se
-/// encoge en silencio afirma que no hay repositorios donde hay uno que no
-/// se puede leer.
+/// What is stored and cannot be read is reported: a list that
+/// shrinks silently asserts that there are no repositories where there is one that
+/// cannot be read.
 #[tokio::test]
 async fn a_row_that_cannot_be_read_is_corruption_and_not_an_empty_list() {
     let (app, _tmp) = app_with(cedar_everything(), Arc::new(CorruptReader)).await;
@@ -325,8 +325,8 @@ async fn a_row_that_cannot_be_read_is_corruption_and_not_an_empty_list() {
     assert_eq!(body["error"], "corruption");
 }
 
-/// Una fila de otra cuenta no sale de la lista: no existe para este
-/// principal, y no se cuenta.
+/// A row of another account does not come out of the list: it does not exist for this
+/// principal, and it is not counted.
 #[tokio::test]
 async fn a_row_of_another_account_is_not_shown_and_is_not_counted() {
     let (app, _tmp) = app_with(cedar_everything(), Arc::new(ForeignAccountReader)).await;
@@ -341,8 +341,8 @@ async fn a_row_of_another_account_is_not_shown_and_is_not_counted() {
     );
 }
 
-/// Una fila que se contradice es corrupción, y no una lista vacía: lo que
-/// está guardado y no se puede leer se dice.
+/// A row that contradicts itself is corruption, and not an empty list: what
+/// is stored and cannot be read is reported.
 #[tokio::test]
 async fn a_row_that_contradicts_itself_is_corruption() {
     let (app, _tmp) = app_with(cedar_everything(), Arc::new(ContradictingReader)).await;
@@ -353,8 +353,8 @@ async fn a_row_that_contradicts_itself_is_corruption() {
     assert_eq!(body["error"], "corruption");
 }
 
-/// La lectura por `hrn` no se vuelve un `400` porque el cliente mande una
-/// página que no le sirve.
+/// The read by `hrn` does not turn into a `400` because the client sends a
+/// page that is of no use to it.
 #[tokio::test]
 async fn the_read_by_hrn_ignores_the_page_parameters() {
     let (app, _tmp) = app_with(cedar_everything(), the_reader()).await;

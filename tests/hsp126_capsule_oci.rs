@@ -1,12 +1,12 @@
-//! La capsula de release como paquete OCI: lo que el bundle dice, el
-//! layout lo repite byte a byte; lo que el bundle calla, la capsula lo
-//! mantiene callado. Y la firma detached protege el manifiesto de la
-//! capsula contra quien la presente como otra.
+//! The release capsule as an OCI package: what the bundle says, the
+//! layout repeats byte for byte; what the bundle keeps silent, the capsule
+//! keeps silent. And the detached signature protects the capsule's manifest
+//! against whoever presents it as another.
 //!
-//! Las garantias de HSP-126 se comprueban aqui sin red: las capas son
-//! verificables con el patron de contenido de OCI, la capsula de
-//! confianza no inventa decisiones (`null` dentro, `null` fuera) y la
-//! firma es sobre los bytes exactos que el indice anuncia.
+//! HSP-126's guarantees are checked here without network: the layers are
+//! verifiable with OCI's content pattern, the trust capsule
+//! does not invent decisions (`null` inside, `null` outside) and the
+//! signature is over the exact bytes the index announces.
 
 use chrono::{Duration, Utc};
 use hodei_catalog::model::{
@@ -37,8 +37,8 @@ use graph_profile::Workdir;
 
 const UPSTREAM_URL: &str = "https://repo.example.org/raw/";
 
-// El andamiaje es el del contrato del paquete (hsp118): una capsula que
-// no se exporte desde un paquete real no prueba nada.
+// The scaffolding is that of the package contract (hsp118): a capsule that
+// is not exported from a real package proves nothing.
 include!("support/hsp118_site.rs");
 
 fn scratch_signer(tag: &str) -> MetadataSigner {
@@ -54,7 +54,7 @@ fn blob_hex(digest: &str) -> &str {
     digest.strip_prefix("sha256:").expect("a sha256 digest")
 }
 
-/// El digest del manifiesto de imagen que el indice anuncia primero.
+/// The digest of the image manifest that the index announces first.
 fn image_digest(index: &serde_json::Value) -> String {
     index["manifests"][0]["digest"]
         .as_str()
@@ -62,8 +62,8 @@ fn image_digest(index: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// Un paquete con las tres formas que puede tener una ruta: confirmada
-/// con decision, confirmada sin decision y retenida.
+/// A package with the three forms a path can have: confirmed
+/// with a decision, confirmed without a decision and withheld.
 async fn three_way_site() -> (Site, ContentDigest) {
     let site = Site::new().await;
     site.create_proxy("acme", "mirror", "central").await;
@@ -114,7 +114,7 @@ async fn three_way_site() -> (Site, ContentDigest) {
         1,
     )
     .await;
-    // c.bin no tiene recibo: se retiene y la capsula lo dice.
+    // c.bin has no receipt: it is withheld and the capsule says so.
     site.resolve("acme", "mirror", "tools/c.bin", b"tool c")
         .await;
     (site, decided)
@@ -127,7 +127,7 @@ async fn the_capsule_is_the_bundle_wearing_the_oci_standard() {
     let directory = export_with(&site, "out", Some(&signer)).await;
     let layout = directory.join("oci");
 
-    // Las dos puertas del layout, con los nombres del estandar.
+    // The layout's two doors, with the standard's names.
     assert_eq!(
         read_json(&layout.join("oci-layout"))["imageLayoutVersion"],
         LAYOUT_VERSION
@@ -136,8 +136,8 @@ async fn the_capsule_is_the_bundle_wearing_the_oci_standard() {
     assert_eq!(index["mediaType"], INDEX_MEDIA_TYPE);
     assert_eq!(index["manifests"].as_array().expect("a list").len(), 2);
 
-    // La capa del release son los bytes EXACTOS del manifiesto del
-    // bundle: la capsula no re-serializa el paquete.
+    // The release layer is the EXACT bytes of the bundle's
+    // manifest: the capsule does not re-serialize the package.
     let bundle_bytes = std::fs::read(directory.join(MANIFEST_NAME)).expect("the bundle");
     let image = read_json(
         &layout
@@ -158,7 +158,7 @@ async fn the_capsule_is_the_bundle_wearing_the_oci_standard() {
     .expect("the release blob");
     assert_eq!(release_bytes, bundle_bytes);
 
-    // Las capas de contenido digieren igual que en el paquete.
+    // The content layers digest the same as in the package.
     let manifest = bundles::read_manifest(&directory).expect("the bundle");
     let trust_layer = image["layers"]
         .as_array()
@@ -220,8 +220,8 @@ async fn a_null_decision_exports_as_null_and_imports_as_null() {
         "sin decision no hay veredicto"
     );
 
-    // El JSON dice `null`, no omite el campo: quien lee la capsula ve la
-    // misma ausencia explicita que dejo el exportador.
+    // The JSON says `null`, it does not omit the field: whoever reads the capsule sees the
+    // same explicit absence the exporter left.
     let layout = directory.join("oci");
     let index = read_json(&layout.join("index.json"));
     let image = read_json(
@@ -246,8 +246,8 @@ async fn a_null_decision_exports_as_null_and_imports_as_null() {
         "la ausencia se escribe como ausencia"
     );
 
-    // Y lo que la capsula cuenta es lo que el destino importa: dos
-    // rutas, ninguna decision inventada.
+    // And what the capsule reports is what the destination imports: two
+    // paths, no invented decision.
     let target = Site::new().await;
     target.create_proxy("acme", "mirror", "central").await;
     let report = import_into(&target, &directory, "acme", "mirror")
@@ -266,8 +266,8 @@ async fn a_signed_capsule_refuses_to_pass_for_another_one() {
     let directory = export_with(&site, "out", Some(&signer)).await;
     let layout = directory.join("oci");
 
-    // Envenenar la capa de confianza con los bytes del manifiesto del
-    // bundle: el descriptor anuncia un digest y los bytes son otros.
+    // Poison the trust layer with the bytes of the bundle's
+    // manifest: the descriptor announces one digest and the bytes are another.
     let index = read_json(&layout.join("index.json"));
     let image = read_json(
         &layout
@@ -292,8 +292,8 @@ async fn a_signed_capsule_refuses_to_pass_for_another_one() {
         "the refusal says what broke: {refusal}"
     );
 
-    // Con la capsula intacta pero otra clave, la firma no vale: se
-    // verifica contra quien la cerro, no contra quien la presenta.
+    // With the capsule intact but another key, the signature is not valid: it is
+    // verified against whoever closed it, not against whoever presents it.
     let (site2, _) = three_way_site().await;
     let other = scratch_signer("other-key");
     let directory2 = export_with(&site2, "out", Some(&other)).await;
@@ -313,7 +313,7 @@ async fn a_revocation_after_export_never_rewrites_the_capsule() {
     let directory = export_with(&site, "out", Some(&signer)).await;
     let layout = directory.join("oci");
 
-    // La capsula de antes, tal cual: los bytes del release son el ancla.
+    // The capsule from before, as is: the release bytes are the anchor.
     let before = std::fs::read(directory.join(MANIFEST_NAME)).expect("the bundle");
     let verified = verify_capsule(&layout, &signer).expect("the capsule verifies");
     assert_eq!(
@@ -330,9 +330,9 @@ async fn a_revocation_after_export_never_rewrites_the_capsule() {
         "dec-1"
     );
 
-    // El origen revoca la decision despues del export. La capsula no
-    // se entera porque no puede: es un recorte firmad del pasado, y su
-    // firma es precisamente sobre esos bytes inmutables.
+    // The origin revokes the decision after the export. The capsule is
+    // none the wiser because it cannot be: it is a signed snapshot of the past, and its
+    // signature is precisely over those immutable bytes.
     site.trust
         .revoke_decision(
             "acme",

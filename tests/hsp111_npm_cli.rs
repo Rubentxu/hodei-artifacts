@@ -1,15 +1,15 @@
-//! npm hosted, proxy y group de HSP-111 contra el cliente real (`npm`).
+//! npm hosted, proxy and group of HSP-111 against the real client (`npm`).
 //!
-//! El `npm` publica, instala, mueve dist-tags, depreca e intenta despublicar
-//! contra un servicio de verdad, y despues instala a traves de un group que
-//! tiene un hosted y un proxy de un registro de laboratorio: la primera vez
-//! baja del upstream y la segunda, con el servicio en modo offline, sale de lo
-//! cacheado sin que el upstream reciba una peticion.
+//! `npm` publishes, installs, moves dist-tags, deprecates and tries to unpublish
+//! against a real service, and then installs through a group that
+//! has a hosted and a proxy of a laboratory registry: the first time it
+//! downloads from the upstream and the second, with the service in offline mode, it comes from what was
+//! cached without the upstream receiving a request.
 //!
-//! Hace falta `npm` en el PATH: sin el, la suite **falla** diciendo que falta.
-//! La credencial va en un `.npmrc` temporal, nunca en argv, y cada ejecucion
-//! usa su propia cache y su propio `HOME`: nada se lee ni se escribe fuera del
-//! directorio del despliegue.
+//! `npm` is required in the PATH: without it, the suite **fails** saying it is missing.
+//! The credential goes in a temporary `.npmrc`, never in argv, and each run
+//! uses its own cache and its own `HOME`: nothing is read or written outside the
+//! deployment directory.
 
 mod support;
 
@@ -24,7 +24,7 @@ use base64::Engine as _;
 use sha2::{Digest, Sha512};
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -42,20 +42,20 @@ fn require_npm() {
     );
 }
 
-/// El resultado de una ejecucion de `npm`.
+/// The result of a run of `npm`.
 struct Run {
     ok: bool,
     output: String,
 }
 
-/// Un cliente `npm` aislado: su `HOME`, su cache y su `.npmrc`.
+/// An isolated `npm` client: its `HOME`, its cache and its `.npmrc`.
 struct Client {
     root: PathBuf,
     rc: PathBuf,
 }
 
 impl Client {
-    /// Un cliente que habla con `/npm/{repository}/` del servicio.
+    /// A client that talks to `/npm/{repository}/` of the service.
     fn new(root: &Path, name: &str, port: u16, repository: &str, token: &str) -> Self {
         let root = root.join(name);
         std::fs::create_dir_all(root.join("home")).expect("the home");
@@ -73,7 +73,7 @@ impl Client {
         Self { root, rc }
     }
 
-    /// Ejecuta `npm` en `dir` con la cache de este cliente.
+    /// Runs `npm` in `dir` with this client's cache.
     fn run(&self, dir: &Path, args: &[&str]) -> Run {
         let output = Command::new("npm")
             .arg("--userconfig")
@@ -96,13 +96,13 @@ impl Client {
         }
     }
 
-    /// Una cache vacia: lo siguiente que se instale sale del servicio.
+    /// An empty cache: whatever is installed next comes from the service.
     fn forget_the_cache(&self) {
         let _ = std::fs::remove_dir_all(self.root.join("cache"));
     }
 }
 
-/// Un paquete en `dir` listo para publicar.
+/// A package in `dir` ready to publish.
 fn package(dir: &Path, name: &str, version: &str, body: &str) {
     std::fs::create_dir_all(dir).expect("the package directory");
     std::fs::write(
@@ -116,7 +116,7 @@ fn package(dir: &Path, name: &str, version: &str, body: &str) {
     std::fs::write(dir.join("index.js"), body).expect("index.js");
 }
 
-/// Un proyecto consumidor vacio.
+/// An empty consumer project.
 fn consumer(dir: &Path) {
     std::fs::create_dir_all(dir).expect("the consumer directory");
     std::fs::write(
@@ -143,7 +143,7 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
     let root = deployment.directory.path();
     let client = Client::new(root, "client", service.port, "npm-hosted", &token);
 
-    // Un paquete con alcance y otro sin el.
+    // A scoped package and another without scope.
     let widget = root.join("widget");
     package(
         &widget,
@@ -158,7 +158,7 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
         assert!(published.ok, "npm publish failed:\n{}", published.output);
     }
 
-    // Una version existente no se reescribe: el cliente recibe el 403 de npm.
+    // An existing version is not rewritten: the client receives npm's 403.
     let again = client.run(&widget, &["publish", "--access", "public"]);
     assert!(!again.ok, "npm republished an existing version");
     assert!(
@@ -171,8 +171,8 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
         again.output
     );
 
-    // Una instalacion desde una cache vacia trae lo publicado, y su lock
-    // dice el mismo integrity que el servicio calcula sobre el tarball.
+    // An install from an empty cache brings what was published, and its lock
+    // says the same integrity the service computes over the tarball.
     let project = root.join("consumer");
     consumer(&project);
     client.forget_the_cache();
@@ -207,7 +207,7 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
         "the tarball served is not the one the lock integrity names"
     );
 
-    // Una version nueva con otro tag, y un dist-tag movido y quitado.
+    // A new version with another tag, and a dist-tag moved and removed.
     package(
         &widget,
         "@acme/widget",
@@ -241,7 +241,7 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
     let tags = client.run(&widget, &["dist-tag", "ls", "@acme/widget"]);
     assert!(!tags.output.contains("stable"), "{}", tags.output);
 
-    // Mover `latest` no reescribio los bytes del tarball historico.
+    // Moving `latest` did not rewrite the bytes of the historical tarball.
     let after = root.join("widget-1.0.0-after.tgz");
     let answer = Curl::download(
         service.port,
@@ -256,7 +256,7 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
         std::fs::read(&tarball).expect("the tarball before")
     );
 
-    // Deprecar deja la version instalable y con su aviso.
+    // Deprecating leaves the version installable and with its warning.
     let deprecated = client.run(
         &widget,
         &["deprecate", "@acme/widget@1.0.0", "use 1.1.0 instead"],
@@ -273,7 +273,7 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
         notice.output
     );
 
-    // Despublicar se rechaza, y la version sigue ahi.
+    // Unpublishing is rejected, and the version is still there.
     let unpublished = client.run(&widget, &["unpublish", "@acme/widget@1.0.0", "--force"]);
     assert!(!unpublished.ok, "npm unpublished a version");
     assert!(
@@ -288,11 +288,11 @@ fn npm_publishes_installs_tags_deprecates_and_cannot_unpublish() {
         still.output
     );
 
-    // Y un servicio que se reinicia sigue sirviendo lo mismo.
+    // And a service that restarts keeps serving the same thing.
     support::stop(&mut service);
 }
 
-/// Un registro de laboratorio: sirve lo que se le da y cuenta peticiones.
+/// A laboratory registry: serves what it is given and counts requests.
 struct Registry {
     port: u16,
     requests: Arc<AtomicUsize>,
@@ -346,7 +346,7 @@ fn npm_installs_through_a_group_and_again_offline_from_the_cache() {
     let deployment = Deployment::new();
     let root = deployment.directory.path();
 
-    // El tarball que el upstream sirve es el de un paquete de verdad.
+    // The tarball the upstream serves is that of a real package.
     let source = root.join("left-pad-src");
     package(
         &source,
@@ -365,8 +365,8 @@ fn npm_installs_through_a_group_and_again_offline_from_the_cache() {
     assert!(packed.status.success(), "npm pack failed");
     let tarball = std::fs::read(root.join("left-pad-1.3.0.tgz")).expect("the packed tarball");
 
-    // Se reserva el puerto del upstream para poder escribir su URL en el
-    // packument antes de arrancarlo.
+    // The upstream port is reserved so its URL can be written in the
+    // packument before starting it.
     let probe = TcpListener::bind("127.0.0.1:0").expect("a port");
     let upstream_port = probe.local_addr().expect("the address").port();
     drop(probe);
@@ -412,7 +412,7 @@ fn npm_installs_through_a_group_and_again_offline_from_the_cache() {
     let allowed = format!("127.0.0.1:{};private;http", registry.port);
     let token = support::token(FIRST_ACCOUNT, "alice");
 
-    // Primera vez: baja del upstream a traves del proxy del group.
+    // First time: downloads from the upstream through the group's proxy.
     let mut service = deployment.start(&[("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())]);
     let client = Client::new(root, "online", service.port, "npm-all", &token);
     let project = root.join("consumer-online");
@@ -430,7 +430,7 @@ fn npm_installs_through_a_group_and_again_offline_from_the_cache() {
     );
     assert!(registry.total() > 0, "nothing came from the upstream");
 
-    // Un paquete que nadie tiene sigue la convencion de error de npm.
+    // A package nobody has follows npm's error convention.
     let missing = client.run(&project, &["view", "no-such-package-hsp111"]);
     assert!(!missing.ok, "npm found a package nobody has");
     assert!(
@@ -440,8 +440,8 @@ fn npm_installs_through_a_group_and_again_offline_from_the_cache() {
     );
     support::stop(&mut service);
 
-    // Segunda vez, sin red y con la cache de npm vacia: sale de lo que el
-    // proxy guardo, y el upstream no se entera.
+    // Second time, without network and with npm's cache empty: it comes from what the
+    // proxy stored, and the upstream is none the wiser.
     let before = registry.total();
     let mut offline = deployment.start(&[
         ("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str()),
@@ -465,7 +465,7 @@ fn npm_installs_through_a_group_and_again_offline_from_the_cache() {
     support::stop(&mut offline);
 }
 
-/// Como `Registry::start`, en un puerto ya elegido.
+/// Like `Registry::start`, on an already chosen port.
 fn start_registry_on(port: u16, files: Vec<(String, Vec<u8>)>) -> Registry {
     let listener = TcpListener::bind(("127.0.0.1", port)).expect("the upstream binds");
     let requests = Arc::new(AtomicUsize::new(0));

@@ -1,19 +1,19 @@
-//! El arnés de la conformidad: un servicio **de verdad**, un `curl` de
-//! verdad y un `sha256sum` de verdad.
+//! The conformance harness: a **real** service, a real `curl` and a real
+//! `sha256sum`.
 //!
-//! Lo que se comprueba aquí no es una función de Rust, sino un proceso
-//! que arranca, escucha en un puerto y sirve bytes: por eso todo lo que
-//! se usa para hablar con él es una herramienta del sistema y no el
-//! código que se está probando.
+//! What is checked here is not a Rust function, but a process
+//! that starts, listens on a port and serves bytes: that is why everything
+//! used to talk to it is a system tool and not the
+//! code under test.
 //!
-//! La comparación de los bytes la hace `sha256sum`, que no tiene nada que
-//! ver con este servicio. Si el hash que vuelve no es el hash que entró,
-//! el contenido no es el mismo, y eso no lo decide el código bajo prueba.
+//! The comparison of the bytes is done by `sha256sum`, which has nothing to
+//! do with this service. If the hash that comes back is not the hash that went in,
+//! the content is not the same, and that is not decided by the code under test.
 //!
-//! Y el resultado se **escribe**: un informe con la versión, el comando de
-//! cada caso, el resultado real y los límites. Una conformidad que solo
-//! existe en el log de una CI es una conformidad que nadie puede leer
-//! dentro de seis meses.
+//! And the result is **written**: a report with the version, the command of
+//! each case, the real result and the limits. A conformance that only
+//! exists in a CI log is a conformance that nobody can read
+//! six months from now.
 
 #![allow(dead_code)]
 
@@ -30,16 +30,16 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 use sha2::Digest as _;
 
-/// El laboratorio del registro: el upstream con contador, el resultado de
-/// un caso y el informe en JSON de una ejecución.
+/// The registry laboratory: the upstream with a counter, the outcome of
+/// a case and the JSON report of a run.
 ///
-/// Vive aquí y no en el fichero de un caso porque siete tareas más lo
-/// van a usar: un upstream con contador que se implemente dos veces es un
-/// contador que mide uno de los dos.
+/// It lives here and not in the file of one case because seven more tasks are
+/// going to use it: an upstream with a counter that is implemented twice is a
+/// counter that measures one of the two.
 pub mod lab;
 
-/// El laboratorio podman del perfil de grafo (Dgraph real y S3): lo usan el
-/// recorrido del binario (HSP-237) y el de la imagen OCI (HSP-308).
+/// The podman laboratory of the graph profile (real Dgraph and S3): used by the
+/// binary walkthrough (HSP-237) and the OCI image one (HSP-308).
 pub mod graph_lab;
 
 /// The graph profile of the harness (HSP-314 F4 S2a): one ACL namespace of a
@@ -57,23 +57,23 @@ pub fn graph_profile() -> bool {
     true
 }
 
-/// El binario del servicio, tal y como lo compila la CI.
+/// The service binary, as the CI compiles it.
 pub const BIN: &str = env!("CARGO_BIN_EXE_hodei-artifacts-api");
 
-/// El secreto de los tokens de la prueba.
+/// The secret of the test tokens.
 ///
-/// Es un secreto de prueba, y está aquí a propósito: el token lo firma
-/// el propio arnés, y un token que no se puede falsificar no probaría
-/// nada.
+/// It is a test secret, and it is here on purpose: the token is signed
+/// by the harness itself, and a token that cannot be forged would prove
+/// nothing.
 pub const SECRET: &[u8] = b"raw-conformity-secret-long-enough";
 
-/// El emisor que los tokens declaran.
+/// The issuer that the tokens declare.
 pub const ISSUER: &str = "https://issuer.example";
 
-/// La audiencia que los tokens declaran.
+/// The audience that the tokens declare.
 pub const AUDIENCE: &str = "hodei-artifacts";
 
-/// La cuenta de la primera persona.
+/// The account of the first person.
 pub const FIRST_ACCOUNT: &str = "acme";
 
 /// The secret of the signing key of the test deployments: 64 hex characters,
@@ -107,27 +107,27 @@ pub fn the_signing_ring() -> Vec<(String, String)> {
     signing_environment(&[("k1", "HODEI_TEST_SIGNING_SECRET_K1", SIGNING_SECRET)])
 }
 
-/// La cuenta de la segunda persona.
+/// The account of the second person.
 pub const SECOND_ACCOUNT: &str = "other";
 
-/// La clave del repositorio de la primera cuenta.
+/// The key of the first account's repository.
 pub const FIRST_REPOSITORY: &str = "releases";
 
-/// La clave del repositorio de la segunda cuenta.
+/// The key of the second account's repository.
 pub const SECOND_REPOSITORY: &str = "releases";
 
-/// La clave de un repositorio que solo tiene la primera cuenta.
+/// The key of a repository that only the first account has.
 ///
-/// Sirve para el caso de la cuenta ajena: un repositorio que existe en
-/// una cuenta y no en la otra. La respuesta de la cuenta que no lo tiene
-/// no puede decir si existe.
+/// It serves the foreign-account case: a repository that exists in
+/// one account and not in the other. The response of the account that does not have it
+/// cannot say whether it exists.
 pub const FIRST_ONLY_REPOSITORY: &str = "private";
 
-/// El esquema de Cedar del despliegue.
+/// The Cedar schema of the deployment.
 ///
-/// Declara las dos acciones de la superficie de contenido crudo, porque
-/// un bundle que no las declara no puede concederlas, y el servicio no
-/// arranca con un bundle que no declara lo que autoriza con.
+/// It declares the two actions of the raw content surface, because
+/// a bundle that does not declare them cannot grant them, and the service does not
+/// start with a bundle that does not declare what it authorizes with.
 pub const SCHEMA: &str = r#"{
   "": { "entityTypes": {}, "actions": {} },
   "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },
@@ -148,12 +148,12 @@ pub const SCHEMA: &str = r#"{
   }
 }"#;
 
-/// La política de Cedar del despliegue.
+/// The Cedar policy of the deployment.
 ///
-/// Las dos personas pueden publicar y descargar. Lo que **no** decide la
-/// política es el aislamiento entre cuentas: ese lo lleva la clave de
-/// cada fila del catálogo, y por eso el caso de la cuenta ajena espera
-/// un `404` y no un `403`.
+/// Both people can publish and download. What the policy does **not** decide
+/// is the isolation between accounts: that is carried by the key of
+/// each catalog row, and that is why the foreign-account case expects
+/// a `404` and not a `403`.
 pub fn the_policy() -> String {
     let mut policy = String::new();
     for (account, user) in [(FIRST_ACCOUNT, "alice"), (SECOND_ACCOUNT, "bob")] {
@@ -163,8 +163,8 @@ pub fn the_policy() -> String {
             ));
         }
     }
-    // Solo alice promueve y revoca: bob puede leer y escribir, pero la
-    // decision de que software es de fiar no es suya.
+    // Only alice promotes and revokes: bob can read and write, but the
+    // decision of which software is trustworthy is not his.
     for action in ["PromoteAsset", "RevokePromotion"] {
         policy.push_str(&format!(
             "permit(principal == Iam::User::\"hrn:hodei:iam::{FIRST_ACCOUNT}:User/alice\", action == Artifacts::Action::\"{action}\", resource);\n"
@@ -173,7 +173,7 @@ pub fn the_policy() -> String {
     policy
 }
 
-/// Lo que un token dice.
+/// What a token says.
 #[derive(Serialize)]
 struct Claims {
     sub: String,
@@ -183,16 +183,16 @@ struct Claims {
     aud: String,
 }
 
-/// El token de una persona de una cuenta.
+/// The token of a person of an account.
 ///
-/// La cuenta del token es la que el servicio verifica: no la que el
-/// llamante dice. Un token de otra cuenta es un token de otra cuenta, y
-/// por eso el `404` del repositorio ajeno no dice si existe.
+/// The token's account is the one the service verifies: not the one the
+/// caller says. A token from another account is a token from another account, and
+/// that is why the `404` of the foreign repository does not say whether it exists.
 ///
-/// El token se acuña con un nombre, y ese nombre es el que va al
-/// informe: el token de verdad no se escribe nunca en un fichero que se
-/// archiva. El nombre sale de aquí, de la misma función que acuña el
-/// token, así que los dos no pueden desincronizarse.
+/// The token is minted with a name, and that name is the one that goes to the
+/// report: the real token is never written to a file that is
+/// archived. The name comes from here, from the same function that mints the
+/// token, so the two cannot get out of sync.
 pub fn token(account: &str, user: &str) -> String {
     let signed = encode(
         &Header::new(Algorithm::HS256),
@@ -210,20 +210,20 @@ pub fn token(account: &str, user: &str) -> String {
     signed
 }
 
-/// Los nombres de las credenciales que el arnés ha acuñado.
+/// The names of the credentials that the harness has minted.
 ///
-/// El informe dice **quién** actuó, no con qué se autenticó: el token no
-/// viaja al informe, y un token en un fichero archivado es una
-/// credencial en un fichero archivado.
+/// The report says **who** acted, not what they authenticated with: the token does not
+/// travel to the report, and a token in an archived file is a
+/// credential in an archived file.
 fn the_names() -> &'static Mutex<HashMap<String, String>> {
     static NAMES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
     NAMES.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// El nombre con el que se escribe una credencial.
+/// The name with which a credential is written.
 ///
-/// Una credencial que el arnés no acuñó no tiene nombre conocido, y se
-/// escribe como redactada: el nombre es lo que se puede decir en claro.
+/// A credential that the harness did not mint has no known name, and is
+/// written as redacted: the name is what can be said in the clear.
 pub fn the_name_of(token: &str) -> String {
     if token.is_empty() {
         return "<sin credencial>".to_string();
@@ -236,7 +236,7 @@ pub fn the_name_of(token: &str) -> String {
         .unwrap_or_else(|| "<redactada>".to_string())
 }
 
-/// Anota el nombre de una credencial acuñada.
+/// Records the name of a minted credential.
 fn remember_the_name_of(token: &str, user: &str) {
     the_names()
         .lock()
@@ -244,11 +244,11 @@ fn remember_the_name_of(token: &str, user: &str) {
         .insert(token.to_string(), format!("<{user}>"));
 }
 
-/// Un puerto libre del sistema.
+/// A free port of the system.
 ///
-/// El puerto se abre y se cierra: el servicio lo ocupa después. Es una
-/// carrera que casi nunca se pierde, y el arnés la espera y reintenta si
-/// el servicio no llega a abrir el puerto.
+/// The port is opened and closed: the service occupies it afterwards. It is a
+/// race that is almost never lost, and the harness expects it and retries if
+/// the service does not manage to open the port.
 pub fn free_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .expect("a free port")
@@ -257,13 +257,13 @@ pub fn free_port() -> u16 {
         .port()
 }
 
-/// El puerto en el que el servicio **dice** que escucha.
+/// The port on which the service **says** it listens.
 ///
-/// El servicio lo escribe en su log **después** de haber ocupado el
-/// puerto, así que esa línea es la prueba de que el proceso que la
-/// escribió es el dueño del puerto. Un `connect` que funciona no lo
-/// prueba: el otro proceso puede tener el puerto cogido y el nuestro
-/// haber muerto al no poder obtenerlo.
+/// The service writes it in its log **after** having occupied the
+/// port, so that line is the proof that the process that
+/// wrote it owns the port. A `connect` that works does not
+/// prove it: the other process may hold the port and ours
+/// may have died for not being able to obtain it.
 fn the_bound_port(log: &Path) -> Option<u16> {
     let content = std::fs::read_to_string(log).ok()?;
     let line = content
@@ -273,10 +273,10 @@ fn the_bound_port(log: &Path) -> Option<u16> {
     address.trim().rsplit(':').next()?.trim().parse().ok()
 }
 
-/// Quita las secuencias de escape del log.
+/// Strips the escape sequences from the log.
 ///
-/// El formato del log puede traer códigos de color, y un puerto con un
-/// `\u{1b}[0m` pegado no se puede leer como número.
+/// The log format may carry color codes, and a port with a
+/// `\u{1b}[0m` glued to it cannot be read as a number.
 pub fn without_the_colors(text: &str) -> String {
     let mut plain = String::with_capacity(text.len());
     let mut characters = text.chars();
@@ -285,7 +285,7 @@ pub fn without_the_colors(text: &str) -> String {
             plain.push(character);
             continue;
         }
-        // Es una secuencia de escape: se come hasta su letra final.
+        // It is an escape sequence: it is eaten up to its final letter.
         for escaped in characters.by_ref() {
             if escaped.is_ascii_alphabetic() {
                 break;
@@ -295,13 +295,13 @@ pub fn without_the_colors(text: &str) -> String {
     plain
 }
 
-/// El nombre que el almacén le pone a una escritura en curso.
+/// The name the store gives to a write in progress.
 ///
-/// `<pid>-<nanos:x>-<counter:x>.part`: el pid del proceso que escribe, el
-/// instante y un contador. El arnés lo copia porque lo que quiere es un
-/// staging **de verdad**, con el nombre que el almacén reconoce: un
-/// fichero con otro nombre no es una escritura en curso, y el almacén no
-/// lo toca.
+/// `<pid>-<nanos:x>-<counter:x>.part`: the pid of the writing process, the
+/// instant and a counter. The harness copies it because what it wants is a
+/// **real** staging, with the name the store recognizes: a
+/// file with another name is not a write in progress, and the store does not
+/// touch it.
 fn a_staging_name() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -313,35 +313,35 @@ fn a_staging_name() -> String {
     format!("{}-{nanos:x}-{counter:x}.part", std::process::id())
 }
 
-/// Un despliegue limpio: un directorio, una base, un almacén, las
-/// políticas y el esquema.
+/// A clean deployment: a directory, a database, a store, the
+/// policies and the schema.
 ///
-/// "Limpio" quiere decir **vacío**: la base y el almacén se crean aquí,
-/// y lo que hay en ellos es lo que la prueba ha puesto.
+/// "Clean" means **empty**: the database and the store are created here,
+/// and what is in them is what the test has put there.
 pub struct Deployment {
-    /// El directorio que lo contiene todo.
+    /// The directory that contains everything.
     pub directory: tempfile::TempDir,
-    /// La base: el directorio del motor embebido o, en el perfil de grafo,
-    /// el localizador del tenant (`graph://<namespace>/<clave>`) que el
-    /// proceso sembrador lee.
+    /// The database: the embedded engine's directory or, in the graph profile,
+    /// the tenant locator (`graph://<namespace>/<key>`) that the
+    /// seeder process reads.
     pub db: String,
-    /// El namespace Dgraph propio del despliegue (perfil de grafo): se borra
-    /// al soltarse el despliegue.
+    /// The deployment's own Dgraph namespace (graph profile): it is deleted
+    /// when the deployment is dropped.
     pub graph: Option<graph_profile::GraphTenant>,
-    /// El directorio del almacén de contenido.
+    /// The content store directory.
     pub cas: String,
-    /// El directorio del staging del almacén de contenido.
+    /// The content store staging directory.
     pub staging: PathBuf,
-    /// Los ficheros de staging que el arnés tiene **bloqueados**.
+    /// The staging files that the harness has **locked**.
     ///
-    /// El bloqueo es lo que dice que una subida está en curso, y el
-    /// fichero vive mientras el descriptor vive: por eso se guardan
-    /// aquí y no en una variable suelta.
+    /// The lock is what says that an upload is in progress, and the
+    /// file lives as long as the descriptor lives: that is why they are kept
+    /// here and not in a loose variable.
     lives: Mutex<Vec<std::fs::File>>,
 }
 
 impl Deployment {
-    /// Un despliegue vacío.
+    /// An empty deployment.
     pub fn new() -> Self {
         let directory = tempfile::tempdir().expect("a temp dir");
         let graph = graph_profile().then(graph_profile::GraphTenant::create);
@@ -365,17 +365,17 @@ impl Deployment {
         }
     }
 
-    /// La ruta del fichero de la política.
+    /// The path of the policy file.
     fn policy_path(&self) -> PathBuf {
         self.directory.path().join("policies.cedar")
     }
 
-    /// La ruta del fichero del esquema.
+    /// The path of the schema file.
     fn schema_path(&self) -> PathBuf {
         self.directory.path().join("schema.json")
     }
 
-    /// Las escrituras en curso que hay en el almacén.
+    /// The writes in progress that there are in the store.
     pub fn staging_entries(&self) -> Vec<PathBuf> {
         let Ok(entries) = std::fs::read_dir(&self.staging) else {
             return Vec::new();
@@ -385,12 +385,12 @@ impl Deployment {
         found
     }
 
-    /// Los bytes que hay escritos en el staging.
+    /// The bytes that are written in the staging.
     ///
-    /// Es lo que separa "el servicio ha abierto el fichero" de "el
-    /// servicio está escribiendo el cuerpo": un staging vacío significa
-    /// que la subida todavía no ha empezado a llegar, y matar el proceso
-    /// ahí no es matar una subida a la mitad.
+    /// It is what separates "the service has opened the file" from "the
+    /// service is writing the body": an empty staging means
+    /// the upload has not started arriving yet, and killing the process
+    /// there is not killing an upload halfway.
     pub fn staging_bytes(&self) -> u64 {
         self.staging_entries()
             .iter()
@@ -399,11 +399,11 @@ impl Deployment {
             .sum()
     }
 
-    /// Envejece los ficheros de staging.
+    /// Ages the staging files.
     ///
-    /// Envejecer un fichero es lo que hace el tiempo, y el arnés no
-    /// puede esperar dos horas: lo que se quiere es un staging
-    /// abandonado, y la caducidad la decide la **fecha de modificación**.
+    /// Ageing a file is what time does, and the harness cannot
+    /// wait two hours: what is wanted is an abandoned
+    /// staging, and the expiry is decided by the **modification date**.
     pub fn age_the_staging(&self, age: Duration) {
         let when = SystemTime::now() - age;
         for path in self.staging_entries() {
@@ -416,16 +416,16 @@ impl Deployment {
         }
     }
 
-    /// Deja un staging **vivo**, como el de una subida de otro proceso.
+    /// Leaves a **live** staging, like that of an upload from another process.
     ///
-    /// Es un fichero recién escrito en el directorio de staging, con el
-    /// nombre que el almacén le pone a una escritura, y **bloqueado**:
-    /// el bloqueo es lo que dice que la subida está en curso, y lo que
-    /// el arranque tiene que respetar. Un fichero sin bloquear sería el
-    /// de un proceso que se quedó sin escribir, y ese sí se limpia.
+    /// It is a freshly written file in the staging directory, with the
+    /// name the store gives to a write, and **locked**:
+    /// the lock is what says the upload is in progress, and what
+    /// the startup has to respect. An unlocked file would be that
+    /// of a process that was left without writing, and that one does get cleaned.
     ///
-    /// El descriptor se queda en el despliegue, porque el bloqueo vive en
-    /// el descriptor: si se soltara, el staging dejaría de estar vivo.
+    /// The descriptor stays in the deployment, because the lock lives in
+    /// the descriptor: if it were dropped, the staging would stop being alive.
     pub fn a_live_staging(&self) -> PathBuf {
         let path = self.staging.join(a_staging_name());
         let file = std::fs::File::create(&path).expect("the live staging is written");
@@ -437,40 +437,40 @@ impl Deployment {
         path
     }
 
-    /// Siembra el catálogo con un repositorio por cuenta.
+    /// Seeds the catalog with one repository per account.
     ///
-    /// La siembra va en un **proceso aparte**, y no por comodidad: el
-    /// motor embebido mantiene el bloqueo del directorio mientras hay una
-    /// conexión abierta, y el servicio es otro proceso que tiene que poder
-    /// abrir la base.
+    /// The seeding goes in a **separate process**, and not for convenience: the
+    /// embedded engine holds the directory lock while there is an
+    /// open connection, and the service is another process that has to be able to
+    /// open the database.
     pub fn seed(&self) {
         self.seed_with(&[]);
     }
 
-    /// Siembra el catálogo con un repositorio por cuenta **y** los que se
-    /// le pidan.
+    /// Seeds the catalog with one repository per account **and** the ones that are
+    /// requested.
     ///
-    /// Los repositorios de mas son los que necesita una suite que empuja a
-    /// un repositorio con nombre: el registro solo publica en repositorios
-    /// que existen, y sin sembrarlo la suite mediria un 404 donde queria
-    /// medir un push.
+    /// The extra repositories are those needed by a suite that pushes to
+    /// a named repository: the registry only publishes to repositories
+    /// that exist, and without seeding it the suite would measure a 404 where it wanted to
+    /// measure a push.
     pub fn seed_with(&self, extra: &[&str]) {
         self.seed_trusted(extra, &[]);
     }
 
-    /// Siembra como [`Self::seed_with`] y deja en el canal **trusted** los
-    /// repositorios de la primera cuenta que se nombren.
+    /// Seeds like [`Self::seed_with`] and leaves in the **trusted** channel the
+    /// repositories of the first account that are named.
     ///
-    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
-    /// y no hay una ruta HTTP que cree repositorios del catalogo, asi que
-    /// se fija al sembrar, como lo haria quien opera el despliegue.
+    /// The channel is a repository setting (`config_settings.trust.serve`)
+    /// and there is no HTTP route that creates catalog repositories, so
+    /// it is set when seeding, as whoever operates the deployment would do.
     pub fn seed_trusted(&self, extra: &[&str], trusted: &[&str]) {
         self.seed_proxies(extra, trusted, &[]);
     }
 
-    /// Siembra como [`Self::seed_trusted`] y crea ademas repositorios
-    /// **proxy** de la primera cuenta: cada uno con su clave y la
-    /// configuracion de su upstream (`config_settings.proxy.upstream`).
+    /// Seeds like [`Self::seed_trusted`] and also creates **proxy**
+    /// repositories of the first account: each one with its key and the
+    /// configuration of its upstream (`config_settings.proxy.upstream`).
     pub fn seed_proxies(
         &self,
         extra: &[&str],
@@ -500,12 +500,12 @@ impl Deployment {
         assert!(status.success(), "the catalog could not be seeded");
     }
 
-    /// Siembra el catálogo declarando **sustituibles** los repositorios
-    /// listados: su `config_settings.raw.replace` es `allow`, y publicar
-    /// en una dirección ocupada es un reemplazo y no un 409.
+    /// Seeds the catalog declaring the listed repositories **replaceable**:
+    /// their `config_settings.raw.replace` is `allow`, and publishing
+    /// to an occupied address is a replacement and not a 409.
     ///
-    /// La política no se puede pedir por HTTP: la decide quien opera el
-    /// despliegue al sembrar, igual que el canal de confianza.
+    /// The policy cannot be requested over HTTP: it is decided by whoever operates the
+    /// deployment when seeding, like the trust channel.
     pub fn seed_with_replacement(&self, replace: &[&str]) {
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
@@ -521,11 +521,11 @@ impl Deployment {
         assert!(status.success(), "the catalog could not be seeded");
     }
 
-    /// Reconfigura un repositorio proxy ya sembrado: sustituye su
-    /// `config_settings.proxy` y sube la version de su configuracion.
+    /// Reconfigures an already seeded proxy repository: replaces its
+    /// `config_settings.proxy` and raises its configuration version.
     ///
-    /// Lo hace un proceso que acaba enseguida y con el servicio parado: la
-    /// base la bloquea el proceso que la abre.
+    /// It is done by a process that ends right away and with the service stopped: the
+    /// database is locked by the process that opens it.
     pub fn reconfigure_proxy(&self, key: &str, proxy: serde_json::Value) {
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
@@ -542,13 +542,13 @@ impl Deployment {
         assert!(status.success(), "the repository could not be reconfigured");
     }
 
-    /// Reconfigura un repositorio ya sembrado: le pone (o le quita, con
-    /// `null`) la politica de namespaces y sube la version de su
-    /// configuracion.
+    /// Reconfigures an already seeded repository: sets (or removes, with
+    /// `null`) the namespace policy and raises its configuration
+    /// version.
     ///
-    /// Lo hace un proceso que acaba enseguida y con el servicio parado: la
-    /// base la bloquea el proceso que la abre. Es la revision de politica
-    /// que una resolucion previa incompatible tiene que respetar.
+    /// It is done by a process that ends right away and with the service stopped: the
+    /// database is locked by the process that opens it. It is the policy revision
+    /// that an incompatible previous resolution has to respect.
     pub fn reconfigure_namespaces(&self, key: &str, namespaces: serde_json::Value) {
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
@@ -565,12 +565,12 @@ impl Deployment {
         assert!(status.success(), "the namespaces could not be reconfigured");
     }
 
-    /// Crea repositorios de **grupo** de la primera cuenta, en el orden
-    /// dado (un grupo anidado se declara despues de los suyos). Cada uno es
-    /// una clave y la lista ordenada de sus miembros.
+    /// Creates **group** repositories of the first account, in the given
+    /// order (a nested group is declared after its own). Each one is
+    /// a key and the ordered list of its members.
     ///
-    /// Se siembra en un proceso aparte y con el servicio parado, como el
-    /// resto: la base la bloquea el proceso que la abre.
+    /// It is seeded in a separate process and with the service stopped, like the
+    /// rest: the database is locked by the process that opens it.
     pub fn seed_groups(&self, groups: &[(&str, &[&str])]) {
         let groups: Vec<serde_json::Value> = groups
             .iter()
@@ -593,8 +593,8 @@ impl Deployment {
         assert!(status.success(), "the groups could not be seeded");
     }
 
-    /// Crea un **grupo go** de la primera cuenta: la clave y la lista
-    /// ordenada de sus miembros.
+    /// Creates a **go group** of the first account: the key and the ordered
+    /// list of its members.
     pub fn seed_go_group(&self, key: &str, members: &[&str]) {
         let groups = vec![serde_json::json!({
             "key": key,
@@ -618,8 +618,8 @@ impl Deployment {
         assert!(status.success(), "the go group could not be seeded");
     }
 
-    /// Crea un **grupo nuget** de la primera cuenta: la clave y la lista
-    /// ordenada de sus miembros.
+    /// Creates a **nuget group** of the first account: the key and the ordered
+    /// list of its members.
     pub fn seed_nuget_group(&self, key: &str, members: &[&str]) {
         let groups = vec![serde_json::json!({
             "key": key,
@@ -643,11 +643,11 @@ impl Deployment {
         assert!(status.success(), "the nuget group could not be seeded");
     }
 
-    /// Crea repositorios **Maven2 hosted** de la primera cuenta. Cada uno
-    /// es una clave y su `config_settings.maven` (`null` si no lleva).
+    /// Creates **Maven2 hosted** repositories of the first account. Each one
+    /// is a key and its `config_settings.maven` (`null` if it has none).
     ///
-    /// Se siembra en un proceso aparte y con el servicio parado: la base
-    /// la bloquea el proceso que la abre.
+    /// It is seeded in a separate process and with the service stopped: the database
+    /// is locked by the process that opens it.
     pub fn seed_maven(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -673,9 +673,9 @@ impl Deployment {
         );
     }
 
-    /// Crea repositorios **Maven2 proxy** de la primera cuenta. Cada uno es
-    /// una clave, su `config_settings.maven` (`null` si no lleva) y su
-    /// `config_settings.proxy` (el upstream y su cache).
+    /// Creates **Maven2 proxy** repositories of the first account. Each one is
+    /// a key, its `config_settings.maven` (`null` if it has none) and its
+    /// `config_settings.proxy` (the upstream and its cache).
     pub fn seed_maven_proxies(
         &self,
         repositories: &[(&str, serde_json::Value, serde_json::Value)],
@@ -703,7 +703,7 @@ impl Deployment {
         assert!(status.success(), "the maven proxies could not be seeded");
     }
 
-    /// Crea grupos **Maven2** de la primera cuenta, en el orden dado.
+    /// Creates **Maven2** groups of the first account, in the given order.
     pub fn seed_maven_groups(&self, groups: &[(&str, &[&str])]) {
         let groups: Vec<serde_json::Value> = groups
             .iter()
@@ -728,8 +728,8 @@ impl Deployment {
         assert!(status.success(), "the maven groups could not be seeded");
     }
 
-    /// Crea repositorios **npm hosted** de la primera cuenta. Cada uno es
-    /// una clave y su `config_settings.npm` (`null` si no lleva).
+    /// Creates **npm hosted** repositories of the first account. Each one is
+    /// a key and its `config_settings.npm` (`null` if it has none).
     pub fn seed_npm(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -738,8 +738,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the npm repositories");
     }
 
-    /// Crea repositorios **cargo hosted** de la primera cuenta. Cada entrada
-    /// es una clave y su config (`null` si no tiene).
+    /// Creates **cargo hosted** repositories of the first account. Each entry
+    /// is a key and its config (`null` if it has none).
     pub fn seed_cargo(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -750,8 +750,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the cargo repositories");
     }
 
-    /// Crea repositorios **conan hosted** de la primera cuenta. Cada uno
-    /// es una clave y su config (`null` si no lleva).
+    /// Creates **conan hosted** repositories of the first account. Each one
+    /// is a key and its config (`null` if it has none).
     pub fn seed_conan(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -762,12 +762,12 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the conan repositories");
     }
 
-    /// Crea repositorios **galaxy hosted** de la primera cuenta. Cada uno
-    /// es una clave y su config (`null` si no lleva).
-    /// Crea repositorios **terraform** de la primera cuenta. Cada
-    /// entrada es una clave y su config (`null` si no tiene); con la
-    /// config se crea hosted (registry de modulos) y con `proxy` proxy
-    /// (mirror de providers).
+    /// Creates **galaxy hosted** repositories of the first account. Each one
+    /// is a key and its config (`null` if it has none).
+    /// Creates **terraform** repositories of the first account. Each
+    /// entry is a key and its config (`null` if it has none); with the
+    /// config it is created hosted (module registry) and with `proxy` proxy
+    /// (provider mirror).
     pub fn seed_terraform(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -782,8 +782,8 @@ impl Deployment {
         );
     }
 
-    /// Crea repositorios **terraform proxy** (mirror de providers) de la
-    /// primera cuenta: la clave y su `config_settings.proxy`.
+    /// Creates **terraform proxy** repositories (provider mirror) of the
+    /// first account: the key and its `config_settings.proxy`.
     pub fn seed_terraform_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -815,9 +815,9 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the terraform mirrors");
     }
 
-    /// Crea repositorios **hosted** de un formato adicional (`conan`,
-    /// `galaxy`, `terraform`) en el canal **trusted**: la config es la del
-    /// formato (`null` si no lleva).
+    /// Creates **hosted** repositories of an additional format (`conan`,
+    /// `galaxy`, `terraform`) in the **trusted** channel: the config is that of the
+    /// format (`null` if it has none).
     pub fn seed_format_trusted(&self, format: &str, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -843,11 +843,11 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the galaxy repositories");
     }
 
-    /// Crea repositorios **hf hosted** de la primera cuenta y siembra sus
-    /// modelos. Cada asset es `(ruta de asset, fichero fuente)`: el
-    /// contenido se guarda en el CAS y se publica en el catalogo. La
-    /// escritura del dialecto no se declara (la superficie hf es de
-    /// lectura), y por eso el contenido entra por la siembra del hub.
+    /// Creates **hf hosted** repositories of the first account and seeds their
+    /// models. Each asset is `(asset path, source file)`: the
+    /// content is stored in the CAS and published in the catalog. The
+    /// dialect's write is not declared (the hf surface is
+    /// read-only), and that is why the content enters through the hub seeding.
     pub fn seed_hf(&self, repositories: &[(&str, Vec<(&str, std::path::PathBuf)>)]) {
         self.seed_hf_in(&[], repositories);
     }
@@ -903,8 +903,8 @@ impl Deployment {
         assert!(status.success(), "the hf repositories could not be seeded");
     }
 
-    /// Crea repositorios **apt hosted** de la primera cuenta. Cada
-    /// entrada es una clave y su config (`null` si no tiene).
+    /// Creates **apt hosted** repositories of the first account. Each
+    /// entry is a key and its config (`null` if it has none).
     pub fn seed_apt(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -913,8 +913,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the apt repositories");
     }
 
-    /// Crea repositorios **yum hosted** de la primera cuenta. Cada
-    /// entrada es una clave y su config (`null` si no tiene).
+    /// Creates **yum hosted** repositories of the first account. Each
+    /// entry is a key and its config (`null` if it has none).
     pub fn seed_yum(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -923,14 +923,14 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the yum repositories");
     }
 
-    /// Crea repositorios **yum proxy** de la primera cuenta. Cada uno es
-    /// una clave, su `config_settings.proxy` (el upstream y su cache) y el
-    /// canal de confianza en el que se siembra.
+    /// Creates **yum proxy** repositories of the first account. Each one is
+    /// a key, its `config_settings.proxy` (the upstream and its cache) and the
+    /// trust channel it is seeded in.
     ///
-    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
-    /// y no hay una ruta HTTP que lo fije: se fija al sembrar, como lo
-    /// haria quien opera el despliegue. Los que no estan en la lista de
-    /// confianza se siembran en el canal abierto.
+    /// The channel is a repository setting (`config_settings.trust.serve`)
+    /// and there is no HTTP route that sets it: it is set when seeding, as
+    /// whoever operates the deployment would do. Those that are not in the trust
+    /// list are seeded in the open channel.
     pub fn seed_yum_proxies(&self, trusted: &[&str], repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -970,8 +970,8 @@ impl Deployment {
         assert!(status.success(), "the yum group could not be seeded");
     }
 
-    /// Crea repositorios **go hosted** de la primera cuenta. Cada entrada
-    /// es una clave y su config (`null` si no tiene).
+    /// Creates **go hosted** repositories of the first account. Each entry
+    /// is a key and its config (`null` if it has none).
     pub fn seed_go(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -980,13 +980,13 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go repositories");
     }
 
-    /// Crea repositorios **go hosted** de la primera cuenta con el **ambito
-    /// del contenido particionado**.
+    /// Creates **go hosted** repositories of the first account with the
+    /// **partitioned content scope**.
     ///
-    /// Existe para el caso que mide la politica de ambito: esta release solo
-    /// sirve el ambito global, y un miembro de ambito particionado tiene que
-    /// declararse con el diagnostico del ambito, no con un 404 que seria
-    /// mentir.
+    /// It exists for the case that measures the scope policy: this release only
+    /// serves the global scope, and a member with a partitioned scope has to be
+    /// declared with the scope diagnostic, not with a 404 which would be
+    /// a lie.
     pub fn seed_go_partitioned(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1002,8 +1002,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go repositories");
     }
 
-    /// Crea repositorios **go proxy** de la primera cuenta: la clave y su
-    /// `config_settings.proxy` (el upstream y su cache).
+    /// Creates **go proxy** repositories of the first account: the key and its
+    /// `config_settings.proxy` (the upstream and its cache).
     pub fn seed_go_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1012,13 +1012,13 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go proxies");
     }
 
-    /// Crea repositorios **go proxy** de la primera cuenta, algunos de ellos
-    /// en el canal **trusted**.
+    /// Creates **go proxy** repositories of the first account, some of them
+    /// in the **trusted** channel.
     ///
-    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
-    /// y no hay una ruta HTTP que lo fije: se fija al sembrar, como lo
-    /// haria quien opera el despliegue. Los que no estan en la lista de
-    /// confianza se siembran en el canal abierto.
+    /// The channel is a repository setting (`config_settings.trust.serve`)
+    /// and there is no HTTP route that sets it: it is set when seeding, as
+    /// whoever operates the deployment would do. Those that are not in the trust
+    /// list are seeded in the open channel.
     pub fn seed_go_proxies_trusted(
         &self,
         trusted: &[&str],
@@ -1038,8 +1038,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the go proxies");
     }
 
-    /// Crea repositorios **nuget hosted** de la primera cuenta. Cada
-    /// entrada es una clave y su config (`null` si no tiene).
+    /// Creates **nuget hosted** repositories of the first account. Each
+    /// entry is a key and its config (`null` if it has none).
     pub fn seed_nuget(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1050,8 +1050,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the nuget repositories");
     }
 
-    /// Crea repositorios **nuget proxy** de la primera cuenta: la clave y
-    /// su `config_settings.proxy` (el upstream y su cache).
+    /// Creates **nuget proxy** repositories of the first account: the key and
+    /// its `config_settings.proxy` (the upstream and its cache).
     pub fn seed_nuget_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1062,8 +1062,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the nuget proxies");
     }
 
-    /// Crea repositorios **helm** de la primera cuenta, servidos por el
-    /// canal OCI. Cada entrada es una clave y su config (`null` si no tiene).
+    /// Creates **helm** repositories of the first account, served through the
+    /// OCI channel. Each entry is a key and its config (`null` if it has none).
     pub fn seed_helm(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1072,8 +1072,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the helm repositories");
     }
 
-    /// Crea repositorios **npm proxy** de la primera cuenta: la clave y su
-    /// `config_settings.proxy` (el upstream y su cache).
+    /// Creates **npm proxy** repositories of the first account: the key and its
+    /// `config_settings.proxy` (the upstream and its cache).
     pub fn seed_npm_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1082,8 +1082,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the npm proxies");
     }
 
-    /// Crea repositorios **PyPI hosted** de la primera cuenta. Cada uno es
-    /// una clave y su `config_settings.pypi` (`null` si no lleva).
+    /// Creates **PyPI hosted** repositories of the first account. Each one is
+    /// a key and its `config_settings.pypi` (`null` if it has none).
     pub fn seed_pypi(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1092,12 +1092,12 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi repositories");
     }
 
-    /// Crea repositorios **PyPI hosted** de la primera cuenta, algunos de
-    /// ellos en el canal **trusted**.
+    /// Creates **PyPI hosted** repositories of the first account, some of
+    /// them in the **trusted** channel.
     ///
-    /// El canal es un ajuste del repositorio (`config_settings.trust.serve`)
-    /// y no hay una ruta HTTP que lo fije: se fija al sembrar, como lo
-    /// haria quien opera el despliegue.
+    /// The channel is a repository setting (`config_settings.trust.serve`)
+    /// and there is no HTTP route that sets it: it is set when seeding, as
+    /// whoever operates the deployment would do.
     pub fn seed_pypi_trusted(&self, trusted: &[&str], repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1113,8 +1113,8 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi repositories");
     }
 
-    /// Crea repositorios **PyPI proxy** de la primera cuenta: la clave y su
-    /// `config_settings.proxy` (el upstream y su cache).
+    /// Creates **PyPI proxy** repositories of the first account: the key and its
+    /// `config_settings.proxy` (the upstream and its cache).
     pub fn seed_pypi_proxies(&self, repositories: &[(&str, serde_json::Value)]) {
         let repositories: Vec<serde_json::Value> = repositories
             .iter()
@@ -1123,7 +1123,7 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_MAVEN", repositories, "the pypi proxies");
     }
 
-    /// Crea grupos **PyPI** de la primera cuenta, en el orden dado.
+    /// Creates **PyPI** groups of the first account, in the given order.
     pub fn seed_pypi_groups(&self, groups: &[(&str, &[&str])]) {
         let groups: Vec<serde_json::Value> = groups
             .iter()
@@ -1134,7 +1134,7 @@ impl Deployment {
         self.run_the_seeder("HODEI_SEED_GROUPS", groups, "the pypi groups");
     }
 
-    /// Crea grupos **npm** de la primera cuenta, en el orden dado.
+    /// Creates **npm** groups of the first account, in the given order.
     pub fn seed_npm_groups(&self, groups: &[(&str, &[&str])]) {
         let groups: Vec<serde_json::Value> = groups
             .iter()
@@ -1160,14 +1160,14 @@ impl Deployment {
         assert!(status.success(), "{what} could not be seeded");
     }
 
-    /// Siembra repositorios de la primera cuenta con ajustes libres.
+    /// Seeds repositories of the first account with free-form settings.
     ///
-    /// Cada entrada es el JSON que `seed_the_maven` entiende: `key`,
-    /// `format` (`raw`, `npm`, `pypi`, `maven2`...), `proxy` (si es proxy),
-    /// `namespaces` (la politica de reserva, si la declara), `scope` (el
-    /// ambito del contenido: `partitioned` si lo declara) y los ajustes
-    /// propios del formato (`maven`, `npm`, `pypi`). Es la puerta que usan
-    /// las suites que mezclan formato y reserva sin multiplicar sembradores.
+    /// Each entry is the JSON that `seed_the_maven` understands: `key`,
+    /// `format` (`raw`, `npm`, `pypi`, `maven2`...), `proxy` (if it is a proxy),
+    /// `namespaces` (the reservation policy, if it declares one), `scope` (the
+    /// content scope: `partitioned` if it declares it) and the format's own
+    /// settings (`maven`, `npm`, `pypi`). It is the door used by
+    /// the suites that mix format and reservation without multiplying seeders.
     pub fn seed_repositories(&self, entries: &[serde_json::Value]) {
         self.run_the_seeder(
             "HODEI_SEED_MAVEN",
@@ -1176,14 +1176,14 @@ impl Deployment {
         );
     }
 
-    /// Siembra grupos de la primera cuenta a partir de entradas libres:
-    /// `key`, `members` y la `namespaces` que declaren.
+    /// Seeds groups of the first account from free-form entries:
+    /// `key`, `members` and the `namespaces` they declare.
     pub fn seed_groups_raw(&self, groups: &[serde_json::Value]) {
         self.run_the_seeder("HODEI_SEED_GROUPS", groups.to_vec(), "the free-form groups");
     }
 
-    /// Cambia los miembros de un grupo ya sembrado: la version de su
-    /// configuracion sube.
+    /// Changes the members of an already seeded group: the version of its
+    /// configuration goes up.
     pub fn reconfigure_group(&self, key: &str, members: &[&str]) {
         let status = Command::new(std::env::current_exe().expect("the test binary"))
             .args([
@@ -1203,29 +1203,29 @@ impl Deployment {
         assert!(status.success(), "the group could not be reconfigured");
     }
 
-    /// Sustituye la politica de Cedar del despliegue. Hay que hacerlo antes
-    /// de arrancar el servicio.
+    /// Replaces the Cedar policy of the deployment. It has to be done before
+    /// starting the service.
     pub fn write_policy(&self, policy: &str) {
         std::fs::write(self.policy_path(), policy).expect("the policy is written");
     }
 
-    /// Arranca el servicio y espera a que abra el puerto.
+    /// Starts the service and waits for it to open the port.
     ///
-    /// El puerto se elige en cada intento, y no antes: un puerto libre
-    /// puede ser tomado por otro proceso entre que se elige y que el
-    /// servicio lo ocupa, y en ese caso el arnés acabaría hablando con
-    /// el servicio de otro despliegue —una suite en verde que no midió
-    /// lo que dice medir—.
+    /// The port is chosen on each attempt, and not beforehand: a free port
+    /// can be taken by another process between being chosen and the
+    /// service occupying it, and in that case the harness would end up talking to
+    /// the service of another deployment -- a green suite that did not measure
+    /// what it says it measures --.
     ///
-    /// Lo que quita esa duda es el **log**: el servicio dice en qué
-    /// puerto escuchó, y lo dice **después** de haberlo ocupado. Si otro
-    /// proceso tenía el puerto, este servicio no puede escribir esa
-    /// línea, así que el arnés no lo toma por suyo y repite con otro.
+    /// What removes that doubt is the **log**: the service says which
+    /// port it listened on, and says it **after** having occupied it. If another
+    /// process held the port, this service cannot write that
+    /// line, so the harness does not take it as its own and retries with another.
     ///
-    /// El servicio también puede morir al arrancar cuando el motor de
-    /// disco todavía tiene el bloqueo del directorio, así que un intento
-    /// que muere antes de abrir el puerto se repite: lo que se prueba es
-    /// el servicio, no la carrera del bloqueo.
+    /// The service may also die on startup when the disk engine
+    /// still holds the directory lock, so an attempt
+    /// that dies before opening the port is repeated: what is tested is
+    /// the service, not the lock race.
     pub fn start(&self, extra_environment: &[(&str, &str)]) -> Service {
         for _attempt in 0..5 {
             if let Some(service) = self.try_start(free_port(), extra_environment) {
@@ -1238,16 +1238,16 @@ impl Deployment {
         );
     }
 
-    /// Arranca el servicio en un puerto concreto.
+    /// Starts the service on a specific port.
     ///
-    /// El reinicio necesita el **mismo** puerto: el cliente ya sabe a
-    /// donde mira, y con otro puerto se mediria otro servicio--uno recien
-    /// nacido-- y no lo que se quiere medir--el mismo servicio, otra vez.
+    /// The restart needs the **same** port: the client already knows where
+    /// it is looking, and with another port another service would be measured -- a newly
+    /// born one -- and not what is meant to be measured -- the same service, again.
     ///
-    /// Los intentos se repiten en el mismo puerto, como los de
-    /// [`Self::start`]: el motor de disco puede tardar en soltar el
-    /// bloqueo del directorio, y un reinicio que se rinde al primer
-    /// intento mediria un fallo de arranque por el arranque.
+    /// The attempts are repeated on the same port, like those of
+    /// [`Self::start`]: the disk engine may take time to release the
+    /// directory lock, and a restart that gives up at the first
+    /// attempt would measure a startup failure for the startup.
     pub fn start_on(&self, port: u16, extra_environment: &[(&str, &str)]) -> Service {
         for _attempt in 0..5 {
             if let Some(service) = self.try_start(port, extra_environment) {
@@ -1260,7 +1260,7 @@ impl Deployment {
         )
     }
 
-    /// Un intento de arrancar el servicio en un puerto.
+    /// An attempt to start the service on a port.
     fn try_start(&self, port: u16, extra_environment: &[(&str, &str)]) -> Option<Service> {
         let log = self.log_path();
         let stderr = File::create(&log).expect("the log of the service");
@@ -1308,9 +1308,9 @@ impl Deployment {
 
         let deadline = Instant::now() + Duration::from_secs(30);
         while Instant::now() < deadline {
-            // El puerto lo dice el servicio, y solo lo dice si lo ha
-            // ocupado: esa es la prueba de que el hijo es el dueño del
-            // puerto.
+            // The port is stated by the service, and it only states it if it has
+            // occupied it: that is the proof that the child owns the
+            // port.
             if the_bound_port(&log) == Some(port)
                 && TcpStream::connect(("127.0.0.1", port)).is_ok()
                 && matches!(child.try_wait(), Ok(None))
@@ -1328,55 +1328,55 @@ impl Deployment {
         None
     }
 
-    /// La ruta del log del servicio.
+    /// The path of the service log.
     pub fn log_path(&self) -> PathBuf {
         self.directory.path().join("service.log")
     }
 
-    /// El log del servicio, para leerlo cuando algo falla.
+    /// The service log, to read it when something fails.
     pub fn the_log(&self) -> String {
         std::fs::read_to_string(self.log_path()).unwrap_or_default()
     }
 }
 
-/// El servicio que está en pie.
+/// The service that is up.
 pub struct Service {
-    /// El puerto donde escucha.
+    /// The port it listens on.
     pub port: u16,
-    /// El proceso.
+    /// The process.
     pub child: Child,
 }
 
 impl Drop for Service {
-    /// El servicio no se queda vivo si la prueba se cae.
+    /// The service does not stay alive if the test falls over.
     ///
-    /// Sin esto, una prueba que falla antes de parar el servicio deja
-    /// un proceso escuchando en su puerto: el siguiente test puede
-    /// hablar con un servicio viejo, y la suite se pone verde sin haber
-    /// probado lo que dice probar.
+    /// Without this, a test that fails before stopping the service leaves
+    /// a process listening on its port: the next test may
+    /// talk to an old service, and the suite goes green without having
+    /// tested what it says it tests.
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-/// Para el servicio.
+/// Stops the service.
 pub fn stop(service: &mut Service) {
     let _ = service.child.kill();
     let _ = service.child.wait();
 }
 
-/// Para el servicio, de golpe.
+/// Stops the service, abruptly.
 ///
-/// Un `SIGKILL` es lo que pasa cuando una máquina se apaga: no hay
-/// oportunidad de limpiar nada, y por eso es el que reproduce la
-/// interrupción de verdad.
+/// A `SIGKILL` is what happens when a machine is switched off: there is no
+/// chance to clean anything up, and that is why it is the one that reproduces
+/// a real interruption.
 pub fn kill(service: &mut Service) {
     let _ = service.child.kill();
     let _ = service.child.wait();
 }
 
-/// Los metadatos de una distribucion, como los lee `twine`.
+/// The metadata of a distribution, as `twine` reads it.
 pub fn the_metadata(name: &str, version: &str, requires_python: Option<&str>) -> String {
     let mut metadata = format!(
         "Metadata-Version: 2.1\n\
@@ -1391,15 +1391,15 @@ pub fn the_metadata(name: &str, version: &str, requires_python: Option<&str>) ->
     metadata
 }
 
-/// El nombre que lleva el fichero de una distribucion.
+/// The name carried by the file of a distribution.
 ///
-/// PEP 427: en el nombre del fichero, el nombre del proyecto se escribe con
-/// `_` en vez de `-`.
+/// PEP 427: in the file name, the project name is written with
+/// `_` instead of `-`.
 pub fn the_escaped_name(name: &str) -> String {
     name.replace(['-', '.'], "_")
 }
 
-/// Un `RECORD` de wheel: los ficheros, su hash y su tamano.
+/// A wheel `RECORD`: the files, their hash and their size.
 fn the_record(entries: &[(&str, &[u8])]) -> String {
     let mut record = String::new();
     for (path, body) in entries {
@@ -1413,15 +1413,15 @@ fn the_record(entries: &[(&str, &[u8])]) -> String {
     record
 }
 
-/// Un wheel: un zip con los metadatos, el `RECORD` y el modulo del paquete.
+/// A wheel: a zip with the metadata, the `RECORD` and the package module.
 pub fn a_wheel(name: &str, version: &str, requires_python: Option<&str>) -> Vec<u8> {
     the_wheel(name, version, requires_python, 0)
 }
 
-/// Un wheel con un miembro de relleno.
+/// A wheel with a filler member.
 ///
-/// Una distribucion de verdad pesa mas de dos megas, y el limite que
-/// trae el servidor web por defecto son dos: hace falta una que lo pase.
+/// A real distribution weighs more than two megabytes, and the limit that
+/// the web server brings by default is two: one that passes it is needed.
 pub fn a_big_wheel(
     name: &str,
     version: &str,
@@ -1431,7 +1431,7 @@ pub fn a_big_wheel(
     the_wheel(name, version, requires_python, filler)
 }
 
-/// El wheel de siempre, con un miembro de relleno si se pide.
+/// The usual wheel, with a filler member if requested.
 fn the_wheel(name: &str, version: &str, requires_python: Option<&str>, filler: usize) -> Vec<u8> {
     use std::io::Write;
     let escaped = the_escaped_name(name);
@@ -1476,7 +1476,7 @@ fn the_wheel(name: &str, version: &str, requires_python: Option<&str>, filler: u
     writer.finish().expect("the wheel is closed").into_inner()
 }
 
-/// Un sdist: un tar con gzip con el `PKG-INFO` y el `pyproject.toml`.
+/// An sdist: a gzipped tar with the `PKG-INFO` and the `pyproject.toml`.
 pub fn an_sdist(name: &str, version: &str, requires_python: Option<&str>) -> Vec<u8> {
     use std::io::Write;
     let root = format!("{name}-{version}");
@@ -1503,14 +1503,14 @@ pub fn an_sdist(name: &str, version: &str, requires_python: Option<&str>) -> Vec
         let padding = (512 - body.len() % 512) % 512;
         tar.extend(std::iter::repeat_n(0u8, padding));
     }
-    // Dos bloques de ceros: el fin del archivo.
+    // Two blocks of zeros: the end of the archive.
     tar.extend(std::iter::repeat_n(0u8, 1024));
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(&tar).expect("the tar is compressed");
     encoder.finish().expect("the sdist is closed")
 }
 
-/// La cabecera de un fichero de tar.
+/// The header of a tar file.
 fn the_tar_header(path: &str, size: u64) -> [u8; 512] {
     let mut header = [0u8; 512];
     header[..path.len()].copy_from_slice(path.as_bytes());
@@ -1522,7 +1522,7 @@ fn the_tar_header(path: &str, size: u64) -> [u8; 512] {
     write(&mut header, 116, "000000 ");
     write(&mut header, 124, &format!("{size:011o} "));
     write(&mut header, 136, &format!("{:011o} ", 0));
-    // El checksum se calcula con el campo en blanco.
+    // The checksum is computed with the field blank.
     header[148..156].fill(b' ');
     header[156] = b'0';
     write(&mut header, 257, "ustar");
@@ -1534,10 +1534,10 @@ fn the_tar_header(path: &str, size: u64) -> [u8; 512] {
     header
 }
 
-/// El comando `sha256sum` que comprueba el digest de un fichero.
+/// The `sha256sum` command that checks the digest of a file.
 ///
-/// Es el mismo programa y el mismo fichero que el arnes ejecuta: lo que
-/// se escribe en el informe es lo que se corrio, no una reconstruccion.
+/// It is the same program and the same file that the harness runs: what
+/// is written in the report is what was run, not a reconstruction.
 pub fn sha256_command(file: &Path) -> String {
     let root = file
         .parent()
@@ -1551,11 +1551,11 @@ pub fn sha256_command(file: &Path) -> String {
     format!("sha256sum {name}")
 }
 
-/// El digest de un fichero, dicho por `sha256sum`.
+/// The digest of a file, as stated by `sha256sum`.
 ///
-/// La comparación no la hace el código bajo prueba: `sha256sum` es un
-/// programa que no tiene nada que ver con este servicio, y es el que dice
-/// si los bytes son los mismos.
+/// The comparison is not made by the code under test: `sha256sum` is a
+/// program that has nothing to do with this service, and it is the one that says
+/// whether the bytes are the same.
 pub fn sha256_of(file: &Path) -> String {
     let output = Command::new("sha256sum")
         .arg(file)
@@ -1570,26 +1570,26 @@ pub fn sha256_of(file: &Path) -> String {
         .to_string()
 }
 
-/// La respuesta de un `curl`.
+/// The response of a `curl`.
 pub struct Answer {
-    /// El código de estado.
+    /// The status code.
     pub status: u16,
-    /// Los bytes del cuerpo que el `curl` escribió.
+    /// The bytes of the body that `curl` wrote.
     ///
-    /// Lo dice el propio `curl`, que sabe cuántos bytes escribió en el
-    /// destino: es la forma de medir un `HEAD` sin cuerpo sin suponerlo.
+    /// It is stated by `curl` itself, which knows how many bytes it wrote to the
+    /// destination: it is the way to measure a bodiless `HEAD` without assuming it.
     pub size: u64,
-    /// Las cabeceras, en texto.
+    /// The headers, as text.
     pub headers: String,
-    /// El cuerpo que el `curl` escribió, si lo escribió en un fichero.
+    /// The body that `curl` wrote, if it wrote it to a file.
     ///
-    /// Es lo que dice el servidor, byte a byte: sin esto, un test solo
-    /// puede afirmar el codigo y no **que** bytes sirvio.
+    /// It is what the server says, byte by byte: without this, a test can only
+    /// assert the code and not **which** bytes it served.
     pub body: Vec<u8>,
 }
 
 impl Answer {
-    /// Una cabecera de la respuesta.
+    /// A response header.
     pub fn header(&self, name: &str) -> Option<String> {
         self.headers.lines().find_map(|line| {
             let (key, value) = line.split_once(':')?;
@@ -1602,43 +1602,43 @@ impl Answer {
     }
 }
 
-/// Un `curl` con los argumentos con los que se ejecuta.
+/// A `curl` with the arguments it is run with.
 ///
-/// El comando que se ejecuta y el comando que se escribe en el informe
-/// salen de la **misma** lista de argumentos. Un comando resumido es una
-/// paráfrasis, y una paráfrasis es una opinión: lo que se ejecutó y lo
-/// que se escribe son lo mismo.
+/// The command that is run and the command that is written in the report
+/// come from the **same** argument list. A summarized command is a
+/// paraphrase, and a paraphrase is an opinion: what was run and what
+/// is written are the same thing.
 ///
-/// La credencial va **redactada** en lo que se escribe: el informe dice
-/// con quién se habló, no con qué se autenticó. Un informe se archiva y
-/// se comparte, y un token en un fichero es una credencial en un
-/// fichero.
+/// The credential goes **redacted** in what is written: the report says
+/// who was talked to, not what they authenticated with. A report is archived and
+/// shared, and a token in a file is a credential in a
+/// file.
 pub struct Curl {
-    /// Los argumentos, en el orden en que se le pasan al `curl`.
+    /// The arguments, in the order in which they are passed to `curl`.
     args: Vec<String>,
-    /// La credencial real, que se redacta al escribirla.
+    /// The real credential, which is redacted when written.
     token: String,
-    /// El directorio del despliegue, que se abrevia al escribirlo.
+    /// The deployment directory, which is abbreviated when written.
     ///
-    /// Las rutas del despliegue están en un directorio temporal que
-    /// dentro de seis meses no existe. Escribir la ruta entera es
-    /// escribir ruido; escribir `<despliegue>/fichero` dice lo mismo y
-    /// se puede leer.
+    /// The deployment paths are in a temporary directory that
+    /// does not exist six months from now. Writing the whole path is
+    /// writing noise; writing `<deployment>/file` says the same and
+    /// can be read.
     root: Option<PathBuf>,
-    /// Donde el `curl` escribe el cuerpo, si lo escribe en un fichero.
+    /// Where `curl` writes the body, if it writes it to a file.
     ///
-    /// Sin esto, una respuesta solo dice el codigo: no se puede afirmar
-    /// **que** bytes sirvio el servidor, solo que dijo algo.
+    /// Without this, a response only says the code: it cannot be asserted
+    /// **which** bytes the server served, only that it said something.
     body: Option<PathBuf>,
 }
 
 impl Curl {
-    /// Los argumentos que todas las peticiones comparten.
+    /// The arguments that all requests share.
     ///
-    /// El camino va tal cual (`--path-as-is`), la credencial va si la
-    /// hay, las cabeceras se vuelcan y el `curl` cuenta el código y los
-    /// bytes que escribió: el código y el tamaño los dice el `curl`, no
-    /// el código bajo prueba.
+    /// The path goes as is (`--path-as-is`), the credential goes if there
+    /// is one, the headers are dumped and `curl` counts the code and the
+    /// bytes it wrote: the code and the size are stated by `curl`, not
+    /// by the code under test.
     fn base(port: u16, path: &str, token: &str) -> Self {
         let mut args = vec![
             "--silent".to_string(),
@@ -1662,10 +1662,10 @@ impl Curl {
         }
     }
 
-    /// Un `curl` que publica un fichero.
+    /// A `curl` that publishes a file.
     ///
-    /// Con `--limit-rate` el cuerpo llega despacio, que es lo que hace
-    /// falta para poder matar el servicio **a mitad de la subida**.
+    /// With `--limit-rate` the body arrives slowly, which is what is
+    /// needed to be able to kill the service **halfway through the upload**.
     pub fn upload(
         port: u16,
         path: &str,
@@ -1688,7 +1688,7 @@ impl Curl {
         curl
     }
 
-    /// Un `curl` que descarga a un fichero, o a la nada.
+    /// A `curl` that downloads to a file, or to nothing.
     pub fn download(port: u16, path: &str, token: &str, into: Option<&Path>) -> Self {
         let mut curl = Self::base(port, path, token);
         curl.args.push("--output".to_string());
@@ -1701,7 +1701,7 @@ impl Curl {
         curl
     }
 
-    /// Un `curl` que solo pide la descripción.
+    /// A `curl` that only asks for the description.
     pub fn describe(port: u16, path: &str, token: &str) -> Self {
         let mut curl = Self::base(port, path, token);
         curl.args.push("--head".to_string());
@@ -1710,11 +1710,11 @@ impl Curl {
         curl
     }
 
-    /// Un `curl` con una cabecera de más, que deja el cuerpo en un
-    /// fichero.
+    /// A `curl` with an extra header, which leaves the body in a
+    /// file.
     ///
-    /// Es lo que permite comprobar los **bytes** de un tramo, y no solo su
-    /// código y su `Content-Range`.
+    /// It is what allows checking the **bytes** of a range, and not only its
+    /// code and its `Content-Range`.
     pub fn with_header(
         port: u16,
         path: &str,
@@ -1731,13 +1731,13 @@ impl Curl {
         curl
     }
 
-    /// Un `curl` con el metodo, el cuerpo y el tipo de contenido que
-    /// hagan falta.
+    /// A `curl` with the method, the body and the content type that
+    /// are needed.
     ///
-    /// El protocolo de push es el que mas metodos usa: `POST` abre la
-    /// sesion, `PATCH` mete el trozo, `PUT` la cierra y `DELETE` la
-    /// cancela. Cada uno con su propio cuerpo, y el manifiesto con su
-    /// propio tipo de contenido.
+    /// The push protocol is the one that uses the most methods: `POST` opens the
+    /// session, `PATCH` puts in the chunk, `PUT` closes it and `DELETE`
+    /// cancels it. Each one with its own body, and the manifest with its
+    /// own content type.
     pub fn call(
         port: u16,
         method: &str,
@@ -1761,13 +1761,13 @@ impl Curl {
         }
     }
 
-    /// Un `curl` con el metodo, el cuerpo y las cabeceras de mas que
-    /// hagan falta.
+    /// A `curl` with the method, the body and the extra headers that
+    /// are needed.
     ///
-    /// El `Content-Range` del protocolo de push es una cabecera mas, y
-    /// sin ella no se puede probar que un trozo que no encaja recibe el
-    /// error que dice el protocolo. El tipo de contenido tambien es una
-    /// cabecera, y por eso viaja en la misma lista.
+    /// The push protocol's `Content-Range` is one more header, and
+    /// without it it cannot be proven that a chunk that does not fit receives the
+    /// error the protocol states. The content type is also a
+    /// header, and that is why it travels in the same list.
     pub fn call_with_headers(
         port: u16,
         method: &str,
@@ -1779,8 +1779,8 @@ impl Curl {
     ) -> Self {
         let mut curl = Self::base(port, path, token);
         if method != "GET" {
-            // `--request HEAD` hace que curl espere un cuerpo que HEAD
-            // nunca trae: el modo descripcion es `--head`.
+            // `--request HEAD` makes curl wait for a body that HEAD
+            // never brings: the description mode is `--head`.
             if method == "HEAD" {
                 curl.args.push("--head".to_string());
             } else {
@@ -1798,8 +1798,8 @@ impl Curl {
         }
         curl.args.push("--output".to_string());
         curl.args.push(match into {
-            // Con `--head` curl escribe las cabeceras en el destino:
-            // HEAD no trae cuerpo, y el arnes lo exige vacio.
+            // With `--head` curl writes the headers to the destination:
+            // HEAD has no body, and the harness requires it empty.
             Some(_) if method == "HEAD" => "/dev/null".to_string(),
             Some(file) => file.display().to_string(),
             None => "/dev/null".to_string(),
@@ -1808,8 +1808,8 @@ impl Curl {
             .or(body)
             .and_then(|file| file.parent())
             .map(Path::to_path_buf);
-        // HEAD no escribe cuerpo: si senalaramos el destino, la lectura
-        // encontraria los restos del numero de fichero de otro run.
+        // HEAD writes no body: if we pointed the destination, the read
+        // would find the leftovers of another run's file number.
         curl.body = if method == "HEAD" {
             None
         } else {
@@ -1818,14 +1818,14 @@ impl Curl {
         curl
     }
 
-    /// El proceso que se ejecuta.
+    /// The process that is run.
     fn command(&self) -> Command {
         let mut command = Command::new("curl");
         command.args(&self.args);
         command
     }
 
-    /// El comando tal y como se escribe en el informe.
+    /// The command as it is written in the report.
     pub fn shown(&self) -> String {
         let root = self
             .root
@@ -1854,17 +1854,17 @@ impl Curl {
         text
     }
 
-    /// Ejecuta el `curl` y devuelve su respuesta.
+    /// Runs `curl` and returns its response.
     pub fn run(&self) -> Answer {
         let mut command = self.command();
         the_answer(&mut command, self.body.as_deref())
     }
 
-    /// Lanza el `curl` en segundo plano.
+    /// Launches `curl` in the background.
     ///
-    /// La subida se queda en curso mientras el arnés hace otra cosa: es
-    /// lo que permite matar al servicio **a mitad de una subida**, que
-    /// es la forma de mirar un corte de verdad.
+    /// The upload stays in progress while the harness does something else: it is
+    /// what allows killing the service **halfway through an upload**, which
+    /// is the way to look at a real cut.
     pub fn run_in_background(&self) -> Child {
         let mut command = self.command();
         command.stdin(Stdio::null());
@@ -1874,10 +1874,10 @@ impl Curl {
     }
 }
 
-/// Un `curl` que publica un fichero.
+/// A `curl` that publishes a file.
 ///
-/// Con `--limit-rate` el cuerpo llega despacio, que es lo que hace falta
-/// para poder matar el servicio **a mitad de la subida**.
+/// With `--limit-rate` the body arrives slowly, which is what is needed
+/// to be able to kill the service **halfway through the upload**.
 pub fn curl_upload(
     port: u16,
     path: &str,
@@ -1888,17 +1888,17 @@ pub fn curl_upload(
     Curl::upload(port, path, token, file, limit_rate).run()
 }
 
-/// Un `curl` que descarga a un fichero, o a la nada.
+/// A `curl` that downloads to a file, or to nothing.
 pub fn curl_download(port: u16, path: &str, token: &str, into: Option<&Path>) -> Answer {
     Curl::download(port, path, token, into).run()
 }
 
-/// Un `curl` que solo pide la descripción.
+/// A `curl` that only asks for the description.
 pub fn curl_describe(port: u16, path: &str, token: &str) -> Answer {
     Curl::describe(port, path, token).run()
 }
 
-/// Un `curl` con una cabecera de más, que deja el cuerpo en un fichero.
+/// A `curl` with an extra header, which leaves the body in a file.
 pub fn curl_get_with_header(
     port: u16,
     path: &str,
@@ -1909,7 +1909,7 @@ pub fn curl_get_with_header(
     Curl::with_header(port, path, token, header, into).run()
 }
 
-/// Un `curl` que publica un fichero, en segundo plano.
+/// A `curl` that publishes a file, in the background.
 pub fn curl_upload_in_background(
     port: u16,
     path: &str,
@@ -1920,11 +1920,11 @@ pub fn curl_upload_in_background(
     Curl::upload(port, path, token, file, limit_rate).run_in_background()
 }
 
-/// La respuesta de un `curl` que se lanzó en segundo plano.
+/// The response of a `curl` that was launched in the background.
 ///
-/// Un `curl` que no pudo hablar con el servicio no tiene código: eso es
-/// un fallo de la prueba, y por eso el código es `0` y no un número
-/// inventado.
+/// A `curl` that could not talk to the service has no code: that is
+/// a test failure, and that is why the code is `0` and not an
+/// invented number.
 pub fn wait_for_the_answer(child: Child) -> Answer {
     let output = child.wait_with_output().expect("the curl finishes");
     assert!(
@@ -1943,11 +1943,11 @@ pub fn wait_for_the_answer(child: Child) -> Answer {
     }
 }
 
-/// Los recuentos que el arranque dice de los stagings.
+/// The counts that the startup states about the stagings.
 ///
-/// El arranque limpia lo caducado y respeta lo vivo, y lo dice: el
-/// número de los dos. Un recuento que solo existe en el código no es
-/// evidencia de nada; el log del servicio sí lo es.
+/// The startup cleans what has expired and respects what is alive, and says so: the
+/// number of both. A count that only exists in the code is not
+/// evidence of anything; the service log is.
 pub fn the_boot_cleanup(log: &str) -> (Option<u64>, Option<u64>) {
     let plain = without_the_colors(log);
     let mut removed = None;
@@ -1966,10 +1966,10 @@ pub fn the_boot_cleanup(log: &str) -> (Option<u64>, Option<u64>) {
     (removed, alive)
 }
 
-/// El número que un campo dice en una línea del log.
+/// The number that a field states in a log line.
 ///
-/// El formato del log es del servicio, y cambia; lo que no cambia es
-/// que el número va después del nombre del campo.
+/// The log format belongs to the service, and changes; what does not change is
+/// that the number comes after the field name.
 fn a_number_after(text: &str, field: &str) -> Option<u64> {
     let mut rest = text;
     while let Some(position) = rest.find(field) {
@@ -1989,11 +1989,11 @@ fn a_number_after(text: &str, field: &str) -> Option<u64> {
     None
 }
 
-/// La salida de un `curl`, comprobando que el `curl` terminó bien.
+/// The output of a `curl`, checking that `curl` finished well.
 ///
-/// Un `curl` que falla no tiene respuesta: su código es un error, no un
-/// estado HTTP. Mirar el estado de salida es lo que separa "el servicio
-/// dijo 404" de "no hubo servicio".
+/// A `curl` that fails has no response: its code is an error, not an
+/// HTTP status. Looking at the exit status is what separates "the service
+/// said 404" from "there was no service".
 fn the_output(command: &mut Command) -> String {
     let output = command.output().expect("curl has to be there");
     assert!(
@@ -2005,7 +2005,7 @@ fn the_output(command: &mut Command) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-/// La respuesta de un `curl` que se ha ejecutado.
+/// The response of a `curl` that has run.
 fn the_answer(command: &mut Command, body: Option<&Path>) -> Answer {
     let stdout = the_output(command);
     let (headers, status, size) = the_answer_of(&stdout);
@@ -2019,10 +2019,10 @@ fn the_answer(command: &mut Command, body: Option<&Path>) -> Answer {
     }
 }
 
-/// Las cabeceras, el código y el tamaño de la salida de un `curl`.
+/// The headers, the code and the size of the output of a `curl`.
 ///
-/// El `curl` escribe las cabeceras y después, al final, el código y el
-/// número de bytes que escribió en el destino.
+/// `curl` writes the headers and then, at the end, the code and the
+/// number of bytes it wrote to the destination.
 fn the_answer_of(stdout: &str) -> (String, u16, u64) {
     let mut headers = String::new();
     let mut status = 0;
@@ -2051,53 +2051,53 @@ fn the_answer_of(stdout: &str) -> (String, u16, u64) {
     (headers, status, size)
 }
 
-/// Un caso del informe.
+/// A case of the report.
 #[derive(Clone)]
 pub struct Case {
-    /// El identificador del caso.
+    /// The case identifier.
     pub id: String,
-    /// Lo que se dio.
+    /// What was given.
     pub given: String,
-    /// Lo que se hizo.
+    /// What was done.
     pub when: String,
-    /// El comando que lo hizo.
+    /// The command that did it.
     pub command: String,
-    /// El resultado real.
+    /// The real result.
     pub outcome: String,
-    /// Si el caso pasó.
+    /// Whether the case passed.
     pub passed: bool,
 }
 
-/// El informe de la conformidad.
+/// The conformance report.
 ///
-/// Los casos se escriben en un fichero, no solo en el log: un informe que
-/// solo existe en la salida de una CI se pierde en cuanto la CI se
-/// limpia.
+/// The cases are written to a file, not only to the log: a report that
+/// only exists in the output of a CI is lost as soon as the CI is
+/// cleaned.
 ///
-/// Cada superficie tiene **su** informe, con su titulo y su aviso de lo
-/// que no certifica: un informe que se titula "conformidad RAW" y
-/// certify casos de OCI es un informe que no dice la verdad, y el que lo
-/// lee no puede saber que mide.
+/// Each surface has **its own** report, with its title and its notice of what it
+/// does not certify: a report titled "RAW conformance" that
+/// certifies OCI cases is a report that does not tell the truth, and whoever reads it
+/// cannot know what it measures.
 pub struct Report {
-    /// El titulo del informe.
+    /// The title of the report.
     title: &'static str,
-    /// El aviso de lo que este informe **no** certifica.
+    /// The notice of what this report does **not** certify.
     disclaimer: &'static str,
-    /// Donde se escribe el informe.
+    /// Where the report is written.
     path: PathBuf,
-    /// Las herramientas que han hablado con el servicio.
+    /// The tools that have talked to the service.
     tools: String,
     cases: Vec<Case>,
 }
 
-/// Lo que el informe de la superficie cruda **no** certifica.
+/// What the raw surface report does **not** certify.
 const RAW_DISCLAIMER: &str = "\
 - **Ni compatibilidad OCI.** Nada de lo que se ha ejecutado habla el protocolo de OCI Distribution: no hay manifiestos, ni `HEAD` de tags, ni `GET` de blobs por digest con la semántica de OCI. La superficie es `raw`.\n\
 - **Ni compatibilidad S3.** No hay `ListBuckets`, ni `PutObject` con firma AWS, ni nada que se parezca a la API de S3.\n\
 - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es que los bytes vuelven intactos.\n\
 - **Ni la recolección de blobs sin referencia.** Un blob sin referenciar se puede quedar en el almacén; lo que se ha comprobado es que no se publica solo.";
 
-/// Lo que el informe del push OCI **no** certifica.
+/// What the OCI push report does **not** certify.
 const OCI_PUSH_DISCLAIMER: &str = "\
 - **Ni compatibilidad OCI completa.** Lo que se ha ejecutado es el corte de **push**: las sesiones de subida y el manifiesto. El indice multi-plataforma, los referrers y las firmas son de otras tareas, y no se pueden certificar con lo que aqui se ha medido.\n\
 - **Ni `oras` ni el `docker` de la CLI.** Los clientes reales que han hablado con el registro son `skopeo` y `podman`: son los que estan instalados en este entorno.\n\
@@ -2105,7 +2105,7 @@ const OCI_PUSH_DISCLAIMER: &str = "\
 - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea: lo que se ha medido es que los bytes vuelven intactos.\n\
 - **Ni la recolección de blobs sin referencia.** Un blob sin referenciar se puede quedar en el almacén; lo que se ha comprobado es que no se publica solo.";
 
-/// Lo que el informe del indice y los referrers **no** certifica.
+/// What the index and referrers report does **not** certify.
 const OCI_INDEX_DISCLAIMER: &str = "\
 - **Ni la validacion criptografica de las firmas.** Un referrer de firma se registra como lo que es: un manifiesto que dice que cuelga de otro. El registro **no** comprueba firmas, y la presencia de una no concede nada: la decision la toma el motor de confianza.\n\
 - **Ni la promocion de nada.** Lo que se ha comprobado es que un referrer **no** cambia el canal de confianza de aquello a lo que cuelga: sigue en cuarentena, y promoverla es de otra tarea.\n\
@@ -2114,12 +2114,12 @@ const OCI_INDEX_DISCLAIMER: &str = "\
 - **Ni la suite oficial de conformidad.** Este informe dice lo que se ha ejecutado aqui, no lo que dice la suite del `distribution-spec`.\n\
 - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea.";
 
-/// Lo que el informe de la compatibilidad con clientes reales **no**
-/// certifica.
+/// What the real-client compatibility report does **not**
+/// certify.
 ///
-/// Este informe es el que mide **que clientes hablan el protocolo**, y su
-/// valor esta en que sean los de verdad. Su limite esta en lo que los
-/// clientes de verdad no hacen, y en lo que el registro no hace.
+/// This report is the one that measures **which clients speak the protocol**, and its
+/// value lies in their being the real ones. Its limit lies in what real
+/// clients do not do, and in what the registry does not do.
 const OCI_E2E_DISCLAIMER: &str = "\
 - **Ni la conformidad de las categorias que no se han ejecutado.** El informe nombra las categorias de la suite oficial que se han ejecutado, con su resultado. De las demas no se dice nada: una categoria que no se ha ejecutado no es una categoria conforme, y decir lo contrario seria propaganda.\n\
 - **Ni validacion criptografica de las firmas.** Un referrer de firma se registra como lo que es: un manifiesto que dice que cuelga de otro. El registro **no** comprueba firmas, y la presencia de una no concede nada: la decision la toma el motor de confianza.\n\
@@ -2129,7 +2129,7 @@ const OCI_E2E_DISCLAIMER: &str = "\
 - **Ni disponibilidad.** No se ha medido el tiempo de respuesta, ni el comportamiento bajo carga, ni que el servicio aguante lo que sea.";
 
 impl Report {
-    /// Un informe vacío, el de la superficie cruda.
+    /// An empty report, the raw surface one.
     pub fn new() -> Self {
         Self {
             title: "Conformidad RAW — informe",
@@ -2140,19 +2140,19 @@ impl Report {
         }
     }
 
-    /// Un informe vacío, el del push OCI.
+    /// An empty report, the OCI push one.
     ///
-    /// Es un informe aparte, con su titulo y su aviso: el informe de la
-    /// superficie cruda lo leen los gates de la conformacion RAW, y un
-    /// caso de OCI en el no dice nada de lo que el gate cree.
+    /// It is a separate report, with its title and its notice: the raw
+    /// surface report is read by the RAW conformance gates, and an
+    /// OCI case in it says nothing of what the gate believes.
     pub fn for_oci_push() -> Self {
         Self {
             title: "Conformidad OCI push — informe",
             disclaimer: OCI_PUSH_DISCLAIMER,
             path: Self::the_oci_push_path(),
-            // Las versiones de los clientes van en el informe: un cliente
-            // sin version es un cliente del que no se puede decir que
-            // habla el protocolo.
+            // The client versions go in the report: a client
+            // without a version is a client of which it cannot be said that
+            // it speaks the protocol.
             tools: format!(
                 "{}; `{}`; `{}`",
                 the_tools(),
@@ -2163,19 +2163,19 @@ impl Report {
         }
     }
 
-    /// Un informe vacio, el del indice y los referrers.
+    /// An empty report, the index and referrers one.
     ///
-    /// Es un informe aparte, con su titulo y su aviso: uno que certify
-    /// el push y el indice en el mismo titulo diria que el registro
-    /// cumple el protocolo entero, y lo que se ha medido es una parte.
+    /// It is a separate report, with its title and its notice: one that certifies
+    /// the push and the index under the same title would say the registry
+    /// complies with the whole protocol, and what has been measured is a part.
     pub fn for_oci_index() -> Self {
         Self {
             title: "Conformidad OCI indice, etiquetas y referrers — informe",
             disclaimer: OCI_INDEX_DISCLAIMER,
             path: Self::the_oci_index_path(),
-            // Las versiones de los clientes van en el informe: un cliente
-            // sin version es un cliente del que no se puede decir que
-            // habla el protocolo.
+            // The client versions go in the report: a client
+            // without a version is a client of which it cannot be said that
+            // it speaks the protocol.
             tools: format!(
                 "{}; `oras {}`",
                 the_tools(),
@@ -2185,20 +2185,20 @@ impl Report {
         }
     }
 
-    /// Un informe vacio, el de la compatibilidad con los clientes reales.
+    /// An empty report, the real-client compatibility one.
     ///
-    /// Es un informe **aparte**, con su titulo y su aviso: el del indice
-    /// certify las consultas y los adjuntos, y lo que se mide aqui es otra
-    /// cosa--que clientes de verdad hablan el protocolo-- y un informe que
-    /// lo mezclara diria que el registro lo cumple entero.
+    /// It is a **separate** report, with its title and its notice: the index one
+    /// certifies the queries and the attachments, and what is measured here is something
+    /// else -- which real clients speak the protocol -- and a report that
+    /// mixed it would say the registry complies with it entirely.
     pub fn for_oci_e2e() -> Self {
         Self {
             title: "Compatibilidad OCI con clientes reales — informe",
             disclaimer: OCI_E2E_DISCLAIMER,
             path: Self::the_oci_e2e_path(),
-            // Las versiones de los clientes van en el informe: una
-            // compatibilidad sin la version del cliente no es una
-            // compatibilidad, es una intencion.
+            // The client versions go in the report: a
+            // compatibility without the client version is not a
+            // compatibility, it is an intention.
             tools: format!(
                 "{}; `oras {}`; `podman {}`; `docker {}`",
                 the_tools(),
@@ -2210,13 +2210,13 @@ impl Report {
         }
     }
 
-    /// Anota un caso y escribe el informe.
+    /// Records a case and writes the report.
     ///
-    /// Un caso con el mismo identificador **reemplaza** al anterior: un
-    /// caso que se anota antes de ejecutarse y se vuelve a anotar con su
-    /// resultado deja en el informe un `FALLO` si la prueba se muere
-    /// antes de terminar, y no un caso que no aparece. Un informe que
-    /// solo sabe decir `PASS` no es un informe: es propaganda.
+    /// A case with the same identifier **replaces** the previous one: a
+    /// case that is recorded before running and recorded again with its
+    /// result leaves a `FAILURE` in the report if the test dies
+    /// before finishing, and not a case that does not appear. A report that
+    /// can only say `PASS` is not a report: it is propaganda.
     pub fn record(&mut self, case: Case) {
         match self
             .cases
@@ -2229,7 +2229,7 @@ impl Report {
         self.write();
     }
 
-    /// La ruta del fichero del informe.
+    /// The path of the report file.
     pub fn the_path() -> PathBuf {
         let configured = std::env::var_os("HODEI_UAT_REPORT").map(PathBuf::from);
         configured.unwrap_or_else(|| {
@@ -2240,10 +2240,10 @@ impl Report {
         })
     }
 
-    /// La ruta del fichero del informe del push OCI.
+    /// The path of the OCI push report file.
     ///
-    /// La del informe de la superficie cruda la decide la pipeline, y no
-    /// se mezcla con la de otra superficie.
+    /// The raw surface report's is decided by the pipeline, and it is not
+    /// mixed with that of another surface.
     pub fn the_oci_push_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
@@ -2251,7 +2251,7 @@ impl Report {
             .join("oci-push-conformity.md")
     }
 
-    /// La ruta del fichero del informe del indice.
+    /// The path of the index report file.
     pub fn the_oci_index_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
@@ -2259,8 +2259,8 @@ impl Report {
             .join("oci-index-conformity.md")
     }
 
-    /// La ruta del fichero del informe de la compatibilidad con los
-    /// clientes reales.
+    /// The path of the real-client compatibility report
+    /// file.
     pub fn the_oci_e2e_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("target")
@@ -2268,13 +2268,13 @@ impl Report {
             .join("oci-compatibility.md")
     }
 
-    /// Escribe el informe.
+    /// Writes the report.
     ///
-    /// La escritura es **atomica**: el informe se escribe en un fichero
-    /// al lado y se renombra encima. Un informe a medias--por un corte o
-    /// por un lector que llega mientras se escribe-- es un informe
-    /// corrupto, y un informe corrupto que existe pasa el guard de la
-    /// pipeline como si fuera bueno.
+    /// The write is **atomic**: the report is written to a file
+    /// next to it and renamed on top. A half-written report -- by a cut or
+    /// by a reader arriving while it is being written -- is a corrupt
+    /// report, and a corrupt report that exists passes the pipeline's guard
+    /// as if it were good.
     pub fn write(&self) {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).expect("the directory of the report");
@@ -2284,7 +2284,7 @@ impl Report {
         std::fs::rename(&temporary, &self.path).expect("the report is put in its place");
     }
 
-    /// El informe, en Markdown.
+    /// The report, in Markdown.
     pub fn as_markdown(&self) -> String {
         let mut text = String::new();
         text.push_str(&format!("# {}\n\n", self.title));
@@ -2318,16 +2318,16 @@ impl Report {
     }
 }
 
-/// El texto de una celda de la tabla del informe.
+/// The text of a cell of the report table.
 ///
-/// La tabla es de Markdown, asi que una barra vertical rompe la fila y
-/// un salto de linea la convierte en dos: el texto de un caso--que puede
-/// ser la salida de un cliente-- se escapa para que la tabla siga siendo
-/// una tabla.
+/// The table is Markdown, so a vertical bar breaks the row and
+/// a line break turns it into two: the text of a case -- which may
+/// be the output of a client -- is escaped so that the table remains
+/// a table.
 ///
-/// Y se **redacta**: el informe dice con quien se hablo, no con que se
-/// autentico. Un texto que llega al informe sin pasar por aqui puede
-/// llevar un token, y un informe se archiva y se comparte.
+/// And it is **redacted**: the report says who was talked to, not what they
+/// authenticated with. A text that reaches the report without passing through here may
+/// carry a token, and a report is archived and shared.
 fn the_cell(text: &str) -> String {
     let mut cell = String::new();
     for line in text.lines() {
@@ -2346,29 +2346,29 @@ fn the_cell(text: &str) -> String {
         })
 }
 
-/// El informe compartido por los casos de este binario.
+/// The report shared by the cases of this binary.
 static REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
 
-/// El informe compartido.
+/// The shared report.
 pub fn the_report() -> &'static Mutex<Report> {
     REPORT.get_or_init(|| Mutex::new(Report::new()))
 }
 
-/// Anota un caso en el informe compartido.
+/// Records a case in the shared report.
 pub fn record(case: Case) {
     let mut report = the_report().lock().expect("the report is not poisoned");
     report.record(case);
 }
 
-/// El informe del push OCI, compartido por los casos de su binario.
+/// The OCI push report, shared by the cases of its binary.
 static OCI_PUSH_REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
 
-/// El informe del push OCI.
+/// The OCI push report.
 pub fn the_oci_push_report() -> &'static Mutex<Report> {
     OCI_PUSH_REPORT.get_or_init(|| Mutex::new(Report::for_oci_push()))
 }
 
-/// Anota un caso en el informe del push OCI.
+/// Records a case in the OCI push report.
 pub fn record_oci_push(case: Case) {
     let mut report = the_oci_push_report()
         .lock()
@@ -2376,16 +2376,16 @@ pub fn record_oci_push(case: Case) {
     report.record(case);
 }
 
-/// El informe del indice y los referrers, compartido por los casos de su
-/// binario.
+/// The index and referrers report, shared by the cases of its
+/// binary.
 static OCI_INDEX_REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
 
-/// El informe del indice y los referrers.
+/// The index and referrers report.
 pub fn the_oci_index_report() -> &'static Mutex<Report> {
     OCI_INDEX_REPORT.get_or_init(|| Mutex::new(Report::for_oci_index()))
 }
 
-/// Anota un caso en el informe del indice y los referrers.
+/// Records a case in the index and referrers report.
 pub fn record_oci_index(case: Case) {
     let mut report = the_oci_index_report()
         .lock()
@@ -2393,17 +2393,17 @@ pub fn record_oci_index(case: Case) {
     report.record(case);
 }
 
-/// El informe de la compatibilidad con los clientes reales, compartido por
-/// los casos de su binario.
+/// The real-client compatibility report, shared by
+/// the cases of its binary.
 static OCI_E2E_REPORT: OnceLock<Mutex<Report>> = OnceLock::new();
 
-/// El informe de la compatibilidad con los clientes reales.
+/// The real-client compatibility report.
 pub fn the_oci_e2e_report() -> &'static Mutex<Report> {
     OCI_E2E_REPORT.get_or_init(|| Mutex::new(Report::for_oci_e2e()))
 }
 
-/// Anota un caso en el informe de la compatibilidad con los clientes
-/// reales.
+/// Records a case in the real-client compatibility
+/// report.
 pub fn record_oci_e2e(case: Case) {
     let mut report = the_oci_e2e_report()
         .lock()
@@ -2411,11 +2411,11 @@ pub fn record_oci_e2e(case: Case) {
     report.record(case);
 }
 
-/// Donde esta el `oras`.
+/// Where `oras` is.
 ///
-/// No siempre esta en el `PATH` de quien lanza las pruebas, y una
-/// herramienta que no se encuentra es una herramienta que no se puede
-/// probar: se dice donde se busca y se deja el sitio.
+/// It is not always on the `PATH` of whoever launches the tests, and a
+/// tool that cannot be found is a tool that cannot be
+/// tested: it is said where it is looked for and the place is left.
 pub fn the_oras() -> String {
     if let Some(binary) = std::env::var_os("HODEI_ORAS_BIN") {
         return binary.to_string_lossy().into_owned();
@@ -2442,18 +2442,18 @@ pub fn the_oras() -> String {
         .clone()
 }
 
-/// Donde esta el `oras`: se busca **una vez**.
+/// Where `oras` is: it is looked up **once**.
 ///
-/// La busqueda lanza un proceso por cada comando que usa la herramienta,
-/// y una prueba que llama a `oras` veinte veces lanza veinte procesos
-/// para preguntar lo mismo.
+/// The lookup launches a process for each command the tool uses,
+/// and a test that calls `oras` twenty times launches twenty processes
+/// to ask the same thing.
 static THE_ORAS: OnceLock<String> = OnceLock::new();
 
-/// Donde esta el `docker` de la CLI.
+/// Where the CLI `docker` is.
 ///
-/// La CLI de Docker no viene con el sistema: se instala aparte, y el sitio
-/// donde se ha puesto se dice, para que el informe pueda nombrar la version
-/// con la que se ha hablado.
+/// The Docker CLI does not come with the system: it is installed separately, and the place
+/// where it was put is stated, so that the report can name the version
+/// it talked to.
 pub fn the_docker() -> String {
     if let Some(binary) = std::env::var_os("HODEI_DOCKER_BIN") {
         return binary.to_string_lossy().into_owned();
@@ -2480,14 +2480,14 @@ pub fn the_docker() -> String {
         .clone()
 }
 
-/// Donde esta el `docker` de la CLI: se busca **una vez**.
+/// Where the CLI `docker` is: it is looked up **once**.
 static THE_DOCKER: OnceLock<String> = OnceLock::new();
 
-/// Donde esta el `podman`.
+/// Where `podman` is.
 ///
-/// El `podman` es el motor de imagen, y el que hace de demonio para el
-/// `docker` de la CLI: la CLI de Docker no habla con un registro, habla con
-/// un demonio.
+/// `podman` is the image engine, and the one that acts as daemon for the
+/// CLI `docker`: the Docker CLI does not talk to a registry, it talks to
+/// a daemon.
 pub fn the_podman() -> String {
     if let Some(binary) = std::env::var_os("HODEI_PODMAN_BIN") {
         return binary.to_string_lossy().into_owned();
@@ -2508,10 +2508,10 @@ pub fn the_podman() -> String {
         .clone()
 }
 
-/// Donde esta el `podman`: se busca **una vez**.
+/// Where `podman` is: it is looked up **once**.
 static THE_PODMAN: OnceLock<String> = OnceLock::new();
 
-/// La versión del servicio que se ha probado.
+/// The version of the service that has been tested.
 pub fn the_version() -> String {
     let commit = Command::new("git")
         .args(["rev-parse", "--short", "HEAD"])
@@ -2528,7 +2528,7 @@ pub fn the_version() -> String {
     )
 }
 
-/// Las versiones de las herramientas que participa en la conformidad.
+/// The versions of the tools that take part in the conformance.
 pub fn the_tools() -> String {
     let curl = the_first_line_of(&["curl", "--version"]);
     let sha = the_first_line_of(&["sha256sum", "--version"]);
@@ -2537,11 +2537,11 @@ pub fn the_tools() -> String {
     format!("`{curl}`; `{sha}`; `{cargo}`; sistema `{system}`")
 }
 
-/// El momento de la conformidad.
+/// The moment of the conformance.
 ///
-/// Un informe sin fecha es un informe que no se puede situar en el
-/// tiempo, y un informe que no se puede situar en el tiempo no dice si
-/// se ha repetido o si es la primera vez.
+/// A report without a date is a report that cannot be placed in
+/// time, and a report that cannot be placed in time does not say whether
+/// it has been repeated or whether it is the first time.
 pub fn the_moment() -> String {
     let output = Command::new("date").args(["--iso-8601=seconds"]).output();
     match output {
@@ -2552,11 +2552,11 @@ pub fn the_moment() -> String {
     }
 }
 
-/// La version de una herramienta, sin el ruido que la envuelve.
+/// The version of a tool, without the noise that surrounds it.
 ///
-/// El `oras` dice su version en una linea con la forma
-/// `Version:        1.2.0`, y en el informe lo que interesa es el
-/// numero.
+/// `oras` states its version on a line of the form
+/// `Version:        1.2.0`, and in the report what matters is the
+/// number.
 fn the_version_of(command: &[&str]) -> String {
     let line = the_first_line_of(command);
     match line.split_once(':') {
@@ -2565,7 +2565,7 @@ fn the_version_of(command: &[&str]) -> String {
     }
 }
 
-/// La primera línea de la salida de un comando.
+/// The first line of the output of a command.
 fn the_first_line_of(command: &[&str]) -> String {
     let Ok(output) = Command::new(command[0]).args(&command[1..]).output() else {
         return format!("{}: no disponible", command[0]);
@@ -2581,10 +2581,10 @@ fn the_first_line_of(command: &[&str]) -> String {
         .to_string()
 }
 
-/// Siembra el catálogo en el proceso actual.
+/// Seeds the catalog in the current process.
 ///
-/// Solo siembra si el proceso es el que otro ha mandado sembrar: el
-/// proceso que siembra es otro, y el que se prueba es el servicio.
+/// It only seeds if the process is the one that another has ordered to seed: the
+/// process that seeds is another, and the one under test is the service.
 pub fn seed_if_asked() {
     let Some(db) = std::env::var_os("HODEI_SEED_DB") else {
         return;

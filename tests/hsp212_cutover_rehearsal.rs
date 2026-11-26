@@ -1,25 +1,25 @@
-//! Ensayo de cutover y rollback de una sola autoridad (HSP-212, HGS-29).
+//! Cutover and rollback rehearsal of a single authority (HSP-212, HGS-29).
 //!
-//! Sobre las fixtures y los seams certificados de HSP-210 (import
-//! idempotente) y HSP-211 (gate semántico con `CutoverToken`), este IT
-//! ejercita la máquina de estados de `src/recovery/cutover.rs` con el
-//! paquete real de 31 filas / 13 tablas y demuestra conducta, no mocks:
+//! On the certified fixtures and seams of HSP-210 (idempotent import)
+//! and HSP-211 (semantic gate with `CutoverToken`), this IT
+//! exercises the state machine of `src/recovery/cutover.rs` with the real
+//! package of 31 rows / 13 tables and demonstrates behavior, not mocks:
 //!
-//! - AC1: ensayo completo con tráfico real — barrera, snapshot, import,
-//!   gate y conmutación. En la fase conmutada el origen es read-only
-//!   (sirve lecturas, rechaza y **cuenta** escrituras) y el destino es la
-//!   autoridad exclusiva. En cada fase hay a lo sumo una autoridad
-//!   activa: split-brain no construible. Un destino ensuciado por fuera
-//!   bloquea el gate con culpable nombrado y hace ilegal la conmutación.
-//! - AC2: rollback pre-primera-escritura restaura el origen exactamente
-//!   (y se niega si el destino derivó); tras la primera escritura nueva
-//!   el rollback libre está prohibido y solo el forward recovery
-//!   (congelar → export → replay → gate → token) devuelve la autoridad
-//!   sin pérdida silenciosa. Un kill a mitad del import se reanuda al
-//!   fingerprint idéntico de la corrida limpia (patrón CrashSink 210).
-//! - AC3: la ventana de cutover y el RPO/RTO se miden en la corrida y se
-//!   publican en `target/uat/hsp212/evidencia.md` como valores
-//!   observados, nunca como promesa.
+//! - AC1: full rehearsal with real traffic -- barrier, snapshot, import,
+//!   gate and switch. In the switched phase the origin is read-only
+//!   (serves reads, rejects and **counts** writes) and the destination is the
+//!   exclusive authority. In each phase there is at most one active
+//!   authority: split-brain is not constructible. A destination dirtied from outside
+//!   blocks the gate with a named culprit and makes the switch illegal.
+//! - AC2: pre-first-write rollback restores the origin exactly
+//!   (and refuses if the destination drifted); after the first new write
+//!   free rollback is forbidden and only forward recovery
+//!   (freeze → export → replay → gate → token) returns the authority
+//!   without silent loss. A kill midway through the import resumes to the
+//!   fingerprint identical to the clean run (CrashSink 210 pattern).
+//! - AC3: the cutover window and the RPO/RTO are measured in the run and
+//!   published in `target/uat/hsp212/evidencia.md` as observed
+//!   values, never as a promise.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ const PACKAGE: &str = concat!(
     "/tests/fixtures/hsp210-authorities"
 );
 
-/// Claves de las filas del fixture que llevan un digest de contenido.
+/// Keys of the fixture rows that carry a content digest.
 const DIGEST_KEYS: [(&str, &str); 5] = [
     ("catalog_asset", "sha256"),
     ("catalog_reference", "sha256"),
@@ -63,8 +63,8 @@ fn options(batch_rows: usize, resume: bool) -> ImportOptions {
     }
 }
 
-/// El CAS de la plataforma del ensayo: exactamente los digests que el
-/// fixture referencia, leídos del propio paquete.
+/// The CAS of the rehearsal platform: exactly the digests that the
+/// fixture references, read from the package itself.
 fn fixture_cas() -> Arc<dyn DigestReconciler> {
     let manifest = read_import_manifest(&package_dir()).unwrap();
     let mut digests: BTreeSet<String> = BTreeSet::new();
@@ -85,9 +85,9 @@ fn fixture_cas() -> Arc<dyn DigestReconciler> {
     Arc::new(SetReconciler::new(digests))
 }
 
-/// El origen con tráfico: el fixture importado limpio, 31 filas. Sembrar
-/// por el seam del 210 es lo que da realismo — el origen contiene
-/// exactamente lo que el import del ensayo va a confrontar.
+/// The origin with traffic: the fixture imported clean, 31 rows. Seeding
+/// through the 210 seam is what gives realism -- the origin contains
+/// exactly what the rehearsal's import is going to confront.
 async fn seeded_origin() -> Arc<MemorySink> {
     let dir = tempfile::tempdir().unwrap();
     let sink: Arc<MemorySink> = Arc::new(MemorySink::new());
@@ -104,9 +104,9 @@ async fn seeded_origin() -> Arc<MemorySink> {
     sink
 }
 
-/// Monta una máquina sobre origen sembrado y destino vacío, ya con la
-/// barrera cerrada... no: sin cerrar. Devuelve también el workspace, que
-/// el llamante debe mantener vivo.
+/// Builds a machine over a seeded origin and an empty destination, already with the
+/// barrier closed... no: not closed. It also returns the workspace, which
+/// the caller must keep alive.
 async fn rehearsal(
     workspace: &Path,
     cas: Arc<dyn DigestReconciler>,
@@ -131,7 +131,7 @@ async fn default_machine() -> (tempfile::TempDir, CutoverMachine) {
     (dir, machine)
 }
 
-/// Invariante AC1: en cualquier fase hay a lo sumo una autoridad activa.
+/// AC1 invariant: in any phase there is at most one active authority.
 fn assert_single_authority(machine: &CutoverMachine) {
     assert!(
         !(machine.origin().is_active() && machine.destination().is_active()),
@@ -140,7 +140,7 @@ fn assert_single_authority(machine: &CutoverMachine) {
     );
 }
 
-/// El recorrido feliz hasta el corte, compartido por los ensayos.
+/// The happy path up to the cut, shared by the rehearsals.
 async fn cut_over(machine: &mut CutoverMachine) -> hodei_artifacts_api::recovery::CutoverToken {
     assert_single_authority(machine);
     machine.close_barrier().await.expect("barrier");
@@ -152,7 +152,7 @@ async fn cut_over(machine: &mut CutoverMachine) -> hodei_artifacts_api::recovery
         .await
         .expect("gate verifies the faithful import");
     assert_eq!(machine.phase(), Phase::GateVerified);
-    // La API no se conmuta sin el token de este ensayo.
+    // The API is not switched without this rehearsal's token.
     machine
         .commit(&token)
         .await
@@ -167,8 +167,8 @@ async fn ac1_switch_leaves_origin_read_only_and_destination_exclusive() {
     let (_dir, mut machine) = default_machine().await;
     let token = cut_over(&mut machine).await;
 
-    // El origen, congelado en la barrera, es read-only estricto: sirve
-    // las 31 filas y rechaza y cuenta cada intento del servicio viejo.
+    // The origin, frozen at the barrier, is strictly read-only: it serves
+    // the 31 rows and rejects and counts each attempt of the old service.
     let sample = machine
         .origin()
         .read("catalog_tag:acme|main|stable")
@@ -193,8 +193,8 @@ async fn ac1_switch_leaves_origin_read_only_and_destination_exclusive() {
         "rechazo contado"
     );
 
-    // Integridad/trust: el fingerprint verificado en el corte es el de
-    // ambas autoridades, congelado en el token.
+    // Integrity/trust: the fingerprint verified at the cut is that of
+    // both authorities, frozen in the token.
     assert_eq!(
         machine.destination().fingerprint().await.unwrap(),
         token.destination_fingerprint(),
@@ -205,9 +205,9 @@ async fn ac1_switch_leaves_origin_read_only_and_destination_exclusive() {
     );
     assert_eq!(token.origin_fingerprint(), token.destination_fingerprint());
 
-    // El destino es la autoridad exclusiva: escribe con identidad
-    // canónica y lee lo importado. Después del corte, el destino ya no
-    // coincide con el token — es la prueba de que manda él.
+    // The destination is the exclusive authority: it writes with canonical
+    // identity and reads what was imported. After the cut, the destination no longer
+    // matches the token -- which proves it is the one in charge.
     machine
         .destination()
         .write("catalog_tag:acme|main|newest", &stray)
@@ -227,8 +227,8 @@ async fn ac1_switch_leaves_origin_read_only_and_destination_exclusive() {
         "a write on the new authority moves it past the verified token"
     );
 
-    // No hay segunda conmutación sin ciclo nuevo: la fase ya no lo
-    // permite (nada de re-switch silencioso).
+    // There is no second switch without a new cycle: the phase no longer
+    // allows it (no silent re-switch).
     let error = machine
         .commit(&token)
         .await
@@ -245,8 +245,8 @@ async fn ac1_dirty_destination_blocks_the_gate_and_no_commit_happens() {
     machine.close_barrier().await.expect("barrier");
     machine.import_snapshot().await.expect("import");
 
-    // El servicio ensucia el destino por fuera de la máquina antes de
-    // la verificación: el gate lo nombra, no lo perdona.
+    // The service dirties the destination from outside the machine before
+    // the verification: the gate names it, does not forgive it.
     let mut tag = Row::new();
     tag.insert("account".into(), Value::String("acme".into()));
     tag.insert("repository".into(), Value::String("main".into()));
@@ -272,7 +272,7 @@ async fn ac1_dirty_destination_blocks_the_gate_and_no_commit_happens() {
             .any(|d| matches!(d, Divergence::Extra { what } if what.contains("drift"))),
         "the extra row must be named: {divergences:?}"
     );
-    // Sin token no hay fase GateVerified, y por tanto commit es ilegal.
+    // Without a token there is no GateVerified phase, and therefore commit is illegal.
     assert_eq!(machine.phase(), Phase::DestinationImported);
     assert!(!machine.destination().is_active(), "el corte no ocurrió");
     assert!(machine.origin().is_frozen());
@@ -289,8 +289,8 @@ async fn ac2_pre_write_rollback_restores_the_origin_exactly() {
         .expect("origin fingerprint before the rehearsal");
     let token = cut_over(&mut machine).await;
 
-    // El destino deriva por fuera: el rollback libre exige el estado
-    // exactamente verificado por el token.
+    // The destination drifts from outside: free rollback requires the state
+    // exactly verified by the token.
     let mut tag = Row::new();
     tag.insert("account".into(), Value::String("acme".into()));
     tag.insert("repository".into(), Value::String("main".into()));
@@ -308,7 +308,7 @@ async fn ac2_pre_write_rollback_restores_the_origin_exactly() {
         .expect_err("rollback over a drifted destination is refused");
     assert!(matches!(error, CutoverError::Drifted { .. }), "{error}");
 
-    // Correr el rollback sobre estado intacto: otra máquina limpia.
+    // Run the rollback over an intact state: another clean machine.
     let (_dir2, mut clean) = default_machine().await;
     cut_over(&mut clean).await;
     clean.rollback().await.expect("free pre-write rollback");
@@ -323,7 +323,7 @@ async fn ac2_pre_write_rollback_restores_the_origin_exactly() {
         origin_fingerprint,
         "restore is exact: the origin never wrote since the barrier"
     );
-    // Y el servicio vuelve a escribir en el origen.
+    // And the service writes to the origin again.
     let mut tag = Row::new();
     tag.insert("account".into(), Value::String("acme".into()));
     tag.insert("repository".into(), Value::String("main".into()));
@@ -337,8 +337,8 @@ async fn ac2_pre_write_rollback_restores_the_origin_exactly() {
     let _ = token;
 }
 
-/// Tres escrituras nuevas coherentes: un tag, su evento de ledger y el
-/// cabezal que lo respalda (prepare rechazaría un cabezal que miente).
+/// Three coherent new writes: a tag, its ledger event and the
+/// head that backs it (prepare would reject a head that lies).
 fn post_cutover_writes() -> Vec<(String, Row)> {
     let mut tag = Row::new();
     tag.insert("account".into(), Value::String("acme".into()));
@@ -379,7 +379,7 @@ async fn ac2_post_write_forward_recovery_returns_without_silent_loss() {
     }
     assert_eq!(machine.phase(), Phase::CutOverLive);
 
-    // Regla 2: después de la primera escritura nueva no se vuelve gratis.
+    // Rule 2: after the first new write there is no free way back.
     let error = machine
         .rollback()
         .await
@@ -389,7 +389,7 @@ async fn ac2_post_write_forward_recovery_returns_without_silent_loss() {
         "{error}"
     );
 
-    // Forward recovery: congelar, exportar, replay al origen con gate.
+    // Forward recovery: freeze, export, replay to the origin with gate.
     machine
         .export_forward()
         .await
@@ -401,8 +401,8 @@ async fn ac2_post_write_forward_recovery_returns_without_silent_loss() {
         .expect("the replay verifies against the frozen destination");
     assert_eq!(machine.phase(), Phase::ReplayValidated);
 
-    // El regreso exige el token de ESTE replay: el del corte original ya
-    // no vale — sus fingerprints describen otro estado.
+    // The return requires the token of THIS replay: that of the original cut is no
+    // longer valid -- its fingerprints describe another state.
     let error = machine
         .rollback_with_replay(&cut_token)
         .await
@@ -418,8 +418,8 @@ async fn ac2_post_write_forward_recovery_returns_without_silent_loss() {
     assert!(!machine.destination().is_active());
     assert_single_authority(&machine);
 
-    // Sin pérdida silenciosa: las tres escrituras nuevas están en el
-    // origen restaurado.
+    // Without silent loss: the three new writes are in the
+    // restored origin.
     for (identity, _) in post_cutover_writes() {
         assert!(
             machine.origin().read(&identity).await.unwrap().is_some(),
@@ -435,9 +435,9 @@ async fn ac2_post_write_forward_recovery_returns_without_silent_loss() {
 
 #[tokio::test]
 async fn ac2_a_kill_mid_import_resumes_to_the_identical_fingerprint() {
-    // AC2/AC1: la pierna de import sobrevive a un corte: presupuesto de
-    // escrituras agotado a mitad, reanudación, y el destino queda en el
-    // fingerprint idéntico al de la corrida limpia (patrón CrashSink 210).
+    // AC2/AC1: the import leg survives a cut: write budget exhausted midway,
+    // resume, and the destination ends at the
+    // fingerprint identical to that of the clean run (CrashSink 210 pattern).
     let dir = tempfile::tempdir().unwrap();
     let inner = Arc::new(MemorySink::new());
     let budget = Arc::new(AtomicUsize::new(5));
@@ -449,7 +449,7 @@ async fn ac2_a_kill_mid_import_resumes_to_the_identical_fingerprint() {
         dir.path(),
         fixture_cas(),
         destination,
-        options(1, true), // filas de 1 y resume: el corte cae dentro de un lote
+        options(1, true), // rows of 1 and resume: the cut falls inside a batch
     )
     .await;
 
@@ -470,7 +470,7 @@ async fn ac2_a_kill_mid_import_resumes_to_the_identical_fingerprint() {
     );
     assert!(dir.path().join(".cutover-import-progress.json").exists());
 
-    // El operador recupera el proceso y reanuda: presupuesto renovado.
+    // The operator recovers the process and resumes: renewed budget.
     budget.store(usize::MAX, Ordering::SeqCst);
     machine
         .import_snapshot()
@@ -483,8 +483,8 @@ async fn ac2_a_kill_mid_import_resumes_to_the_identical_fingerprint() {
     );
     assert_eq!(inner.len().await, 31, "the kill added no duplicate");
 
-    // Y el ensayo continúa hasta el corte: la reanudación no dejó el
-    // estado en tierra de nadie.
+    // And the rehearsal continues up to the cut: the resumption did not leave the
+    // state in no-man's-land.
     let token = machine
         .verify()
         .await
@@ -496,7 +496,7 @@ async fn ac2_a_kill_mid_import_resumes_to_the_identical_fingerprint() {
     assert_single_authority(&machine);
 }
 
-/// El sink que "muere" tras N escrituras, como en HSP-210.
+/// The sink that "dies" after N writes, as in HSP-210.
 struct CrashSink {
     inner: Arc<MemorySink>,
     budget: Arc<AtomicUsize>,
@@ -554,9 +554,9 @@ async fn ac3_window_measured_and_rpo_rto_published_as_observed() {
     )
     .await;
 
-    // Tráfico real durante la ventana: un intento del servicio viejo
-    // mientras la barrera está cerrada. Se rechaza y se cuenta: el RPO
-    // se reporta medido, no jurado.
+    // Real traffic during the window: an attempt by the old service
+    // while the barrier is closed. It is rejected and counted: the RPO
+    // is reported measured, not sworn.
     machine.close_barrier().await.expect("barrier");
     let mut stray = Row::new();
     stray.insert("account".into(), Value::String("acme".into()));
@@ -576,8 +576,8 @@ async fn ac3_window_measured_and_rpo_rto_published_as_observed() {
     let token = machine.verify().await.expect("gate");
     machine.commit(&token).await.expect("switch");
 
-    // Primera escritura nueva medida (el RTO termina en el corte; esto
-    // es el tráfico reanudado que lo confirma vivo).
+    // First new write measured (the RTO ends at the cut; this
+    // is the resumed traffic that confirms it alive).
     machine
         .write_new("catalog_tag:acme|main|first-live", &stray)
         .await
@@ -600,7 +600,7 @@ async fn ac3_window_measured_and_rpo_rto_published_as_observed() {
     assert!(evidence.contains("RTO observado"), "{evidence}");
     assert!(evidence.contains(&metrics.verified_fingerprint));
 
-    // Publicar la evidencia (AC3): valores medidos de esta corrida.
+    // Publish the evidence (AC3): measured values of this run.
     let tmp = PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
     let target = tmp.parent().unwrap_or(&tmp).to_path_buf();
     let dir = target.join("uat").join("hsp212");

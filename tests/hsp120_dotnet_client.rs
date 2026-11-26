@@ -1,20 +1,20 @@
-//! El `dotnet nuget push` y `dotnet restore` de HSP-120 contra el
-//! **cliente real** (`dotnet`).
+//! HSP-120 `dotnet nuget push` and `dotnet restore` against the
+//! **real client** (`dotnet`).
 //!
-//! La suite HTTP mide el protocolo; esta mide que el binario `dotnet`,
-//! con su fuente NuGet apuntando al hub, sube el paquete que `pack`
-//! fabrico y lo baja despues en su cache **con los bytes exactos** que
-//! se publicaron. El digest preservado no es una promesa del arnes: es
-//! lo que el propio cliente comprueba (el `contentHash` del paquete y
-//! su `.sha512`) antes de dar la bajada por buena.
+//! The HTTP suite measures the protocol; this one measures that the `dotnet` binary,
+//! with its NuGet source pointing at the hub, uploads the package that `pack`
+//! produced and then downloads it into its cache **with the exact bytes** that
+//! were published. The preserved digest is not a promise of the harness: it is
+//! what the client itself checks (the package's `contentHash` and
+//! its `.sha512`) before accepting the download as good.
 //!
-//! Hace falta el SDK de .NET: sin el, la suite **falla** diciendo que
-//! falta, como las demas suites de cliente real.
+//! The .NET SDK is needed: without it, the suite **fails** saying that it
+//! is missing, like the other real-client suites.
 //!
-//! A diferencia del cliente `go`, NuGet habla http sin pestañear: no
-//! hace falta puente TLS. La cache del cliente se ailla con
-//! `NUGET_PACKAGES`, y el HOME con `DOTNET_CLI_HOME`: nada del HOME
-//! real se lee ni se escribe.
+//! Unlike the `go` client, NuGet speaks http without blinking: no
+//! TLS bridge is needed. The client cache is isolated with
+//! `NUGET_PACKAGES`, and the HOME with `DOTNET_CLI_HOME`: nothing of the
+//! real HOME is read or written.
 
 mod support;
 
@@ -23,14 +23,14 @@ use std::process::Command;
 
 use support::{Answer, Curl, Deployment};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// El binario `dotnet`: el PATH primero, y luego la instalacion local
-/// del script oficial.
+/// The `dotnet` binary: the PATH first, and then the local installation
+/// of the official script.
 fn require_dotnet() -> PathBuf {
     if let Some(found) = std::env::var_os("DOTNET")
         .map(PathBuf::from)
@@ -71,14 +71,14 @@ fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// La casa del cliente: todo el estado de dotnet dentro del despliegue.
+/// The client's home: all the dotnet state inside the deployment.
 struct Client {
     dotnet: PathBuf,
     root: PathBuf,
 }
 
 impl Client {
-    /// `dotnet <args...>` en el directorio dado, con el entorno aislado.
+    /// `dotnet <args...>` in the given directory, with the isolated environment.
     fn run(&self, work: &Path, args: &[&str]) -> std::process::Output {
         let output = Command::new(&self.dotnet)
             .current_dir(work)
@@ -87,16 +87,16 @@ impl Client {
             .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
             .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "1")
             .env("DOTNET_NOLOGO", "1")
-            // Nada de demonios heredando descriptores: `pack` y `build`
-            // levantan VBCSCompiler y nodos de MSBuild que sobreviven al
-            // hijo y se quedan con el pipe de la salida del paso, de modo
-            // que el transcript del gate nunca ve el EOF.
+            // No daemons inheriting descriptors: `pack` and `build`
+            // spawn VBCSCompiler and MSBuild nodes that outlive the
+            // child and hold on to the pipe of the step's output, so
+            // that the gate transcript never sees the EOF.
             .env("DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER", "1")
             .env("MSBUILDDISABLENODEREUSE", "1")
             .env("UseSharedCompilation", "false")
-            // La cache de paquetes del cliente, aqui dentro: la prueba
-            // puede exigir que el paquete haya bajado del hub, y no
-            // encontrarlo ya en la cache del operador.
+            // The client's package cache, in here: the test
+            // can require that the package was downloaded from the hub, and
+            // not find it already in the operator's cache.
             .env("NUGET_PACKAGES", self.root.join("packages"))
             .args(args)
             .output()
@@ -112,11 +112,11 @@ impl Client {
     }
 }
 
-/// El NuGet.config que hace del hub **la unica fuente del mundo**:
-/// `<clear/>` no es decoracion, es la prueba de que lo bajado vino de
-/// Hodei y no de nuget.org. Las credenciales de la fuente viajan como
-/// Basic `usuario:clave`, con la clave como contrasena: es lo que
-/// manda el cliente en cada peticion de lectura.
+/// The NuGet.config that makes the hub **the only source in the world**:
+/// `<clear/>` is not decoration, it is the proof that what was downloaded came from
+/// Hodei and not from nuget.org. The source credentials travel as
+/// Basic `user:key`, with the key as the password: it is what the
+/// client sends on each read request.
 fn write_only_the_hub(root: &Path, port: u16, token: &str) {
     std::fs::write(
         root.join("NuGet.config"),
@@ -152,8 +152,8 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
     std::fs::create_dir_all(&root).expect("the client home");
     let client = Client { dotnet, root };
 
-    // 1. `dotnet new classlib` + `dotnet pack`: un paquete de verdad,
-    //    fabricado por el propio SDK.
+    // 1. `dotnet new classlib` + `dotnet pack`: a real package,
+    //    produced by the SDK itself.
     let proj = client.root.join("src");
     std::fs::create_dir_all(&proj).expect("the project directory");
     client.run(&proj, &["new", "classlib", "-n", "CliPkg", "--force"]);
@@ -172,11 +172,11 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
     let nupkg = glob_nupkg(&proj.join("CliPkg").join("bin/Release"));
     let pushed_bytes = std::fs::read(&nupkg).expect("the packed nupkg");
 
-    // 2. `dotnet nuget push`: la clave viaja en X-NuGet-ApiKey, como
-    //    el SDK hace. La fuente se nombra por fichero de config, no
-    //    por URL cruda: el cliente solo admite http cuando el propio
-    //    NuGet.config lo declara con allowInsecureConnections, y la
-    //    linea de comandos no puede llevar esa declaracion.
+    // 2. `dotnet nuget push`: the key travels in X-NuGet-ApiKey, as
+    //    the SDK does. The source is named by config file, not
+    //    by raw URL: the client only allows http when the
+    //    NuGet.config itself declares it with allowInsecureConnections, and the
+    //    command line cannot carry that declaration.
     write_only_the_hub(&proj, port, &token);
     client.run(
         &proj,
@@ -191,7 +191,7 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
         ],
     );
 
-    // El hub lo guarda bajo la identidad normalizada.
+    // The hub stores it under the normalized identity.
     let served = call(
         port,
         "GET",
@@ -205,8 +205,8 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
         "el push no guardo los bytes que fabrico pack"
     );
 
-    // 3. El consumidor: NuGet.config con el hub como unica fuente del
-    //    mundo, y `dotnet restore`.
+    // 3. The consumer: NuGet.config with the hub as the only source in the
+    //    world, and `dotnet restore`.
     let consumer = client.root.join("consumer");
     std::fs::create_dir_all(&consumer).expect("the consumer directory");
     write_only_the_hub(&consumer, port, &token);
@@ -219,14 +219,14 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
             "  <ItemGroup>\n    <PackageReference Include=\"Sample.Cli.Pkg\" Version=\"1.0.0\" />\n  </ItemGroup>\n</Project>",
         );
     std::fs::write(&consumer_csproj, edited).expect("the consumer csproj is rewritten");
-    // El restore toma el config del padre: copiarlo dentro del proyecto.
+    // The restore takes the config from the parent: copy it into the project.
     write_only_the_hub(&consumer.join("Consumer"), port, &token);
     client.run(&consumer.join("Consumer"), &["restore"]);
 
-    // 4. La cache del cliente tiene el nupkg **byte a byte**: el
-    //    contentHash que el cliente calculo casa con el paquete que
-    //    pack fabrico, y eso es lo unico que demuestra que el hub no
-    //    reescribio nada.
+    // 4. The client cache has the nupkg **byte for byte**: the
+    //    contentHash that the client computed matches the package that
+    //    pack produced, and that is the only thing that shows the hub did not
+    //    rewrite anything.
     let cached = client
         .root
         .join("packages")
@@ -244,8 +244,8 @@ fn the_real_dotnet_client_pushes_and_restores_with_the_digest_preserved() {
         "la cache del cliente no tiene los bytes que se publicaron"
     );
 
-    // 5. Y `dotnet build` lo usa de verdad: compila contra la dll del
-    //    paquete servido por el hub.
+    // 5. And `dotnet build` really uses it: it compiles against the dll of the
+    //    package served by the hub.
     client.run(
         &consumer.join("Consumer"),
         &[
@@ -263,7 +263,7 @@ fn call(port: u16, method: &str, path: &str, token: &str) -> Answer {
     Curl::call(port, method, path, token, None, None, Some(&into)).run()
 }
 
-/// El nupkg que `pack` dejo en bin/Release: hay exactamente uno.
+/// The nupkg that `pack` left in bin/Release: there is exactly one.
 fn glob_nupkg(directory: &Path) -> PathBuf {
     let found: Vec<PathBuf> = std::fs::read_dir(directory)
         .expect("the pack output")

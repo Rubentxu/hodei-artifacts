@@ -1,19 +1,19 @@
-//! El `go mod download` de HSP-121 contra el **cliente real** (`go`).
+//! HSP-121's `go mod download` against the **real client** (`go`).
 //!
-//! La suite HTTP mide el protocolo; esta mide que el binario `go`, con
-//! `GOPROXY` apuntando al hub, baja la version publicada y la deja en su
-//! cache **con los bytes exactos** que se publicaron: el digest
-//! preservado no es una promesa del arnés, es lo que el cliente comprueba
-//! por si solo (`.ziphash` y `go.sum`) antes de dar la bajada por buena.
+//! The HTTP suite measures the protocol; this one measures that the `go` binary, with
+//! `GOPROXY` pointing at the hub, downloads the published version and leaves it in its
+//! cache **with the exact bytes** that were published: the preserved
+//! digest is not a promise of the harness, it is what the client checks
+//! by itself (`.ziphash` and `go.sum`) before accepting the download as good.
 //!
-//! Hace falta el SDK de Go en el PATH: sin el, la suite **falla**
-//! diciendo que falta, como las demas suites de cliente real.
+//! The Go SDK is required in the PATH: without it, the suite **fails**
+//! saying it is missing, like the other real-client suites.
 //!
-//! El trafico va por **TLS a traves de un puente local `socat`**: `go`
-//! solo manda credenciales (su `.netrc`) por https, y se niega a
-//! hacerlo por http llaneandolas por el camino. El hub sigue hablando
-//! http en el interior del puente; el cliente confia en el certificado
-//! autofirmado gracias a `SSL_CERT_FILE`.
+//! Traffic goes over **TLS through a local `socat` bridge**: `go`
+//! only sends credentials (its `.netrc`) over https, and refuses to
+//! send them over http, flattening them along the way. The hub keeps speaking
+//! http inside the bridge; the client trusts the self-signed certificate
+//! thanks to `SSL_CERT_FILE`.
 
 mod support;
 
@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use support::{Answer, Curl, Deployment};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -71,12 +71,12 @@ fn sha256_of(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// El texto de una respuesta.
+/// The text of a response.
 fn text_of(answer: &Answer) -> String {
     String::from_utf8_lossy(&answer.body).into_owned()
 }
 
-/// Publicar un artefacto de version por el camino hosted.
+/// Publish a version artifact through the hosted path.
 fn put(port: u16, repository: &str, token: &str, rest: &str, body: &[u8]) -> Answer {
     let sent = next("sent");
     std::fs::write(&sent, body).expect("the body is written");
@@ -93,8 +93,8 @@ fn put(port: u16, repository: &str, token: &str, rest: &str, body: &[u8]) -> Ans
     .run()
 }
 
-/// Un puente TLS efimero: `https` en la puerta, el hub en el fondo.
-/// El proceso vive mientras el puente; al soltarlo, se lleva el tunel.
+/// An ephemeral TLS bridge: `https` at the door, the hub behind.
+/// The process lives as long as the bridge; dropping it takes the tunnel with it.
 struct Bridge {
     child: std::process::Child,
     port: u16,
@@ -108,7 +108,7 @@ impl Drop for Bridge {
     }
 }
 
-/// Un puerto libre: se toma, se suelta, y el puente lo ocupa justo despues.
+/// A free port: it is taken, released, and the bridge occupies it right after.
 fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .expect("an ephemeral port")
@@ -117,9 +117,9 @@ fn free_port() -> u16 {
         .port()
 }
 
-/// Un certificado autofirmado para 127.0.0.1: lo firma openssl, lo confia
-/// el cliente go por `SSL_CERT_FILE`. El par queda en un unico pem, que es
-/// lo que `socat` espera de `cert=`.
+/// A self-signed certificate for 127.0.0.1: openssl signs it, the go
+/// client trusts it through `SSL_CERT_FILE`. The pair ends up in a single pem, which is
+/// what `socat` expects from `cert=`.
 fn self_signed(root: &Path) -> std::path::PathBuf {
     let pem = root.join("bridge.pem");
     let output = Command::new("openssl")
@@ -140,7 +140,7 @@ fn self_signed(root: &Path) -> std::path::PathBuf {
     pem
 }
 
-/// Levanta el puente y no devuelve hasta que escucha.
+/// Brings up the bridge and does not return until it is listening.
 fn bridge(root: &Path, hub: u16) -> Bridge {
     let certificate = self_signed(root);
     let port = free_port();
@@ -177,9 +177,9 @@ impl Bridge {
     }
 }
 
-/// El zip de un modulo, como lo exige el protocolo: todo bajo el prefijo
-/// `{module}@{version}/` y con el mismo go.mod que sirve el `.mod`. No
-/// vale cualquier zip: `go` valida la forma antes de tragarselo.
+/// A module's zip, as the protocol requires: everything under the prefix
+/// `{module}@{version}/` and with the same go.mod the `.mod` serves. Not
+/// just any zip will do: `go` validates the shape before swallowing it.
 fn module_zip(module: &str, version: &str, go_mod: &str) -> Vec<u8> {
     use std::io::Write;
     let prefix = format!("{module}@{version}");
@@ -210,8 +210,8 @@ fn the_real_go_client_downloads_the_published_module_with_the_digest_preserved()
     let service = deployment.start(&[]);
     let port = service.port;
 
-    // Publicar example.com/hello v1.0.0 por el camino hosted, y acordarse
-    // de los bytes del zip: eso es lo que el cliente tiene que devolver.
+    // Publish example.com/hello v1.0.0 through the hosted path, and remember
+    // the zip's bytes: that is what the client has to give back.
     let module = "example.com/hello";
     let version = "v1.0.0";
     let go_mod = format!("module {module}\n\ngo 1.22\n");
@@ -232,21 +232,21 @@ fn the_real_go_client_downloads_the_published_module_with_the_digest_preserved()
         assert_eq!(answer.status, 200, "{extension}: {}", text_of(&answer));
     }
 
-    // La casa del cliente: GOPATH, GOMODCACHE, GOCACHE, todo dentro del
-    // despliegue. Nada del HOME real se lee ni se escribe.
+    // The client's home: GOPATH, GOMODCACHE, GOCACHE, all inside the
+    // deployment. Nothing of the real HOME is read or written.
     let root = deployment.directory.path().join("gocli");
     std::fs::create_dir_all(&root).expect("the client home");
     let work = root.join("work");
     std::fs::create_dir_all(&work).expect("the work directory");
 
-    // El hub escucha http; `go` solo credencia por https. El puente es
-    // exactamente lo que hace cualquier despliegue real: TLS delante,
-    // el servicio detras, sin cambiar una coma del hub.
+    // The hub listens on http; `go` only sends credentials over https. The bridge is
+    // exactly what any real deployment does: TLS in front,
+    // the service behind, without changing a comma of the hub.
     let tunnel = bridge(&root, port);
 
-    // La `.netrc` se escribe con el puente ya en pie: GOAUTH casando por
-    // prefijo de URL, el `machine` lleva el puerto del tunel. La
-    // credencial va en la contrasena; el usuario es informativo.
+    // The `.netrc` is written with the bridge already up: GOAUTH matching by
+    // URL prefix, the `machine` carries the tunnel's port. The
+    // credential goes in the password; the user is informational.
     let netrc = root.join(".netrc");
     std::fs::write(
         &netrc,
@@ -273,15 +273,15 @@ fn the_real_go_client_downloads_the_published_module_with_the_digest_preserved()
             .env("GOCACHE", root.join("buildcache"))
             .env("SSL_CERT_FILE", &tunnel.certificate)
             .env("GOFLAGS", "-mod=mod")
-            // El proxy es el hub, y solo el hub: `go` no tiene por donde
-            // caerse a la red ni a VCS si el proxy responde.
+            // The proxy is the hub, and only the hub: `go` has no way to
+            // fall back to the network or to VCS if the proxy answers.
             .env(
                 "GOPROXY",
                 format!("https://127.0.0.1:{}/go/go-cli", tunnel.port),
             )
-            // El sumdb publico no conoce este modulo; la integridad no se
-            // salta: el zip se comprueba abajo, byte a byte, y el propio go
-            // escribe su .ziphash.
+            // The public sumdb does not know this module; integrity is not
+            // skipped: the zip is checked below, byte for byte, and go itself
+            // writes its .ziphash.
             .env("GOSUMDB", "off")
             .args(args)
             .output()
@@ -306,8 +306,8 @@ fn the_real_go_client_downloads_the_published_module_with_the_digest_preserved()
     let output = client(&["mod", "download", module]);
     check("go mod download", &output);
 
-    // El zip en la cache del cliente es el zip publicado: eso es "digests
-    // preservados" dicho por el unico juez que importa.
+    // The zip in the client's cache is the published zip: that is "preserved
+    // digests" said by the only judge that matters.
     let cached = root
         .join("modcache")
         .join("cache/download")
@@ -332,8 +332,8 @@ fn the_real_go_client_downloads_the_published_module_with_the_digest_preserved()
         "go did not record the integrity of the download"
     );
 
-    // Y `go build` lo usa de verdad: el modulo baja, se descomprime y
-    // compila contra su go.mod servido por el hub.
+    // And `go build` really uses it: the module downloads, is unpacked and
+    // compiles against its go.mod served by the hub.
     std::fs::write(work.join("main.go"), "package main\n\nfunc main() {}\n")
         .expect("the main is written");
     let output = client(&["build", "-o", "probe"]);

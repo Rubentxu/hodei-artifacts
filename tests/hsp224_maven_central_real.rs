@@ -1,46 +1,46 @@
-//! Maven Central **real** (HSP-224 / HCR-02), con el cliente Maven de verdad.
+//! **Real** Maven Central (HSP-224 / HCR-02), with the real Maven client.
 //!
-//! El laboratorio de HSP-223 (`support::lab`) demuestra que el registro
-//! cachea, que funciona sin upstream y que no sirve nada no confiable
-//! **contra un upstream local**. Aqui se demuestra lo mismo contra el
-//! Central público de verdad (`https://repo.maven.apache.org/maven2/`), y
-//! con el cliente que usa la gente: `mvn`.
+//! The HSP-223 laboratory (`support::lab`) shows that the registry
+//! caches, works without upstream and serves nothing untrusted
+//! **against a local upstream**. Here the same is shown against the real
+//! public Central (`https://repo.maven.apache.org/maven2/`), and
+//! with the client people use: `mvn`.
 //!
-//! Lo que se mide, y no se afirma:
+//! What is measured, not asserted:
 //!
-//! - **AC1**: `mvn dependency:get` con un `settings.xml` que apunta al
-//!   **grupo** de Hodei resuelve `org.apache.commons:commons-lang3:3.14.0`,
-//!   y el POM y el JAR **coinciden por digest** con los que sirve el
-//!   Central público. La comprobación del upstream es **opt-in** y con la
-//!   versión fijada: sin `HODEI_LAB_REAL=1` el caso no se ejecuta y el
-//!   informe no es verde, que es lo correcto.
-//! - **AC2**: un **segundo** fetch del mismo artefacto **no consulta** el
-//!   upstream (el contador del laboratorio lo dice), con el upstream
-//!   **desconectado** se resuelve igual con los datos locales, y el
-//!   cliente **no puede saltarse el grupo**: con el grupo caido no
-//!   resuelve, y con la misma configuracion apuntando al upstream si.
-//! - **AC3**: una **colisión de groupId reservado** y un upstream que
-//!   devuelve **metadatos alterados** no sirven paquete no confiable, y
-//!   ningun token del cliente aparece en el log del servicio.
+//! - **AC1**: `mvn dependency:get` with a `settings.xml` pointing at the
+//!   Hodei **group** resolves `org.apache.commons:commons-lang3:3.14.0`,
+//!   and the POM and the JAR **match by digest** those served by the
+//!   public Central. The upstream check is **opt-in** and with the
+//!   version pinned: without `HODEI_LAB_REAL=1` the case does not run and the
+//!   report is not green, which is correct.
+//! - **AC2**: a **second** fetch of the same artifact **does not query** the
+//!   upstream (the laboratory counter says so), with the upstream
+//!   **disconnected** it resolves just the same from the local data, and the
+//!   client **cannot bypass the group**: with the group down it does not
+//!   resolve, and with the same configuration pointing at the upstream it does.
+//! - **AC3**: a **reserved groupId collision** and an upstream that
+//!   returns **tampered metadata** do not serve an untrusted package, and
+//!   no client token appears in the service log.
 //!
-//! # El camino sin red
+//! # The no-network path
 //!
-//! Por defecto **no se sale a la red**: el upstream es el del laboratorio
-//! (un servidor local que cuenta) y el artefacto es un *fixture* con las
-//! coordenadas del Central. La unica lectura de fuera de los directorios
-//! del laboratorio es la cache de Maven de la máquina, **en solo
-//! lectura**, y solo para el *plugin* (`dependency:get`): el plugin tiene
-//! que venir de alguna parte y sin red la unica que hay es esa. Del
-//! artefacto bajo prueba no sale de ahi nunca: el repositorio local del
-//! cliente es temporal y el artefacto solo se pide al grupo.
+//! By default **the network is not used**: the upstream is the laboratory's
+//! (a local counting server) and the artifact is a *fixture* with the
+//! Central coordinates. The only read from outside the laboratory
+//! directories is the machine's Maven cache, **read-only**,
+//! and only for the *plugin* (`dependency:get`): the plugin has
+//! to come from somewhere and without network the only source is that one. The
+//! artifact under test never comes from there: the client's local repository
+//! is temporary and the artifact is only requested from the group.
 //!
-//! # El cliente
+//! # The client
 //!
-//! El `mvn` del PATH puede ser un envoltorio que necesita el HOME de la
-//! máquina (este tiene uno, para las *slices* de build), y el laboratorio
-//! corre el cliente con un HOME que no es el del usuario. El
-//! `mvn --version` dice dónde vive el Maven de verdad, y esa ruta no
-//! depende del HOME.
+//! The `mvn` on the PATH may be a wrapper that needs the machine's HOME
+//! (this one has one, for the build *slices*), and the laboratory
+//! runs the client with a HOME that is not the user's. `mvn --version`
+//! says where the real Maven lives, and that path does not
+//! depend on HOME.
 
 mod support;
 
@@ -54,47 +54,47 @@ use support::lab::{
 };
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// El groupId del artefacto bajo prueba.
+/// The groupId of the artifact under test.
 const GROUP_ID: &str = "org.apache.commons";
 
-/// El artifactId del artefacto bajo prueba.
+/// The artifactId of the artifact under test.
 const ARTIFACT_ID: &str = "commons-lang3";
 
-/// La versión del artefacto bajo prueba: **fijada**, siempre.
+/// The version of the artifact under test: **pinned**, always.
 const VERSION: &str = "3.14.0";
 
-/// Las coordenadas que se piden al cliente.
+/// The coordinates requested from the client.
 const COORDINATES: &str = "org.apache.commons:commons-lang3:3.14.0";
 
-/// La ruta del POM en el repositorio.
+/// The POM path in the repository.
 const POM_PATH: &str = "org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.pom";
 
-/// La ruta del JAR en el repositorio.
+/// The JAR path in the repository.
 const JAR_PATH: &str = "org/apache/commons/commons-lang3/3.14.0/commons-lang3-3.14.0.jar";
 
-/// La ruta de los metadatos del artefacto.
+/// The path of the artifact metadata.
 const METADATA_PATH: &str = "org/apache/commons/commons-lang3/maven-metadata.xml";
 
-/// El upstream real: el Maven Central de internet.
+/// The real upstream: the internet's Maven Central.
 const REAL_UPSTREAM: &str = "https://repo.maven.apache.org/maven2/";
 
-/// El host del upstream real, como lo entiende la salida del servicio.
+/// The host of the real upstream, as the service output understands it.
 const REAL_HOST: &str = "repo.maven.apache.org";
 
-/// El plugin que resuelve el artefacto.
+/// The plugin that resolves the artifact.
 const GET: &str = "org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get";
 
-/// El repositorio *hosted* del grupo: lo propio de la casa.
+/// The group's *hosted* repository: the house's own.
 const HOSTED: &str = "mvn-hosted";
 
-/// El repositorio *proxy* del grupo: el Central de verdad.
+/// The group's *proxy* repository: the real Central.
 const PROXY: &str = "central";
 
-/// El grupo bajo prueba.
+/// The group under test.
 const GROUP: &str = "mvn-all";
 
-/// El POM que sirve el upstream del laboratorio: un *fixture* con las
-/// coordenadas del Central, y **no** los bytes del Central.
+/// The POM served by the laboratory upstream: a *fixture* with the
+/// Central coordinates, and **not** the Central bytes.
 const FIXTURE_POM: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0">
   <modelVersion>4.0.0</modelVersion>
@@ -106,14 +106,14 @@ const FIXTURE_POM: &[u8] = br#"<?xml version="1.0" encoding="UTF-8"?>
 </project>
 "#;
 
-/// El JAR que sirve el upstream del laboratorio: los bytes del fixture.
+/// The JAR served by the laboratory upstream: the fixture bytes.
 const FIXTURE_JAR: &[u8] = b"PK-the-bytes-of-the-fixture-of-the-maven-central-laboratory";
 
-/// Los casos que una corrida completa tiene que ejecutar.
+/// The cases that a complete run has to execute.
 ///
-/// El informe los declara, así que una corrida que solo llego a alguno
-/// dice cual le falto: los que no se ejecutan cuentan como `NOT_RUN`, y el
-/// informe nunca es verde.
+/// The report declares them, so a run that only reached some of them
+/// says which ones it missed: those that do not run count as `NOT_RUN`, and the
+/// report is never green.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1-mvn-resolves-the-artifact-through-the-group",
@@ -153,10 +153,10 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El título y el disclaimer del informe de esta suite.
+/// The title and the disclaimer of this suite's report.
 ///
-/// El disclaimer del laboratorio (HSP-223) dice que no se ha hablado con
-/// `mvn`, y aquí si: el disclaimer es de la suite, no del modulo.
+/// The laboratory disclaimer (HSP-223) says `mvn` was not talked to,
+/// and here it is: the disclaimer belongs to the suite, not to the module.
 const THE_TITLE: &str = "Laboratorio de Maven Central — informe";
 
 const THE_DISCLAIMER: &[&str] = &[
@@ -166,32 +166,32 @@ const THE_DISCLAIMER: &[&str] = &[
     "- **Ni el laboratorio.** Los casos de `scope: harness` miden el arnés —el recuento— y no el producto. Los dos recuentos van aparte.",
 ];
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El laboratorio.
+// The laboratory.
 // ---------------------------------------------------------------------------
 
-/// El laboratorio de Maven Central: un despliegue, un upstream que cuenta
-/// y el grupo bajo prueba.
+/// The Maven Central laboratory: a deployment, a counting upstream
+/// and the group under test.
 struct Lab {
     deployment: Deployment,
-    /// El upstream local: solo existe en el modo sin red.
+    /// The local upstream: it only exists in the no-network mode.
     upstream: Upstream,
-    /// La URL del upstream del proxy.
+    /// The URL of the proxy's upstream.
     upstream_url: String,
 }
 
 impl Lab {
-    /// Un laboratorio con un upstream **local** que cuenta.
+    /// A laboratory with a **local** counting upstream.
     ///
-    /// El upstream es el del laboratorio (`support::lab::Upstream`): el
-    /// contador y el upstream son la misma cosa, porque un contador que
-    /// vive en dos sitios mide uno de los dos.
+    /// The upstream is the laboratory's (`support::lab::Upstream`): the
+    /// counter and the upstream are the same thing, because a counter that
+    /// lives in two places measures one of the two.
     fn local() -> Self {
         let upstream = Upstream::start();
         let url = upstream.base();
@@ -202,11 +202,11 @@ impl Lab {
         }
     }
 
-    /// Un laboratorio con el upstream **real**: el Central de internet.
+    /// A laboratory with the **real** upstream: the internet's Central.
     ///
-    /// No hay contador local: a Central no se le puede contar. Lo que se
-    /// mide en el modo real es el digest y el hecho de que la segunda
-    /// resolución funciona con la salida a Central **cerrada**.
+    /// There is no local counter: Central cannot be counted. What is
+    /// measured in the real mode is the digest and the fact that the second
+    /// resolution works with the exit to Central **closed**.
     fn real() -> Self {
         Self {
             deployment: Deployment::new(),
@@ -215,8 +215,8 @@ impl Lab {
         }
     }
 
-    /// Siembra el hosted, el proxy y el grupo con la politica de reserva
-    /// que se le pase.
+    /// Seeds the hosted, the proxy and the group with the reservation policy
+    /// that is passed.
     fn seed(&self, namespaces: Option<serde_json::Value>) {
         let mut proxy = serde_json::json!({
             "key": PROXY,
@@ -249,18 +249,18 @@ impl Lab {
         self.deployment.seed_groups_raw(&[group]);
     }
 
-    /// Arranca el servicio con la salida que el caso necesita.
+    /// Starts the service with the egress the case needs.
     fn start(&self, extra: &[(&str, &str)]) -> support::Service {
         self.deployment.start(extra)
     }
 
-    /// La salida que deja pasar al upstream local del laboratorio.
+    /// The egress that lets the laboratory's local upstream through.
     fn the_local_egress(&self) -> String {
         format!("127.0.0.1:{};private;http", self.upstream.port())
     }
 }
 
-/// Una respuesta del servicio.
+/// A service response.
 struct Reply {
     status: u16,
     body: Vec<u8>,
@@ -274,7 +274,7 @@ impl Reply {
     }
 }
 
-/// Pide una ruta a un repositorio del servicio.
+/// Requests a path from a service repository.
 fn get(lab: &Lab, port: u16, repository: &str, path: &str) -> Reply {
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let into = lab.deployment.directory.path().join("response.bin");
@@ -299,38 +299,38 @@ fn get(lab: &Lab, port: u16, repository: &str, path: &str) -> Reply {
 }
 
 // ---------------------------------------------------------------------------
-// El cliente Maven.
+// The Maven client.
 // ---------------------------------------------------------------------------
 
-/// La corrida de un cliente.
+/// A client run.
 struct Run {
     ok: bool,
     output: String,
     command: String,
 }
 
-/// Un cliente Maven aislado: su HOME, su repositorio local y sus ajustes.
+/// An isolated Maven client: its HOME, its local repository and its settings.
 ///
-/// El `settings.xml` apunta `central` al **grupo** de Hodei, de modo que
-/// el cliente no tiene un camino propio a Central: lo que descarga sale
-/// del grupo o no sale.
+/// The `settings.xml` points `central` at the Hodei **group**, so that
+/// the client has no path of its own to Central: what it downloads comes
+/// from the group or does not come at all.
 struct Maven {
-    /// El HOME del cliente: no es el de quien ejecuta la prueba.
+    /// The client's HOME: it is not that of whoever runs the test.
     home: PathBuf,
-    /// El repositorio local del cliente: temporal.
+    /// The client's local repository: temporary.
     repository: PathBuf,
-    /// Los ajustes del cliente: temporales.
+    /// The client's settings: temporary.
     settings: PathBuf,
-    /// El Maven de verdad.
+    /// The real Maven.
     binary: PathBuf,
 }
 
 impl Maven {
-    /// Un cliente que apunta a `mirror` y que habla con la credencial
+    /// A client that points at `mirror` and talks with the credential
     /// `token`.
     ///
-    /// Devuelve `None` cuando la máquina no tiene lo que hace falta para
-    /// correr Maven sin red: el Maven de verdad y la cache con el plugin.
+    /// Returns `None` when the machine does not have what is needed to
+    /// run Maven without network: the real Maven and the cache with the plugin.
     fn new(root: &Path, mirror: &str, token: &str) -> Option<Self> {
         let binary = the_maven_binary()?;
         let cache = the_machine_cache()?;
@@ -339,9 +339,9 @@ impl Maven {
         let repository = root.join("repository");
         std::fs::create_dir_all(&home).expect("the home of the client");
         std::fs::create_dir_all(&repository).expect("the repository of the client");
-        // Las versiones de las herramientas de la máquina se eligen con
-        // `.tool-versions`, y ese archivo se busca en el HOME: sin el, el
-        // `java` de la máquina no se sabe elegir.
+        // The versions of the machine's tools are chosen with
+        // `.tool-versions`, and that file is looked up in HOME: without it, the
+        // machine's `java` cannot be chosen.
         if let Ok(versions) =
             std::fs::read_to_string(PathBuf::from(std::env::var_os("HOME")?).join(".tool-versions"))
         {
@@ -371,7 +371,7 @@ impl Maven {
         })
     }
 
-    /// Resuelve unas coordenadas y dice si pudo.
+    /// Resolves some coordinates and says whether it could.
     fn resolve(&self, coordinates: &str) -> Run {
         let mut command = Command::new(&self.binary);
         command
@@ -383,9 +383,9 @@ impl Maven {
             .arg("-Dtransitive=false")
             .arg(format!("-Dmaven.repo.local={}", self.repository.display()))
             .env("HOME", &self.home);
-        // Los envoltorios de la máquina (asdf) eligen la versión de sus
-        // herramientas con el HOME: sin esta pista, el HOME del cliente
-        // los deja sin java.
+        // The machine's wrappers (asdf) choose the version of their
+        // tools with HOME: without this hint, the client's HOME
+        // leaves them without java.
         if let Some(directories) = the_asdf_directories() {
             for (name, path) in directories {
                 command.env(name, path);
@@ -408,7 +408,7 @@ impl Maven {
         }
     }
 
-    /// El fichero que el cliente tiene del artefacto.
+    /// The file the client has of the artifact.
     fn local(&self, name: &str) -> PathBuf {
         self.repository
             .join(GROUP_ID.replace('.', "/"))
@@ -417,8 +417,8 @@ impl Maven {
             .join(name)
     }
 
-    /// Olvida el artefacto: el cliente lo volvera a pedir, y lo que se
-    /// mide es de dónde sale esa segunda vez.
+    /// Forgets the artifact: the client will request it again, and what is
+    /// measured is where that second time comes from.
     fn forget(&self) {
         let _ = std::fs::remove_dir_all(
             self.repository
@@ -429,12 +429,12 @@ impl Maven {
     }
 }
 
-/// El Maven de verdad de esta máquina.
+/// The real Maven of this machine.
 ///
-/// El `mvn` del PATH puede ser un envoltorio que necesita el HOME de la
-/// máquina, y el cliente corre con un HOME que no es el del usuario. El
-/// `mvn --version` dice dónde vive el Maven de verdad, y esa ruta no
-/// depende del HOME.
+/// The `mvn` on the PATH may be a wrapper that needs the machine's HOME,
+/// and the client runs with a HOME that is not the user's.
+/// `mvn --version` says where the real Maven lives, and that path does not
+/// depend on HOME.
 fn the_maven_binary() -> Option<PathBuf> {
     let output = Command::new("mvn").arg("--version").output().ok()?;
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -448,20 +448,20 @@ fn the_maven_binary() -> Option<PathBuf> {
     binary.is_file().then_some(binary)
 }
 
-/// La cache de Maven de la máquina: de dónde sale el **plugin**, y solo
-/// el plugin.
+/// The machine's Maven cache: where the **plugin** comes from, and only
+/// the plugin.
 ///
-/// Se lee en solo lectura y el artefacto bajo prueba nunca sale de ahi:
-/// el repositorio local del cliente es temporal, y el artefacto se pide
-/// al grupo.
+/// It is read read-only and the artifact under test never comes from there:
+/// the client's local repository is temporary, and the artifact is requested
+/// from the group.
 fn the_machine_cache() -> Option<PathBuf> {
     let home = std::env::var_os("HOME")?;
     let cache = PathBuf::from(home).join(".m2").join("repository");
     cache.is_dir().then_some(cache)
 }
 
-/// Los directorios de asdf, si esta máquina los tiene: son dónde sus
-/// envoltorios buscan las herramientas que el HOME ya no les dice.
+/// The asdf directories, if this machine has them: they are where its
+/// wrappers look for the tools that HOME no longer tells them.
 fn the_asdf_directories() -> Option<Vec<(&'static str, PathBuf)>> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
     let asdf = home.join(".asdf");
@@ -470,10 +470,10 @@ fn the_asdf_directories() -> Option<Vec<(&'static str, PathBuf)>> {
 }
 
 // ---------------------------------------------------------------------------
-// Utilidades.
+// Utilities.
 // ---------------------------------------------------------------------------
 
-/// El resumen de un caso, con el id y el título del caso.
+/// The summary of a case, with the case id and title.
 fn a_case(
     id: &str,
     title: &str,
@@ -485,7 +485,7 @@ fn a_case(
     run_registry_lab_case(THE_CASES, id, title, scope, expectation, body);
 }
 
-/// El sha256 de unos bytes.
+/// The sha256 of some bytes.
 fn sha256_of_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes)
@@ -494,12 +494,12 @@ fn sha256_of_bytes(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Los bytes que el upstream real sirve para una ruta, pedidos **por
-/// fuera** del registro.
+/// The bytes that the real upstream serves for a path, requested **from
+/// outside** the registry.
 ///
-/// La comparacion es el punto: el digest de lo que Hodei sirvio tiene que
-/// ser el digest de lo que sirve Central, y la unica forma de saberlo es
-/// preguntarle a Central. La versión va fijada en la ruta.
+/// The comparison is the point: the digest of what Hodei served has to be
+/// the digest of what Central serves, and the only way to know is
+/// to ask Central. The version is pinned in the path.
 fn the_upstream_bytes(path: &str) -> Option<Vec<u8>> {
     let url = format!("{REAL_UPSTREAM}{path}");
     let output = Command::new("curl")
@@ -510,7 +510,7 @@ fn the_upstream_bytes(path: &str) -> Option<Vec<u8>> {
     output.status.success().then_some(output.stdout)
 }
 
-/// Los metadatos de un artefacto, tal y como los escribiria un upstream.
+/// The metadata of an artifact, as an upstream would write it.
 fn the_metadata(group_id: &str, artifact_id: &str, version: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<metadata>\n  <groupId>{group_id}</groupId>\n  <artifactId>{artifact_id}</artifactId>\n  <versioning>\n    <latest>{version}</latest>\n    <release>{version}</release>\n    <versions>\n      <version>{version}</version>\n    </versions>\n    <lastUpdated>20240101000000</lastUpdated>\n  </versioning>\n</metadata>\n"
@@ -518,7 +518,7 @@ fn the_metadata(group_id: &str, artifact_id: &str, version: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el cliente resuelve por el grupo, y el digest es el del upstream.
+// AC1: the client resolves through the group, and the digest is the upstream's.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -560,7 +560,7 @@ fn ac1_mvn_resolves_the_artifact_through_the_group() {
                 run.output
             );
 
-            // El POM y el JAR del cliente son los del fixture, byte a byte.
+            // The client's POM and JAR are those of the fixture, byte for byte.
             let jar = client.local("commons-lang3-3.14.0.jar");
             let pom = client.local("commons-lang3-3.14.0.pom");
             assert!(jar.is_file(), "the jar was not resolved");
@@ -569,8 +569,8 @@ fn ac1_mvn_resolves_the_artifact_through_the_group() {
             let pom_digest = support::sha256_of(&pom);
             assert_eq!(jar_digest, sha256_of_bytes(FIXTURE_JAR));
             assert_eq!(pom_digest, sha256_of_bytes(FIXTURE_POM));
-            // Y el upstream recibió la petición: lo que el cliente tiene
-            // salio de ahi, no de ningun otro sitio.
+            // And the upstream received the request: what the client has
+            // came from there, not from any other place.
             assert!(
                 lab.upstream.hits(JAR_PATH) > 0,
                 "the upstream was never asked for the jar"
@@ -579,8 +579,8 @@ fn ac1_mvn_resolves_the_artifact_through_the_group() {
                 lab.upstream.hits(POM_PATH) > 0,
                 "the upstream was never asked for the pom"
             );
-            // Y lo que el cliente tiene salio del **grupo**: el miembro
-            // que gana la ruta es el proxy del Central.
+            // And what the client has came from the **group**: the member
+            // that wins the path is the Central proxy.
             let served = get(&lab, port, GROUP, JAR_PATH);
             assert_eq!(served.status, 200, "{}", served.text());
             assert_eq!(
@@ -618,8 +618,8 @@ fn ac1_the_digest_matches_the_real_central() {
                 "mvn {GET} -Dartifact={COORDINATES} (mirror: el grupo de Hodei)"
             ));
             if !real_mode_enabled() {
-                // Sin el opt-in el caso no se ejecuta, y un caso que no
-                // se ejecuta no es un caso verde.
+                // Without the opt-in the case does not run, and a case that does not
+                // run is not a green case.
                 return case.not_run(format!(
                     "the real mode is opt-in: set {REAL_MODE_VARIABLE}=1 to run it"
                 ));
@@ -661,8 +661,8 @@ fn ac1_the_digest_matches_the_real_central() {
                 run.output
             );
 
-            // El POM y el JAR que tiene el cliente, y los que sirve el
-            // Central real: los digests tienen que ser los mismos.
+            // The POM and the JAR the client has, and those the real
+            // Central serves: the digests have to be the same.
             let jar = client.local("commons-lang3-3.14.0.jar");
             let pom = client.local("commons-lang3-3.14.0.pom");
             assert!(jar.is_file(), "the jar was not resolved");
@@ -688,15 +688,15 @@ fn ac1_the_digest_matches_the_real_central() {
                 "the pom that Hodei served is not the pom of the real Central"
             );
 
-            // Y la corrida respeta el presupuesto del laboratorio.
+            // And the run respects the laboratory's budget.
             let bytes = std::fs::metadata(&jar).map(|meta| meta.len()).unwrap_or(0);
 
-            // El Central se queda fuera de la salida del servicio: la
-            // lista de hosts que puede contactar no lo tiene, así que el
-            // servicio **no puede** ir a buscarlo aunque quisiera. El
-            // servicio vuelve a arrancar con la misma base y el mismo
-            // almacen, y el cliente, con su repositorio local vacío,
-            // resuelve igual: lo que se sirve es la copia local.
+            // Central stays out of the service's egress: the
+            // list of hosts it can contact does not have it, so the
+            // service **cannot** go and fetch it even if it wanted to. The
+            // service starts again with the same database and the same
+            // store, and the client, with its empty local repository,
+            // resolves just the same: what is served is the local copy.
             support::stop(&mut service);
             let mut closed: Vec<(String, String)> = environment
                 .iter()
@@ -705,9 +705,9 @@ fn ac1_the_digest_matches_the_real_central() {
                 .collect();
             closed.push((
                 "HODEI_PROXY__ALLOWED_HOSTS".to_string(),
-                // Un host que no es Central: la salida sigue existiendo,
-                // pero a Central no le llega. No se vacia la lista (una
-                // lista vacia no es una lista), se cambia lo que hay en
+                // A host that is not Central: the egress still exists,
+                // but it does not reach Central. The list is not emptied (an
+                // empty list is not a list), what is in it is changed.
                 // ella.
                 "127.0.0.1:1;private;http".to_string(),
             ));
@@ -751,7 +751,7 @@ fn ac1_the_digest_matches_the_real_central() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la cache, el upstream caido, y la ausencia de un camino directo.
+// AC2: the cache, the upstream down, and the absence of a direct path.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -790,8 +790,8 @@ fn ac2_the_second_fetch_does_not_ask_the_upstream() {
             let asked = lab.upstream.total();
             assert!(asked > 0, "the upstream was never asked");
 
-            // El cliente olvida el artefacto: lo vuelve a pedir, y lo que
-            // se mide es de dónde sale esa segunda vez.
+            // The client forgets the artifact: it requests it again, and what
+            // is measured is where that second time comes from.
             client.forget();
             let second = client.resolve(COORDINATES);
             assert!(
@@ -855,9 +855,9 @@ fn ac2_the_artifact_resolves_with_the_upstream_gone() {
             );
             let asked = lab.upstream.total();
 
-            // El upstream se va: deja de aceptar conexiones. Un contador
-            // que no crece con el puerto cerrado no prueba nada, así que
-            // lo que se comprueba es que el upstream está muerto de verdad.
+            // The upstream goes away: it stops accepting connections. A counter
+            // that does not grow with the port closed proves nothing, so
+            // what is checked is that the upstream is really dead.
             lab.upstream.disconnect();
             assert!(
                 !lab.upstream.accepts_connections(),
@@ -927,8 +927,8 @@ fn ac2_the_client_cannot_skip_the_group() {
             );
             let asked = lab.upstream.total();
 
-            // El grupo se cae. El cliente, con su repositorio local
-            // vacío, no puede resolver: no tiene a dónde ir.
+            // The group goes down. The client, with its empty local
+            // repository, cannot resolve: it has nowhere to go.
             support::stop(&mut service);
             let orphan = Maven::new(
                 &lab.deployment.directory.path().join("orphan"),
@@ -943,9 +943,9 @@ fn ac2_the_client_cannot_skip_the_group() {
                 refused.output
             );
 
-            // Y el control: el mismo cliente, con `central` apuntando al
-            // upstream en vez de al grupo, **si** resuelve. Asi se ve que
-            // lo que lo para es el grupo y no una red que no funciona.
+            // And the control: the same client, with `central` pointing at the
+            // upstream instead of the group, **does** resolve. This shows
+            // that what stops it is the group and not a network that does not work.
             let control = Maven::new(
                 &lab.deployment.directory.path().join("control"),
                 &lab.upstream.base(),
@@ -975,7 +975,7 @@ fn ac2_the_client_cannot_skip_the_group() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: lo que no se sirve, y el rastro que no se ensucia.
+// AC3: what is not served, and the trail that is not dirtied.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -986,8 +986,8 @@ fn ac3_a_reserved_group_id_is_not_served_from_the_public_upstream() {
         Scope::Product,
         Expectation::Refused,
         || {
-            // El grupo reserva su namespace: lo que este bajo el no sale
-            // del upstream público, aunque el upstream lo tenga.
+            // The group reserves its namespace: what is under it does not come
+            // from the public upstream, even if the upstream has it.
             let lab = Lab::local();
             lab.upstream.put(POM_PATH, FIXTURE_POM, None);
             lab.upstream.put(JAR_PATH, FIXTURE_JAR, None);
@@ -1052,7 +1052,7 @@ fn ac3_metadata_altered_is_not_served_as_ours() {
         Expectation::Refused,
         || {
             let lab = Lab::local();
-            // El upstream responde con metadatos de **otro** artefacto.
+            // The upstream responds with metadata of **another** artifact.
             let altered = the_metadata("org.evil", ARTIFACT_ID, "9.9.9");
             lab.upstream.put(METADATA_PATH, altered.as_bytes(), None);
             lab.seed(None);
@@ -1060,7 +1060,7 @@ fn ac3_metadata_altered_is_not_served_as_ours() {
             let mut service = lab.start(&[("HODEI_PROXY__ALLOWED_HOSTS", &lab.the_local_egress())]);
             let port = service.port;
 
-            // El grupo no los sirve como si fueran suyos.
+            // The group does not serve it as if it were its own.
             let reply = get(&lab, port, GROUP, METADATA_PATH);
             let refused = reply.status >= 400;
             assert!(
@@ -1074,8 +1074,8 @@ fn ac3_metadata_altered_is_not_served_as_ours() {
                 reply.text()
             );
 
-            // Y el proxy, que no fusiona nada, los sirve tal cual: el que
-            // no los Mezcla es el grupo.
+            // And the proxy, which merges nothing, serves it as is: the one
+            // that does not mix it is the group.
             let direct = get(&lab, port, PROXY, METADATA_PATH);
             assert_eq!(direct.status, 200, "{}", direct.text());
             assert_eq!(direct.body, altered.as_bytes());
@@ -1132,8 +1132,8 @@ fn ac3_the_token_of_the_client_does_not_reach_the_log() {
             );
             support::stop(&mut service);
 
-            // El log del servicio: la credencial del cliente no está en
-            // el, ni la que el proxy manda a su upstream.
+            // The service log: the client's credential is not in
+            // it, nor the one the proxy sends to its upstream.
             let log = lab.deployment.the_log();
             assert!(!log.is_empty(), "the service wrote no log at all");
             assert!(
@@ -1164,14 +1164,14 @@ fn ac3_the_token_of_the_client_does_not_reach_the_log() {
 }
 
 // ---------------------------------------------------------------------------
-// El recuento del laboratorio.
+// The laboratory count.
 // ---------------------------------------------------------------------------
 
-/// El recuento no miente: un caso que no se ejecuto no es verde.
+/// The count does not lie: a case that did not run is not green.
 ///
-/// Es la misma regla del laboratorio de HSP-223, comprobada aquí con el
-/// caso real de esta suite: sin el opt-in, el caso del Central real no se
-/// ejecuta, y el informe no puede ser verde.
+/// It is the same rule as the HSP-223 laboratory, checked here with the
+/// real case of this suite: without the opt-in, the real Central case does not
+/// run, and the report cannot be green.
 #[test]
 fn ac3_the_count_does_not_lie() {
     a_case(

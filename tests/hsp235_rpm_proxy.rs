@@ -1,26 +1,26 @@
-//! HSP-235: el proxy RPM sirve el repodata del upstream **tal cual**.
+//! HSP-235: the RPM proxy serves the upstream's repodata **as is**.
 //!
-//! Un repositorio rpm en modo proxy no reconstruye el repodata ajeno: lo
-//! trae de su upstream y lo sirve byte a byte, con la firma del upstream
-//! y con la clave del upstream. Lo que se mide aqui, contra el servicio
-//! de verdad:
+//! An rpm repository in proxy mode does not rebuild foreign repodata: it
+//! fetches it from its upstream and serves it byte for byte, with the upstream's signature
+//! and with the upstream's key. What is measured here, against the real
+//! service:
 //!
-//! - el `repomd.xml` que se sirve es **el del upstream**, no un documento
-//!   reconstruido;
-//! - la firma que se sirve es la del upstream, y la clave que se sirve es
-//!   la del upstream, no la del hub;
-//! - el metadata se sirve **solo** si cumple el checksum que declara: el
-//!   que su propio nombre anuncia, o el que el `repomd` cacheado
-//!   declara;
-//! - un metadata que no cumple su checksum **no** se sirve, y uno que el
-//!   `repomd` no declara tampoco;
-//! - una ruta fuera de los scopes del upstream no existe para ese proxy;
-//! - sin red, la cache sirve lo ya descargado y no inventa lo demas;
-//! - la compuerta de confianza tambien se aplica al camino proxy.
+//! - the `repomd.xml` that is served is **the upstream's**, not a rebuilt
+//! document;
+//! - the signature that is served is the upstream's, and the key that is served is
+//! the upstream's, not the hub's;
+//! - the metadata is served **only** if it meets the checksum it declares: the
+//! one its own name announces, or the one the cached `repomd`
+//! declares;
+//! - a metadata that does not meet its checksum is **not** served, and neither is one that the
+//! `repomd` does not declare;
+//! - a path outside the upstream's scopes does not exist for that proxy;
+//! - without network, the cache serves what was already downloaded and does not invent the rest;
+//! - the trust gate is also applied to the proxy path.
 //!
-//! El upstream es un servidor local que este fichero controla: el
-//! `repomd` que firma, el primary que declara y el metadata corrupto que
-//! no cumple lo que su nombre anuncia.
+//! The upstream is a local server that this file controls: the
+//! `repomd` it signs, the primary it declares and the corrupt metadata that
+//! does not meet what its name announces.
 
 mod support;
 
@@ -33,28 +33,28 @@ use sha2::Digest as _;
 use support::lab::{Expectation, LabCase, Scope, describe_registry_lab, run_registry_lab_case};
 use support::{Answer, Curl, Deployment, FIRST_ACCOUNT};
 
-/// El repositorio proxy en el canal abierto.
+/// The proxy repository on the open channel.
 const LAB: &str = "rpm-lab";
 
-/// El repositorio proxy en el canal **trusted**: lo que separa es el
-/// canal, y nada mas.
+/// The proxy repository on the **trusted** channel: what separates them is the
+/// channel, and nothing else.
 const TRUSTED: &str = "rpm-trusted";
 
-/// El paquete que el upstream publica en su layout habitual.
+/// The package the upstream publishes in its usual layout.
 const PACKAGE_PATH: &str = "Packages/hello-hodei-1.0.0-1.fc40.x86_64.rpm";
 
-/// Los bytes del paquete: **sinteticos**. Lo que se mide en este
-/// incremento es el camino HTTP, el checksum y la coherencia de la
-/// generacion, no el formato rpm: un paquete de verdad necesita
-/// `rpmbuild`, que aqui no esta.
+/// The package's bytes: **synthetic**. What is measured in this
+/// increment is the HTTP path, the checksum and the generation's
+/// coherence, not the rpm format: a real package needs
+/// `rpmbuild`, which is not here.
 const PACKAGE: &[u8] =
     b"a synthetic rpm: the path, the checksum and the generation are what is measured";
 
-/// La revision del repodata del upstream.
+/// The revision of the upstream's repodata.
 const REVISION: u64 = 1_700_000_000;
 
 // ---------------------------------------------------------------------------
-// Los casos
+// The cases
 // ---------------------------------------------------------------------------
 
 const CASE_REPOMD: &str = "ac1-the-repomd-of-the-proxy-is-the-one-of-the-upstream";
@@ -79,11 +79,11 @@ const TITLE_OFFLINE: &str = "sin red, la cache sirve lo descargado y no inventa 
 const CASE_TRUST: &str = "ac3-the-trust-gate-applies-to-the-proxy-content";
 const TITLE_TRUST: &str = "un proxy en el canal trusted no sirve lo que no tiene concesion";
 
-/// Los casos que una ejecucion completa tiene que ejecutar.
+/// The cases a complete run has to execute.
 ///
-/// Se declaran **antes** de correr: una ejecucion que solo llego a algunos
-/// dice cuales no corrieron, y un informe con un caso que no corrio nunca es
-/// verde.
+/// They are declared **before** running: a run that only reached some
+/// says which did not run, and a report with a case that never ran is
+/// green.
 const THE_CASES: &[(&str, &str)] = &[
     (CASE_REPOMD, TITLE_REPOMD),
     (CASE_SIGNATURE, TITLE_SIGNATURE),
@@ -97,7 +97,7 @@ const THE_CASES: &[(&str, &str)] = &[
     (CASE_TRUST, TITLE_TRUST),
 ];
 
-/// Corre un caso del laboratorio.
+/// Runs a lab case.
 fn a_case(
     id: &str,
     title: &str,
@@ -117,32 +117,32 @@ fn a_case(
 }
 
 // ---------------------------------------------------------------------------
-// El laboratorio
+// The lab
 // ---------------------------------------------------------------------------
 
-/// El despliegue del laboratorio: el upstream de mentira, las claves y lo
-/// que el upstream publica.
+/// The lab's deployment: the fake upstream, the keys and what
+/// the upstream publishes.
 struct Lab {
     deployment: Deployment,
     upstream: support::lab::Upstream,
-    /// La clave publica del upstream, en armor: la que el proxy sirve.
+    /// The upstream's public key, in armor: the one the proxy serves.
     upstream_key: String,
-    /// La clave publica del hub, en armor: la que el proxy **no** debe
-    /// servir.
+    /// The hub's public key, in armor: the one the proxy must **not**
+    /// serve.
     hub_key: String,
-    /// La clave privada del hub, blindada: la arranca el servicio.
+    /// The hub's private key, armored: the service boots with it.
     hub_armor: String,
-    /// El `repomd.xml` del upstream.
+    /// The upstream's `repomd.xml`.
     repomd: Vec<u8>,
-    /// La firma del `repomd.xml`, hecha por la clave del upstream.
+    /// The `repomd.xml` signature, made by the upstream's key.
     signature: Vec<u8>,
-    /// El primary comprimido del upstream.
+    /// The upstream's compressed primary.
     primary_gz: Vec<u8>,
-    /// El SHA256 del primary comprimido: el nombre por el que se pide.
+    /// The SHA256 of the compressed primary: the name it is requested by.
     primary_sha: String,
 }
 
-/// El sha256 de unos bytes, en hexadecimal.
+/// The sha256 of some bytes, in hexadecimal.
 fn sha256_of(bytes: &[u8]) -> String {
     let digest = sha2::Sha256::digest(bytes);
     let mut out = String::with_capacity(64);
@@ -152,15 +152,15 @@ fn sha256_of(bytes: &[u8]) -> String {
     out
 }
 
-/// Los bytes comprimidos de un documento.
+/// The compressed bytes of a document.
 fn gzip(bytes: &[u8]) -> Vec<u8> {
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(bytes).expect("the gzip writes");
     encoder.finish().expect("the gzip finishes")
 }
 
-/// La configuracion `proxy` del repositorio: el upstream, sus scopes y la
-/// clave publica con la que el upstream firma.
+/// The repository's `proxy` configuration: the upstream, its scopes and the
+/// public key the upstream signs with.
 fn proxy_of(upstream: &support::lab::Upstream, key: &str) -> Value {
     json!({
         "upstream": {
@@ -173,11 +173,11 @@ fn proxy_of(upstream: &support::lab::Upstream, key: &str) -> Value {
     })
 }
 
-/// El despliegue del laboratorio.
+/// The lab's deployment.
 ///
-/// El upstream firma su `repomd` con una clave que **no** es la del hub:
-/// el hub arranca con otra, y por eso el caso de la clave puede
-/// afirmar que la que se sirve no es la del hub.
+/// The upstream signs its `repomd` with a key that is **not** the hub's:
+/// the hub boots with another, and that is why the key case can
+/// assert that the one served is not the hub's.
 fn the_lab() -> Lab {
     let upstream = support::lab::Upstream::start();
     let upstream_signer =
@@ -187,8 +187,8 @@ fn the_lab() -> Lab {
     let hub_key = hub_signer.key_asc().expect("the hub public key");
     let hub_armor = hub_signer.to_armor().expect("the armored hub key");
 
-    // El repodata del upstream: el documento, el primary que declara y la
-    // firma que lo cubre.
+    // The upstream's repodata: the document, the primary it declares and the
+    // signature that covers it.
     let primary_xml = yum::primary_document(&[]);
     let primary_gz = gzip(primary_xml.as_bytes());
     let primary_sha = sha256_of(&primary_gz);
@@ -211,10 +211,10 @@ fn the_lab() -> Lab {
     upstream.put("repodata/repomd.xml.asc", &signature, None);
     upstream.put(&location, &primary_gz, None);
     upstream.put(PACKAGE_PATH, PACKAGE, None);
-    // Un metadata que el repomd **no** declara.
+    // A metadata that the repomd does **not** declare.
     upstream.put("repodata/primary.xml.gz", &primary_gz, None);
-    // Y un metadata cuyo nombre anuncia un checksum que sus bytes no
-    // cumplen.
+    // And a metadata whose name announces a checksum that its bytes do not
+    // meet.
     upstream.put(
         &format!("repodata/{}-primary.xml.gz", "cd".repeat(32)),
         b"these bytes are not the ones the name announces",
@@ -237,8 +237,8 @@ fn the_lab() -> Lab {
     }
 }
 
-/// El entorno del servicio: el upstream del laboratorio es la unica red, y
-/// el hub arranca con una clave que el laboratorio conoce.
+/// The service's environment: the lab's upstream is the only network, and
+/// the hub boots with a key the lab knows.
 fn the_environment(lab: &Lab) -> Vec<(&'static str, String)> {
     vec![
         (
@@ -249,7 +249,7 @@ fn the_environment(lab: &Lab) -> Vec<(&'static str, String)> {
     ]
 }
 
-/// Arranca el servicio con el entorno del laboratorio.
+/// Starts the service with the lab's environment.
 fn start(lab: &Lab, extra: &[(&str, &str)]) -> support::Service {
     let environment = the_environment(lab);
     let mut pairs: Vec<(&str, &str)> = environment
@@ -262,7 +262,7 @@ fn start(lab: &Lab, extra: &[(&str, &str)]) -> support::Service {
     lab.deployment.start(&pairs)
 }
 
-/// Una peticion GET al repositorio, con el token de la primera cuenta.
+/// A GET request to the repository, with the first account's token.
 fn get(lab: &Lab, port: u16, repository: &str, path: &str) -> Answer {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let into = lab.deployment.directory.path().join("response.bin");
@@ -279,20 +279,20 @@ fn get(lab: &Lab, port: u16, repository: &str, path: &str) -> Answer {
     .run()
 }
 
-/// Una peticion HEAD al repositorio: lo que se pide es la descripcion.
+/// A HEAD request to the repository: what is requested is the description.
 fn head(port: u16, repository: &str, path: &str) -> Answer {
     let token = support::token(FIRST_ACCOUNT, "alice");
     support::curl_describe(port, &format!("/yum/{repository}/{path}"), &token)
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// AC1: lo que se sirve es lo del upstream
+// AC1: what is served is the upstream's
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -394,7 +394,7 @@ fn the_proxy_serves_the_metadata_of_the_upstream_with_its_checksum() {
                 return LabCase::new(CASE_METADATA, TITLE_METADATA)
                     .failed("the metadata served does not meet the checksum its name declares");
             }
-            // El HEAD declara el tamano real del asset, no cero.
+            // The HEAD declares the asset's real size, not zero.
             let description = head(port, LAB, &path);
             let length = description
                 .header("content-length")
@@ -413,7 +413,7 @@ fn the_proxy_serves_the_metadata_of_the_upstream_with_its_checksum() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: el checksum y la generacion
+// AC2: the checksum and the generation
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -440,7 +440,7 @@ fn the_proxy_refuses_the_metadata_that_does_not_match_its_checksum() {
                     metadata.status
                 ));
             }
-            // Los bytes corruptos no son lo que se responde.
+            // The corrupt bytes are not what is answered.
             if metadata.body == b"these bytes are not the ones the name announces" {
                 return LabCase::new(CASE_CORRUPT, TITLE_CORRUPT)
                     .failed("the corrupt bytes were served");
@@ -467,7 +467,7 @@ fn the_proxy_refuses_the_metadata_that_the_repomd_does_not_declare() {
         Scope::Product,
         Expectation::Refused,
         || {
-            // El cliente pide el repomd primero: es el que declara.
+            // The client requests the repomd first: it is the one that declares.
             let repomd = get(&lab, port, LAB, "repodata/repomd.xml");
             if repomd.status != 200 {
                 return LabCase::new(CASE_UNDECLARED, TITLE_UNDECLARED)
@@ -480,7 +480,7 @@ fn the_proxy_refuses_the_metadata_that_the_repomd_does_not_declare() {
                     undeclared.status
                 ));
             }
-            // Y ni se pregunta al upstream por ella.
+            // And the upstream is not even asked for it.
             if lab.upstream.hits("repodata/primary.xml.gz") != 0 {
                 return LabCase::new(CASE_UNDECLARED, TITLE_UNDECLARED)
                     .failed("the upstream was asked for metadata that nobody declares");
@@ -522,7 +522,7 @@ fn the_proxy_serves_the_package_of_the_upstream() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: el scope, el offline y la confianza
+// AC3: the scope, offline and trust
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -561,7 +561,7 @@ fn offline_serves_the_cached_copy_and_not_more() {
     let mut service = start(&lab, &[]);
     let port = service.port;
 
-    // Lo ya descargado.
+    // What was already downloaded.
     let first = get(&lab, port, LAB, "repodata/repomd.xml");
     assert_eq!(
         first.status,
@@ -572,7 +572,7 @@ fn offline_serves_the_cached_copy_and_not_more() {
     support::stop(&mut service);
     let before = lab.upstream.total();
 
-    // El servicio entero sin red.
+    // The whole service without network.
     let mut service = start(&lab, &[("HODEI_PROXY__OFFLINE", "true")]);
     let port = service.port;
 
@@ -597,7 +597,7 @@ fn offline_serves_the_cached_copy_and_not_more() {
                     cached.header("x-hodei-cache")
                 ));
             }
-            // Lo que nunca se descargó no se inventa.
+            // What was never downloaded is not invented.
             let missing = get(&lab, port, LAB, "Packages/nunca-descargado.rpm");
             if missing.status != 503 {
                 return LabCase::new(CASE_OFFLINE, TITLE_OFFLINE).failed(format!(
@@ -633,17 +633,17 @@ fn the_trust_gate_applies_to_the_proxy_content() {
                 return LabCase::new(CASE_TRUST, TITLE_TRUST)
                     .failed("the trusted proxy served content that was not granted");
             }
-            // Sin concesion, el contenido no existe para quien lee: un 404,
-            // no un 403 que diria que el repositorio esta ahi.
+            // Without a grant, the content does not exist for the reader: a 404,
+            // not a 403 that would say the repository is there.
             if trusted.status != 404 {
                 return LabCase::new(CASE_TRUST, TITLE_TRUST).failed(format!(
                     "the trusted proxy answered {}, and it has to answer 404",
                     trusted.status
                 ));
             }
-            // El control: el mismo upstream, el mismo contenido y el canal
-            // abierto **si** se sirve. Sin esto, el caso no distinguiria la
-            // compuerta de un proxy roto.
+            // The control: the same upstream, the same content and the open channel
+            // **does** get served. Without this, the case would not distinguish the
+            // gate from a broken proxy.
             let open = get(&lab, port, LAB, "repodata/repomd.xml");
             if open.status != 200 {
                 return LabCase::new(CASE_TRUST, TITLE_TRUST)

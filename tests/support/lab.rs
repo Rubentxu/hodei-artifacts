@@ -1211,11 +1211,11 @@ pub fn run_registry_lab_case(
             // built itself.
             case.scope = scope;
             case.expectation = expectation;
-            // Un fallo que **nadie pidio** es un fallo de la suite: el
-            // laboratorio existe para que un fallo se vea, y un informe
-            // con `green: false` que el `cargo test` no ve es un falso
-            // verde. Un rechazo que el caso pedia (un `refused`) si es un
-            // resultado: no falla la suite.
+            // A failure that **nobody asked for** is a failure of the suite: the
+            // laboratory exists so that a failure is seen, and a report
+            // with `green: false` that `cargo test` does not see is a false
+            // green. A refusal that the case asked for (a `refused`) is a
+            // result: it does not fail the suite.
             let unexpected = case.result == Outcome::Fail && !case.expected;
             let cause = case.cause.clone();
             record_registry_lab(case);

@@ -1,8 +1,8 @@
-//! La UAT de doc-9 (Raw Hosted + CAS + Catalog), ejecutada.
+//! The doc-9 UAT (Raw Hosted + CAS + Catalog), executed.
 //!
-//! Cada escenario se aprueba por su **oraculo**, no por la forma de la
-//! respuesta, y el comando se registra con lo que realmente se ejecuto.
-//! El arnes comun —el resultado, el informe y los ayudantes— esta en
+//! Each scenario is approved by its **oracle**, not by the shape of the
+//! response, and the command is recorded as what was actually executed.
+//! The common harness (the result, the report and the helpers) lives in
 //! `doc9_support`.
 
 mod doc9_support;
@@ -20,26 +20,26 @@ use hodei_catalog::{CatalogReader, CatalogWriter};
 use hodei_hub::blob::BlobStore;
 use support::Deployment;
 
-/// El semillero del catálogo.
+/// The catalog seeder.
 ///
-/// El despliegue siembra el catálogo en un proceso aparte, y este test es
-/// el que lo hace cuando el proceso le pide: el arnés pasa la ruta de la
-/// base por la variable `HODEI_SEED_DB`, y este es el que la escribe.
+/// The deployment seeds the catalog in a separate process, and this test
+/// is what does it when the process asks: the harness passes the path of
+/// the database through the `HODEI_SEED_DB` variable, and this is what writes it.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// RAW-01, RAW-02 — publicar, descargar, describir y pedir un tramo.
+// RAW-01, RAW-02 — publish, download, describe and request a range.
 // ---------------------------------------------------------------------------
 
-/// RAW-01 y RAW-02: lo publicado vuelve intacto, y el HEAD y el Range
-/// dicen lo que deben.
+/// RAW-01 and RAW-02: what was published comes back intact, and HEAD and
+/// Range say what they should.
 ///
-/// El oraculo es el digest: `sha256sum` del fichero publicado y del
-/// descargado tienen que ser el mismo, y eso lo dice un programa que no
-/// tiene nada que ver con este servicio.
+/// The oracle is the digest: `sha256sum` of the published file and of the
+/// downloaded one must be the same, and that is stated by a program that
+/// has nothing to do with this service.
 #[test]
 fn raw_01_and_raw_02_the_content_comes_back_intact_and_the_head_and_the_range_say_what_they_should()
 {
@@ -81,7 +81,7 @@ fn raw_01_and_raw_02_the_content_comes_back_intact_and_the_head_and_the_range_sa
     let measured = support::sha256_of(&downloaded);
     assert_eq!(measured, expected, "what came back is not what went in");
 
-    // El HEAD describe sin traer: mismo estado, cero bytes de cuerpo.
+    // HEAD describes without fetching: same status, zero body bytes.
     let describe =
         support::Curl::describe(service.port, &the_path(FIRST_REPOSITORY, "app.bin"), &token);
     let describe_command = describe.shown();
@@ -93,7 +93,7 @@ fn raw_01_and_raw_02_the_content_comes_back_intact_and_the_head_and_the_range_sa
         described.size
     );
 
-    // Y el Range responde 206 con su Content-Range y sus bytes.
+    // And Range answers 206 with its Content-Range and its bytes.
     let ranged_path = deployment.directory.path().join("ranged.bin");
     let range = support::Curl::with_header(
         service.port,
@@ -139,15 +139,15 @@ fn raw_01_and_raw_02_the_content_comes_back_intact_and_the_head_and_the_range_sa
 }
 
 // ---------------------------------------------------------------------------
-// RAW-03 — las condiciones.
+// RAW-03 — the conditions.
 // ---------------------------------------------------------------------------
 
-/// RAW-03: una condicion que no se cumple dice lo que dice RFC 9110, y
-/// no muta nada.
+/// RAW-03: a condition that is not met says what RFC 9110 says, and
+/// mutates nothing.
 ///
-/// El oraculo tiene tres partes: un `If-None-Match` que coincide da un
-/// 304 sin cuerpo, un `If-Match` que no coincide da un 412, y el asset
-/// sigue igual despues: una condicion fallida no publica ni borra.
+/// The oracle has three parts: a matching `If-None-Match` gives a 304
+/// without a body, a non-matching `If-Match` gives a 412, and the asset
+/// stays the same afterwards: a failed condition neither publishes nor deletes.
 #[test]
 fn raw_03_a_condition_that_does_not_hold_says_what_the_rfc_says_and_changes_nothing() {
     let deployment = a_deployment();
@@ -171,7 +171,7 @@ fn raw_03_a_condition_that_does_not_hold_says_what_the_rfc_says_and_changes_noth
     let published = upload.run();
     assert_eq!(published.status, 201, "{}", deployment.the_log());
 
-    // El If-None-Match que coincide: 304, sin cuerpo, con la etiqueta.
+    // The matching If-None-Match: 304, no body, with the etag.
     let not_modified_path = deployment.directory.path().join("not-modified.bin");
     let not_modified = support::Curl::with_header(
         service.port,
@@ -194,7 +194,7 @@ fn raw_03_a_condition_that_does_not_hold_says_what_the_rfc_says_and_changes_noth
         not_modified_answer.size
     );
 
-    // El If-Match que no coincide: 412.
+    // The non-matching If-Match: 412.
     let failed_path = deployment.directory.path().join("failed.bin");
     let failed = support::Curl::with_header(
         service.port,
@@ -215,7 +215,7 @@ fn raw_03_a_condition_that_does_not_hold_says_what_the_rfc_says_and_changes_noth
         deployment.the_log()
     );
 
-    // Y el asset sigue siendo el mismo: una condicion fallida no publica.
+    // And the asset is still the same: a failed condition does not publish.
     let after_path = deployment.directory.path().join("after.bin");
     let after = support::Curl::download(
         service.port,
@@ -248,14 +248,14 @@ fn raw_03_a_condition_that_does_not_hold_says_what_the_rfc_says_and_changes_noth
 }
 
 // ---------------------------------------------------------------------------
-// RAW-05 — dos cuentas no se ven.
+// RAW-05 — two accounts do not see each other.
 // ---------------------------------------------------------------------------
 
-/// RAW-05: la cuenta de B no ve lo de A, y no puede saber si existe.
+/// RAW-05: B's account does not see A's content, and cannot know whether it exists.
 ///
-/// El oraculo tiene tres partes: cada cuenta descarga lo suyo en la misma
-/// direccion, el repositorio de la otra cuenta es un 404 —que no dice si
-/// existe— y el principal que el bundle no cubre es un 403.
+/// The oracle has three parts: each account downloads its own content at
+/// the same address, the other account's repository is a 404 —which does not
+/// say whether it exists— and the principal the bundle does not cover is a 403.
 #[test]
 fn raw_05_the_other_account_does_not_see_the_content_and_cannot_know_it_exists() {
     let deployment = a_deployment();
@@ -290,11 +290,11 @@ fn raw_05_the_other_account_does_not_see_the_content_and_cannot_know_it_exists()
     let published = second_upload.run();
     assert_eq!(published.status, 201, "{}", deployment.the_log());
 
-    // La cuenta de B busca el repositorio que solo tiene A: 404, que no
-    // dice si existe.
-    // La respuesta de un 404 tiene que ser **generica**: ni un byte del
-    // recurso ajeno, ni el digest, ni la ruta. Un 404 que dice algo del
-    // recurso que no es tuyo filtra su existencia.
+    // B's account looks for the repository only A has: 404, which does not
+    // say whether it exists.
+    // The body of a 404 must be **generic**: not a single byte of the
+    // foreign resource, nor the digest, nor the path. A 404 that says anything
+    // about a resource that is not yours leaks its existence.
     let other_path = deployment.directory.path().join("other.bin");
     let other = support::Curl::download(
         service.port,
@@ -324,7 +324,7 @@ fn raw_05_the_other_account_does_not_see_the_content_and_cannot_know_it_exists()
         "the 404 leaks the path of the repository of the other account: {body}"
     );
 
-    // Y sin credencial tampoco: 401, que es otra cosa distinta.
+    // And without credentials too: 401, which is a different thing.
     let anonymous = support::Curl::download(
         service.port,
         &the_path(FIRST_REPOSITORY, "shared.bin"),
@@ -353,15 +353,15 @@ fn raw_05_the_other_account_does_not_see_the_content_and_cannot_know_it_exists()
 }
 
 // ---------------------------------------------------------------------------
-// RAW-06 — la carga interrumpida.
+// RAW-06 — the interrupted upload.
 // ---------------------------------------------------------------------------
 
-/// RAW-06: una subida cortada no deja ruta publicada, y lo que ya estaba
-/// publicado sigue entero.
+/// RAW-06: a cut-off upload leaves no published path, and what was already
+/// published remains whole.
 ///
-/// El oraculo tiene tres partes: la ruta cortada no existe, el staging
-/// caducado se limpia y el vivo se respeta, y el blob publicado antes
-/// conserva su digest.
+/// The oracle has three parts: the cut path does not exist, the expired
+/// staging is cleaned up and the live one is respected, and the blob
+/// published earlier keeps its digest.
 #[test]
 fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_survives() {
     let deployment = a_deployment();
@@ -384,7 +384,7 @@ fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_surv
     let answer = keep.run();
     assert_eq!(answer.status, 201, "{}", deployment.the_log());
 
-    // Una subida que no llega a terminarse, con el servicio muerto a mitad.
+    // An upload that never gets to finish, with the service killed midway.
     let big_path = deployment.directory.path().join("big.bin");
     std::fs::write(&big_path, vec![7u8; 512 * 1024]).expect("the source is written");
     let cut = support::Curl::upload(
@@ -397,8 +397,8 @@ fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_surv
     let cut_command = cut.shown();
     let mut upload = cut.run_in_background();
 
-    // Se espera a que el staging **tenga bytes**: un staging vacio
-    // significa que la subida no habia empezado a llegar.
+    // Wait until the staging **has bytes**: an empty staging
+    // means the upload had not started arriving.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     while deployment.staging_bytes() == 0 && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(50));
@@ -412,11 +412,11 @@ fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_surv
     support::kill(&mut service);
     let _ = upload.wait();
 
-    // El staging abandonado envejece, para que el arranque lo limpie.
+    // The abandoned staging ages, so that startup cleans it up.
     deployment.age_the_staging(std::time::Duration::from_secs(2 * 3600));
     let mut service = deployment.start(&[]);
 
-    // La ruta cortada no existe: no se publico a medias.
+    // The cut path does not exist: it was not published halfway.
     let missing = support::Curl::download(
         service.port,
         &the_path(FIRST_REPOSITORY, "cut.bin"),
@@ -432,7 +432,7 @@ fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_surv
         deployment.the_log()
     );
 
-    // Y lo que si se habia publicado sigue con el mismo digest.
+    // And what had been published keeps the same digest.
     let after_path = deployment.directory.path().join("after.bin");
     let after = support::Curl::download(
         service.port,
@@ -467,23 +467,23 @@ fn raw_06_an_interrupted_upload_leaves_no_published_path_and_the_valid_blob_surv
 }
 
 // ---------------------------------------------------------------------------
-// CAT-01 — el catalogo sobrevive al reinicio.
+// CAT-01 — the catalog survives the restart.
 // ---------------------------------------------------------------------------
 
-/// El localizador del tenant Dgraph donde el proceso de escritura deja el
-/// catalogo (`graph://<namespace>/<clave>`).
+/// The locator of the Dgraph tenant where the writer process leaves the
+/// catalog (`graph://<namespace>/<key>`).
 const RESTART_PATH: &str = "DOC9_UAT_RESTART_PATH";
 
-/// La fase de escritura del reinicio, en su propio proceso.
+/// The write phase of the restart, in its own process.
 ///
-/// Es un test aparte, y no una rama del de reinicio, por una razon que
-/// no es de estilo: si la fase de escritura fuera una rama, bastaria
-/// que la variable de entorno que la activa estuviera puesta en el
-/// entorno de quien lanza la suite para que el proceso que verifica
-/// escribiera y se saliera **sin comprobar nada**, y el test pasaria en
-/// verde sin haber verificado nada. Con dos tests, el que verifica no
-/// tiene rama que lo saltee, y el que escribe falla si se lo lanza sin
-/// el localizador.
+/// It is a separate test, and not a branch of the restart one, for a reason
+/// that is not stylistic: if the write phase were a branch, it would be enough
+/// for the environment variable that activates it to be set in the
+/// environment of whoever launches the suite for the verifying process to
+/// write and exit **without checking anything**, and the test would pass
+/// green without having verified anything. With two tests, the one that verifies
+/// has no branch that skips it, and the one that writes fails if launched without
+/// the locator.
 #[tokio::test]
 #[ignore = "solo corre como el proceso hijo del test de reinicio"]
 async fn the_catalog_is_written_for_the_restart() {
@@ -496,7 +496,7 @@ async fn the_catalog_is_written_for_the_restart() {
     write_the_catalog(&tenant).await;
 }
 
-/// Escribe el catalogo y lo deja donde el proceso que verifica lo leera.
+/// Writes the catalog and leaves it where the verifying process will read it.
 async fn write_the_catalog(tenant: &support::graph_profile::GraphTenant) {
     let content = the_content();
     let digest = the_digest(&content);
@@ -517,20 +517,20 @@ async fn write_the_catalog(tenant: &support::graph_profile::GraphTenant) {
         .expect("the content is published");
 }
 
-/// CAT-01: lo que se publico sigue ahi despues de reiniciar el proceso.
+/// CAT-01: what was published is still there after restarting the process.
 ///
-/// El oraculo es que el registro resuelve el **mismo digest** despues del
-/// reinicio: no basta con que haya una fila, tiene que ser la misma. Y
-/// el reinicio es de verdad: otro proceso, no el mismo.
+/// The oracle is that the registry resolves the **same digest** after the
+/// restart: a row is not enough, it must be the same one. And
+/// the restart is real: another process, not the same one.
 ///
-/// El catalogo vive en un namespace del alpha, no en el proceso: lo que
-/// escribe el hijo lo lee el padre con un cliente nuevo, abierto despues de
-/// que el proceso escritor haya muerto.
+/// The catalog lives in an alpha namespace, not in the process: what
+/// the child writes the parent reads with a new client, opened after
+/// the writer process has died.
 #[tokio::test]
 async fn cat_01_the_catalog_resolves_the_same_digest_after_a_restart() {
     let tenant = support::graph_profile::GraphTenant::create();
 
-    // El proceso que escribe es otro proceso, y se espera a que termine.
+    // The writing process is another process, and we wait for it to finish.
     let binary = std::env::current_exe().expect("the test binary");
     let status = tokio::process::Command::new(binary)
         .arg("--exact")
@@ -543,7 +543,7 @@ async fn cat_01_the_catalog_resolves_the_same_digest_after_a_restart() {
         .expect("the writing process");
     assert!(status.success(), "the writing process failed: {status}");
 
-    // Un cliente nuevo, sobre el mismo namespace, ve lo mismo.
+    // A new client, on the same namespace, sees the same thing.
     let reopened = tenant.catalog_store().await;
 
     let repository = reopened
@@ -581,7 +581,7 @@ async fn cat_01_the_catalog_resolves_the_same_digest_after_a_restart() {
     ));
 }
 
-/// El descriptor de un repositorio.
+/// The descriptor of a repository.
 fn the_descriptor(account: &str, repo_key: &str) -> hodei_catalog::RepositoryDescriptor {
     hodei_catalog::RepositoryDescriptor {
         hrn: hodei_catalog::repository_hrn("hodei", "artifacts", "eu", account, repo_key),
@@ -595,7 +595,7 @@ fn the_descriptor(account: &str, repo_key: &str) -> hodei_catalog::RepositoryDes
     }
 }
 
-/// La publicacion de un contenido.
+/// The publication of a content.
 fn the_publication(asset_path: &str, digest: &str, size_bytes: u64) -> hodei_catalog::Publication {
     hodei_catalog::Publication {
         repository: FIRST_REPOSITORY.to_string(),
@@ -616,15 +616,15 @@ fn the_publication(asset_path: &str, digest: &str, size_bytes: u64) -> hodei_cat
 }
 
 // ---------------------------------------------------------------------------
-// CAS-02 — los escritores concurrentes.
+// CAS-02 — the concurrent writers.
 // ---------------------------------------------------------------------------
 
-/// CAS-02: dieciseis escritores concurrentes, y un solo blob fisico por
+/// CAS-02: sixteen concurrent writers, and a single physical blob per
 /// digest.
 ///
-/// El oraculo tiene dos partes: el contenido que sale es integro —nunca
-/// una mezcla de trozos de dos escritores— y en el disco hay **un** blob
-/// por digest, no uno por escritor.
+/// The oracle has two parts: the resulting content is intact —never
+/// a mix of chunks from two writers— and on disk there is **one** blob
+/// per digest, not one per writer.
 #[tokio::test]
 async fn cas_02_sixteen_concurrent_writers_leave_one_blob_per_digest() {
     let deployment = Deployment::new();
@@ -634,8 +634,8 @@ async fn cas_02_sixteen_concurrent_writers_leave_one_blob_per_digest() {
 
     let store = Arc::new(hodei_hub::blob::FileBlobStore::new(&cas).expect("the store"));
 
-    // Dieciseis escritores, el mismo digest: el contenido es
-    // identico y el que gana es el que escribe primero.
+    // Sixteen writers, the same digest: the content is
+    // identical and the winner is whoever writes first.
     let mut handles = Vec::new();
     for _ in 0..16 {
         let store = store.clone();
@@ -656,7 +656,7 @@ async fn cas_02_sixteen_concurrent_writers_leave_one_blob_per_digest() {
         "the writers did not agree on the digest: {digests:?}"
     );
 
-    // Y en disco hay un unico blob fisico para ese digest.
+    // And on disk there is a single physical blob for that digest.
     let physical = blob_path(&cas, &digest);
     assert!(physical.exists(), "the blob is not where the digest says");
     let siblings = std::fs::read_dir(physical.parent().expect("the blob has a parent"))
@@ -669,7 +669,7 @@ async fn cas_02_sixteen_concurrent_writers_leave_one_blob_per_digest() {
         "the digest has more than one blob in the store: {siblings}"
     );
 
-    // Y el contenido que sale es el que entro, byte a byte.
+    // And the resulting content is what went in, byte for byte.
     let read = store
         .get(&hodei_evidence::ContentDigest::sha256(digest.clone()))
         .await
@@ -687,15 +687,15 @@ async fn cas_02_sixteen_concurrent_writers_leave_one_blob_per_digest() {
 }
 
 // ---------------------------------------------------------------------------
-// CAT-02 — el conflicto en paralelo.
+// CAT-02 — the parallel conflict.
 // ---------------------------------------------------------------------------
 
-/// CAT-02: dos publicaciones en paralelo sobre la misma ruta, y una sola
-/// gana.
+/// CAT-02: two parallel publications on the same path, and only one
+/// wins.
 ///
-/// El oraculo: el perdedor recibe un 409 —que es "esta direccion ya
-/// publica otra cosa" y no un error generico— y el estado que queda es
-/// coherente: lo que hay es lo que gano.
+/// The oracle: the loser receives a 409 —which means "this address already
+/// publishes something else" and not a generic error— and the resulting state is
+/// coherent: what is there is what won.
 #[tokio::test]
 async fn cat_02_two_concurrent_publications_leave_one_winner_and_a_conflict() {
     let deployment = Deployment::new();
@@ -717,11 +717,11 @@ async fn cat_02_two_concurrent_publications_leave_one_winner_and_a_conflict() {
         .await
         .expect("the repository is created");
 
-    // Dos contenidos **distintos** sobre la misma ruta: si fueran el
-    // mismo, la segunda publicacion seria idempotente, y eso no es un
-    // conflicto. El oraculo del doc-9 habla de identidad, version y
-    // path en conflicto, y el conflicto de path necesita dos
-    // contenidos que no pueden convivir en la misma direccion.
+    // Two **different** contents on the same path: if they were the
+    // same, the second publication would be idempotent, and that is not a
+    // conflict. The doc-9 oracle speaks of identity, version and
+    // path in conflict, and the path conflict needs two
+    // contents that cannot coexist at the same address.
     let mut handles = Vec::new();
     for writer in 0..2u8 {
         let catalog = catalog.clone();
@@ -751,9 +751,9 @@ async fn cat_02_two_concurrent_publications_leave_one_winner_and_a_conflict() {
     assert_eq!(winners, 1, "the publication must have one winner");
     assert_eq!(conflicts, 1, "the loser must get a conflict");
 
-    // Y lo que queda es lo que gano: un asset, con el digest de quien
-    // gano. Lo que importa es que el estado es coherente: hay un asset,
-    // y su digest es el del contenido que se publico.
+    // And what remains is what won: one asset, with the digest of the one that
+    // won. What matters is that the state is coherent: there is one asset,
+    // and its digest is that of the content that was published.
     let asset = catalog
         .asset(FIRST_ACCOUNT, FIRST_REPOSITORY, "app.bin")
         .await
@@ -779,13 +779,13 @@ async fn cat_02_two_concurrent_publications_leave_one_winner_and_a_conflict() {
 }
 
 // ---------------------------------------------------------------------------
-// CAT-03 — dos cuentas, la misma ruta.
+// CAT-03 — two accounts, the same path.
 // ---------------------------------------------------------------------------
 
-/// CAT-03: dos cuentas con la misma ruta de asset, y cada una ve lo suyo.
+/// CAT-03: two accounts with the same asset path, and each one sees its own.
 ///
-/// El oraculo: cada cuenta resuelve **su** contenido, y la cuenta ajena
-/// recibe un 404 que no dice si existe.
+/// The oracle: each account resolves **its** content, and the foreign account
+/// receives a 404 that does not say whether it exists.
 #[tokio::test]
 async fn cat_03_two_accounts_with_the_same_path_see_only_their_own() {
     let deployment = Deployment::new();
@@ -834,7 +834,7 @@ async fn cat_03_two_accounts_with_the_same_path_see_only_their_own() {
         .await
         .expect("the second content is published");
 
-    // Cada cuenta ve lo suyo.
+    // Each account sees its own.
     let first = catalog
         .asset(FIRST_ACCOUNT, FIRST_REPOSITORY, "shared.bin")
         .await
@@ -846,7 +846,7 @@ async fn cat_03_two_accounts_with_the_same_path_see_only_their_own() {
         .expect("the second asset is read");
     assert_eq!(second.digest.value, second_digest);
 
-    // Y la cuenta ajena no ve lo de la otra.
+    // And the foreign account does not see the other's.
     let answer = catalog
         .asset(SECOND_ACCOUNT, FIRST_ONLY_REPOSITORY, "shared.bin")
         .await
@@ -856,8 +856,8 @@ async fn cat_03_two_accounts_with_the_same_path_see_only_their_own() {
         "unexpected error: {answer:?}"
     );
 
-    // El HRN del repositorio viene de la cuenta verificada: el mismo
-    // nombre en dos cuentas son dos repositorios, no uno.
+    // The repository HRN comes from the verified account: the same
+    // name in two accounts is two repositories, not one.
     let first_repository = catalog
         .repository(FIRST_ACCOUNT, FIRST_REPOSITORY)
         .await
@@ -889,13 +889,13 @@ async fn cat_03_two_accounts_with_the_same_path_see_only_their_own() {
 }
 
 // ---------------------------------------------------------------------------
-// Los escenarios que hoy no se pueden certificar.
+// The scenarios that cannot be certified today.
 // ---------------------------------------------------------------------------
 
-/// Los escenarios cuya oraculo no se puede medir con lo que hay.
+/// The scenarios whose oracle cannot be measured with what exists.
 ///
-/// No es un PASS: es un "no se puede todavia", con el motivo y con lo que
-/// falta. Un PASS que no se ha medido es peor que un FAILED sin explicar.
+/// It is not a PASS: it is a "not yet possible", with the reason and with what
+/// is missing. A PASS that has not been measured is worse than an unexplained FAILED.
 #[test]
 fn the_scenarios_that_cannot_be_certified_yet_are_declared() {
     record(Outcome::uncertified(
@@ -1002,40 +1002,40 @@ fn the_scenarios_that_cannot_be_certified_yet_are_declared() {
     ));
 }
 
-/// Escribe el informe.
+/// Writes the report.
 ///
-/// Va al final, cuando todos los escenarios han dicho lo suyo.
+/// It goes last, when all the scenarios have said their part.
 ///
-/// Los tests de un binario **no** se ejecutan en el orden del fichero, y
-/// aqui el orden importa: este test tiene que ver los resultados de
-/// todos los demas. Por eso no depende del orden, sino de una **barrera**:
-/// cada escenario dice cuantos ha registrado, y este espera a que el
-/// numero cuadre antes de escribir.
+/// The tests of a binary are **not** run in file order, and
+/// here order matters: this test has to see the results of
+/// all the others. So it does not depend on order, but on a **barrier**:
+/// each scenario says how many it has recorded, and this one waits for the
+/// number to add up before writing.
 ///
-/// La espera tiene techo, porque un test que espera a otro que no
-/// llega se queda colgado sin decir nada.
+/// The wait has a ceiling, because a test waiting for another that
+/// never arrives hangs without saying anything.
 #[test]
 fn the_report_is_written_where_the_ci_can_read_it() {
-    // Cada escenario que ha hablado esta en el informe.
+    // Every scenario that has spoken is in the report.
     //
-    // La cuenta completa **no** se comprueba aqui, y el motivo es que
-    // este test no es el ultimo: los tests de un binario se ejecutan en
-    // paralelo y en orden alfabetico, no en el del fichero. Comprobar
-    // aqui que estan los dieciseis seria comprobarlo antes de que hayan
-    // corrido todos.
+    // The full count is **not** checked here, and the reason is that
+    // this test is not the last one: the tests of a binary run in
+    // parallel and in alphabetical order, not in file order. Checking
+    // here that all sixteen are present would be checking before they have
+    // all run.
     //
-    // La cuenta completa la comprueba la pipeline, que ve el fichero
-    // cuando el binario ha terminado: ahi si se puede afirmar que la
-    // UAT trajo sus dieciseis escenarios.
-    // El informe puede no existir todavia: este test corre en paralelo
-    // con los escenarios que lo escriben, y puede llegar el primero. Lo
-    // que se comprueba aqui es que **si** el informe existe, trae lo
-    // que se sabe de el. La cuenta completa la comprueba el gate de la
-    // pipeline, que ve el fichero cuando el binario ha terminado.
+    // The full count is checked by the pipeline, which sees the file
+    // when the binary has finished: there it can be asserted that the
+    // UAT brought its sixteen scenarios.
+    // The report may not exist yet: this test runs in parallel
+    // with the scenarios that write it, and may arrive first. What
+    // is checked here is that **if** the report exists, it carries what
+    // is known of it. The full count is checked by the pipeline gate,
+    // which sees the file when the binary has finished.
     let path = the_report_path();
     let Ok(report) = std::fs::read_to_string(&path) else {
-        // Todavia no hay informe: lo escribiran los escenarios que
-        // faltan. El gate de la pipeline lo comprueba al final.
+        // There is no report yet: the missing scenarios will write it.
+        // The pipeline gate checks it at the end.
         return;
     };
     let outcomes = outcomes();
@@ -1052,7 +1052,7 @@ fn the_report_is_written_where_the_ci_can_read_it() {
         report.contains("UAT doc-9"),
         "the report does not say what it is:\n{report}"
     );
-    // Que esten los dieciseis escenarios lo comprueba `scripts/check-doc9-uat.sh`
-    // cuando el binario ha terminado: aqui depender del orden de ejecucion
-    // haria fallar el test segun cuando le toque correr.
+    // That all sixteen scenarios are present is checked by `scripts/check-doc9-uat.sh`
+    // when the binary has finished: here depending on execution order
+    // would make the test fail depending on when it happens to run.
 }

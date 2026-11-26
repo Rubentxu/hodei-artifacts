@@ -1,30 +1,30 @@
-//! Hugging Face hosted de HSP-218 contra el cliente real (`hf`).
+//! Hugging Face hosted of HSP-218 against the real client (`hf`).
 //!
-//! El `hf` del venv (`huggingface_hub` 1.2.3, que habla httpx) descarga
-//! un modelo sembrado en la superficie hosted de Hodei: resuelve la
-//! revision (`/api/models/{repo}/revision/main`), lee la metadata del
-//! resolve (`302` con `X-Repo-Commit`/`X-Linked-Etag`/`X-Linked-Size` y
-//! `Location` relativa) y baja el blob en streaming por la `Location`.
-//! La identidad la pone el propio dialecto: el etag del fichero ES su
-//! sha256, y el de lo instalado se compara con el que la superficie
-//! declaro. Hace falta el `hf` 1.x del venv (el 3.15 del sistema rompe
-//! toolchain viejas, leccion de HSP-168): en el `HF_BIN` (el venv de la
-//! UAT) o en el `PATH`; sin el, la suite **falla** diciendo que falta.
-//! Cada ejecucion usa su propio `HF_HOME`: nada se lee ni se escribe
-//! fuera del directorio del despliegue.
+//! The venv's `hf` (`huggingface_hub` 1.2.3, which speaks httpx) downloads
+//! a model seeded on Hodei's hosted surface: it resolves the
+//! revision (`/api/models/{repo}/revision/main`), reads the resolve
+//! metadata (`302` with `X-Repo-Commit`/`X-Linked-Etag`/`X-Linked-Size` and
+//! a relative `Location`) and downloads the blob streaming through the `Location`.
+//! The identity is set by the dialect itself: the file's etag IS its
+//! sha256, and that of what is installed is compared with the one the surface
+//! declared. The venv's `hf` 1.x is required (the system's 3.15 breaks
+//! old toolchains, lesson from HSP-168): in `HF_BIN` (the UAT's venv)
+//! or in the `PATH`; without it, the suite **fails** saying it is missing.
+//! Each run uses its own `HF_HOME`: nothing is read or written
+//! outside the deployment directory.
 //!
-//! El dialecto es el que fija el cliente; el mapa del wire lo capturo el
-//! spike de HSP-169 contra huggingface.co (ruta HTTP clasica, sin xet) y
-//! contra un fixture local (FMT-07 de `uat/UAT-FORMATS.md`). El servidor
-//! no emite `X-Xet-*`, asi que el cliente cae a la ruta clasica: la que
-//! este release sirve.
+//! The dialect is the one the client fixes; the wire map was captured by the
+//! HSP-169 spike against huggingface.co (classic HTTP route, no xet) and
+//! against a local fixture (FMT-07 of `uat/UAT-FORMATS.md`). The server
+//! does not emit `X-Xet-*`, so the client falls back to the classic route: the one
+//! this release serves.
 //!
-//! El test negativo documentado reproducen el hallazgo del spike (su
-//! fixture en modo `CORRUPT=1`, aqui como mini-fixture embebido con la
-//! misma forma): en la ruta clasica el cliente SOLO verifica el tamaño,
-//! nunca el sha256 — una descarga servida corrupta es ACEPTADA. La
-//! integridad la garantiza el CAS del servidor (conexion con HSP-105),
-//! no el cliente.
+//! The documented negative test reproduces the spike's finding (its
+//! fixture in `CORRUPT=1` mode, here as an embedded mini-fixture with the
+//! same shape): on the classic route the client ONLY verifies the size,
+//! never the sha256 — a download served corrupt is ACCEPTED. Integrity
+//! is guaranteed by the server's CAS (connection with HSP-105),
+//! not by the client.
 
 mod support;
 
@@ -36,7 +36,7 @@ use std::process::Command;
 use sha2::Digest as _;
 use support::{Deployment, FIRST_ACCOUNT, SECOND_ACCOUNT};
 
-/// Exige el `hf` 1.x del venv o del PATH, y devuelve su ruta.
+/// Requires the venv's or the PATH's `hf` 1.x, and returns its path.
 fn the_hf_binary() -> String {
     if let Ok(path) = std::env::var("HF_BIN") {
         return path;
@@ -58,36 +58,36 @@ fn require_hf() -> String {
     binary
 }
 
-/// El resultado de una ejecucion del cliente.
+/// The result of a client run.
 struct Run {
-    /// Si el cliente termino bien.
+    /// Whether the client finished successfully.
     ok: bool,
-    /// Lo que dijo, por stdout y por stderr.
+    /// What it said, on stdout and stderr.
     output: String,
 }
 
 impl Run {
-    /// El texto si termino bien, y un fallo con todo el resto si no.
+    /// The text if it finished successfully, and a failure with everything else if not.
     fn expect(&self, what: &str) -> String {
         assert!(self.ok, "{what} failed:\n{}", self.output);
         self.output.clone()
     }
 }
 
-/// Un `hf` aislado: su `HF_HOME` de cache y su `HOME`.
+/// An isolated `hf`: its cache `HF_HOME` and its `HOME`.
 struct Client {
-    /// La ruta del ejecutable.
+    /// The path of the executable.
     binary: String,
-    /// El directorio del despliegue.
+    /// The deployment directory.
     root: PathBuf,
-    /// La cache de este cliente.
+    /// This client's cache.
     home: PathBuf,
 }
 
 impl Client {
-    /// Una cache limpia. El endpoint y la credencial van por entorno en
-    /// cada comando: el dialecto no guarda el remote en una configuracion
-    /// previa.
+    /// A clean cache. The endpoint and the credential go through the environment in
+    /// each command: the dialect does not store the remote in a previous
+    /// configuration.
     fn new(root: &Path, name: &str) -> Self {
         let home = root.join(format!("hf-home-{name}"));
         std::fs::create_dir_all(&home).expect("the hf home");
@@ -98,14 +98,14 @@ impl Client {
         }
     }
 
-    /// Ejecuta el `hf` con su entorno aislado.
+    /// Runs `hf` with its isolated environment.
     fn run(&self, args: &[&str], endpoint: &str, token: &str) -> Run {
         let output = Command::new(&self.binary)
             .args(args)
             .env("HOME", &self.root)
             .env("HF_HOME", &self.home)
-            // La ruta clasica es el dialecto servido: sin xet nativo, la
-            // decision del fixture del spike que este release replica.
+            // The classic route is the served dialect: without native xet, the
+            // spike fixture's decision that this release replicates.
             .env("HF_HUB_DISABLE_XET", "1")
             .env("HF_HUB_DISABLE_TELEMETRY", "1")
             .env("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -121,15 +121,15 @@ impl Client {
         }
     }
 
-    /// `hf download`: la resolucion real contra la superficie.
+    /// `hf download`: the real resolution against the surface.
     fn download(&self, repo: &str, endpoint: &str, token: &str, extra: &[&str]) -> Run {
         let mut args = vec!["download", repo, "--quiet"];
         args.extend_from_slice(extra);
         self.run(&args, endpoint, token)
     }
 
-    /// El snapshot instalado de un modelo: la carpeta de snapshots de su
-    /// cache. El cliente nombra el modelo `models--{owner}--{name}`.
+    /// The installed snapshot of a model: the snapshots folder of its
+    /// cache. The client names the model `models--{owner}--{name}`.
     fn the_snapshot_of(&self, repo: &str) -> PathBuf {
         let model_dir = self
             .home
@@ -147,9 +147,9 @@ impl Client {
     }
 }
 
-/// El modelo pequeno que la suite siembra: un `config.json` y un
-/// `model.safetensors` legitimo (cabecera JSON de 8 bytes + tensores), el
-/// artefacto del dialecto en su forma real pero con un megabyte de pesos.
+/// The small model the suite seeds: a `config.json` and a legitimate
+/// `model.safetensors` (8-byte JSON header + tensors), the
+/// dialect's artifact in its real form but with a megabyte of weights.
 fn the_model_files(root: &Path) -> (PathBuf, PathBuf) {
     let directory = root.join("model/hodei-demo-model");
     std::fs::create_dir_all(&directory).expect("the model directory");
@@ -160,8 +160,8 @@ fn the_model_files(root: &Path) -> (PathBuf, PathBuf) {
     )
     .expect("the config");
     let model = directory.join("model.safetensors");
-    // Un safetensors legitimo: u64 little endian con la longitud de la
-    // cabecera (multiplo de 8), la cabecera JSON y los pesos.
+    // A legitimate safetensors: u64 little endian with the length of the
+    // header (multiple of 8), the JSON header and the weights.
     let header = serde_json::json!({
         "weights": { "dtype": "F32", "shape": [256, 1024], "data_offsets": [0, 1048576] }
     })
@@ -176,15 +176,15 @@ fn the_model_files(root: &Path) -> (PathBuf, PathBuf) {
     (config, model)
 }
 
-/// El sha256 de un fichero, como lo verifica el protocolo.
+/// The sha256 of a file, as the protocol verifies it.
 fn sha256_of(path: &Path) -> String {
     let bytes = std::fs::read(path).expect("the file");
     format!("{:x}", sha2::Sha256::digest(&bytes))
 }
 
-/// La respuesta cruda de la superficie, por socket: estado, cabeceras en
-/// minusculas y cuerpo. Los HEAD y los GET del dialecto se comprueban
-/// asi, como llegan al wire.
+/// The raw response of the surface, by socket: status, lowercase
+/// headers and body. The dialect's HEADs and GETs are checked
+/// this way, as they arrive on the wire.
 fn the_request(
     method: &str,
     port: u16,
@@ -220,8 +220,8 @@ fn the_request(
     (status, headers, body)
 }
 
-/// El seeder del catalogo: cada suite lo trae porque el arnes reinicia
-/// el binario de la suite para sembrar antes de arrancar el servicio.
+/// The catalog seeder: each suite brings it because the harness restarts
+/// the suite's binary to seed before starting the service.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
@@ -249,9 +249,9 @@ fn the_hf_client_downloads_the_model_and_the_sha256_is_the_etag() {
     let token = support::token(FIRST_ACCOUNT, "alice");
     let client = Client::new(&root, "consumer");
 
-    // El commit del snapshot es el digest del listado que lo forma: lo
-    // que la superficie declara tiene que ser el que los ficheros
-    // sembrados producen.
+    // The snapshot's commit is the digest of the listing that forms it: what
+    // the surface declares has to be what the seeded files
+    // produce.
     let config_digest = sha256_of(&config);
     let model_digest = sha256_of(&model);
     let expected_commit = the_snapshot_commit(&[
@@ -259,9 +259,9 @@ fn the_hf_client_downloads_the_model_and_the_sha256_is_the_etag() {
         ("model.safetensors", &model_digest),
     ]);
 
-    // AC1: el documento de revision lleva `id`, `sha` y `siblings`, y el
-    // commit que declara es el del snapshot sembrado. La misma revision
-    // se sirve por `main` y por su commit.
+    // AC1: the revision document carries `id`, `sha` and `siblings`, and the
+    // commit it declares is that of the seeded snapshot. The same revision
+    // is served by `main` and by its commit.
     let (status, _, body) = the_request(
         "GET",
         port,
@@ -295,8 +295,8 @@ fn the_hf_client_downloads_the_model_and_the_sha256_is_the_etag() {
     assert_eq!(by_commit, 200, "the revision is served by its commit");
     assert_eq!(body_by_commit, body, "main and the commit are one snapshot");
 
-    // AC1: el resolve por `HEAD` es una `302` con las cabeceras del wire
-    // real y una `Location` relativa (una ruta, sin scheme ni host).
+    // AC1: the resolve by `HEAD` is a `302` with the real wire's headers
+    // and a relative `Location` (a path, without scheme or host).
     let (status, headers, _) = the_request(
         "HEAD",
         port,
@@ -333,15 +333,15 @@ fn the_hf_client_downloads_the_model_and_the_sha256_is_the_etag() {
         "the location is a relative path, the shape the client follows: {location}"
     );
 
-    // AC2: el download real del cliente. El modelo entero, con la cache
-    // que el propio cliente gestiona.
+    // AC2: the client's real download. The whole model, with the cache
+    // that the client itself manages.
     client
         .download("hodei/demo-model", &endpoint, &token, &[])
         .expect("the download");
 
-    // AC2: lo instalado es lo que la superficie declaro: el sha256 del
-    // fichero instalado es el etag del resolve, y el commit del snapshot
-    // instalado es el que la revision sirvio.
+    // AC2: what is installed is what the surface declared: the sha256 of the
+    // installed file is the resolve's etag, and the installed snapshot's
+    // commit is the one the revision served.
     let snapshot = client.the_snapshot_of("hodei/demo-model");
     let installed = snapshot.join("model.safetensors");
     assert!(installed.is_file(), "the install left the model in place");
@@ -356,8 +356,8 @@ fn the_hf_client_downloads_the_model_and_the_sha256_is_the_etag() {
         "the client named the snapshot by the commit the surface declared"
     );
 
-    // AC1: la `Location` lleva el digest y sirve los bytes del CAS: el
-    // GET de la URL que la superficie construyo es el contenido entero.
+    // AC1: the `Location` carries the digest and serves the CAS bytes: the
+    // GET of the URL the surface built is the whole content.
     let (status, blob_headers, blob) = the_request("GET", port, &location, &token);
     assert_eq!(status, 200, "the blob is served");
     assert_eq!(
@@ -376,7 +376,7 @@ fn the_hf_client_downloads_the_model_and_the_sha256_is_the_etag() {
         "the served bytes are the seeded content"
     );
 
-    // La evidencia del digest que el cliente verifico, para el informe.
+    // The evidence of the digest the client verified, for the report.
     println!("HSP-218 model.safetensors sha256: {model_digest}");
     support::stop(&mut service);
 }
@@ -408,9 +408,9 @@ fn the_warm_cache_resolves_when_the_service_is_down() {
         .expect("the first download warms the cache");
     support::stop(&mut service);
 
-    // El servicio esta muerto: cualquier peticion del cliente fallaria.
-    // Que el download de la cache caliente acabe bien ES la prueba de
-    // que el cliente no vuelve a pedir nada.
+    // The service is dead: any client request would fail.
+    // That the warm-cache download finishes fine IS the proof that
+    // the client does not request anything again.
     let warm = client.download("hodei/demo-model", &endpoint, &token, &[]);
     assert!(
         warm.ok,
@@ -424,8 +424,8 @@ fn the_warm_cache_resolves_when_the_service_is_down() {
         "the warm snapshot is the served content"
     );
 
-    // Y un modelo que no tiene falla: sin red, no hay resolucion que
-    // invente lo que el hub no sirvio.
+    // And a model it does not have fails: without network, there is no resolution that
+    // invents what the hub did not serve.
     let missing = client.download("hodei/other-model", &endpoint, &token, &[]);
     assert!(
         !missing.ok,
@@ -454,8 +454,8 @@ fn another_principal_does_not_see_the_model_of_the_first_account() {
     let root = deployment.directory.path().to_path_buf();
     let endpoint = format!("http://127.0.0.1:{port}/hf/hf-hosted");
 
-    // El scoping es por cuenta: el repositorio vive en la cuenta primera,
-    // y un principal de otra cuenta no lo ve.
+    // Scoping is per account: the repository lives in the first account,
+    // and a principal of another account does not see it.
     let token = support::token(FIRST_ACCOUNT, "alice");
     let stranger_token = support::token(SECOND_ACCOUNT, "bob");
     let stranger = Client::new(&root, "stranger");
@@ -469,8 +469,8 @@ fn another_principal_does_not_see_the_model_of_the_first_account() {
     support::stop(&mut service);
 }
 
-/// El commit del snapshot: el digest de las lineas `rfilename sha256`
-/// ordenadas, la derivacion que la superficie declara.
+/// The snapshot's commit: the digest of the sorted `rfilename sha256`
+/// lines, the derivation the surface declares.
 fn the_snapshot_commit(entries: &[(&str, &str)]) -> String {
     let mut listing: Vec<String> = entries
         .iter()
@@ -485,33 +485,33 @@ fn the_snapshot_commit(entries: &[(&str, &str)]) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// El test negativo documentado: el cliente clasico SOLO verifica el
-/// tamaño.
+/// The documented negative test: the classic client ONLY verifies the
+/// size.
 ///
-/// Un mini-fixture con la misma forma que el del spike de HSP-169 en su
-/// modo `CORRUPT=1` (oraculo de documentos y cabeceras del hub): sirve un
-/// repo `hodei/spike-model` con un `config.json` cuyo `X-Linked-Etag`
-/// declara el sha256 del fichero ORIGINAL, pero cuyos bytes servidos
-/// llevan un byte volteado, con el `Content-Length` correcto. El cliente
-/// real ACEPTA la descarga: el sha256 declarado no lo comprueba, y solo
-/// un `sha256sum` externo detecta la corrupcion. Por eso la integridad en
-/// hosted la garantiza el CAS del servidor (HSP-105), que no entrega
-/// bytes que no son su digest.
+/// A mini-fixture with the same shape as the HSP-169 spike's in its
+/// `CORRUPT=1` mode (oracle of hub documents and headers): it serves a
+/// repo `hodei/spike-model` with a `config.json` whose `X-Linked-Etag`
+/// declares the sha256 of the ORIGINAL file, but whose served bytes
+/// carry a flipped byte, with the correct `Content-Length`. The real
+/// client ACCEPTS the download: it does not check the declared sha256, and only
+/// an external `sha256sum` detects the corruption. That is why integrity in
+/// hosted is guaranteed by the server's CAS (HSP-105), which does not deliver
+/// bytes that are not its digest.
 #[test]
 fn the_classic_client_only_verifies_the_size_never_the_sha256() {
     require_hf();
     let deployment = Deployment::new();
     let root = deployment.directory.path().to_path_buf();
 
-    // El fichero original: el que el etag del fixture declara.
+    // The original file: the one the fixture's etag declares.
     let original = root.join("spike/config.json");
     std::fs::create_dir_all(original.parent().expect("the directory")).expect("the directory");
     std::fs::write(&original, "{\n  \"model_type\": \"bert\"\n}\n").expect("the original");
     let declared = sha256_of(&original);
 
-    // El fixture del oraculo: el dialecto del hub clasico con un byte
-    // servido corrupto. stdlib de python, sin dependencias: el mismo
-    // hueco que el `CORRUPT=1` del spike.
+    // The oracle's fixture: the classic hub's dialect with one
+    // served byte corrupt. Python stdlib, no dependencies: the same
+    // gap as the spike's `CORRUPT=1`.
     let fixture = root.join("corrupt_fixture.py");
     std::fs::write(&fixture, CORRUPT_FIXTURE).expect("the fixture");
     let port = support::free_port();
@@ -527,8 +527,8 @@ fn the_classic_client_only_verifies_the_size_never_the_sha256() {
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("the fixture runs");
-    // El fixture dice cuando escucha, y lo dice escribiendo el puerto en
-    // su propia salida... por socket: se espera a que el puerto abra.
+    // The fixture says when it listens, and says it by writing the port to
+    // its own output... by socket: wait for the port to open.
     let mut ready = false;
     for _ in 0..100 {
         if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
@@ -539,8 +539,8 @@ fn the_classic_client_only_verifies_the_size_never_the_sha256() {
     }
     assert!(ready, "the corrupt fixture opened its port");
 
-    // El cliente real contra el oraculo: la descarga corrupta es
-    // ACEPTADA. Ese es el hallazgo documentado.
+    // The real client against the oracle: the corrupt download is
+    // ACCEPTED. That is the documented finding.
     let client = Client::new(&root, "corrupted");
     let endpoint = format!("http://127.0.0.1:{port}");
     let accepted = client.download(
@@ -558,8 +558,8 @@ fn the_classic_client_only_verifies_the_size_never_the_sha256() {
         accepted.output
     );
 
-    // Y la corrupcion la ve quien mira fuera del cliente: lo instalado
-    // ya no es lo que el etag declaro.
+    // And the corruption is seen by whoever looks outside the client: what is installed
+    // is no longer what the etag declared.
     let snapshot = client.the_snapshot_of("hodei/spike-model");
     let installed = sha256_of(&snapshot.join("config.json"));
     assert_ne!(
@@ -569,8 +569,8 @@ fn the_classic_client_only_verifies_the_size_never_the_sha256() {
     println!("HSP-218 negative: accepted sha256={installed}, declared etag={declared}");
 }
 
-/// El fixture del test negativo: el dialecto del hub clasico en su modo
-/// `CORRUPT=1`, la misma forma que el fixture del spike de HSP-169.
+/// The negative test's fixture: the classic hub's dialect in its
+/// `CORRUPT=1` mode, the same shape as the HSP-169 spike's fixture.
 const CORRUPT_FIXTURE: &str = r#"import hashlib, os, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 

@@ -1,14 +1,14 @@
-//! La migracion de HSP-123 contra **origenes con la forma real de sus
-//! APIs**: servidores fake que responden el JSON exacto de Nexus
-//! (`/service/rest/v1/search`, `/service/rest/v1/repositories`) y de
-//! Artifactory (`/api/repositories`, `/api/storage/{key}`), y el hub
-//! real arrancado como proceso con la superficie administrativa abierta.
+//! HSP-123's migration against **origins with the real shape of their
+//! APIs**: fake servers that answer the exact JSON of Nexus
+//! (`/service/rest/v1/search`, `/service/rest/v1/repositories`) and of
+//! Artifactory (`/api/repositories`, `/api/storage/{key}`), and the real
+//! hub started as a process with the administrative surface open.
 //!
-//! Lo que se comprueba no es el parser solo: es el ciclo completo del
-//! criterio de aceptacion — inventario con diferencias explicitas,
-//! import verificado por SHA, reimport que no mueve bytes, corrupto que
-//! no publica nada, resolucion nativa por path antes y despues, y la
-//! prueba estructural de que al origen solo le hicieron `GET`s.
+//! What is checked is not the parser alone: it is the complete cycle of the
+//! acceptance criterion — inventory with explicit differences,
+//! import verified by SHA, reimport that moves no bytes, a corrupt one that
+//! publishes nothing, native resolution by path before and after, and the
+//! structural proof that the origin only received `GET`s.
 
 mod support;
 
@@ -44,12 +44,12 @@ fn hex(bytes: &[u8]) -> String {
     out
 }
 
-/// El log de peticiones del origen: cada linea es `METODO path`. La
-/// prueba la exige de lectura pura.
+/// The origin's request log: each line is `METHOD path`. The
+/// test requires it to be pure reads.
 type Log = Arc<Mutex<Vec<String>>>;
 
-/// Un artefacto del origen fake: donde vive, que formato declara y que
-/// bytes sirve. `honest=false` predica un sha256 que no es el suyo.
+/// An artifact of the fake origin: where it lives, what format it declares and what
+/// bytes it serves. `honest=false` claims a sha256 that is not its own.
 struct FakeAsset {
     repository: &'static str,
     format: &'static str,
@@ -71,8 +71,8 @@ impl FakeAsset {
         hex(&sha1::Sha1::digest(&self.bytes))
     }
 
-    /// El documento de busqueda de Nexus para este artefacto: el pom
-    /// declara solo sha1, como en un Nexus viejo; el resto, ambos.
+    /// The Nexus search document for this artifact: the pom
+    /// declares only sha1, as in an old Nexus; the rest, both.
     fn nexus_item(&self, base: &str) -> Value {
         let checksums = if self.path.ends_with(".pom") {
             json!({"sha1": self.sha1()})
@@ -102,9 +102,9 @@ impl FakeAsset {
     }
 }
 
-/// El origen fake completo: ruta exacta (con query) contra respuesta.
-/// Se construye con el puerto ya conocido, como lo haria el propio
-/// Nexus con su `downloadUrl`.
+/// The complete fake origin: exact route (with query) to response.
+/// It is built with the port already known, as Nexus itself would
+/// with its `downloadUrl`.
 fn spawn_origin(kind: &str, assets: Vec<FakeAsset>) -> (u16, Log) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a free port for the fake origin");
     let port = listener.local_addr().expect("the address").port();
@@ -260,9 +260,9 @@ fn spawn_origin(kind: &str, assets: Vec<FakeAsset>) -> (u16, Log) {
     (port, log)
 }
 
-/// El despliegue con la superficie administrativa abierta: el esquema
-/// con su namespace `Admin` y la politica que solo deja pasar a alice,
-/// exactamente el montaje de HSP-115.
+/// The deployment with the administrative surface open: the schema
+/// with its `Admin` namespace and the policy that only lets alice through,
+/// exactly the HSP-115 setup.
 fn admin_deployment() -> Deployment {
     let deployment = Deployment::new();
     let mut schema: Value = serde_json::from_str(support::SCHEMA).expect("the schema parses");
@@ -291,7 +291,7 @@ fn admin_deployment() -> Deployment {
     deployment
 }
 
-/// El cuerpo JSON de la peticion de migracion contra un origen.
+/// The JSON body of the migration request against an origin.
 fn migration_body(kind: &str, port: u16) -> Value {
     json!({
         "source": {
@@ -321,8 +321,8 @@ fn body_of(answer: &Answer) -> Value {
     serde_json::from_slice(&answer.body).unwrap_or(Value::Null)
 }
 
-/// Un `GET` de la prueba al origen fake, sin `curl`: los bytes exactos
-/// que el origen predica, medidos por el propio arnés.
+/// A test `GET` to the fake origin, without `curl`: the exact bytes
+/// the origin claims, measured by the harness itself.
 fn origin_get(path: &str, port: u16) -> Vec<u8> {
     use std::io::{Read as _, Write as _};
     let mut stream =
@@ -344,7 +344,7 @@ fn origin_get(path: &str, port: u16) -> Vec<u8> {
     buffer[head_end..].to_vec()
 }
 
-/// Que el origen solo vio lecturas, y cuantas peticiones de contenido.
+/// That the origin only saw reads, and how many content requests.
 fn assert_read_only(log: &Log) {
     let entries = log.lock().expect("the log").clone();
     for entry in entries {
@@ -383,8 +383,8 @@ fn asset(
     }
 }
 
-/// Los cuatro artefactos del origen Nexus de la suite: dos maven (el
-/// pom solo declara sha1), uno raw y uno npm que no es migrable.
+/// The four artifacts of the suite's Nexus origin: two maven (the
+/// pom only declares sha1), one raw and one npm that is not migratable.
 fn nexus_assets() -> Vec<FakeAsset> {
     vec![
         asset(
@@ -404,8 +404,8 @@ fn nexus_assets() -> Vec<FakeAsset> {
     ]
 }
 
-/// AC1: el inventario suma bytes y rutas, dice la modalidad del origen,
-/// la permission del destino y escribe cada diferencia en claro.
+/// AC1: the inventory sums bytes and paths, states the origin's mode,
+/// the destination's permission and writes each difference in the clear.
 #[test]
 fn the_inventory_reports_everything_and_spells_out_every_difference() {
     let (origin, _log) = spawn_origin("nexus", nexus_assets());
@@ -469,8 +469,8 @@ fn the_inventory_reports_everything_and_spells_out_every_difference() {
         "the proxy modality is an explicit difference: {reasons}"
     );
 
-    // La superficie es administrativa de verdad: sin credencial 401, y
-    // bob, que puede subir assets pero no acceder a la admin, 403.
+    // The surface is truly administrative: without credentials 401, and
+    // bob, who can upload assets but not access admin, 403.
     let anonymous = post_json(
         port,
         "/api/v1/migrations/inventory",
@@ -489,9 +489,9 @@ fn the_inventory_reports_everything_and_spells_out_every_difference() {
     support::stop(&mut service);
 }
 
-/// AC2 + AC3: el import publica lo verificado, el origen solo fue leido
-/// y el cliente nativo resuelve el path antes/despues con los mismos
-/// bytes. Un segundo import no mueve ni un byte de los declarados.
+/// AC2 + AC3: the import publishes what was verified, the origin was only read
+/// and the native client resolves the path before/after with the same
+/// bytes. A second import moves not one of the declared bytes.
 #[test]
 fn the_import_verifies_publishes_and_is_incrementally_idempotent() {
     let (origin, log) = spawn_origin("nexus", nexus_assets());
@@ -502,7 +502,7 @@ fn the_import_verifies_publishes_and_is_incrementally_idempotent() {
     let port = service.port;
     let token = support::token(support::FIRST_ACCOUNT, "alice");
 
-    // Antes: el cliente nativo no encuentra nada.
+    // Before: the native client finds nothing.
     let jar = "com/example/demo/1.0/demo-1.0.jar";
     let before = Curl::call(
         port,
@@ -558,9 +558,9 @@ fn the_import_verifies_publishes_and_is_incrementally_idempotent() {
         );
     }
 
-    // Incremental de verdad: el segundo import reconoce por digest los
-    // dos artefactos con sha256 declarado sin volver a bajarlos, y el
-    // pom (solo sha1) vuelve a descargarse pero no duplica nada.
+    // Truly incremental: the second import recognizes by digest the
+    // two artifacts with a declared sha256 without downloading them again, and the
+    // pom (sha1 only) is downloaded again but duplicates nothing.
     let gets_before = content_gets(&log, "nexus");
     let again = post_json(
         port,
@@ -584,9 +584,9 @@ fn the_import_verifies_publishes_and_is_incrementally_idempotent() {
     support::stop(&mut service);
 }
 
-/// AC2: un artefacto que no cumple el sha256 declarado aborta la
-/// publicacion **antes** de escribir el catalogo: el destino sigue
-/// vacio y el origen, intacto.
+/// AC2: an artifact that does not meet the declared sha256 aborts the
+/// publication **before** writing the catalog: the destination remains
+/// empty and the origin, intact.
 #[test]
 fn a_corrupted_artifact_stops_the_run_and_publishes_nothing() {
     let mut assets = nexus_assets();
@@ -646,8 +646,8 @@ fn a_corrupted_artifact_stops_the_run_and_publishes_nothing() {
     support::stop(&mut service);
 }
 
-/// El otro origen, la otra forma del documento: listing + info de
-/// Artifactory, con su remote declarado como diferencia.
+/// The other origin, the other document shape: Artifactory's listing + info,
+/// with its remote declared as a difference.
 #[test]
 fn the_artifactory_surface_is_inventoried_and_imported_too() {
     let (origin, log) = spawn_origin(

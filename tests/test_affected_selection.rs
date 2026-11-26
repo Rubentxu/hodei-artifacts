@@ -142,7 +142,7 @@ const CASES: &[Case] = &[
     },
 ];
 
-// ───────────────────────── el fixture ─────────────────────────
+// ───────────────────────── the fixture ─────────────────────────
 
 /// A temporary repository with the shape of the real one, but small.
 struct Fixture {
@@ -460,7 +460,7 @@ fn plan_of(fixture: &Fixture, case: &Case) -> Value {
     read_report(&report)
 }
 
-// ───────────────────────── la matriz ─────────────────────────
+// ───────────────────────── the matrix ─────────────────────────
 
 #[test]
 fn every_cause_selects_the_gates_it_should() {
@@ -526,7 +526,7 @@ fn a_test_that_did_not_run_is_never_a_test_that_passed() {
     }
 }
 
-// ───────────────────────── el fallo honesto ─────────────────────────
+// ───────────────────────── the honest failure ─────────────────────────
 
 #[test]
 fn a_base_that_does_not_exist_fails_instead_of_pretending() {
@@ -546,7 +546,7 @@ fn a_base_that_does_not_exist_fails_instead_of_pretending() {
     );
 }
 
-// ───────────────────────── la ejecucion ─────────────────────────
+// ───────────────────────── the execution ─────────────────────────
 
 #[test]
 fn the_gate_runs_what_it_said_it_would_run() {

@@ -1,29 +1,29 @@
-//! HSP-192: el libro coordinado de la GC sobre el motor Dgraph real.
+//! HSP-192: the GC coordinated ledger over the real Dgraph engine.
 //!
-//! Gated on `HODEI_GRAPH_IT_ENDPOINT` como todos los IT del stack. Lo que
-//! prueba, contra el servidor vivo h186 (TLS + ACL), con claves de scope
-//! propias por ejecución (`it192<tag><nonce>`, nunca un censo global —
-//! en el mismo alpha hay slices OCI y de simulación en vuelo):
+//! Gated on `HODEI_GRAPH_IT_ENDPOINT` like all the stack ITs. What it
+//! proves, against the live h186 server (TLS + ACL), with its own scope
+//! keys per execution (`it192<tag><nonce>`, never a global census --
+//! on the same alpha there are OCI and simulation slices in flight):
 //!
-//! - **AC1** el claim es una guarda CAS DURABLE sobre la fila del lease
-//!   (no un contador en memoria): un claim ajeno vigente ocupa el scope
-//!   (`Conflict`), el take-over del lease vencido sube generación y da
-//!   token nuevo, y un zombie con la generación vieja queda
-//!   `PreconditionFailed` en TODA operación de pasada — marcar,
-//!   reconfirmar, registrar, renovar o cerrar. Dos clientes sobre
-//!   scopes disjoint conviven en el mismo alpha;
-//! - **AC2/entrega 2** la marca y el tombstone llevan la guarda de
-//!   referencias EN la misma transacción: un candidato con raíz viva
-//!   aborta la marca y no deja rastro, y el veredicto se decide por
-//!   relectura post-commit (HSP-205), nunca por "el upsert devolvió OK";
-//! - **AC3** el censo va por MEMBRESÍA de la cuenta (paginado, cursor =
-//!   digest), y las superficies globales (`content_roots`,
-//!   `pending_run`) fallan cerradas por HSP-220;
-//! - y la pasada coordinada completa (`CoordinatedPass` +
-//!   `FileBlobStore` bajo `target/uat/hsp192/`) barre el huérfano y no
-//!   toca lo publicado, con las páginas contadas.
+//! - **AC1** the claim is a DURABLE CAS guard on the lease row
+//!   (not an in-memory counter): a live foreign claim occupies the scope
+//!   (`Conflict`), the take-over of the expired lease raises the generation and gives a
+//!   new token, and a zombie with the old generation gets
+//!   `PreconditionFailed` on EVERY pass operation -- mark,
+//!   reconfirm, record, renew or close. Two clients on
+//!   disjoint scopes coexist on the same alpha;
+//! - **AC2/delivery 2** the mark and the tombstone carry the reference
+//!   guard IN the same transaction: a candidate with a live root
+//!   aborts the mark and leaves no trace, and the verdict is decided by
+//!   post-commit re-read (HSP-205), never by "the upsert returned OK";
+//! - **AC3** the census goes by account MEMBERSHIP (paginated, cursor =
+//!   digest), and the global surfaces (`content_roots`,
+//!   `pending_run`) fail closed per HSP-220;
+//! - and the complete coordinated pass (`CoordinatedPass` +
+//!   `FileBlobStore` under `target/uat/hsp192/`) sweeps the orphan and does not
+//!   touch what is published, with the pages counted.
 //!
-//! Corre serializada (`--test-threads=1`): el alpha es compartido.
+//! It runs serialized (`--test-threads=1`): the alpha is shared.
 
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -42,8 +42,8 @@ use hodei_graph_client::{
 };
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 
-/// El directorio de evidencia de HSP-192: los object stores de prueba
-/// viven aqui y NO se borran nunca (convención del workspace).
+/// The HSP-192 evidence directory: the test object stores
+/// live here and are NEVER deleted (workspace convention).
 const UAT_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/target/uat/hsp192");
 
 const GRACE: Duration = Duration::ZERO;
@@ -69,7 +69,7 @@ fn config_from_env() -> Option<GraphClientConfig> {
     Some(GraphClientConfig::from_toml_str(&text).expect("the IT configuration validates"))
 }
 
-/// Una conexión nueva y autenticada. `None` sin entorno: el IT está gated.
+/// A new authenticated connection. `None` without environment: the IT is gated.
 async fn fresh_client() -> Option<Arc<GraphClient>> {
     let Some(config) = config_from_env() else {
         eprintln!("SKIP: HODEI_GRAPH_IT_ENDPOINT is not set");
@@ -88,9 +88,9 @@ fn nonce() -> String {
         .to_string()
 }
 
-/// Un scope (la cuenta) por prueba y por ejecución: ninguna corrida se
-/// encuentra con los leases de otra, y el censo por membresía solo ve
-/// lo de esta prueba.
+/// One scope (the account) per test and per execution: no run
+/// runs into the leases of another, and the membership census only sees
+/// what belongs to this test.
 fn account(tag: &str) -> String {
     format!("it192{}{}", tag, &nonce()[8..])
 }
@@ -103,7 +103,7 @@ async fn open_store(client: Arc<GraphClient>) -> Arc<DgraphCatalogStore> {
     )
 }
 
-/// El libro coordinado: la misma fila del catálogo, vista como ledger.
+/// The coordinated ledger: the same catalog row, seen as a ledger.
 fn ledger(store: &Arc<DgraphCatalogStore>) -> Arc<dyn ContentLedger> {
     Arc::clone(store) as Arc<dyn ContentLedger>
 }
@@ -125,9 +125,9 @@ fn a_publication(account: &str, content: &[u8], slot: &str) -> Publication {
     Publication {
         repository: "raw".to_string(),
         asset_path: format!("app/{slot}.bin"),
-        // La version del fixture es el slot: dos publicaciones del
-        // mismo paquete colisionarian en `pkg@1.0.0` (el catalogo raw
-        // es inmutable por version) y la segunda daria Conflict.
+        // The fixture version is the slot: two publications of the
+        // same package would collide on `pkg@1.0.0` (the raw catalog
+        // is immutable per version) and the second would give Conflict.
         coordinates: PackageCoordinates {
             package_name: "pkg".to_string(),
             package_version: slot.to_string(),
@@ -147,8 +147,8 @@ fn orphan_digest(label: &str) -> ContentDigest {
     ContentDigest::of_bytes(format!("orphan-{label}-{}", nonce()).as_bytes())
 }
 
-/// Un run_id por prueba y por ejecución: la clave del run es el id, y
-/// dos corridas no deben pisarse la marca durable.
+/// One run_id per test and per execution: the run key is the id, and
+/// two runs must not step on each other's durable mark.
 fn run_id(tag: &str) -> String {
     format!("gc-{tag}-{}", &nonce()[8..])
 }
@@ -187,12 +187,12 @@ fn a_deletion(digest: &ContentDigest, scope: &str, run_id: &str) -> GcDeletion {
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el claim durable CAS y el zombie con la generación vencida.
+// AC1: the durable CAS claim and the zombie with the expired generation.
 // ---------------------------------------------------------------------------
 
-/// El claim vive en la autoridad: un claim ajeno vigente ocupa el scope,
-/// el mismo owner renueva SIN cambiar token ni generación, y dos scopes
-/// disjoint conviven sobre el mismo alpha con dos clientes distintos.
+/// The claim lives in the authority: a live foreign claim occupies the scope,
+/// the same owner renews WITHOUT changing token or generation, and two
+/// disjoint scopes coexist on the same alpha with two different clients.
 #[tokio::test]
 async fn the_claim_is_a_durable_cas_and_a_live_foreign_lease_busy_the_scope() {
     let Some(client_a) = fresh_client().await else {
@@ -208,7 +208,7 @@ async fn the_claim_is_a_durable_cas_and_a_live_foreign_lease_busy_the_scope() {
 
     assert!(ledger(&store_a).supports_fenced_pass());
 
-    // Claim inicial: generación 1, durable y releible post-commit.
+    // Initial claim: generation 1, durable and re-readable post-commit.
     let lease = ledger(&store_a)
         .claim_gc_pass(&scope, "worker-a", Duration::from_secs(30), now)
         .await
@@ -222,8 +222,8 @@ async fn the_claim_is_a_durable_cas_and_a_live_foreign_lease_busy_the_scope() {
     assert_eq!(back.token, lease.token);
     assert_eq!(back.generation, lease.generation);
 
-    // Otro owner con lease vigente: el scope está OCUPADO (Conflict),
-    // decidido por la guarda del servidor, no por una pre-lectura.
+    // Another owner with a live lease: the scope is OCCUPIED (Conflict),
+    // decided by the server's guard, not by a pre-read.
     let busy = ledger(&store_b)
         .claim_gc_pass(&scope, "worker-b", Duration::from_secs(30), Utc::now())
         .await;
@@ -232,7 +232,7 @@ async fn the_claim_is_a_durable_cas_and_a_live_foreign_lease_busy_the_scope() {
         "a live foreign lease must busy the scope: {busy:?}"
     );
 
-    // El mismo owner renueva: misma generación, mismo token.
+    // The same owner renews: same generation, same token.
     let renewed = ledger(&store_a)
         .claim_gc_pass(&scope, "worker-a", Duration::from_secs(30), Utc::now())
         .await
@@ -240,8 +240,8 @@ async fn the_claim_is_a_durable_cas_and_a_live_foreign_lease_busy_the_scope() {
     assert_eq!(renewed.generation, lease.generation);
     assert_eq!(renewed.token, lease.token);
 
-    // Scopes disjoint sobre el MISMO alpha con otro cliente: no se
-    // pisar (la clave del lease es por scope).
+    // Disjoint scopes on the SAME alpha with another client: they do not
+    // step on each other (the lease key is per scope).
     let other = ledger(&store_b)
         .claim_gc_pass(&foreign, "worker-b", Duration::from_secs(30), Utc::now())
         .await
@@ -250,10 +250,10 @@ async fn the_claim_is_a_durable_cas_and_a_live_foreign_lease_busy_the_scope() {
     assert_ne!(other.token, lease.token);
 }
 
-/// El zombie de la generación vencida NO puede seguir borrando: marcar,
-/// reconfirmar, registrar, renovar y cerrar fallan con el fence, y el
-/// rastro del blob que el zombie pretendía barrer no existe. La
-/// autoridad (la fila del lease) decidió el take-over, no el worker.
+/// The zombie of the expired generation can NOT keep deleting: mark,
+/// reconfirm, record, renew and close fail with the fence, and the
+/// trace of the blob the zombie meant to sweep does not exist. The
+/// authority (the lease row) decided the take-over, not the worker.
 #[tokio::test]
 async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation() {
     let Some(client_a) = fresh_client().await else {
@@ -267,7 +267,7 @@ async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation(
         (scope, ledger(&store_a), ledger(&store_b))
     };
 
-    // Generación 1 con un lease que caduca solo.
+    // Generation 1 with a lease that expires on its own.
     let zombie = ledger_a
         .claim_gc_pass(&scope_a, "worker-a", Duration::from_secs(2), Utc::now())
         .await
@@ -283,7 +283,7 @@ async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation(
         "an expired lease is no longer live"
     );
 
-    // Take-over real: otro worker, generación nueva y token NUEVO.
+    // Real take-over: another worker, new generation and NEW token.
     let fresh = ledger_b
         .claim_gc_pass(&scope_a, "worker-b", Duration::from_secs(30), Utc::now())
         .await
@@ -291,7 +291,7 @@ async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation(
     assert_eq!(fresh.generation, 2);
     assert_ne!(fresh.token, zombie.token);
 
-    // El zombie presenta su token viejo en CADA operación de pasada.
+    // The zombie presents its old token on EVERY pass operation.
     let bait = orphan_digest("zombie-bait");
     let zombie_run = run_id("zombie");
     let marked = ledger_a
@@ -335,8 +335,8 @@ async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation(
         Err(CatalogError::PreconditionFailed { .. })
     ));
 
-    // Y el veredicto final es la relectura: el zombie NO dejó marca ni
-    // rastro — no pudo seguir borrando la generación nueva.
+    // And the final verdict is the re-read: the zombie left NO mark nor
+    // trace -- it could not keep deleting the new generation.
     assert!(
         ledger_a
             .pending_scoped_run(&scope_a, Utc::now())
@@ -354,7 +354,7 @@ async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation(
         "the zombie left no tombstone"
     );
 
-    // El holder vigente sí opera bajo su token nuevo.
+    // The live holder does operate under its new token.
     let live_bait = orphan_digest("holder");
     ledger_b
         .mark_run_fenced(
@@ -373,12 +373,12 @@ async fn a_zombie_with_an_expired_lease_cannot_keep_sweeping_the_new_generation(
 }
 
 // ---------------------------------------------------------------------------
-// AC3 + entrega 2: censo por membresía y guardas en la misma transacción.
+// AC3 + delivery 2: membership census and guards in the same transaction.
 // ---------------------------------------------------------------------------
 
-/// El censo va por MEMBRESÍA de la cuenta y por páginas acotadas: nunca
-/// se materializa el grafo, y las superficies globales fallan cerradas
-/// (HSP-220). La cuenta ajena no ve ni una raíz.
+/// The census goes by account MEMBERSHIP and by bounded pages: the graph is
+/// never materialized, and the global surfaces fail closed
+/// (HSP-220). The foreign account does not see a single root.
 #[tokio::test]
 async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
     let Some(client) = fresh_client().await else {
@@ -401,12 +401,12 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
             .await
             .expect("the publication");
     }
-    // Cada publicacion raw deja TRES raices con digest (asset, version y
-    // reference): el censo por membresia las ve todas, nueve en total.
+    // Each raw publication leaves THREE roots with a digest (asset, version and
+    // reference): the membership census sees them all, nine in total.
     let expected_roots = published.len() * 3;
 
-    // Las superficies globales no existen en esta autoridad: un censo
-    // materializado sería el scan prohibido.
+    // The global surfaces do not exist in this authority: a materialized
+    // census would be the forbidden scan.
     assert!(matches!(
         ledger(&store).content_roots().await,
         Err(CatalogError::Unavailable { .. })
@@ -416,9 +416,9 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
         Err(CatalogError::Unavailable { .. })
     ));
 
-    // Paginado con cota 2 sobre 9 raices: mas de una pagina, cursor =
-    // digest, y entre todas cubren el censo propio EXACTAMENTE una vez
-    // (sin materializar y sin repetirse en el cruce de familias).
+    // Paginated with bound 2 over 9 roots: more than one page, cursor =
+    // digest, and together they cover the own census EXACTLY once
+    // (without materializing and without repeating at the family crossing).
     let mut seen: Vec<(RootKind, String, ContentDigest)> = Vec::new();
     let mut cursor: Option<String> = None;
     let mut pages = 0usize;
@@ -429,9 +429,9 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
             .expect("the census page");
         pages += 1;
         assert!(!page.roots.is_empty(), "a bounded page must carry rows");
-        // La cota es dura sobre las filas DISTINTAS del borde: los
-        // empates del digest de corte se completan en la misma pagina
-        // (son la misma clave de censo vista por otra familia).
+        // The bound is hard on the DISTINCT rows of the edge: ties of the
+        // cut digest are completed on the same page
+        // (they are the same census key seen through another family).
         let distinct_at_edge: Vec<String> = page
             .roots
             .iter()
@@ -483,8 +483,8 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
             .filter(|(_, _, found)| found == digest)
             .map(|(kind, _, _)| *kind)
             .collect();
-        // El orden dentro del mismo digest es el de la clave de fila,
-        // no el de la familia: se compara como conjunto.
+        // The order within the same digest is that of the row key,
+        // not that of the family: it is compared as a set.
         mine.sort_by_key(|kind| kind.as_str().to_owned());
         assert_eq!(
             mine,
@@ -493,7 +493,7 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
         );
     }
 
-    // Una cuenta ajena no ve NADA: la pagina va por membresía.
+    // A foreign account sees NOTHING: the page goes by membership.
     let foreign = account("census-foreign");
     let page = ledger(&store)
         .root_page(&foreign, None, 10)
@@ -502,8 +502,8 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
     assert!(page.roots.is_empty());
     assert!(!page.has_more);
 
-    // La sonda de referencias frescas: lo publicado está vivo, el
-    // huerfano no.
+    // The fresh-references probe: what is published is alive, the
+    // orphan is not.
     assert!(
         ledger(&store)
             .live_reference_count(&published[0])
@@ -520,10 +520,10 @@ async fn the_census_pages_by_membership_and_the_global_surfaces_fail_closed() {
     );
 }
 
-/// Las guardas viajan EN la transacción y el veredicto es la relectura
-/// post-commit: un candidato con raíz viva aborta la marca; un tombstone
-/// sobre contenido referenciado no se escribe (aunque el lease sea
-/// vigente), y lo que la autoridad dice al leer es lo único que vale.
+/// The guards travel IN the transaction and the verdict is the post-commit
+/// re-read: a candidate with a live root aborts the mark; a tombstone
+/// over referenced content is not written (even if the lease is
+/// live), and what the authority says on reading is the only thing that counts.
 #[tokio::test]
 async fn the_reference_guard_lives_in_the_mark_and_the_verdict_is_the_post_commit_read() {
     let Some(client) = fresh_client().await else {
@@ -549,8 +549,8 @@ async fn the_reference_guard_lives_in_the_mark_and_the_verdict_is_the_post_commi
         .expect("the claim");
     let free = orphan_digest("truly-orphan");
 
-    // Marca con un candidato referenciado: la guarda aborta la marca
-    // ENTERA, no se cuela el huérfano a medias.
+    // Mark with a referenced candidate: the guard aborts the WHOLE
+    // mark, the orphan does not sneak in half-way.
     let guarded_run = run_id("guarded");
     let marked = ledger(&store)
         .mark_run_fenced(
@@ -573,9 +573,9 @@ async fn the_reference_guard_lives_in_the_mark_and_the_verdict_is_the_post_commi
         "a referenced candidate aborts the mark: {marked:?}"
     );
 
-    // El tombstone de lo referenciado, CON lease vigente: la guarda de
-    // referencias lo bloquea en el propio upsert y la relectura dice
-    // que no quedó — veredicto post-commit, no fe en el commit.
+    // The tombstone of what is referenced, WITH a live lease: the reference
+    // guard blocks it in the upsert itself and the re-read says
+    // it did not stay -- a post-commit verdict, not faith in the commit.
     let wrote = ledger(&store)
         .record_deletion_fenced(
             &scope,
@@ -595,8 +595,8 @@ async fn the_reference_guard_lives_in_the_mark_and_the_verdict_is_the_post_commi
             .is_none()
     );
 
-    // El candidato libre sí: la marca pasa, y el rastro se escribe y se
-    // confirma bajo el token vigente.
+    // The free candidate does: the mark goes through, and the trace is written and
+    // confirmed under the live token.
     let clean_run = run_id("clean");
     let marked = ledger(&store)
         .mark_run_fenced(
@@ -624,8 +624,8 @@ async fn the_reference_guard_lives_in_the_mark_and_the_verdict_is_the_post_commi
         .expect("the tombstone is there after commit");
     assert_eq!(trace.state, DeletionState::Intended);
 
-    // La marca pendiente es DURABLE: otro cliente del mismo scope la ve
-    // bajo la generación vigente (la autoridad manda, no el proceso).
+    // The pending mark is DURABLE: another client of the same scope sees it
+    // under the live generation (the authority rules, not the process).
     let pending = ledger(&store)
         .pending_scoped_run(&scope, Utc::now())
         .await
@@ -637,12 +637,12 @@ async fn the_reference_guard_lives_in_the_mark_and_the_verdict_is_the_post_commi
 }
 
 // ---------------------------------------------------------------------------
-// La pasada coordinada completa sobre la autoridad real + el CAS de ficheros.
+// The complete coordinated pass over the real authority + the file CAS.
 // ---------------------------------------------------------------------------
 
-/// El plano de arriba en acción: `CoordinatedPass` sobre el libro Dgraph
-/// y un `FileBlobStore` bajo `target/uat/hsp192/` barre SOLO el huerfano,
-/// no toca lo publicado, y el censo va contado por páginas.
+/// The plan above in action: `CoordinatedPass` over the Dgraph ledger
+/// and a `FileBlobStore` under `target/uat/hsp192/` sweeps ONLY the orphan,
+/// does not touch what is published, and the census is counted by pages.
 #[tokio::test]
 async fn the_coordinated_pass_sweeps_the_orphan_and_leaves_the_referenced_alone() {
     let Some(client) = fresh_client().await else {
@@ -694,10 +694,10 @@ async fn the_coordinated_pass_sweeps_the_orphan_and_leaves_the_referenced_alone(
     assert_eq!(report.deleted, 1, "{report:?}");
     assert_eq!(report.bytes_freed, b"orphan sweep bait".len() as u64);
     assert_eq!(report.unknown, 0);
-    // Nueve raices propias con cota de pagina 2: el censo se recorre
-    // en VARIAS paginas acotadas, nunca de golpe. El numero exacto
-    // depende de donde caigan los empates del borde, no es la
-    // propiedad; la propiedad es que haya mas de una pagina.
+    // Nine own roots with page bound 2: the census is walked
+    // in SEVERAL bounded pages, never all at once. The exact number
+    // depends on where the edge ties fall, it is not the
+    // property; the property is that there is more than one page.
     assert!(report.census_pages > 1, "{report:?}");
     assert_eq!(
         report.actions.get(&orphan.to_string()),
@@ -718,7 +718,7 @@ async fn the_coordinated_pass_sweeps_the_orphan_and_leaves_the_referenced_alone(
         );
     }
 
-    // El rastro confirmado en la autoridad: post-efecto, post-commit.
+    // The trace confirmed in the authority: post-effect, post-commit.
     let trace = ledger(&store)
         .deletion_of(&orphan)
         .await
@@ -726,8 +726,8 @@ async fn the_coordinated_pass_sweeps_the_orphan_and_leaves_the_referenced_alone(
         .expect("the sweep left its trace");
     assert_eq!(trace.state, DeletionState::Confirmed);
 
-    // Una segunda pasada no encuentra nada que barrer: el censo es
-    // estable y el huérfano ya no está.
+    // A second pass finds nothing to sweep: the census is
+    // stable and the orphan is no longer there.
     let second = pass.run().await.expect("the second pass");
     assert_eq!(second.marked, 0, "{second:?}");
     assert_eq!(second.deleted, 0);

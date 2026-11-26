@@ -1,9 +1,9 @@
-//! Los fixtures del despliegue antiguo para el contrato de HSP-213.
+//! The old deployment fixtures for the HSP-213 contract.
 //!
-//! Lo usa `hsp213_profile_rejection`: el binario productivo rechaza el
-//! perfil antiguo sin `[graph]`. El binario es
-//! `CARGO_BIN_EXE_hodei-artifacts-api`: el que Cargo acaba de construir,
-//! y el unico arbol que existe (sin motor embebido).
+//! Used by `hsp213_profile_rejection`: the production binary rejects the
+//! old profile without `[graph]`. The binary is
+//! `CARGO_BIN_EXE_hodei-artifacts-api`: the one Cargo just built,
+//! and the only tree that exists (no embedded engine).
 
 use std::path::Path;
 
@@ -18,10 +18,10 @@ pub fn free_port() -> u16 {
     port
 }
 
-/// El esquema Cedar del despliegue, con las acciones que el servicio
-/// autoriza: un bundle que no las declara muere en la validacion de
-/// seguridad antes de llegar al despacho del perfil, y la prueba mediria
-/// otra cosa. Es el mismo que sirve el arnes de `tests/support` (hsp138).
+/// The Cedar schema of the deployment, with the actions the service
+/// authorizes: a bundle that does not declare them dies in the security
+/// validation before reaching the profile dispatch, and the test would measure
+/// something else. It is the same one the `tests/support` harness serves (hsp138).
 pub const SCHEMA: &str = r#"{
   "": { "entityTypes": {}, "actions": {} },
   "Iam": { "entityTypes": { "User": { "shape": { "type": "Record", "attributes": {} } } }, "actions": {} },

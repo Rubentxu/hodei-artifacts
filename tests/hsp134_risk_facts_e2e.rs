@@ -1,20 +1,20 @@
-//! HSP-134: los hechos de riesgo de la promoción salen del grafo real.
+//! HSP-134: the promotion risk facts come out of the real graph.
 //!
-//! El proceso arranca con `DgraphRiskFacts` cableado contra el mismo
-//! namespace de Dgraph donde el arnés ha sembrado el registro de deltas y la
-//! vista materializada, por los almacenes reales. Lo que la
-//! política concede o rechaza es, por tanto, lo que el grafo dice -- no
-//! un `RiskFacts::default()`:
+//! The process starts with `DgraphRiskFacts` wired against the same
+//! Dgraph namespace where the harness has seeded the delta registry and the
+//! materialized view, through the real stores. What the
+//! policy grants or rejects is, therefore, what the graph says -- not
+//! a `RiskFacts::default()`:
 //!
-//! * un cero verificado (vista al día, severidades conocidas, nada
-//!   alcanzando al sujeto) promueve, y la respuesta lleva la VERSION del
-//!   registro, no un cero prestado;
-//! * un crítico que alcanza al sujeto se rechaza con la misma versión;
-//! * una vista atrasada es UNKNOWN: no es cero, no promociona;
-//! * un advisory que el catálogo no conoce tampoco establece el riesgo.
+//! * a verified zero (view up to date, severities known, nothing
+//!   reaching the subject) promotes, and the response carries the VERSION of the
+//!   registry, not a borrowed zero;
+//! * a critical that reaches the subject is rejected with the same version;
+//! * a stale view is UNKNOWN: it is not zero, it does not promote;
+//! * an advisory the catalog does not know does not establish the risk either.
 //!
-//! La decisión persistida se lee de la propia base al final: el veredicto
-//! y la versión que ve el cliente son los que quedaron escritos.
+//! The persisted decision is read from the database itself at the end: the verdict
+//! and the version the client sees are the ones that were written.
 
 mod support;
 
@@ -23,10 +23,10 @@ use support::{Curl, Deployment, FIRST_ACCOUNT, FIRST_REPOSITORY};
 
 const REGION: &str = "eu";
 
-/// El advisory que el catálogo conoce y no bloquea.
+/// The advisory the catalog knows and does not block.
 const KNOWN_ADVISORY: &str = "hrn:hodei:artifacts:eu-west-1:acme:Vulnerability/GHSA-hsp134-known";
 
-/// El advisory cuya severidad el catálogo conoce y SÍ bloquea.
+/// The advisory whose severity the catalog knows and DOES block.
 const CRITICAL_ADVISORY: &str =
     "hrn:hodei:artifacts:eu-west-1:acme:Vulnerability/GHSA-hsp134-critical";
 
@@ -94,22 +94,22 @@ fn promote(
     )
 }
 
-/// El sujeto de un contenido subido como `path`, dicho igual que lo dice
-/// el handler: el HRN del artefacto por digest.
+/// The subject of content uploaded as `path`, stated the same way the
+/// handler states it: the artifact HRN by digest.
 fn subject_of(content: &[u8]) -> kernel::Hrn {
     let digest = hodei_evidence::ContentDigest::of_bytes(content);
     hodei_artifacts_api::trust::hrn::artifact_hrn(REGION, FIRST_ACCOUNT, FIRST_REPOSITORY, &digest)
 }
 
-/// El tenant del grafo para ese sujeto: la misma plantilla con la que
-/// arranca el despliegue.
+/// The graph tenant for that subject: the same template the deployment
+/// starts with.
 fn tenant_of(subject: &kernel::Hrn) -> kernel::Hrn {
     hodei_artifacts_api::config::InvestigationConfig::default()
         .the_graph_tenant(subject)
         .expect("the default tenant template names an HRN")
 }
 
-/// La política que solo exige la ausencia de críticos alcanzantes.
+/// The policy that only requires the absence of reaching criticals.
 fn risk_policy_file(deployment: &Deployment) -> String {
     let policy = TrustPolicy::new(
         "risk-aware",
@@ -124,7 +124,7 @@ fn risk_policy_file(deployment: &Deployment) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// El catálogo de severidades que el operador entrega al despliegue.
+/// The severity catalog the operator hands to the deployment.
 fn catalog_file(deployment: &Deployment, severities: &[(&str, &str)]) -> String {
     let mut entries = serde_json::Map::new();
     for (advisory, severity) in severities {
@@ -139,23 +139,23 @@ fn catalog_file(deployment: &Deployment, severities: &[(&str, &str)]) -> String 
     path.to_string_lossy().into_owned()
 }
 
-/// Lo que se siembra en el grafo antes de levantar el proceso: el registro
-/// que habla, las rutas de la vista con su marca de agua y las filas que
-/// alcanzan a un sujeto.
+/// What is seeded in the graph before raising the process: the registry
+/// that speaks, the view paths with their watermark and the rows that
+/// reach a subject.
 struct Seed {
-    /// La versión del registro de deltas para la cuenta.
+    /// The version of the delta registry for the account.
     ledger_seq: u64,
-    /// Las rutas materializadas: advisory y marca de agua.
+    /// The materialized paths: advisory and watermark.
     routes: Vec<(String, u64)>,
-    /// Las filas de la vista: advisory, sujeto alcanzado.
+    /// The view rows: advisory, reached subject.
     rows: Vec<(String, String)>,
 }
 
-/// Escribe la siembra en el namespace Dgraph del despliegue, por los
-/// almacenes reales: el registro de deltas dice la versión y la vista se
-/// materializa con esa marca de agua.
+/// Writes the seed into the deployment's Dgraph namespace, through the
+/// real stores: the delta registry states the version and the view is
+/// materialized with that watermark.
 ///
-/// Se hace ANTES de arrancar el proceso, como lo haría el operador.
+/// It is done BEFORE starting the process, as the operator would.
 fn seed(deployment: &Deployment, seed: &Seed) {
     let tenant = tenant_of(&subject_of(b"whatever"));
     let plan = support::graph_risk::RiskSeed {
@@ -171,7 +171,7 @@ fn seed(deployment: &Deployment, seed: &Seed) {
         .block_on(support::graph_risk::seed_risk(graph, &tenant, &plan));
 }
 
-/// La última decisión persistida, leída del grafo con el servicio ya parado.
+/// The last persisted decision, read from the graph with the service already stopped.
 struct Persisted {
     subject: String,
     outcome: hodei_trust_policy::Outcome,
@@ -212,15 +212,15 @@ fn a_deployment(plan: &Seed) -> Deployment {
     deployment
 }
 
-/// El seeder del catalogo: el arnés relanza este binario con ese nombre
-/// exacto para crear los repositorios antes de levantar el servicio.
+/// The catalog seeder: the harness relaunches this binary under that exact
+/// name to create the repositories before raising the service.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// Un cero verificado promociona con la versión del registro.
+// A verified zero promotes with the registry version.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -286,7 +286,7 @@ fn a_verified_zero_promotes_and_carries_the_ledger_version() {
 }
 
 // ---------------------------------------------------------------------------
-// Un crítico que alcanza al sujeto se rechaza, y la versión viaja.
+// A critical that reaches the subject is rejected, and the version travels.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -351,7 +351,7 @@ fn a_critical_reaching_the_subject_is_refused_with_its_version() {
 }
 
 // ---------------------------------------------------------------------------
-// La vista atrasada es UNKNOWN: no es cero y no promociona.
+// The stale view is UNKNOWN: it is not zero and does not promote.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -359,7 +359,7 @@ fn a_stale_view_leaves_the_risk_unknown_and_refuses() {
     let content = b"lagging artifact".to_vec();
     let alice = support::token(FIRST_ACCOUNT, "alice");
     let deployment = a_deployment(&Seed {
-        // El registro habla la versión 9; la vista se quedó en la 7.
+        // The registry speaks version 9; the view stayed at 7.
         ledger_seq: 9,
         routes: vec![(KNOWN_ADVISORY.to_string(), 7)],
         rows: vec![],
@@ -407,7 +407,7 @@ fn a_stale_view_leaves_the_risk_unknown_and_refuses() {
 }
 
 // ---------------------------------------------------------------------------
-// Sin catálogo no hay severidad conocida: UNKNOWN, no cero.
+// Without a catalog there is no known severity: UNKNOWN, not zero.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -417,7 +417,7 @@ fn an_uncovered_advisory_never_establishes_a_clean_risk() {
     let deployment = a_deployment(&Seed {
         ledger_seq: 7,
         routes: vec![(CRITICAL_ADVISORY.to_string(), 7)],
-        // El advisory alcanza al sujeto, pero el catálogo no lo conoce.
+        // The advisory reaches the subject, but the catalog does not know it.
         rows: vec![(
             CRITICAL_ADVISORY.to_string(),
             subject_of(&content).to_string(),

@@ -1,15 +1,15 @@
-//! Maven 2 proxy y group de HSP-110 contra el cliente real (`mvn`).
+//! Maven 2 proxy and group of HSP-110 against the real client (`mvn`).
 //!
-//! Un `mvn dependency:get` resuelve un artefacto a traves de un group que
-//! tiene un hosted y un proxy de un "Central" de laboratorio: la primera vez
-//! baja del upstream y la segunda, con el servicio en modo offline, sale de
-//! lo cacheado sin que el upstream reciba una peticion. Maven comprueba los
-//! checksums que el group le sirve, asi que un sidecar que no fuese el del
-//! fichero servido haria fallar la resolucion.
+//! An `mvn dependency:get` resolves an artifact through a group that
+//! has a hosted and a proxy of a laboratory "Central": the first time it
+//! downloads from the upstream and the second, with the service in offline mode, it comes from
+//! what was cached without the upstream receiving a request. Maven checks the
+//! checksums the group serves it, so a sidecar that was not that of the
+//! served file would make the resolution fail.
 //!
-//! Hace falta `mvn` en el PATH: sin el, la suite **falla** diciendo que
-//! falta. La credencial va en un `settings.xml` temporal, nunca en argv, y de
-//! la cache local del usuario solo se borra el grupo de esta prueba.
+//! `mvn` is required in the PATH: without it, the suite **fails** saying that
+//! it is missing. The credential goes in a temporary `settings.xml`, never in argv, and from
+//! the user's local cache only this test's group is deleted.
 
 mod support;
 
@@ -26,13 +26,13 @@ const GET: &str = "org.apache.maven.plugins:maven-dependency-plugin:3.6.1:get";
 const GROUP: &str = "hodei.hsp110";
 const JAR: &[u8] = b"jar bytes that a real maven client resolves through the group";
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Un "Central" de laboratorio: sirve lo que se le da y cuenta peticiones.
+/// A laboratory "Central": serves what it is given and counts requests.
 struct Central {
     port: u16,
     requests: Arc<AtomicUsize>,
@@ -97,8 +97,8 @@ fn serve(mut stream: TcpStream, files: &[(String, Vec<u8>)], counter: &AtomicUsi
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-/// El grupo de la prueba en el repositorio local de Maven, que se borra al
-/// acabar para no dejar nada en la cache del usuario.
+/// The test's group in the local Maven repository, which is deleted at
+/// the end so as to leave nothing in the user's cache.
 struct LocalGroup(PathBuf);
 
 impl LocalGroup {
@@ -153,7 +153,7 @@ fn settings(dir: &Path, token: &str) -> PathBuf {
     settings
 }
 
-/// Resuelve `GROUP:lib:1.0` a traves de `repository`; devuelve exito y salida.
+/// Resolves `GROUP:lib:1.0` through `repository`; returns success and output.
 fn resolve(dir: &Path, settings: &Path, port: u16, repository: &str) -> (bool, String) {
     let output = Command::new("mvn")
         .arg("--batch-mode")
@@ -205,7 +205,7 @@ fn mvn_resolves_through_a_group_and_again_offline_from_the_cache() {
     let settings = settings(deployment.directory.path(), &token);
     let local = LocalGroup::new();
 
-    // Primera vez: baja de Central a traves del proxy.
+    // First time: downloads from Central through the proxy.
     let mut service = deployment.start(&[("HODEI_PROXY__ALLOWED_HOSTS", allowed.as_str())]);
     let (ok, output) = resolve(
         deployment.directory.path(),
@@ -225,8 +225,8 @@ fn mvn_resolves_through_a_group_and_again_offline_from_the_cache() {
     assert!(central.total() > 0, "nothing came from the upstream");
     support::stop(&mut service);
 
-    // Segunda vez, sin red y con la cache local de Maven vacia: sale de lo
-    // que el proxy guardo, y el upstream no se entera.
+    // Second time, without network and with Maven's local cache empty: it comes from what
+    // the proxy stored, and the upstream is none the wiser.
     local.forget();
     let before = central.total();
     let mut offline = deployment.start(&[

@@ -1,29 +1,29 @@
-//! HSP-137: el ciclo CVE a distribución cerrado sobre el servicio real.
+//! HSP-137: the CVE-to-distribution cycle closed over the real service.
 //!
-//! Lo que se prueba aquí es el cableado del hito completo, no las piezas:
-//! un advisory entra por la entrada soportada (`POST
-//! /api/v1/advisories/accept`), el motor dice los intents de reevaluación
-//! contra el grafo real, y la distribución **bloquea el pull del artefacto
-//! concedido dentro de la misma llamada**, porque la reevaluación retira la
-//! concesión antes de responder. No hay consumidor externo que pueda estar
-//! caido: el ciclo corre en el proceso que sirve los bytes.
+//! What is tested here is the wiring of the complete milestone, not the pieces:
+//! an advisory enters through the supported entry (`POST
+//! /api/v1/advisories/accept`), the engine states the reevaluation intents
+//! against the real graph, and the distribution **blocks the pull of the
+//! granted artifact within the same call**, because the reevaluation withdraws the
+//! grant before responding. There is no external consumer that could be
+//! down: the cycle runs in the process that serves the bytes.
 //!
-//! Los casos siguen la UAT TRUST-04:
+//! The cases follow the TRUST-04 UAT:
 //!
-//! * AC1: artefacto promovido -> advisory crítico entra -> pull nuevo 404,
-//!   y la admision->bloqueo se **mide**, no se declara;
-//! * AC2: un advisory irrelevante (severidad `other`) no retira la
-//!   concesion ajena, y el cambio de politica reevalua los sujetos
-//!   dependientes (barrido de drift tras reinicio con version 2.0.0);
-//! * AC3: `kill -9` en la ventana entre calcular y revocar (el outbox
-//!   duradero guarda la mitad sobreviviente) -> el reinicio converge por
-//!   `resume` sin duplicar el effect receipt.
+//! * AC1: promoted artifact -> critical advisory enters -> new pull 404,
+//!   and the admission->block time is **measured**, not declared;
+//! * AC2: an irrelevant advisory (severity `other`) does not withdraw the
+//!   grant of another artifact, and the policy change reevaluates the
+//!   dependent subjects (drift sweep after restart with version 2.0.0);
+//! * AC3: `kill -9` in the window between computing and revoking (the durable
+//!   outbox keeps the surviving half) -> the restart converges through
+//!   `resume` without duplicating the effect receipt.
 //!
-//! Limite honesto, como en `hsp104_gc_e2e.rs`: el corte exacto dentro del
-//! handler no se puede provocar desde fuera sin un gancho de pruebas en el
-//! codigo de produccion. La ventana se reproduce escribiendo en el outbox
-//! lo que el proceso habria dicho antes de morir -- es el mismo estado
-//! durable que el `kill -9` deja, y `resume` no distingue quien lo escribio.
+//! Honest limit, as in `hsp104_gc_e2e.rs`: the exact cut inside the
+//! handler cannot be provoked from outside without a test hook in the
+//! production code. The window is reproduced by writing into the outbox
+//! what the process would have said before dying -- it is the same durable
+//! state that `kill -9` leaves, and `resume` does not distinguish who wrote it.
 
 mod support;
 
@@ -34,21 +34,21 @@ use support::{Curl, Deployment, FIRST_ACCOUNT, FIRST_REPOSITORY};
 
 const REGION: &str = "eu";
 
-/// El tenant del grafo: la plantilla por defecto del despliegue.
+/// The graph tenant: the deployment's default template.
 const TENANT: &str = "hrn:hodei:artifacts:eu:acme:artifact/acme";
 
-/// El advisory critico de AC1/AC2, nombrado como lo nombra la proyeccion.
+/// The critical advisory of AC1/AC2, named the way the projection names it.
 const CRITICAL_ADVISORY: &str = "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-hsp137-0001";
 
-/// El advisory irrelevante (severidad `other`) de AC2.
+/// The irrelevant advisory (severity `other`) of AC2.
 const IRRELEVANT_ADVISORY: &str = "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-hsp137-other";
 
-/// El advisory de la ventana de crash (AC3).
+/// The advisory of the crash window (AC3).
 const CRASH_ADVISORY: &str = "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-hsp137-crash";
 
-/// El inventario CycloneDX 1.7 del artefacto: `web` sujeta a `lib-a`, que
-/// depende de `lib-b` y `lib-c`. El advisory de prueba casa por nombre con
-/// `lib-a`, y el radio de impacto sube de ahi al artefacto proyectado.
+/// The CycloneDX 1.7 inventory of the artifact: `web` depends on `lib-a`, which
+/// depends on `lib-b` and `lib-c`. The test advisory matches `lib-a` by name,
+/// and the blast radius goes up from there to the projected artifact.
 const INVENTORY: &str = r#"{
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
@@ -76,7 +76,7 @@ const INVENTORY: &str = r#"{
   ]
 }"#;
 
-/// El documento OSV del advisory que casa con `lib-a`.
+/// The OSV document of the advisory that matches `lib-a`.
 fn osv(id: &str) -> serde_json::Value {
     serde_json::json!({
         "schema_version": "1.6.0",
@@ -89,10 +89,10 @@ fn osv(id: &str) -> serde_json::Value {
 }
 
 // ---------------------------------------------------------------------------
-// Arnés
+// Harness
 // ---------------------------------------------------------------------------
 
-/// El esquema con la superficie administrativa (gate Cedar del accept).
+/// The schema with the administrative surface (Cedar gate of the accept).
 fn the_schema() -> String {
     let mut schema: serde_json::Value =
         serde_json::from_str(support::SCHEMA).expect("the schema parses");
@@ -107,8 +107,8 @@ fn the_schema() -> String {
     schema.to_string()
 }
 
-/// La politica Cedar: la superficie de contenido de siempre, mas la
-/// administracion abierta para alice (la resource del accept la cubre).
+/// The Cedar policy: the usual content surface, plus
+/// administration open for alice (the accept's resource covers it).
 fn the_policy() -> String {
     format!(
         "{}\npermit(principal == Iam::User::\"hrn:hodei:iam::{FIRST_ACCOUNT}:User/alice\", action == Admin::Action::\"AccessAdminApi\", resource);\n",
@@ -116,8 +116,8 @@ fn the_policy() -> String {
     )
 }
 
-/// La politica de confianza: solo la ausencia de criticos alcanzantes.
-/// `version` es lo que el drift del barrido compara con la concesion.
+/// The trust policy: only the absence of reaching criticals.
+/// `version` is what the sweep's drift compares with the grant.
 fn risk_policy_file(deployment: &Deployment, version: &str) -> String {
     let policy = TrustPolicy::new(
         "default",
@@ -131,7 +131,7 @@ fn risk_policy_file(deployment: &Deployment, version: &str) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// El catalogo de severidades del operador.
+/// The operator's severity catalog.
 fn catalog_file(deployment: &Deployment, severities: &[(&str, &str)]) -> String {
     let mut entries = serde_json::Map::new();
     for (advisory, severity) in severities {
@@ -146,17 +146,17 @@ fn catalog_file(deployment: &Deployment, severities: &[(&str, &str)]) -> String 
     path.to_string_lossy().into_owned()
 }
 
-/// La ruta de referencia de la vista: sin ninguna ruta materializada el
-/// lector dice "sin vista no hay actualidad" (el propio `is_current` de
-/// HSP-134), y el cero de la promocion no se verifica. La ruta no alcanza
-/// a ningun sujeto -- no tiene filas en `impact_view` -- y su marca de
-/// agua esta por encima de cualquier version que el grafo de la prueba va
-/// a decir, de modo que la actualidad del tenant depende solo de las
-/// rutas de advisory que el ciclo reconstruye.
+/// The reference route of the view: with no materialized route the
+/// reader says "no view means no currency" (HSP-134's own `is_current`),
+/// and the zero of the promotion is not verified. The route reaches
+/// no subject -- it has no rows in `impact_view` -- and its
+/// watermark is above any version that the test's graph is going
+/// to state, so that the tenant's currency depends only on the
+/// advisory routes that the cycle rebuilds.
 const BASELINE_ROUTE: &str = "hrn:hodei:artifacts:eu:acme:Vulnerability/GHSA-hsp137-baseline";
 
-/// Un despliegue con el catalogo sembrado, el canal trusted abierto, la
-/// administracion habilitada y la vista en cero verificado.
+/// A deployment with the catalog seeded, the trusted channel open,
+/// administration enabled and the view at verified zero.
 fn a_deployment() -> Deployment {
     let deployment = Deployment::new();
     std::fs::write(
@@ -174,10 +174,10 @@ fn a_deployment() -> Deployment {
     deployment
 }
 
-/// Escribe la ruta de referencia antes de levantar el proceso, por los
-/// almacenes reales del grafo: una ruta materializada sin sujetos alcanzados,
-/// a la versión actual del registro, que es lo que hace a la vista
-/// "al día" (un cero verificado) antes de que entre ningún advisory.
+/// Writes the reference route before raising the process, through the
+/// real graph stores: a materialized route without reached subjects,
+/// at the registry's current version, which is what makes the view
+/// "up to date" (a verified zero) before any advisory enters.
 fn seed_baseline(deployment: &Deployment) {
     let plan = support::graph_risk::RiskSeed {
         ledger_seq: 0,
@@ -260,7 +260,7 @@ fn promote(
     )
 }
 
-/// La entrada soportada de advisories.
+/// The supported advisory entry.
 fn admit(
     deployment: &Deployment,
     port: u16,
@@ -285,8 +285,8 @@ fn admit(
     )
 }
 
-/// El sujeto del ciclo: el HRN del artefacto por digest, dicho igual que
-/// lo dicen el handler y la promocion.
+/// The cycle subject: the artifact HRN by digest, stated the same way
+/// the handler and the promotion state it.
 fn subject_of(content: &[u8]) -> String {
     let digest = hodei_evidence::ContentDigest::of_bytes(content);
     hodei_artifacts_api::trust::hrn::artifact_hrn(REGION, FIRST_ACCOUNT, FIRST_REPOSITORY, &digest)
@@ -298,7 +298,7 @@ fn hex_of(content: &[u8]) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Cirugia del grafo (la ventana de crash y la lectura de la evidencia)
+// Graph surgery (the crash window and the evidence reading)
 // ---------------------------------------------------------------------------
 
 fn runtime() -> tokio::runtime::Runtime {
@@ -308,10 +308,10 @@ fn runtime() -> tokio::runtime::Runtime {
         .expect("a runtime")
 }
 
-/// Siembra la mitad sobreviviente del crash: el crítico alcanzando al sujeto
-/// en el registro y la vista (con severidad conocida) y el intent de
-/// reevaluación PENDIENTE en el outbox duradero -- exactamente lo que queda
-/// vivo cuando el proceso muere después de planificar y antes de revocar.
+/// Seeds the surviving half of the crash: the critical reaching the subject
+/// in the registry and the view (with known severity) and the PENDING
+/// reevaluation intent in the durable outbox -- exactly what stays
+/// alive when the process dies after planning and before revoking.
 fn plant_crash_window(deployment: &Deployment, subject: &str) {
     use hodei_reactive::intent::{EventOrigin, Intent, IntentOrigin};
     use hodei_reactive::intent::IntentOutbox as _;
@@ -326,8 +326,8 @@ fn plant_crash_window(deployment: &Deployment, subject: &str) {
     };
     runtime().block_on(async {
         support::graph_risk::seed_risk(graph, &hodei_evidence_tenant(), &plan).await;
-        // El intent dicho por el planificador antes de morir. La identidad y
-        // la clave son las MISMAS que el plan del crate habría escrito:
+        // The intent stated by the planner before dying. The identity and
+        // the key are the SAME as the crate plan would have written:
         // `intent:vulnerability_impact:{event}:{key}`.
         let event_id = "evt-hsp137-crash-window";
         let key = format!("decision:{advisory}:{subject}");
@@ -356,7 +356,7 @@ fn plant_crash_window(deployment: &Deployment, subject: &str) {
     });
 }
 
-/// La evidencia persistida que la prueba lee con el servicio ya parado.
+/// The persisted evidence that the test reads with the service already stopped.
 #[derive(Debug)]
 struct DecisionRow {
     subject: String,
@@ -364,7 +364,7 @@ struct DecisionRow {
     policy_version: String,
 }
 
-/// Las decisiones del sujeto, de la más antigua a la más reciente.
+/// The subject's decisions, from oldest to most recent.
 fn decisions(deployment: &Deployment, subject: &str) -> Vec<DecisionRow> {
     use hodei_trust_policy::DecisionStore as _;
     let graph = deployment.graph.as_ref().expect("the graph profile");
@@ -387,7 +387,7 @@ fn decisions(deployment: &Deployment, subject: &str) -> Vec<DecisionRow> {
     })
 }
 
-/// Cuántas veces se aplicó el efecto de esa clave.
+/// How many times the effect of that key was applied.
 fn effect_receipts(deployment: &Deployment, key: &str) -> u64 {
     use hodei_reactive::runtime::ExecutionStore as _;
     let graph = deployment.graph.as_ref().expect("the graph profile");
@@ -404,15 +404,15 @@ fn effect_receipts(deployment: &Deployment, key: &str) -> u64 {
     })
 }
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// AC1 (UAT TRUST-04): advisory critico -> el pull nuevo queda bloqueado,
-// y el tiempo admision->bloqueo se mide.
+// AC1 (UAT TRUST-04): critical advisory -> the new pull is blocked,
+// and the admission->block time is measured.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -440,9 +440,9 @@ fn a_critical_advisory_blocks_the_pull_it_should() {
         200
     );
 
-    // La admision corre el ciclo completo: proyeccion, vista, intents,
-    // reevaluacion, revocacion. Cuando responde, la concesion ya esta
-    // retirada; el pull que la media es el primer pull BLOQUEADO.
+    // The admission runs the complete cycle: projection, view, intents,
+    // reevaluation, revocation. When it responds, the grant is already
+    // withdrawn; the pull that measures it is the first BLOCKED pull.
     let admitted_at = Instant::now();
     let (status, body) = admit(
         &deployment,
@@ -468,8 +468,8 @@ fn a_critical_advisory_blocks_the_pull_it_should() {
         "the critical reached the artifact and the pull still served"
     );
 
-    // SLO: el objetivo declarado es p99 <= 10 s en un nodo. Aqui se mide
-    // un valor, no se declara el cumplimiento de una distribucion.
+    // SLO: the declared target is p99 <= 10 s on a node. Here a value
+    // is measured, compliance of a distribution is not declared.
     let elapsed_millis = admission["elapsed_millis"].as_u64().expect("elapsed");
     println!(
         "HSP-137 SLO sample: admission={elapsed_millis} ms, admission->blocked pull={} ms",
@@ -484,8 +484,8 @@ fn a_critical_advisory_blocks_the_pull_it_should() {
         "the admission itself blew the objective: {elapsed_millis} ms"
     );
 
-    // La readmision del mismo advisory es el mismo hecho dicho dos veces:
-    // el ciclo lo dice en lugar de fingir otra vez, y no abre nada.
+    // Readmitting the same advisory is the same fact stated twice:
+    // the cycle says so instead of pretending again, and opens nothing.
     let (status, body) = admit(
         &deployment,
         service.port,
@@ -501,8 +501,8 @@ fn a_critical_advisory_blocks_the_pull_it_should() {
     );
     support::stop(&mut service);
 
-    // La decision persistida: el sujeto promovido y luego negado por el
-    // critico alcanzante, en el mismo orden que el wire conto.
+    // The persisted decision: the subject promoted and then denied by the
+    // reaching critical, in the same order the wire counted.
     let rows = decisions(&deployment, &subject_of(&content));
     assert!(
         rows.iter().all(|row| row.subject == subject_of(&content)),
@@ -521,7 +521,7 @@ fn a_critical_advisory_blocks_the_pull_it_should() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: un CVE irrelevante no retira concesiones ajenas.
+// AC2: an irrelevant CVE does not withdraw other grants.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -578,10 +578,10 @@ fn an_irrelevant_advisory_keeps_every_concession_it_should() {
         200
     );
 
-    // El advisory de severidad `other` toca mi artefacto (el inventario
-    // casa con lib-a): la reevaluacion ocurre y AUTORIZA -- la politica
-    // solo niega criticos. El artefacto ajeno ni siquiera entra en el
-    // radio: no se reevalua lo que el advisory no alcanza.
+    // The `other`-severity advisory touches my artifact (the inventory
+    // matches lib-a): the reevaluation happens and AUTHORIZES -- the policy
+    // only denies criticals. The other artifact does not even enter the
+    // radius: what the advisory does not reach is not reevaluated.
     let (status, body) = admit(
         &deployment,
         service.port,
@@ -602,8 +602,8 @@ fn an_irrelevant_advisory_keeps_every_concession_it_should() {
     );
     support::stop(&mut service);
 
-    // La evidencia: mi sujeto fue reevaluado (dos ALLOW: promocion y
-    // ciclo) y el ajeno conserva UNA sola decision -- nadie lo toco.
+    // The evidence: my subject was reevaluated (two ALLOWs: promotion and
+    // cycle) and the other keeps a SINGLE decision -- nobody touched it.
     let mine_rows = decisions(&deployment, &subject_of(&content));
     assert_eq!(
         mine_rows.len(),
@@ -620,8 +620,8 @@ fn an_irrelevant_advisory_keeps_every_concession_it_should() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2 (derivada): el cambio de politica reevalua los sujetos dependientes.
-// El barrido de drift detecta la version activa nueva tras el reinicio.
+// AC2 (derived): the policy change reevaluates the dependent subjects.
+// The drift sweep detects the new active version after the restart.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -649,9 +649,9 @@ fn a_policy_change_reevaluates_the_subjects_it_concerns() {
     let port = service.port;
     support::stop(&mut service);
 
-    // El operador sube la politica a 2.0.0 y reinicia. La concesion
-    // escrita dice 1.0.0: el barrido (intervalo 1 s) la ve obsoleta y
-    // reevalua el sujeto contra la version activa.
+    // The operator raises the policy to 2.0.0 and restarts. The written grant
+    // says 1.0.0: the sweep (1 s interval) sees it as obsolete and
+    // reevaluates the subject against the active version.
     std::fs::write(
         deployment.directory.path().join("trust-policy.json"),
         serde_json::to_vec(&TrustPolicy::new(
@@ -674,8 +674,8 @@ fn a_policy_change_reevaluates_the_subjects_it_concerns() {
         ],
     );
     std::thread::sleep(std::time::Duration::from_millis(2500));
-    // La distribucion sigue sirviendo: la reevaluacion AUTORIZA contra la
-    // politica nueva (el riesgo sigue siendo cero verificado).
+    // The distribution keeps serving: the reevaluation AUTHORIZES against the
+    // new policy (the risk is still a verified zero).
     assert_eq!(
         call(&deployment, service.port, "GET", &path, &alice, None).0,
         200,
@@ -683,8 +683,8 @@ fn a_policy_change_reevaluates_the_subjects_it_concerns() {
     );
     support::stop(&mut service);
 
-    // La evidencia: una decision nueva con la version 2.0.0, emitida por
-    // el ciclo (actor reactor) y no por un cliente.
+    // The evidence: a new decision with version 2.0.0, issued by
+    // the cycle (reactor actor) and not by a client.
     let rows = decisions(&deployment, &subject_of(&content));
     let versions: Vec<&str> = rows.iter().map(|row| row.policy_version.as_str()).collect();
     assert_eq!(
@@ -695,8 +695,8 @@ fn a_policy_change_reevaluates_the_subjects_it_concerns() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: kill -9 en la ventana entre calcular y revocar. El reinicio
-// converge desde el outbox sin duplicar el effect receipt.
+// AC3: kill -9 in the window between computing and revoking. The restart
+// converges from the outbox without duplicating the effect receipt.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -729,15 +729,15 @@ fn a_crash_between_planning_and_revoking_converges_once() {
     let port = service.port;
     support::kill(&mut service);
 
-    // Lo que el proceso muerto dejo atras: el delta dicho, la vista
-    // alcanzando al sujeto y el intent de reevaluacion pendiente, sin
-    // recibo. Es la ventana exacta que el `kill -9` sobrevive.
+    // What the dead process left behind: the stated delta, the view
+    // reaching the subject and the pending reevaluation intent, without
+    // a receipt. It is the exact window that `kill -9` survives.
     let subject = subject_of(&content);
     plant_crash_window(&deployment, &subject);
 
-    // El arranque converge ANTES de abrir al trafico: `resume` reclamo
-    // el intent pendiente, la reevaluacion nego por el critico y la
-    // revocacion llego al libro mayor.
+    // The boot converges BEFORE opening to traffic: `resume` claimed
+    // the pending intent, the reevaluation denied because of the critical and the
+    // revocation reached the ledger.
     let mut service = deployment.start_on(
         port,
         &[
@@ -754,7 +754,7 @@ fn a_crash_between_planning_and_revoking_converges_once() {
     );
     support::stop(&mut service);
 
-    // El recibo del efecto es UNO: la convergencia no toco dos veces.
+    // The effect receipt is ONE: the convergence did not touch twice.
     let key = format!("decision:{CRASH_ADVISORY}:{subject}");
     assert_eq!(
         effect_receipts(&deployment, &key),

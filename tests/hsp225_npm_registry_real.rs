@@ -1,44 +1,44 @@
-//! npmjs **real** (HSP-225 / HCR-03), con el cliente npm de verdad.
+//! **Real** npmjs (HSP-225 / HCR-03), with the actual npm client.
 //!
-//! El laboratorio de HSP-223 (`support::lab`) demuestra que el registro
-//! cachea, que funciona sin upstream y que no sirve nada no confiable
-//! **contra un upstream local**. Aqui se demuestra lo mismo contra el
-//! registro publico de verdad (`https://registry.npmjs.org/`), y con el
-//! cliente que usa la gente: `npm`.
+//! HSP-223's lab (`support::lab`) demonstrates that the registry
+//! caches, that it works without an upstream and that it serves nothing untrusted
+//! **against a local upstream**. Here the same is demonstrated against the
+//! real public registry (`https://registry.npmjs.org/`), and with the
+//! client people use: `npm`.
 //!
-//! Lo que se mide, y no se afirma:
+//! What is measured, and not asserted:
 //!
-//! - **AC1**: `npm view` y `npm pack` / `npm install --ignore-scripts` con
-//!   un `.npmrc` y un HOME temporales resuelven `is-number@7.0.0` por Hodei,
-//!   y el `integrity` del tarball coincide con el que declara el origen.
-//!   La comprobacion contra npmjs de verdad es **opt-in** y con la version
-//!   fijada: sin `HODEI_LAB_REAL=1` el caso no se ejecuta y el informe no
-//!   es verde, que es lo correcto.
-//! - **AC2**: un **segundo** fetch del mismo contenido **no consulta** el
-//!   upstream (el contador del laboratorio lo dice), con el upstream
-//!   **desconectado** se resuelve igual con los datos locales, y un
-//!   dist-tag que se mueve se revalida **segun el TTL** sin cambiar los
-//!   bytes historicos.
-//! - **AC3**: un **scope reservado** no cae al publico, las URLs
-//!   `dist.tarball` que devuelve el proxy apuntan al **endpoint de Hodei**,
-//!   y ningun token del cliente aparece en el log ni viaja al upstream.
+//! - **AC1**: `npm view` and `npm pack` / `npm install --ignore-scripts` with
+//! a temporary `.npmrc` and HOME resolve `is-number@7.0.0` through Hodei,
+//! and the tarball's `integrity` matches the one the origin declares.
+//! The check against the real npmjs is **opt-in** and with the version
+//! pinned: without `HODEI_LAB_REAL=1` the case does not run and the report is
+//! not green, which is correct.
+//! - **AC2**: a **second** fetch of the same content does **not** query the
+//! upstream (the lab's counter says so), with the upstream
+//! **disconnected** it resolves the same with local data, and a
+//! dist-tag that moves is revalidated **according to the TTL** without changing the
+//! historical bytes.
+//! - **AC3**: a **reserved scope** does not fall through to the public one, the
+//! `dist.tarball` URLs the proxy returns point to **Hodei's endpoint**,
+//! and no client token appears in the log or travels to the upstream.
 //!
-//! # El camino sin red
+//! # The path without network
 //!
-//! Por defecto **no se sale a la red**: el upstream es el del laboratorio
-//! (un servidor local que cuenta) y el paquete es un *fixture* con las
-//! coordenadas del publico: un tarball de verdad, empaquetado con el mismo
-//! `npm pack` que usaria el cliente, pero **no** los bytes de npmjs. Del
-//! paquete bajo prueba no sale de ahi nunca: la cache del cliente es
-//! temporal y el paquete se pide al grupo.
+//! By default **the network is not used**: the upstream is the lab's
+//! (a local server that counts) and the package is a *fixture* with the
+//! public's coordinates: a real tarball, packed with the same
+//! `npm pack` the client would use, but **not** npmjs's bytes. The package
+//! under test never comes from anywhere else: the client's cache is
+//! temporary and the package is requested from the group.
 //!
-//! # El cliente
+//! # The client
 //!
-//! El `npm` del PATH puede ser un envoltorio que necesita el HOME de la
-//! maquina, y el laboratorio corre el cliente con un HOME que no es el del
-//! usuario. Por eso el cliente tiene **su** HOME (`LabHome`), **su** cache
-//! y **su** `.npmrc`: lo que se descarga sale del grupo o no sale, y la
-//! credencial vive en un fichero temporal que desaparece con el caso.
+//! The PATH's `npm` may be a wrapper that needs the machine's HOME,
+//! and the lab runs the client with a HOME that is not the user's.
+//! That is why the client has **its** HOME (`LabHome`), **its** cache
+//! and **its** `.npmrc`: what is downloaded comes from the group or does not come, and the
+//! credential lives in a temporary file that disappears with the case.
 
 mod support;
 
@@ -54,66 +54,66 @@ use support::lab::{
 };
 use support::{Curl, Deployment, FIRST_ACCOUNT};
 
-/// El paquete bajo prueba: las coordenadas son las del publico.
+/// The package under test: the coordinates are the public's.
 const PACKAGE: &str = "is-number";
 
-/// La version del paquete bajo prueba: **fijada**, siempre.
+/// The version of the package under test: **pinned**, always.
 const VERSION: &str = "7.0.0";
 
-/// La otra version del fixture: la a la que se mueve el dist-tag.
+/// The other version of the fixture: the one the dist-tag moves to.
 const OTHER_VERSION: &str = "7.1.0";
 
-/// Las coordenadas que se piden al cliente.
+/// The coordinates requested from the client.
 const SPEC: &str = "is-number@7.0.0";
 
-/// El path del packument en el repositorio.
+/// The packument path in the repository.
 const PACKUMENT_PATH: &str = "is-number";
 
-/// El path del tarball en el repositorio.
+/// The tarball path in the repository.
 const TARBALL_PATH: &str = "is-number/-/is-number-7.0.0.tgz";
 
-/// El scope reservado: lo que la casa tiene y el publico no debe servir.
+/// The reserved scope: what the house has and the public must not serve.
 const RESERVED_SCOPE: &str = "@reserved";
 
-/// El paquete del scope reservado.
+/// The reserved scope's package.
 const RESERVED_PACKAGE: &str = "@reserved/widget";
 
-/// El upstream real: el registro publico de npm.
+/// The real upstream: the public npm registry.
 const REAL_UPSTREAM: &str = "https://registry.npmjs.org/";
 
-/// El host del upstream real, como lo entiende la salida del servicio.
+/// The real upstream's host, as the service's egress understands it.
 const REAL_HOST: &str = "registry.npmjs.org";
 
-/// El `integrity` que declara npmjs para `is-number@7.0.0`.
+/// The `integrity` npmjs declares for `is-number@7.0.0`.
 ///
-/// Es el valor que dice el publico, no uno que se calcula aqui: lo que se
-/// comprueba es que el tarball que baja por Hodei sea **ese** y no otro.
+/// It is the value the public states, not one computed here: what is
+/// checked is that the tarball downloaded through Hodei is **that one** and no other.
 const REAL_INTEGRITY: &str = "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==";
 
-/// El repositorio *hosted* del grupo: lo propio de la casa.
+/// The group's *hosted* repository: the house's own content.
 const HOSTED: &str = "npm-hosted";
 
-/// El repositorio *proxy* del grupo: el registro publico.
+/// The group's *proxy* repository: the public registry.
 const PROXY: &str = "npm-public";
 
-/// El grupo bajo prueba.
+/// The group under test.
 const GROUP: &str = "npm-all";
 
-/// Los TTL con los que se siembra el proxy, en segundos.
+/// The TTLs the proxy is seeded with, in seconds.
 ///
-/// El contenido (los tarballs) no caduca nunca: es inmutable por
-/// definicion. La metadata (los packuments) caduca, y ahi es donde se
-/// decide cuando se revalida un dist-tag que se ha movido.
+/// The content (the tarballs) never expires: it is immutable by
+/// definition. The metadata (the packuments) expires, and that is where it
+/// is decided when a dist-tag that has moved is revalidated.
 const METADATA_TTL: u64 = 3_600;
 
-/// El TTL corto con el que se demuestra la revalidacion por TTL.
+/// The short TTL used to demonstrate revalidation by TTL.
 const SHORT_METADATA_TTL: u64 = 5;
 
-/// Los casos que una corrida completa tiene que ejecutar.
+/// The cases a complete run has to execute.
 ///
-/// El informe los declara, asi que una corrida que solo llego a alguno
-/// dice cual le falto: los que no se ejecutan cuentan como `NOT_RUN`, y el
-/// informe nunca es verde.
+/// The report declares them, so a run that only reached some of them
+/// says which was missing: those not executed count as `NOT_RUN`, and the
+/// report is never green.
 const THE_CASES: &[(&str, &str)] = &[
     (
         "ac1-npm-view-resolves-the-pinned-version-through-the-group",
@@ -161,10 +161,10 @@ const THE_CASES: &[(&str, &str)] = &[
     ),
 ];
 
-/// El titulo y el disclaimer del informe de esta suite.
+/// The title and the disclaimer of this suite's report.
 ///
-/// El disclaimer del laboratorio (HSP-223) dice que no se ha hablado con
-/// `npm`, y aqui si: el disclaimer es de la suite, no del modulo.
+/// The HSP-223 lab's disclaimer says `npm` was not talked to,
+/// and here it was: the disclaimer belongs to the suite, not to the module.
 const THE_TITLE: &str = "Laboratorio de npmjs — informe";
 
 const THE_DISCLAIMER: &[&str] = &[
@@ -174,34 +174,34 @@ const THE_DISCLAIMER: &[&str] = &[
     "- **Ni el laboratorio.** Los casos de `scope: harness` miden el arnés —el recuento— y no el producto. Los dos recuentos van aparte.",
 ];
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
 // ---------------------------------------------------------------------------
-// El laboratorio.
+// The lab.
 // ---------------------------------------------------------------------------
 
-/// El laboratorio de npmjs: un despliegue, un upstream que cuenta y el
-/// grupo bajo prueba.
+/// The npmjs lab: a deployment, an upstream that counts and the
+/// group under test.
 struct Lab {
     deployment: Deployment,
-    /// El upstream local: solo existe en el modo sin red.
+    /// The local upstream: it only exists in the no-network mode.
     upstream: Upstream,
-    /// La URL del upstream del proxy.
+    /// The proxy's upstream URL.
     upstream_url: String,
-    /// Los segundos de frescura de la metadata del proxy.
+    /// The seconds of freshness of the proxy's metadata.
     metadata_ttl: u64,
 }
 
 impl Lab {
-    /// Un laboratorio con un upstream **local** que cuenta.
+    /// A lab with a **local** upstream that counts.
     ///
-    /// El upstream es el del laboratorio (`support::lab::Upstream`): el
-    /// contador y el upstream son la misma cosa, porque un contador que
-    /// vive en dos sitios mide uno de los dos.
+    /// The upstream is the lab's (`support::lab::Upstream`): the
+    /// counter and the upstream are the same thing, because a counter that
+    /// lives in two places measures one of the two.
     fn local(metadata_ttl: u64) -> Self {
         let upstream = Upstream::start();
         let url = upstream.base();
@@ -213,11 +213,11 @@ impl Lab {
         }
     }
 
-    /// Un laboratorio con el upstream **real**: el registro publico de npm.
+    /// A lab with the **real** upstream: the public npm registry.
     ///
-    /// No hay contador local: a npmjs no se le puede contar. Lo que se
-    /// mide en el modo real es el `integrity` y el hecho de que la
-    /// resolucion funciona con la salida a npmjs **cerrada**.
+    /// There is no local counter: npmjs cannot be counted. What is
+    /// measured in the real mode is the `integrity` and the fact that
+    /// resolution works with egress to npmjs **closed**.
     fn real() -> Self {
         Self {
             deployment: Deployment::new(),
@@ -227,8 +227,8 @@ impl Lab {
         }
     }
 
-    /// Siembra el hosted, el proxy y el grupo con la politica de reserva
-    /// que se le pase.
+    /// Seeds the hosted, the proxy and the group with the reservation policy
+    /// passed in.
     fn seed(&self, namespaces: Option<serde_json::Value>) {
         let mut proxy = serde_json::json!({
             "key": PROXY,
@@ -240,9 +240,9 @@ impl Lab {
                     "scopes": ["/"],
                     "max_bytes": 4 * 1024 * 1024,
                 },
-                // El contenido no caduca: un tarball es inmutable. La
-                // metadata caduca, y ahi es donde se revalida un dist-tag
-                // que se ha movido.
+                // The content does not expire: a tarball is immutable. The
+                // metadata expires, and that is where a dist-tag that has moved
+                // is revalidated.
                 "cache": { "ttl": { "content_secs": null, "metadata_secs": self.metadata_ttl } },
             },
         });
@@ -262,46 +262,46 @@ impl Lab {
         self.deployment.seed_groups_raw(&[group]);
     }
 
-    /// Arranca el servicio con la salida que el caso necesita.
+    /// Starts the service with the egress the case needs.
     fn start(&self, extra: &[(&str, &str)]) -> support::Service {
         self.deployment.start(extra)
     }
 
-    /// La salida que deja pasar al upstream local del laboratorio.
+    /// The egress that lets the lab's local upstream through.
     fn the_local_egress(&self) -> String {
         format!("127.0.0.1:{};private;http", self.upstream.port())
     }
 }
 
 // ---------------------------------------------------------------------------
-// El cliente npm.
+// The npm client.
 // ---------------------------------------------------------------------------
 
-/// La corrida de un cliente.
+/// A client run.
 struct Run {
     ok: bool,
     output: String,
     command: String,
 }
 
-/// Un cliente `npm` aislado: su HOME, su cache y su `.npmrc`.
+/// An isolated `npm` client: its HOME, its cache and its `.npmrc`.
 ///
-/// El `.npmrc` apunta el registro al **grupo** de Hodei, de modo que el
-/// cliente no tiene un camino propio a npmjs: lo que descarga sale del
-/// grupo o no sale. La credencial vive en el `.npmrc`, nunca en el argv.
+/// The `.npmrc` points the registry at Hodei's **group**, so the
+/// client has no path of its own to npmjs: what it downloads comes from the
+/// group or does not come. The credential lives in the `.npmrc`, never in argv.
 struct Npm {
-    /// El HOME del cliente: no es el de quien ejecuta la prueba.
+    /// The client's HOME: it is not that of whoever runs the test.
     home: LabHome,
-    /// El directorio del cliente: el `.npmrc` y la cache.
+    /// The client's directory: the `.npmrc` and the cache.
     root: PathBuf,
-    /// El `.npmrc` del cliente.
+    /// The client's `.npmrc`.
     rc: PathBuf,
-    /// El registro al que habla el cliente.
+    /// The registry the client talks to.
     registry: String,
 }
 
 impl Npm {
-    /// Un cliente que habla con `/npm/{repository}/` del servicio.
+    /// A client that talks to `/npm/{repository}/` of the service.
     fn new(root: &Path, name: &str, port: u16, repository: &str, token: &str) -> Self {
         let root = root.join(name);
         std::fs::create_dir_all(&root).expect("the directory of the client");
@@ -328,7 +328,7 @@ impl Npm {
         }
     }
 
-    /// Ejecuta `npm` en `dir` con la cache de este cliente.
+    /// Runs `npm` in `dir` with this client's cache.
     fn run(&self, dir: &Path, args: &[&str]) -> Run {
         let mut command = Command::new("npm");
         command
@@ -354,34 +354,34 @@ impl Npm {
         }
     }
 
-    /// Una cache vacia: lo siguiente que se instale sale del servicio.
+    /// An empty cache: whatever is installed next comes from the service.
     ///
-    /// La cache del cliente es la del cliente: sin vaciarla, el `npm`
-    /// contesta por su cuenta y lo que se mide es su cache, no la del
-    /// registro.
+    /// The client's cache is the client's: without emptying it, `npm`
+    /// answers on its own and what is measured is its cache, not the
+    /// registry's.
     fn forget_the_cache(&self) {
         let _ = std::fs::remove_dir_all(self.root.join("cache"));
     }
 }
 
 // ---------------------------------------------------------------------------
-// Los fixtures.
+// The fixtures.
 // ---------------------------------------------------------------------------
 
-/// El nombre del fichero de un tarball, como lo escribe npm.
+/// The file name of a tarball, as npm writes it.
 ///
-/// Un paquete con alcance se escribe `alcance-nombre-version.tgz`: la
-/// arroba no puede ir en un nombre de fichero.
+/// A scoped package is written `scope-name-version.tgz`: the
+/// at sign cannot go in a file name.
 fn the_tarball_file(name: &str, version: &str) -> String {
     let base = name.trim_start_matches('@').replace('/', "-");
     format!("{base}-{version}.tgz")
 }
 
-/// Un tarball de verdad de un paquete con las coordenadas del publico.
+/// A real tarball of a package with the public's coordinates.
 ///
-/// Lo empaqueta el mismo `npm` que usaria el cliente, con su HOME
-/// aislado: lo que el proxy sirve es un tarball que el `npm` sabe
-/// abrir, no un fichero con nombre de tarball.
+/// It is packed by the same `npm` the client would use, with its isolated
+/// HOME: what the proxy serves is a tarball `npm` knows how to
+/// open, not a file with a tarball's name.
 fn the_fixture_tarball(home: &LabHome, root: &Path, name: &str, version: &str) -> Vec<u8> {
     let source = root.join(format!(
         "fixture-{}-{version}",
@@ -419,10 +419,10 @@ fn the_fixture_tarball(home: &LabHome, root: &Path, name: &str, version: &str) -
     std::fs::read(&file).expect("the packed tarball")
 }
 
-/// El packument que sirve el upstream del laboratorio.
+/// The packument the lab's upstream serves.
 ///
-/// Las URLs `dist.tarball` apuntan al **upstream**: si el proxy no las
-/// reescribe, el cliente se ira ahi y la prueba lo dira.
+/// The `dist.tarball` URLs point to the **upstream**: if the proxy does not
+/// rewrite them, the client will go there and the test will say so.
 fn the_packument(
     name: &str,
     upstream: &str,
@@ -458,7 +458,7 @@ fn the_packument(
     .expect("the packument is json")
 }
 
-/// El `integrity` de unos bytes: `sha512` en base64, como lo escribe npm.
+/// The `integrity` of some bytes: `sha512` in base64, as npm writes it.
 fn integrity_of(bytes: &[u8]) -> String {
     format!(
         "sha512-{}",
@@ -466,7 +466,7 @@ fn integrity_of(bytes: &[u8]) -> String {
     )
 }
 
-/// El sha256 de unos bytes.
+/// The sha256 of some bytes.
 fn sha256_of_bytes(bytes: &[u8]) -> String {
     use sha2::Sha256;
     Sha256::digest(bytes)
@@ -475,7 +475,7 @@ fn sha256_of_bytes(bytes: &[u8]) -> String {
         .collect()
 }
 
-/// Un proyecto consumidor vacio.
+/// An empty consumer project.
 fn a_consumer(dir: &Path) {
     std::fs::create_dir_all(dir).expect("the consumer directory");
     std::fs::write(
@@ -485,7 +485,7 @@ fn a_consumer(dir: &Path) {
     .expect("the package.json of the consumer");
 }
 
-/// La respuesta del servicio a una peticion.
+/// The service's response to a request.
 struct Reply {
     status: u16,
     body: Vec<u8>,
@@ -499,7 +499,7 @@ impl Reply {
     }
 }
 
-/// Pide una ruta al servicio por la superficie de npm.
+/// Requests a path from the service through the npm surface.
 fn get(port: u16, path: &str, token: &str, into: &Path) -> Reply {
     let _ = std::fs::remove_file(into);
     let curl = Curl::call(
@@ -522,10 +522,10 @@ fn get(port: u16, path: &str, token: &str, into: &Path) -> Reply {
 }
 
 // ---------------------------------------------------------------------------
-// Utilidades.
+// Utilities.
 // ---------------------------------------------------------------------------
 
-/// El resumen de un caso, con el id y el titulo del caso.
+/// A case's summary, with the case's id and title.
 fn a_case(
     id: &str,
     title: &str,
@@ -538,7 +538,7 @@ fn a_case(
 }
 
 // ---------------------------------------------------------------------------
-// AC1: el cliente resuelve por el grupo, y el integrity es el del origen.
+// AC1: the client resolves through the group, and the integrity is the origin's.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -581,7 +581,7 @@ fn ac1_npm_view_resolves_the_pinned_version_through_the_group() {
                 VERSION,
                 "the client did not see the pinned version"
             );
-            // Y lo que el cliente tiene salio del upstream, no de otro sitio.
+            // And what the client has came from the upstream, not from anywhere else.
             assert!(
                 lab.upstream.hits(PACKUMENT_PATH) > 0,
                 "the upstream was never asked for the packument"
@@ -634,10 +634,10 @@ fn ac1_npm_pack_and_install_agree_with_the_origin_integrity() {
             std::fs::create_dir_all(&packed).expect("the packed directory");
             a_consumer(&project);
 
-            // `npm pack` baja el tarball por el grupo. El propio `npm`
-            // comprueba el `integrity` que declara el packument: si los
-            // bytes no fueran los, el cliente fallaria antes de que la
-            // prueba llegara a mirar.
+            // `npm pack` downloads the tarball through the group. `npm` itself
+            // checks the `integrity` the packument declares: if the
+            // bytes were not the right ones, the client would fail before the
+            // test got to look.
             let pack = client.run(
                 &work,
                 &[
@@ -657,8 +657,8 @@ fn ac1_npm_pack_and_install_agree_with_the_origin_integrity() {
                 "the tarball that came through Hodei is not the one the origin declares"
             );
 
-            // Y la instalacion: el lock dice el `integrity` que el cliente
-            // verifico, y tiene que ser el mismo.
+            // And the install: the lock says the `integrity` the client
+            // verified, and it has to be the same.
             let install = client.run(&project, &["install", SPEC, "--ignore-scripts"]);
             assert!(install.ok, "npm install failed:\n{}", install.output);
             let lock: serde_json::Value = serde_json::from_slice(
@@ -705,8 +705,8 @@ fn ac1_the_real_npmjs_serves_the_same_integrity() {
             )
             .command(&format!("npm view {SPEC} dist.integrity (registro: npmjs)"));
             if !real_mode_enabled() {
-                // Sin el opt-in el caso no se ejecuta, y un caso que no
-                // se ejecuta no es un caso verde.
+                // Without the opt-in the case does not run, and a case that is
+                // not executed is not a green case.
                 return case.not_run(format!(
                     "the real mode is opt-in: set {REAL_MODE_VARIABLE}=1 to run it"
                 ));
@@ -737,7 +737,7 @@ fn ac1_the_real_npmjs_serves_the_same_integrity() {
             a_consumer(&project);
 
             let started = Instant::now();
-            // Lo que declara el publico, leido **por Hodei**.
+            // What the public declares, read **through Hodei**.
             let view = client.run(&work, &["view", SPEC, "dist.integrity"]);
             assert!(view.ok, "npm view failed:\n{}", view.output);
             let seen = view.output.trim().to_string();
@@ -746,8 +746,8 @@ fn ac1_the_real_npmjs_serves_the_same_integrity() {
                 "the integrity that came through Hodei is not the one npmjs declares"
             );
 
-            // Y el tarball de verdad, bajado por Hodei: sus bytes son los
-            // del publico, y el `npm` los verifica contra lo declarado.
+            // And the real tarball, downloaded through Hodei: its bytes are the
+            // public's, and `npm` verifies them against what is declared.
             let pack = client.run(
                 &work,
                 &[
@@ -766,7 +766,7 @@ fn ac1_the_real_npmjs_serves_the_same_integrity() {
                 "the tarball that came through Hodei is not the tarball of npmjs"
             );
 
-            // Y la instalacion, que es lo que el cliente haria de verdad.
+            // And the install, which is what the client would really do.
             let install = client.run(&project, &["install", SPEC, "--ignore-scripts"]);
             assert!(install.ok, "npm install failed:\n{}", install.output);
             let lock: serde_json::Value = serde_json::from_slice(
@@ -783,7 +783,7 @@ fn ac1_the_real_npmjs_serves_the_same_integrity() {
             );
             let elapsed = started.elapsed();
 
-            // Y la corrida respeta el presupuesto del laboratorio.
+            // And the run respects the lab's budget.
             let size = std::fs::metadata(&file).map(|meta| meta.len()).unwrap_or(0);
             support::stop(&mut service);
             let case = case
@@ -799,7 +799,7 @@ fn ac1_the_real_npmjs_serves_the_same_integrity() {
 }
 
 // ---------------------------------------------------------------------------
-// AC2: la cache, el upstream caido, y el dist-tag que se mueve.
+// AC2: the cache, the upstream down, and the dist-tag that moves.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -834,14 +834,14 @@ fn ac2_the_second_fetch_does_not_ask_the_upstream() {
             a_consumer(&first_project);
             a_consumer(&second_project);
 
-            // La primera vez: el upstream contesta (un MISS).
+            // The first time: the upstream answers (a MISS).
             let first = client.run(&first_project, &["install", SPEC, "--ignore-scripts"]);
             assert!(first.ok, "the first install failed:\n{}", first.output);
             let asked = lab.upstream.total();
             assert!(asked > 0, "the upstream was never asked");
 
-            // La segunda vez: el cliente llega sin su cache, así que lo
-            // que se mide es de donde sale lo que trae.
+            // The second time: the client arrives without its cache, so what
+            // is measured is where what it brings comes from.
             client.forget_the_cache();
             let second = client.run(&second_project, &["install", SPEC, "--ignore-scripts"]);
             assert!(second.ok, "the second install failed:\n{}", second.output);
@@ -910,17 +910,17 @@ fn ac2_the_group_serves_the_pinned_package_with_the_network_closed() {
             let asked = lab.upstream.total();
             assert!(asked > 0, "the upstream was never asked");
 
-            // El upstream se va: deja de aceptar conexiones. Un contador
-            // que no crece con el puerto cerrado no prueba nada, así que
-            // lo que se comprueba es que el upstream esta muerto de verdad.
+            // The upstream goes away: it stops accepting connections. A counter
+            // that does not grow with the port closed proves nothing, so
+            // what is checked is that the upstream is really dead.
             lab.upstream.disconnect();
             assert!(
                 !lab.upstream.accepts_connections(),
                 "the upstream is still listening: the evidence of the offline hit is not what it claims to be"
             );
 
-            // El grupo (un hosted y un proxy) sigue sirviendo el paquete
-            // fijado: lo que tiene, lo tiene con procedencia.
+            // The group (a hosted and a proxy) keeps serving the pinned
+            // package: what it has, it has with provenance.
             client.forget_the_cache();
             let second = client.run(&second_project, &["install", SPEC, "--ignore-scripts"]);
             assert!(
@@ -969,10 +969,10 @@ fn ac2_a_moved_dist_tag_is_revalidated_by_the_ttl() {
             let home = LabHome::new();
             let tarball = the_fixture_tarball(&home, &root, PACKAGE, VERSION);
             let declared = integrity_of(&tarball);
-            // La otra version del fixture: la a la que se mueve el
-            // dist-tag. Su tarball tambien existe, porque un packument
-            // cuyo `latest` apunta a una version que no esta en `versions`
-            // no es un packument que npm pueda resolver.
+            // The other version of the fixture: the one the
+            // dist-tag moves to. Its tarball exists too, because a packument
+            // whose `latest` points to a version that is not in `versions`
+            // is not a packument npm can resolve.
             let other_tarball = the_fixture_tarball(&home, &root, PACKAGE, OTHER_VERSION);
             let other_declared = integrity_of(&other_tarball);
             let before = the_packument(
@@ -1004,21 +1004,21 @@ fn ac2_a_moved_dist_tag_is_revalidated_by_the_ttl() {
             let work = root.join("work");
             std::fs::create_dir_all(&work).expect("the work directory");
 
-            // El MISS: el packument sale del upstream.
+            // The MISS: the packument comes from the upstream.
             let first = client.run(&work, &["view", PACKAGE, "dist-tags.latest"]);
             assert!(first.ok, "the first view failed:\n{}", first.output);
             assert_eq!(first.output.trim(), VERSION);
             let asked = lab.upstream.total();
             assert!(asked > 0, "the upstream was never asked");
 
-            // El upstream mueve el dist-tag: el tag `latest` pasa a otra
+            // The upstream moves the dist-tag: the `latest` tag moves to another
             // version.
             lab.upstream
                 .put_doc(PACKUMENT_PATH, Doc::new(&after).with_etag("\"v2\""));
 
-            // Dentro del TTL, el packument cacheado es el que se sirve: el
-            // upstream no se vuelve a preguntar y el tag no se ha movido
-            // todavia.
+            // Within the TTL, the cached packument is what is served: the
+            // upstream is not asked again and the tag has not moved
+            // yet.
             let cached = get(
                 port,
                 &format!("/{PACKUMENT_PATH}"),
@@ -1026,8 +1026,8 @@ fn ac2_a_moved_dist_tag_is_revalidated_by_the_ttl() {
                 &root.join("cached.json"),
             );
             assert_eq!(cached.status, 200, "{}", cached.text());
-            // La respuesta dice **quien** la resolvio: el miembro del
-            // grupo que gana, no el que el cliente pidio.
+            // The response says **who** resolved it: the group member
+            // that wins, not the one the client asked for.
             assert_eq!(
                 cached.resolved_from.as_deref(),
                 Some(PROXY),
@@ -1048,8 +1048,8 @@ fn ac2_a_moved_dist_tag_is_revalidated_by_the_ttl() {
                 "the upstream was asked again before the TTL expired"
             );
 
-            // Y pasado el TTL, la revalidacion es condicional: el upstream
-            // contesta con bytes nuevos y el tag movido llega al cliente.
+            // And once the TTL has passed, revalidation is conditional: the upstream
+            // answers with new bytes and the moved tag reaches the client.
             std::thread::sleep(Duration::from_secs(SHORT_METADATA_TTL + 2));
             client.forget_the_cache();
             let revalidated = client.run(&work, &["view", PACKAGE, "dist-tags.latest"]);
@@ -1094,10 +1094,10 @@ fn ac2_the_moved_dist_tag_does_not_change_the_historical_bytes() {
             let home = LabHome::new();
             let tarball = the_fixture_tarball(&home, &root, PACKAGE, VERSION);
             let declared = integrity_of(&tarball);
-            // La otra version del fixture: la a la que se mueve el
-            // dist-tag. Su tarball tambien existe, porque un packument
-            // cuyo `latest` apunta a una version que no esta en `versions`
-            // no es un packument que npm pueda resolver.
+            // The other version of the fixture: the one the
+            // dist-tag moves to. Its tarball exists too, because a packument
+            // whose `latest` points to a version that is not in `versions`
+            // is not a packument npm can resolve.
             let other_tarball = the_fixture_tarball(&home, &root, PACKAGE, OTHER_VERSION);
             let other_declared = integrity_of(&other_tarball);
             let before = the_packument(
@@ -1131,7 +1131,7 @@ fn ac2_the_moved_dist_tag_does_not_change_the_historical_bytes() {
             std::fs::create_dir_all(&work).expect("the work directory");
             std::fs::create_dir_all(&packed).expect("the packed directory");
 
-            // Los bytes historicos, antes del movimiento.
+            // The historical bytes, before the move.
             let first = client.run(
                 &work,
                 &[
@@ -1146,14 +1146,14 @@ fn ac2_the_moved_dist_tag_does_not_change_the_historical_bytes() {
                 .expect("the tarball");
             let before_digest = sha256_of_bytes(&before_bytes);
 
-            // El upstream mueve el dist-tag y, con el, la version que el
-            // `latest` señala.
+            // The upstream moves the dist-tag and, with it, the version that
+            // `latest` points to.
             lab.upstream
                 .put_doc(PACKUMENT_PATH, Doc::new(&after).with_etag("\"v2\""));
             std::thread::sleep(Duration::from_secs(SHORT_METADATA_TTL + 2));
 
-            // La version fijada sigue siendo la misma, byte a byte: un
-            // tarball es contenido inmutable y no se reescribe.
+            // The pinned version remains the same, byte for byte: a
+            // tarball is immutable content and is not rewritten.
             client.forget_the_cache();
             let second = client.run(
                 &work,
@@ -1173,8 +1173,8 @@ fn ac2_the_moved_dist_tag_does_not_change_the_historical_bytes() {
                 "the historical bytes changed when the dist-tag moved"
             );
 
-            // Y el tarball que sirve el grupo es el mismo que el del
-            // upstream: no hay dos versiones del mismo contenido.
+            // And the tarball the group serves is the same as the
+            // upstream's: there are not two versions of the same content.
             let served = get(
                 port,
                 &format!("/{TARBALL_PATH}"),
@@ -1202,7 +1202,7 @@ fn ac2_the_moved_dist_tag_does_not_change_the_historical_bytes() {
 }
 
 // ---------------------------------------------------------------------------
-// AC3: lo que no se sirve, y el rastro que no se ensucia.
+// AC3: what is not served, and the trail that is not dirtied.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1213,8 +1213,8 @@ fn ac3_a_reserved_scope_is_not_served_from_the_public_upstream() {
         Scope::Product,
         Expectation::Refused,
         || {
-            // El grupo reserva su scope: lo que este bajo el no sale del
-            // upstream publico, aunque el upstream lo tenga.
+            // The group reserves its scope: what is under it does not come from the
+            // public upstream, even if the upstream has it.
             let lab = Lab::local(METADATA_TTL);
             let root = lab.deployment.directory.path().to_path_buf();
             let home = LabHome::new();
@@ -1259,8 +1259,8 @@ fn ac3_a_reserved_scope_is_not_served_from_the_public_upstream() {
                 "the reserved version leaked to the client:\n{}",
                 denied.output
             );
-            // Y el upstream publico no recibio ni una peticion de ese
-            // scope: la reserva se decide antes de salir.
+            // And the public upstream did not receive a single request for that
+            // scope: the reservation is decided before going out.
             assert_eq!(
                 lab.upstream.hits(RESERVED_PACKAGE),
                 0,
@@ -1328,8 +1328,8 @@ fn ac3_the_tarball_urls_point_to_hodei() {
                 url, expected,
                 "the tarball url does not point to the endpoint of Hodei"
             );
-            // Y el lock del cliente dice lo mismo: de donde sale lo que
-            // instala es del grupo, no del upstream.
+            // And the client's lock says the same: what it installs comes
+            // from the group, not from the upstream.
             let install = client.run(&project, &["install", SPEC, "--ignore-scripts"]);
             assert!(install.ok, "npm install failed:\n{}", install.output);
             let lock: serde_json::Value = serde_json::from_slice(
@@ -1391,8 +1391,8 @@ fn ac3_the_token_of_the_client_does_not_leak() {
             let install = client.run(&project, &["install", SPEC, "--ignore-scripts"]);
             assert!(install.ok, "npm install failed:\n{}", install.output);
 
-            // El packument que se sirve no lleva la credencial en ninguna
-            // parte: ni en las URLs, ni en el cuerpo.
+            // The packument that is served carries the credential nowhere:
+            // neither in the URLs nor in the body.
             let reply = get(
                 port,
                 &format!("/{PACKUMENT_PATH}"),
@@ -1406,8 +1406,8 @@ fn ac3_the_token_of_the_client_does_not_leak() {
             );
             support::stop(&mut service);
 
-            // El log del servicio: la credencial del cliente no esta en
-            // el, ni la que el proxy manda a su upstream.
+            // The service log: the client's credential is not in
+            // it, nor the one the proxy sends to its upstream.
             let log = lab.deployment.the_log();
             assert!(!log.is_empty(), "the service wrote no log at all");
             assert!(
@@ -1438,14 +1438,14 @@ fn ac3_the_token_of_the_client_does_not_leak() {
 }
 
 // ---------------------------------------------------------------------------
-// El recuento del laboratorio.
+// The lab's tally.
 // ---------------------------------------------------------------------------
 
-/// El recuento no miente: un caso que no se ejecuto no es verde.
+/// The tally does not lie: a case that was not executed is not green.
 ///
-/// Es la misma regla del laboratorio de HSP-223, comprobada aqui con el
-/// caso real de esta suite: sin el opt-in, el caso de npmjs real no se
-/// ejecuta, y el informe no puede ser verde.
+/// It is the same rule as the HSP-223 lab, checked here with the
+/// real case of this suite: without the opt-in, the real npmjs case is not
+/// executed, and the report cannot be green.
 #[test]
 fn ac3_the_count_does_not_lie() {
     a_case(

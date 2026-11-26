@@ -1,15 +1,15 @@
-//! PyPI hosted de HSP-112 contra los clientes reales (`twine` y `pip`).
+//! HSP-112 hosted PyPI against the real clients (`twine` and `pip`).
 //!
-//! El `twine` publica un wheel y un sdist contra un servicio de verdad, y el
-//! `pip` los instala: primero el wheel, y despues el sdist, obligando al
-//! cliente a construirlo. El indice que ve el `pip` es el de este servicio,
-//! y el modulo que instala es el que se publico.
+//! `twine` publishes a wheel and an sdist against a real service, and
+//! `pip` installs them: first the wheel, and then the sdist, forcing the
+//! client to build it. The index `pip` sees is this service's,
+//! and the module it installs is the one that was published.
 //!
-//! Hace falta `twine` y `pip` en el PATH: sin ellos, la suite **falla**
-//! diciendo que falta. La credencial va en un `netrc` temporal y en las
-//! variables de entorno de `twine`, nunca en argv, y cada ejecucion usa su
-//! propio `HOME`: nada se lee ni se escribe fuera del directorio del
-//! despliegue.
+//! `twine` and `pip` are needed on the PATH: without them, the suite **fails**
+//! saying so. The credential goes in a temporary `netrc` and in `twine`'s
+//! environment variables, never in argv, and each run uses its
+//! own `HOME`: nothing is read or written outside the deployment
+//! directory.
 
 mod support;
 
@@ -18,13 +18,13 @@ use std::process::Command;
 
 use support::{Deployment, FIRST_ACCOUNT};
 
-/// El seeder del catalogo.
+/// The catalog seeder.
 #[test]
 fn the_catalog_can_be_seeded() {
     support::seed_if_asked();
 }
 
-/// Exige el `twine` de linea de comandos.
+/// Requires the command-line `twine`.
 fn require_twine() {
     let found = Command::new("twine")
         .arg("--version")
@@ -37,7 +37,7 @@ fn require_twine() {
     );
 }
 
-/// Exige el `pip` de linea de comandos.
+/// Requires the command-line `pip`.
 fn require_pip() {
     let found = Command::new("pip")
         .arg("--version")
@@ -50,46 +50,46 @@ fn require_pip() {
     );
 }
 
-/// El resultado de una ejecucion de un cliente.
+/// The result of a client run.
 struct Run {
-    /// Si el cliente termino bien.
+    /// Whether the client finished successfully.
     ok: bool,
-    /// Lo que dijo, por stdout y por stderr.
+    /// What it said, through stdout and stderr.
     output: String,
 }
 
-/// Un cliente de PyPI aislado: su `HOME`, su `netrc` y su cache.
+/// An isolated PyPI client: its `HOME`, its `netrc` and its cache.
 struct Client {
-    /// El directorio del cliente.
+    /// The client directory.
     root: PathBuf,
-    /// El `netrc` con la credencial.
+    /// The `netrc` with the credential.
     netrc: PathBuf,
-    /// El puerto del servicio.
+    /// The service port.
     port: u16,
-    /// El repositorio del servicio.
+    /// The service repository.
     repository: String,
-    /// La credencial.
+    /// The credential.
     token: String,
 }
 
 impl Client {
-    /// Un cliente que habla con `/pypi/{repository}/` del servicio.
+    /// A client that talks to the service's `/pypi/{repository}/`.
     ///
-    /// Cada cliente tiene su `HOME` y su `netrc`: dos clientes con
-    /// credenciales distintas no pueden pisarse.
+    /// Each client has its own `HOME` and `netrc`: two clients with
+    /// different credentials cannot step on each other.
     fn new(root: &Path, name: &str, port: u16, repository: &str, token: &str) -> Self {
         let home = root.join(format!("home-{name}"));
         std::fs::create_dir_all(&home).expect("the home");
         let netrc = root.join(format!("netrc-{name}"));
-        // La credencial viaja en la **contrasena**: la superficie PyPI
-        // acepta la autenticacion basica de `pip` y `twine`, y lo que
-        // importa es la credencial de la plataforma.
+        // The credential travels in the **password**: the PyPI surface
+        // accepts the basic authentication of `pip` and `twine`, and what
+        // matters is the platform credential.
         std::fs::write(
             &netrc,
             format!("machine 127.0.0.1 login alice password {token}\n"),
         )
         .expect("the netrc is written");
-        // Un fichero con una credencial solo lo lee quien lo escribe.
+        // A file with a credential is only read by whoever writes it.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
@@ -105,12 +105,12 @@ impl Client {
         }
     }
 
-    /// La URL del repositorio, como la ve el cliente.
+    /// The repository URL, as the client sees it.
     fn the_repository_url(&self) -> String {
         format!("http://127.0.0.1:{}/pypi/{}/", self.port, self.repository)
     }
 
-    /// La URL del indice simple, como la ve el cliente.
+    /// The simple index URL, as the client sees it.
     fn the_index_url(&self) -> String {
         format!(
             "http://127.0.0.1:{}/pypi/{}/simple/",
@@ -118,7 +118,7 @@ impl Client {
         )
     }
 
-    /// Publica una distribucion con `twine`.
+    /// Publishes a distribution with `twine`.
     fn publish(&self, file: &Path) -> Run {
         let mut command = Command::new("twine");
         command
@@ -128,7 +128,7 @@ impl Client {
             .arg("--non-interactive")
             .arg("--disable-progress-bar")
             .arg(file)
-            // La credencial va en el entorno, nunca en la linea de ordenes.
+            // The credential goes in the environment, never on the command line.
             .env("TWINE_USERNAME", "alice")
             .env("TWINE_PASSWORD", &self.token)
             .env("HOME", self.root.join("home"))
@@ -143,7 +143,7 @@ impl Client {
         }
     }
 
-    /// Instala con `pip`.
+    /// Installs with `pip`.
     fn install(&self, target: &Path, extra: &[&str], package: &str) -> Run {
         let output = Command::new("pip")
             .arg("install")
@@ -156,7 +156,7 @@ impl Client {
             .arg("--disable-pip-version-check")
             .args(extra)
             .arg(package)
-            // El `netrc` dice quien es: el `pip` no interactua.
+            // The `netrc` says who it is: `pip` does not interact.
             .env("NETRC", &self.netrc)
             .env("HOME", self.root.join("home"))
             .env("PIP_CONFIG_FILE", "/dev/null")
@@ -169,19 +169,19 @@ impl Client {
     }
 }
 
-/// La salida de un proceso, por stdout y por stderr.
+/// The output of a process, through stdout and stderr.
 fn the_text(stdout: &[u8], stderr: &[u8]) -> String {
     let mut text = String::from_utf8_lossy(stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(stderr));
     text
 }
 
-/// El sitio donde el interprete tiene sus paquetes de usuario.
+/// The place where the interpreter has its user packages.
 ///
-/// El cliente usa su propio `HOME`, y el sitio donde el interprete busca
-/// sus paquetes depende del `HOME` de quien lo ejecuta: sin este camino,
-/// el `twine` instalado para el usuario real no se ve desde el despliegue
-/// aislado.
+/// The client uses its own `HOME`, and the place where the interpreter looks for
+/// its packages depends on the `HOME` of whoever runs it: without this path,
+/// the `twine` installed for the real user is not visible from the isolated
+/// deployment.
 fn the_python_path() -> Option<String> {
     let output = Command::new("python3")
         .args(["-c", "import site; print(site.getusersitepackages())"])
@@ -208,7 +208,7 @@ fn twine_publishes_and_pip_installs_a_wheel_and_an_sdist() {
     let root = deployment.directory.path();
     let client = Client::new(root, "client", service.port, "pypi-hosted", &token);
 
-    // Las dos distribuciones, con el nombre que llevan en el indice.
+    // The two distributions, with the name they carry in the index.
     let dist = root.join("dist");
     std::fs::create_dir_all(&dist).expect("the dist directory");
     let wheel = dist.join("labpkg-1.0-py3-none-any.whl");
@@ -218,7 +218,7 @@ fn twine_publishes_and_pip_installs_a_wheel_and_an_sdist() {
     std::fs::write(&sdist, support::an_sdist("labpkg", "1.0", Some(">=3.9")))
         .expect("the sdist is written");
 
-    // El `twine` publica las dos.
+    // `twine` publishes both.
     for file in [&wheel, &sdist] {
         let published = client.publish(file);
         assert!(
@@ -229,7 +229,7 @@ fn twine_publishes_and_pip_installs_a_wheel_and_an_sdist() {
         );
     }
 
-    // El indice que ve el `pip` tiene las dos distribuciones.
+    // The index `pip` sees has both distributions.
     let index = support::Curl::call_with_headers(
         service.port,
         "GET",
@@ -252,7 +252,7 @@ fn twine_publishes_and_pip_installs_a_wheel_and_an_sdist() {
     assert!(files.contains(&"labpkg-1.0-py3-none-any.whl"), "{files:?}");
     assert!(files.contains(&"labpkg-1.0.tar.gz"), "{files:?}");
 
-    // El `pip` instala el wheel.
+    // `pip` installs the wheel.
     let target = root.join("installed-wheel");
     let installed = client.install(&target, &[], "labpkg");
     assert!(installed.ok, "pip install failed:\n{}", installed.output);
@@ -269,7 +269,7 @@ fn twine_publishes_and_pip_installs_a_wheel_and_an_sdist() {
         "the installed module is not the one that was published"
     );
 
-    // Y con `--no-binary` instala el sdist, que tiene que construirse.
+    // And with `--no-binary` it installs the sdist, which has to be built.
     let target = root.join("installed-sdist");
     let installed = client.install(
         &target,
@@ -288,8 +288,8 @@ fn twine_publishes_and_pip_installs_a_wheel_and_an_sdist() {
         installed.output
     );
 
-    // Una credencial que no vale no publica: el servicio contesta 401 y el
-    // cliente lo dice.
+    // A credential that is not valid does not publish: the service answers 401 and the
+    // client says so.
     let other = dist.join("labpkg-2.0-py3-none-any.whl");
     std::fs::write(&other, support::a_wheel("labpkg", "2.0", None))
         .expect("the second wheel is written");

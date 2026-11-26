@@ -1,5 +1,5 @@
-//! HSP-197: RPM/yum sobre el motor Dgraph real, con los clientes `dnf`
-//! de verdad y la firma del `repomd.xml` verificada.
+//! HSP-197: RPM/yum over the real Dgraph engine, with the real `dnf` clients
+//! and the `repomd.xml` signature verified.
 //!
 //! Gated on `HODEI_GRAPH_IT_ENDPOINT` like the spine ITs (TLS + ACL, the
 //! live h186 server). The yum vertical (`src/handlers/yum.rs` +
@@ -1078,9 +1078,9 @@ async fn the_real_dnf_clients_verify_the_signed_repodata_over_dgraph() {
             "gpgkey=file:///work/key.asc\n",
             "EOF\n",
             "dnf -y --disablerepo='*' --enablerepo=hodei --refresh install hello-tilde\n",
-            // El `rpm -q` del NEVRA por defecto no pinta el epoch: se pide
-            // explicitamente con el query format, que es lo que prueba la
-            // inmersion real del charset en la transaccion rpm.
+            // The default NEVRA `rpm -q` does not print the epoch: it is requested
+            // explicitly with the query format, which is what proves the real
+            // immersion of the charset in the rpm transaction.
             "rpm -q --qf '%{{NAME}}-%{{EPOCH}}:%{{VERSION}}-%{{RELEASE}}.%{{ARCH}}\\n' hello-tilde\n",
             "cat /usr/share/hello-tilde/greeting.txt\n",
         ),
