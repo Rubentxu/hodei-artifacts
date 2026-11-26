@@ -278,7 +278,7 @@ impl From<DgraphTrustError> for DecisionStoreError {
 }
 
 /// The UTC instant now, RFC 3339 (what a Dgraph `datetime` accepts).
-fn rfc3339(at: DateTime<Utc>) -> String {
+pub(crate) fn rfc3339(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
@@ -332,7 +332,7 @@ const GRANT_FIELDS: &str = "
 ";
 
 /// One string field of a node, when the node carries it.
-fn text_of(node: &Value, predicate: &str) -> Option<String> {
+pub(crate) fn text_of(node: &Value, predicate: &str) -> Option<String> {
     node.get(predicate)
         .and_then(Value::as_str)
         .map(str::to_owned)
@@ -541,7 +541,10 @@ fn require_no_errors(json: &Value) -> Result<(), DgraphTrustError> {
 
 /// Runs one DQL query and answers its data, refusing the error arrays
 /// the wire may carry.
-async fn query_json(client: &GraphClient, query: &str) -> Result<Value, DgraphTrustError> {
+pub(crate) async fn query_json(
+    client: &GraphClient,
+    query: &str,
+) -> Result<Value, DgraphTrustError> {
     let response = client
         .execute_dql(query)
         .await
@@ -594,9 +597,17 @@ fn bound_count(json: &Value, variable: &str) -> usize {
 /// stores opening at once alter the same additive slice, and Dgraph
 /// refuses one of them while the indexes settle.
 pub async fn ensure_trust_schema(client: &GraphClient) -> Result<(), DgraphTrustError> {
+    alter_schema_retrying(client, TRUST_SCHEMA_DQL).await
+}
+
+/// Applies one additive DDL slice with the bounded retry of the adapter.
+pub(crate) async fn alter_schema_retrying(
+    client: &GraphClient,
+    dql: &str,
+) -> Result<(), DgraphTrustError> {
     let mut last = String::new();
     for attempt in 1..=MAX_WRITE_ATTEMPTS {
-        match client.alter_schema(TRUST_SCHEMA_DQL).await {
+        match client.alter_schema(dql).await {
             Ok(()) => return Ok(()),
             Err(error) if attempt < MAX_WRITE_ATTEMPTS => {
                 last = error.to_string();
@@ -629,7 +640,7 @@ pub struct GrantActivation {
 /// scope runs the create branch (the guard binds as `g`), an existing
 /// one the advance branch (the guard binds as `gv`, filtered by the
 /// expected revision).
-fn parent_gate(expected_revision: u64) -> &'static str {
+pub(crate) fn parent_gate(expected_revision: u64) -> &'static str {
     if expected_revision == 0 {
         "eq(len(op), 0) AND eq(len(g), 0)"
     } else {
