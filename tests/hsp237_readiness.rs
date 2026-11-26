@@ -15,17 +15,24 @@
 //!   de manera que dos sondeos seguidos no gastan el presupuesto dos
 //!   veces; y el camino de los datos no pasa por el probe.
 //!
-//! Lo que **no** se demuestra aqui, y por que:
+//! El despliegue de esta suite corre en el **perfil de grafo**: el catalogo
+//! es un namespace de un Dgraph real y el contenido esta en un directorio
+//! del despliegue. El perfil exige dos dependencias, `graph` y
+//! `content_store`, y la suite desconecta **en caliente** las dos: el
+//! directorio de contenido (se mueve) y el alpha (se corta el relay por el
+//! que el servicio lo alcanza). En los dos casos la readiness pasa a `503`
+//! sin decir donde esta el almacen, la liveness sigue en `200`, y al
+//! devolverlo la readiness vuelve.
 //!
-//! - el perfil con **Dgraph** y con **S3 externos**: este despliegue no
-//!   los tiene. El catalogo es el motor embebido y el contenido esta en
-//!   un directorio del despliegue. El caso del perfil externo no se
-//!   inventa: se dice que no aplica.
+//! Lo que **no** se demuestra aqui: el perfil con S3 externo; el contenido
+//! de este despliegue es el directorio, no un bucket.
 
 mod support;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinSet;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
@@ -46,6 +53,10 @@ use hodei_authz::{
 use serde_json::Value;
 use support::lab::{Expectation, LabCase, Scope, describe_registry_lab, run_registry_lab_case};
 use support::{Answer, Curl, Deployment};
+
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 use tower::ServiceExt;
 
 /// El caso: con el almacen exigido ahi, la readiness dice que se puede
@@ -58,8 +69,16 @@ const AC1_READY_503: &str = "ac1-the-readiness-is-not-200-when-the-required-stor
 const AC1_LIVE_200: &str = "ac1-the-liveness-is-200-when-the-required-storage-is-gone";
 /// El caso: devolver el almacen devuelve la readiness.
 const AC1_READY_BACK: &str = "ac1-the-readiness-comes-back-when-the-required-storage-returns";
-/// El caso: el perfil standalone --sin Dgraph ni S3 externos-- esta listo.
-const AC2_STANDALONE: &str = "ac2-the-standalone-profile-is-ready";
+/// El caso: al cortar el alpha en caliente, la readiness deja de ser `200`
+/// y no dice donde esta el alpha.
+const AC1_GRAPH_503: &str = "ac1-the-readiness-is-not-200-when-the-graph-is-cut";
+/// El caso: el proceso vive aunque el alpha este cortado.
+const AC1_GRAPH_LIVE: &str = "ac1-the-liveness-is-200-when-the-graph-is-cut";
+/// El caso: devolver el alpha devuelve la readiness.
+const AC1_GRAPH_BACK: &str = "ac1-the-readiness-comes-back-when-the-graph-returns";
+/// El caso: el perfil de grafo con su contenido esta listo y exige el
+/// alpha y el almacen de contenido.
+const AC2_STANDALONE: &str = "ac2-the-graph-profile-is-ready";
 /// El caso: el cuerpo de la salud no dice donde esta el despliegue.
 const AC2_NO_LEAK: &str = "ac2-the-body-of-the-health-endpoints-does-not-carry-the-deployment";
 /// El caso: una dependencia que el perfil no exige no puede fallar el
@@ -99,8 +118,20 @@ const THE_CASES: &[(&str, &str)] = &[
         "devolver el almacen exigido devuelve la readiness",
     ),
     (
+        AC1_GRAPH_503,
+        "al cortar el alpha en caliente, la readiness deja de ser 200 y no dice donde esta",
+    ),
+    (
+        AC1_GRAPH_LIVE,
+        "el proceso vive aunque el alpha este cortado",
+    ),
+    (
+        AC1_GRAPH_BACK,
+        "devolver el alpha devuelve la readiness",
+    ),
+    (
         AC2_STANDALONE,
-        "el perfil standalone, sin Dgraph ni S3 externos, esta listo",
+        "el perfil de grafo esta listo y exige el alpha y el contenido",
     ),
     (
         AC2_NO_LEAK,
@@ -181,6 +212,60 @@ impl ReadinessProbe for Silent {
     }
 }
 
+/// Un relay hacia el alpha que el test puede cortar: cortarlo suelta todas
+/// las conexiones abiertas y deja de escuchar, de modo que la siguiente
+/// llamada del servicio falla de verdad. Se puede levantar de nuevo en la
+/// misma direccion.
+struct Relay {
+    address: String,
+    target: String,
+    tasks: JoinSet<()>,
+}
+
+impl Relay {
+    async fn bind(address: &str, target: String) -> Relay {
+        let listener = TcpListener::bind(address).await.expect("relay binds");
+        let address = listener.local_addr().expect("relay address").to_string();
+        let mut tasks = JoinSet::new();
+        let forward = target.clone();
+        tasks.spawn(async move {
+            let mut connections = JoinSet::new();
+            loop {
+                let Ok((mut inbound, _)) = listener.accept().await else {
+                    return;
+                };
+                let target = forward.clone();
+                connections.spawn(async move {
+                    if let Ok(mut outbound) = TcpStream::connect(target).await {
+                        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut outbound).await;
+                    }
+                });
+            }
+        });
+        Relay {
+            address,
+            target,
+            tasks,
+        }
+    }
+
+    async fn to(target: String) -> Relay {
+        Relay::bind("127.0.0.1:0", target).await
+    }
+
+    /// Cut it: no connection survives and nothing listens.
+    async fn cut(&mut self) {
+        self.tasks.abort_all();
+        while self.tasks.join_next().await.is_some() {}
+    }
+
+    /// Put it back on the same address.
+    async fn restore(&mut self) {
+        let again = Relay::bind(&self.address, self.target.clone()).await;
+        self.tasks = again.tasks;
+    }
+}
+
 /// Una credencial de mentira: la cuenta `acme` y la persona `alice`.
 ///
 /// El caso no mide la autenticacion: mide el camino del probe.
@@ -210,19 +295,12 @@ impl AuthorizerPort for AllowAll {
 
 /// La aplicacion en proceso, con el probe que se le dice.
 ///
-/// El repositorio durable es lo que cablea el catalogo, y el catalogo es
-/// lo que lee el camino de los datos: sin el, la superficie de contenido
-/// no tendria nada que leer.
-async fn the_app(probe: Arc<dyn ReadinessProbe>) -> (Router, tempfile::TempDir) {
-    let tmp = tempfile::tempdir().expect("a temp dir");
+/// El catalogo es un namespace del Dgraph y es lo que lee el camino de los
+/// datos: sin el, la superficie de contenido no tendria nada que leer.
+async fn the_app(probe: Arc<dyn ReadinessProbe>) -> (Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
-    config.content.cas_path = tmp.path().join("cas").to_string_lossy().into_owned();
-    config.repository.durable = true;
+    tmp.apply(&mut config);
     config.security.raw_api_enabled = true;
 
     let state = bootstrap(
@@ -305,7 +383,7 @@ fn a_case(
     describe_registry_lab(
         "Laboratorio de la readiness — informe",
         &[
-            "- **El perfil del laboratorio es standalone.** No hay Dgraph ni S3 externos: el catalogo es el motor embebido y el contenido esta en un directorio del despliegue. El caso del perfil con dependencias externas no aplica a este despliegue y no se maquilla.",
+            "- **El perfil del laboratorio es el de grafo.** El catalogo es un namespace de un Dgraph real y el contenido esta en un directorio del despliegue. El caso del contenido en S3 externo no aplica a este despliegue y no se maquilla.",
             "- **El binario real.** Los casos de AC1 y del perfil se miden contra el servicio arrancado de verdad, no contra una funcion.",
             "- **El probe se mide aparte.** Los casos de timeout, de cache y de presupuesto inyectan un probe de mentira: el binario real decide su probe y no admite otro.",
         ],
@@ -315,9 +393,18 @@ fn a_case(
 
 #[test]
 fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
-    // ---- El despliegue de verdad.
+    // The runtime lives for the whole test: it keeps the relay alive while
+    // the sync cases run, and it runs the in-process cases at the end.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("the runtime");
+
+    // ---- El despliegue de verdad, alcanzando el alpha por un relay.
     let deployment = Deployment::new();
-    let service = deployment.start(&[]);
+    let tenant = deployment.graph.as_ref().expect("the graph profile");
+    let mut relay = runtime.block_on(Relay::to(tenant.endpoint.clone()));
+    let service = deployment.start(&[("HODEI_GRAPH__ENDPOINT", relay.address.as_str())]);
     let port = service.port;
 
     // ---- AC1: con el almacen ahi, se puede servir.
@@ -506,10 +593,88 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
         },
     );
 
+    // ---- El alpha se corta **en caliente**: el servicio ya arranco contra
+    // el, y de pronto no contesta.
+    runtime.block_on(relay.cut());
+    std::thread::sleep(the_cache_is_gone());
+
+    a_case(
+        AC1_GRAPH_503,
+        "al cortar el alpha en caliente, la readiness deja de ser 200 y no dice donde esta",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let title = "al cortar el alpha en caliente, la readiness deja de ser 200 y no dice donde esta";
+            let (ready, command) = call(port, "/health/ready");
+            if ready.status != 503 {
+                return LabCase::new(AC1_GRAPH_503, title).failed(format!(
+                    "the readiness answered {}: {}",
+                    ready.status,
+                    text_of(&ready)
+                ));
+            }
+            let body = text_of(&ready);
+            // It names the dependency that fails, and only its class.
+            if !body.contains("graph") {
+                return LabCase::new(AC1_GRAPH_503, title)
+                    .failed(format!("the body does not name the graph: {body}"));
+            }
+            let alpha = tenant.endpoint.as_str();
+            for forbidden in [alpha, relay.address.as_str(), "127.0.0.1", "groot"] {
+                if body.contains(forbidden) {
+                    return LabCase::new(AC1_GRAPH_503, title)
+                        .failed(format!("the body carries {forbidden:?}: {body}"));
+                }
+            }
+            LabCase::new(AC1_GRAPH_503, title).command(&command).passed()
+        },
+    );
+
+    a_case(
+        AC1_GRAPH_LIVE,
+        "el proceso vive aunque el alpha este cortado",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let title = "el proceso vive aunque el alpha este cortado";
+            let (live, command) = call(port, "/health/live");
+            if live.status != 200 {
+                return LabCase::new(AC1_GRAPH_LIVE, title).failed(format!(
+                    "the liveness answered {}: {}",
+                    live.status,
+                    text_of(&live)
+                ));
+            }
+            LabCase::new(AC1_GRAPH_LIVE, title).command(&command).passed()
+        },
+    );
+
+    runtime.block_on(relay.restore());
+    std::thread::sleep(the_cache_is_gone());
+
+    a_case(
+        AC1_GRAPH_BACK,
+        "devolver el alpha devuelve la readiness",
+        Scope::Product,
+        Expectation::Succeeds,
+        || {
+            let title = "devolver el alpha devuelve la readiness";
+            let (ready, command) = call(port, "/health/ready");
+            if ready.status != 200 {
+                return LabCase::new(AC1_GRAPH_BACK, title).failed(format!(
+                    "the readiness answered {}: {}",
+                    ready.status,
+                    text_of(&ready)
+                ));
+            }
+            LabCase::new(AC1_GRAPH_BACK, title).command(&command).passed()
+        },
+    );
+
     // ---- AC2: el perfil standalone.
     a_case(
         AC2_STANDALONE,
-        "el perfil standalone, sin Dgraph ni S3 externos, esta listo",
+        "el perfil de grafo esta listo y exige el alpha y el contenido",
         Scope::Product,
         Expectation::Succeeds,
         || {
@@ -517,7 +682,7 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
             if ready.status != 200 {
                 return LabCase::new(
                     AC2_STANDALONE,
-                    "el perfil standalone, sin Dgraph ni S3 externos, esta listo",
+                    "el perfil de grafo esta listo y exige el alpha y el contenido",
                 )
                 .failed(format!(
                     "the readiness answered {}: {}",
@@ -536,19 +701,19 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
                         .collect()
                 })
                 .unwrap_or_default();
-            // El perfil de este despliegue exige el catalogo y el almacen
-            // de contenido. No exige la politica de confianza: se carga en
+            // El perfil de este despliegue exige el alpha y el almacen de
+            // contenido. No exige la politica de confianza: se carga en
             // memoria al arrancar y no se puede perder en caliente.
-            if names != vec!["catalog".to_string(), "content_store".to_string()] {
+            if names != vec!["graph".to_string(), "content_store".to_string()] {
                 return LabCase::new(
                     AC2_STANDALONE,
-                    "el perfil standalone, sin Dgraph ni S3 externos, esta listo",
+                    "el perfil de grafo esta listo y exige el alpha y el contenido",
                 )
                 .failed(format!("the dependencies of the profile are {names:?}"));
             }
             LabCase::new(
                 AC2_STANDALONE,
-                "el perfil standalone, sin Dgraph ni S3 externos, esta listo",
+                "el perfil de grafo esta listo y exige el alpha y el contenido",
             )
             .command(&command)
             .passed()
@@ -557,11 +722,6 @@ fn la_readiness_y_la_liveness_dicen_cosas_distintas() {
 
     // ---- El resto, en proceso: el binario real decide su probe y no
     // admite otro, asi que el arnes inyecta uno de mentira.
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .expect("the runtime");
-
     runtime.block_on(async {
         // ---- AC2: una dependencia que el perfil no exige.
         let probe = Arc::new(Counting::new(

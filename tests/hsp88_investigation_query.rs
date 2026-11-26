@@ -21,7 +21,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cedar_policy::Entities;
 use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
-use hodei_artifacts_api::investigation::{CasContentStore, GraphInvestigation};
+use hodei_artifacts_api::investigation::CasContentStore;
+use hodei_artifacts_api::investigation_dgraph::DgraphInvestigation;
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
@@ -42,10 +43,11 @@ use hodei_investigator::report::InvestigationReport;
 use hodei_investigator::scope::Coverage;
 use hodei_investigator::{Investigation, ReadSet};
 use kernel::Hrn;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// La cuenta de la prueba.
 const ACCOUNT: &str = "acme";
@@ -231,16 +233,12 @@ async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
     investigation: Option<Arc<dyn hodei_artifacts_api::investigation::InvestigationPort>>,
     investigation_enabled: bool,
-) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.investigation_api_enabled = investigation_enabled;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -261,6 +259,38 @@ async fn app_with(
         None => state,
     };
     (build_router(state, &config), tmp)
+}
+
+/// The stores of the investigation over the Dgraph namespace of the
+/// deployment: the same adapters the graph profile wires, handed to the test
+/// so it can seed the world before asking.
+struct Stores {
+    evidence: Arc<hodei_evidence_storage::DgraphEvidenceStore>,
+    graph: Arc<hodei_evidence_storage::DgraphGraphStore>,
+    ledger: Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+    blobs: Arc<FileBlobStore>,
+}
+
+async fn stores_of(tmp: &Workdir) -> Stores {
+    let client = tmp.tenant().client().await;
+    let frontier = Arc::new(
+        hodei_evidence_storage::DgraphProjectionFrontier::open(
+            client.clone(),
+            &tmp.tenant().namespace.to_string(),
+        )
+        .await
+        .expect("the frontier opens"),
+    );
+    Stores {
+        evidence: Arc::new(
+            hodei_evidence_storage::DgraphEvidenceStore::open(client.clone())
+                .await
+                .expect("the evidence store opens"),
+        ),
+        graph: Arc::new(hodei_evidence_storage::DgraphGraphStore::new(client)),
+        ledger: Arc::new(hodei_evidence_storage::DgraphDeltaLedger::new(frontier)),
+        blobs: Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the store of content")),
+    }
 }
 
 /// El cuerpo de la peticion.
@@ -577,20 +607,40 @@ async fn un_despliegue_que_no_declara_la_superficie_no_la_monta() {
 
 /// El despliegue cablea la investigacion sobre sus almacenes.
 ///
-/// Sin almacen de contenido no hay investigacion, y la superficie lo dice
-/// con un `503` en vez de devolver un informe vacio que parece una
-/// respuesta.
+/// En el perfil de grafo el almacen de contenido es obligatorio y la
+/// investigacion se cablea siempre: un despliegue sin almacen utilizable no
+/// llega a servir, de modo que la superficie nunca puede devolver un informe
+/// vacio que parece una respuesta. El arranque se niega, diciendo cual es el
+/// directorio que no se puede abrir.
 #[tokio::test]
-async fn un_despliegue_sin_almacen_de_contenido_dice_que_no_esta() {
-    let (app, _tmp) = app_with(cedar(), None, true).await;
+async fn un_despliegue_sin_almacen_de_contenido_no_arranca() {
+    let tmp = Workdir::new();
+    let mut config = AppConfig::default();
+    config.security.admin_api_enabled = false;
+    config.security.investigation_api_enabled = true;
+    tmp.apply(&mut config);
+    // The content directory is a path under a regular file: it cannot exist.
+    let file = tmp.path().join("not-a-directory");
+    std::fs::write(&file, b"a file").expect("the file is written");
+    config.content.cas_path = file.join("cas").to_string_lossy().into_owned();
 
-    let response = app
-        .oneshot(request(Some("alice"), &body(&subject().to_string(), "")))
-        .await
-        .expect("the request");
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body = the_json(response).await;
-    assert_eq!(body["error"], "unavailable");
+    let error = match bootstrap(
+        &config,
+        BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        },
+    )
+    .await
+    {
+        Ok(_) => panic!("a deployment without a usable content store must not boot"),
+        Err(error) => error.to_string(),
+    };
+    assert!(
+        error.to_lowercase().contains("content directory"),
+        "the refusal names the content store: {error}"
+    );
 }
 
 /// La investigacion real: el informe cita la evidencia y declara la cobertura.
@@ -600,16 +650,11 @@ async fn un_despliegue_sin_almacen_de_contenido_dice_que_no_esta() {
 /// decir las dos cosas.
 #[tokio::test]
 async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let cas = tmp.path().join("cas");
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.investigation_api_enabled = true;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -626,27 +671,14 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
         Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
     );
 
-    // El mundo de la investigacion: su propia base, su propio CAS.
-    let db = Arc::new(
-        Surreal::new::<RocksDb>(
-            tmp.path()
-                .join("evidence.rocksdb")
-                .to_string_lossy()
-                .to_string(),
-        )
-        .await
-        .expect("the database opens"),
-    );
-    db.use_ns("hodei")
-        .use_db("artifacts")
-        .await
-        .expect("the ns/db");
-
-    let evidence = Arc::new(hodei_evidence_storage::SurrealEvidenceStore::new(
-        db.clone(),
-    ));
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    let blobs = Arc::new(FileBlobStore::new(&cas).expect("the store of content"));
+    // The world of the investigation: the stores of the graph profile over
+    // the Dgraph namespace of the deployment and its content store.
+    let Stores {
+        evidence,
+        graph,
+        ledger,
+        blobs,
+    } = stores_of(&tmp).await;
 
     // La evidencia: su contenido en el CAS, con el digest que lo nombra.
     let content = EVIDENCE_TEXT.as_bytes().to_vec();
@@ -696,13 +728,11 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
     graph.apply(changes).await.expect("the graph is written");
 
     let authorize = state.authorize_resource.clone();
-    let state = state.with_investigation(Arc::new(GraphInvestigation::new(
+    let state = state.with_investigation(Arc::new(DgraphInvestigation::new(
         evidence.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph,
-        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
-            db.clone(),
-        )) as Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+        ledger,
         authorize,
         config.investigation.clone(),
     )));
@@ -759,16 +789,11 @@ async fn el_informe_cita_la_evidencia_y_declara_la_cobertura() {
 /// quedaron fuera.
 #[tokio::test]
 async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let cas = tmp.path().join("cas");
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.investigation_api_enabled = true;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -785,26 +810,14 @@ async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
         Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
     );
 
-    let db = Arc::new(
-        Surreal::new::<RocksDb>(
-            tmp.path()
-                .join("evidence.rocksdb")
-                .to_string_lossy()
-                .to_string(),
-        )
-        .await
-        .expect("the database opens"),
-    );
-    db.use_ns("hodei")
-        .use_db("artifacts")
-        .await
-        .expect("the ns/db");
-
-    let evidence = Arc::new(hodei_evidence_storage::SurrealEvidenceStore::new(
-        db.clone(),
-    ));
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    let blobs = Arc::new(FileBlobStore::new(&cas).expect("the store of content"));
+    // The world of the investigation: the stores of the graph profile over
+    // the Dgraph namespace of the deployment and its content store.
+    let Stores {
+        evidence,
+        graph,
+        ledger,
+        blobs,
+    } = stores_of(&tmp).await;
 
     let content = EVIDENCE_TEXT.as_bytes().to_vec();
     let digest = blobs.put(&content).await.expect("the content is stored");
@@ -822,13 +835,11 @@ async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
     evidence.put(record).await.expect("the evidence is stored");
 
     let authorize = state.authorize_resource.clone();
-    let state = state.with_investigation(Arc::new(GraphInvestigation::new(
+    let state = state.with_investigation(Arc::new(DgraphInvestigation::new(
         evidence.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph,
-        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
-            db.clone(),
-        )) as Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+        ledger,
         authorize,
         config.investigation.clone(),
     )));
@@ -857,15 +868,11 @@ async fn lo_que_no_cabe_en_el_presupuesto_se_declara_omitido() {
 /// fabricacion.
 #[tokio::test]
 async fn sin_modelo_la_pregunta_se_declara_sin_responder() {
-    let tmp = tempfile::tempdir().expect("temp dir");
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.investigation_api_enabled = true;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -882,35 +889,21 @@ async fn sin_modelo_la_pregunta_se_declara_sin_responder() {
         Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
     );
 
-    let db = Arc::new(
-        Surreal::new::<RocksDb>(
-            tmp.path()
-                .join("evidence.rocksdb")
-                .to_string_lossy()
-                .to_string(),
-        )
-        .await
-        .expect("the database opens"),
-    );
-    db.use_ns("hodei")
-        .use_db("artifacts")
-        .await
-        .expect("the ns/db");
-
-    let evidence = Arc::new(hodei_evidence_storage::SurrealEvidenceStore::new(
-        db.clone(),
-    ));
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    let blobs = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the store of content"));
+    // The world of the investigation: the stores of the graph profile over
+    // the Dgraph namespace of the deployment and its content store.
+    let Stores {
+        evidence,
+        graph,
+        ledger,
+        blobs,
+    } = stores_of(&tmp).await;
 
     let authorize = state.authorize_resource.clone();
-    let state = state.with_investigation(Arc::new(GraphInvestigation::new(
+    let state = state.with_investigation(Arc::new(DgraphInvestigation::new(
         evidence.clone() as Arc<dyn hodei_evidence::ports::EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph,
-        Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
-            db.clone(),
-        )) as Arc<dyn hodei_evidence::domain::delta::RelationDeltaLedger>,
+        ledger,
         authorize,
         config.investigation.clone(),
     )));

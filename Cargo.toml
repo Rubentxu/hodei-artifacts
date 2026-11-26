@@ -522,7 +522,6 @@ path = "tests/hsp126_capsule_oci.rs"
 [[test]]
 name = "hsp134_risk_facts_e2e"
 path = "tests/hsp134_risk_facts_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp135_vigencia_e2e"
@@ -531,12 +530,10 @@ path = "tests/hsp135_vigencia_e2e.rs"
 [[test]]
 name = "hsp137_ciclo_cve_e2e"
 path = "tests/hsp137_ciclo_cve_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp138_s3_arranque_e2e"
 path = "tests/hsp138_s3_arranque_e2e.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp142_capability_matrix"
@@ -569,7 +566,6 @@ path = "tests/hsp217_galaxy_client.rs"
 [[test]]
 name = "hsp218_hf_client"
 path = "tests/hsp218_hf_client.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp223_registry_lab"
@@ -622,12 +618,10 @@ path = "tests/hsp296_formats_audit.rs"
 [[test]]
 name = "hsp297_format_prefixes"
 path = "tests/hsp297_format_prefixes.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp297_trusted_listings"
 path = "tests/hsp297_trusted_listings.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp300_go_sumdb"
@@ -636,7 +630,6 @@ path = "tests/hsp300_go_sumdb.rs"
 [[test]]
 name = "hsp304_format_access"
 path = "tests/hsp304_format_access.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp304_terraform_init"
@@ -649,19 +642,16 @@ path = "tests/hsp313_signed_archive_url.rs"
 [[test]]
 name = "hsp88_investigation_query"
 path = "tests/hsp88_investigation_query.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp89_investigation_freshness"
 path = "tests/hsp89_investigation_freshness.rs"
-required-features = ["legacy"]
 
 
 
 [[test]]
 name = "iam_policy_timestamps"
 path = "tests/iam_policy_timestamps.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "oci_e2e_contract"
@@ -724,7 +714,6 @@ path = "tests/hsp222_search_cursor_surface.rs"
 [[test]]
 name = "hsp237_readiness"
 path = "tests/hsp237_readiness.rs"
-required-features = ["legacy"]
 
 [[test]]
 name = "hsp237_graph_readiness"

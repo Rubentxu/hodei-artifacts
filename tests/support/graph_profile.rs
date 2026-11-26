@@ -340,6 +340,7 @@ fn format_of(name: Option<&str>) -> RepositoryFormat {
         Some("conan") => RepositoryFormat::Conan,
         Some("galaxy") => RepositoryFormat::Galaxy,
         Some("terraform") => RepositoryFormat::Terraform,
+        Some("hf") => RepositoryFormat::Hf,
         _ => RepositoryFormat::Maven2,
     }
 }
@@ -455,6 +456,73 @@ pub async fn seed_repositories(tenant: &GraphTenant, repositories: &[serde_json:
     }
 }
 
+/// `HODEI_SEED_HF`: hosted hf repositories of the first account. Every model
+/// file goes into the content store of the deployment and is published through
+/// the real catalog store: the hf dialect declares no write path, so the
+/// content enters by seeding, as a hub import would.
+pub async fn seed_hf(tenant: &GraphTenant, cas: &str, repositories: &[serde_json::Value]) {
+    use hodei_catalog::{PackageCoordinates, Publication};
+    use hodei_hub::{BlobStore as _, FileBlobStore};
+    let store = tenant.catalog_store().await;
+    let blobs = FileBlobStore::new(cas).expect("the blob store");
+    for repository in repositories {
+        let key = repository["key"].as_str().expect("the key");
+        let mut config = RepositoryConfig::new(DigestScope::Global);
+        let mut settings = serde_json::Map::new();
+        if repository["trusted"].as_bool() == Some(true) {
+            settings.insert("trust".into(), serde_json::json!({ "serve": "trusted" }));
+        }
+        config.config_settings = serde_json::Value::Object(settings);
+        store
+            .create_repository(
+                FIRST_ACCOUNT,
+                descriptor(
+                    FIRST_ACCOUNT,
+                    key,
+                    RepositoryFormat::Hf,
+                    RepositoryMode::Hosted,
+                    config,
+                ),
+            )
+            .await
+            .expect("the hf repository is created");
+        for asset in repository["assets"].as_array().expect("the assets") {
+            let asset_path = asset["asset"].as_str().expect("the asset path");
+            let file = asset["file"].as_str().expect("the source file");
+            let bytes = std::fs::read(file).expect("the model file");
+            let digest = blobs.put(&bytes).await.expect("the blob is stored");
+            // The repo id is what the asset path carries between `artifacts/`
+            // and the last slash; every model file is its own package version.
+            let rest = asset_path
+                .strip_prefix("artifacts/")
+                .expect("the asset of a model");
+            let (repo_id, filename) = rest.rsplit_once('/').expect("the file of a model");
+            store
+                .publish(
+                    FIRST_ACCOUNT,
+                    Publication {
+                        repository: key.to_string(),
+                        asset_path: asset_path.to_string(),
+                        coordinates: PackageCoordinates {
+                            package_name: repo_id.to_string(),
+                            package_version: filename.to_string(),
+                        },
+                        digest,
+                        size_bytes: bytes.len() as u64,
+                        tags: Vec::new(),
+                        actor: "seeder".to_string(),
+                        correlation_id: "seed-hf".to_string(),
+                        overwrite: false,
+                        precondition: None,
+                        subject: None,
+                    },
+                )
+                .await
+                .expect("the model file is published");
+        }
+    }
+}
+
 /// `HODEI_SEED_GROUPS`: group repositories of the first account.
 pub async fn seed_groups(tenant: &GraphTenant, groups: &[serde_json::Value]) {
     let store = tenant.catalog_store().await;
@@ -516,8 +584,11 @@ pub async fn seed_from_environment(tenant: &GraphTenant) {
             serde_json::from_str(&repositories).expect("the repositories parse");
         return seed_repositories(tenant, &repositories).await;
     }
-    if var("HODEI_SEED_HF").is_some() {
-        panic!("the hf seeding is not ported to the graph profile yet (HSP-314 F4 S2: batch B)");
+    if let Some(hf) = var("HODEI_SEED_HF") {
+        let cas = var("HODEI_SEED_CAS").expect("the cas of the hf seeding");
+        let repositories: Vec<serde_json::Value> =
+            serde_json::from_str(&hf).expect("the hf repositories parse");
+        return seed_hf(tenant, &cas, &repositories).await;
     }
     if let Some(groups) = var("HODEI_SEED_GROUPS") {
         let groups: Vec<serde_json::Value> =

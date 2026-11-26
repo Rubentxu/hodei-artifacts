@@ -23,7 +23,8 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use cedar_policy::Entities;
 use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
-use hodei_artifacts_api::investigation::{CasContentStore, GraphInvestigation};
+use hodei_artifacts_api::investigation::CasContentStore;
+use hodei_artifacts_api::investigation_dgraph::DgraphInvestigation;
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
 use hodei_authz::cedar::CedarAuthorizer;
 use hodei_authz::hrn_mapper::HrnCedarMapper;
@@ -41,7 +42,7 @@ use hodei_evidence::domain::graph::{
     GraphChangeSet, GraphNode, GraphRelation, GraphRelationWithdrawal, NodeKind, RelationType,
 };
 use hodei_evidence::ports::EvidenceStore;
-use hodei_evidence::ports::graph::GraphWriter;
+use hodei_evidence::application::projection::{ProjectionDelivery, ProjectionFrontier};
 use hodei_hub::blob::{BlobStore, FileBlobStore};
 use hodei_investigator::claim::{AIClaim, ClaimKind, InvestigationTrace};
 use hodei_investigator::freshness::{Freshness, GRAPH_SOURCE};
@@ -50,10 +51,11 @@ use hodei_investigator::report::InvestigationReport;
 use hodei_investigator::scope::Coverage;
 use hodei_investigator::{Investigation, InvestigationError};
 use kernel::Hrn;
-use surrealdb::Surreal;
-use surrealdb::engine::local::RocksDb;
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 /// La cuenta de la prueba.
 const ACCOUNT: &str = "acme";
@@ -241,16 +243,12 @@ async fn app_with(
     authorizer: Arc<dyn AuthorizerPort>,
     investigation: Option<Arc<dyn hodei_artifacts_api::investigation::InvestigationPort>>,
     investigation_enabled: bool,
-) -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().expect("temp dir");
+) -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.investigation_api_enabled = investigation_enabled;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -309,25 +307,42 @@ async fn the_json(response: axum::response::Response) -> serde_json::Value {
 
 /// El mundo de la prueba: su base, su grafo, su evidencia y su registro.
 struct TheWorld {
-    _tmp: TempDir,
+    _tmp: Workdir,
     app: axum::Router,
-    graph: Arc<hodei_evidence_storage::SurrealGraphStore<surrealdb::engine::local::Db>>,
-    ledger: Arc<hodei_evidence_storage::SurrealRelationDeltaLedger<surrealdb::engine::local::Db>>,
+    frontier: Arc<hodei_evidence_storage::DgraphProjectionFrontier>,
+    ledger: Arc<hodei_evidence_storage::DgraphDeltaLedger>,
+    next_position: std::sync::atomic::AtomicU64,
     digest: hodei_evidence::ContentDigest,
+}
+
+impl TheWorld {
+    /// Say a change of the graph the way the projection does: through the
+    /// frontier, which is what writes the relation deltas the freshness
+    /// check reads (the plain graph writer emits none).
+    async fn say(&self, changes: GraphChangeSet) {
+        let position = self.next_position.fetch_add(1, Ordering::SeqCst);
+        self.frontier
+            .apply_and_checkpoint(
+                changes,
+                &ProjectionDelivery {
+                    consumer: "hsp89".to_string(),
+                    stream_id: "freshness".to_string(),
+                    position,
+                    event_id: format!("evt-{position}"),
+                },
+            )
+            .await
+            .expect("the change goes through the frontier");
+    }
 }
 
 /// El mundo de la prueba, montado con la superficie.
 async fn the_world() -> TheWorld {
-    let tmp = tempfile::tempdir().expect("temp dir");
-    let cas = tmp.path().join("cas");
+    let tmp = Workdir::new();
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = false;
     config.security.investigation_api_enabled = true;
-    config.rocksdb.path = tmp
-        .path()
-        .join("hodei.rocksdb")
-        .to_string_lossy()
-        .into_owned();
+    tmp.apply(&mut config);
 
     let state = bootstrap(
         &config,
@@ -344,29 +359,27 @@ async fn the_world() -> TheWorld {
         Arc::new(hodei_artifacts_api::repository::InMemoryRepositoryReader::empty()),
     );
 
-    let db = Arc::new(
-        Surreal::new::<RocksDb>(
-            tmp.path()
-                .join("evidence.rocksdb")
-                .to_string_lossy()
-                .to_string(),
+    let client = tmp.tenant().client().await;
+    let evidence = Arc::new(
+        hodei_evidence_storage::DgraphEvidenceStore::open(client.clone())
+            .await
+            .expect("the evidence store opens"),
+    );
+    let graph = Arc::new(hodei_evidence_storage::DgraphGraphStore::new(
+        client.clone(),
+    ));
+    let frontier = Arc::new(
+        hodei_evidence_storage::DgraphProjectionFrontier::open(
+            client.clone(),
+            &tmp.tenant().namespace.to_string(),
         )
         .await
-        .expect("the database opens"),
+        .expect("the frontier opens"),
     );
-    db.use_ns("hodei")
-        .use_db("artifacts")
-        .await
-        .expect("the ns/db");
-
-    let evidence = Arc::new(hodei_evidence_storage::SurrealEvidenceStore::new(
-        db.clone(),
+    let ledger = Arc::new(hodei_evidence_storage::DgraphDeltaLedger::new(
+        frontier.clone(),
     ));
-    let graph = Arc::new(hodei_evidence_storage::SurrealGraphStore::new(db.clone()));
-    let ledger = Arc::new(hodei_evidence_storage::SurrealRelationDeltaLedger::new(
-        db.clone(),
-    ));
-    let blobs = Arc::new(FileBlobStore::new(&cas).expect("the store of content"));
+    let blobs = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the store of content"));
 
     // La evidencia: su contenido en el CAS, con el digest que lo nombra.
     let content = EVIDENCE_TEXT.as_bytes().to_vec();
@@ -418,10 +431,9 @@ async fn the_world() -> TheWorld {
         ))
         .with_relation(relation)
         .with_cause("evt-1");
-    graph.apply(changes).await.expect("the graph is written");
 
     let authorize = state.authorize_resource.clone();
-    let state = state.with_investigation(Arc::new(GraphInvestigation::new(
+    let state = state.with_investigation(Arc::new(DgraphInvestigation::new(
         evidence.clone() as Arc<dyn EvidenceStore>,
         Arc::new(CasContentStore::new(blobs.clone() as Arc<dyn BlobStore>)),
         graph.clone(),
@@ -431,13 +443,16 @@ async fn the_world() -> TheWorld {
     )));
     let app = build_router(state, &config);
 
-    TheWorld {
+    let world = TheWorld {
         _tmp: tmp,
         app,
-        graph,
+        frontier,
         ledger,
+        next_position: std::sync::atomic::AtomicU64::new(0),
         digest,
-    }
+    };
+    world.say(changes).await;
+    world
 }
 
 /// El manifiesto de una lectura: lo que el informe diria haber leido.
@@ -499,11 +514,7 @@ async fn the_support_that_is_gone_makes_the_report_stale() {
             chrono::Utc::now(),
         ))
         .with_cause("evt-2");
-    world
-        .graph
-        .apply(withdrawal)
-        .await
-        .expect("the withdrawal is written");
+    world.say(withdrawal).await;
 
     let response = world
         .app
@@ -564,11 +575,7 @@ async fn a_change_away_from_the_report_does_not_invalidate_it() {
         ))
         .with_relation(other)
         .with_cause("evt-3");
-    world
-        .graph
-        .apply(changes)
-        .await
-        .expect("the graph is written");
+    world.say(changes).await;
 
     let response = world
         .app

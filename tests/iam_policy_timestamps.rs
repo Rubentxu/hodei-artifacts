@@ -4,9 +4,10 @@
 //! the process that answered the request. The response therefore said when
 //! the policy was created at the moment it was read, and two reads of the
 //! same policy could disagree. The marks are persisted now, and this file
-//! checks that what a response says is what the database holds.
+//! checks that what a response says is what the database holds. The service
+//! runs on the graph profile and the store is read back from its Dgraph
+//! namespace.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -22,10 +23,11 @@ use hodei_authz::{
     PrincipalId,
 };
 use serde_json::{Value, json};
-use surrealdb::Surreal;
-use surrealdb::engine::local::{Db, RocksDb};
-use tempfile::TempDir;
 use tower::ServiceExt;
+
+#[path = "support/graph_profile.rs"]
+mod graph_profile;
+use graph_profile::Workdir;
 
 struct Accounts;
 
@@ -50,17 +52,17 @@ impl PrincipalAuthenticator for Accounts {
     }
 }
 
-async fn app() -> (axum::Router, TempDir) {
-    let tmp = tempfile::tempdir().unwrap();
-    let app = boot(&tmp.path().join("db")).await;
+async fn app() -> (axum::Router, Workdir) {
+    let tmp = Workdir::new();
+    let app = boot(&tmp).await;
     (app, tmp)
 }
 
-/// The service, over a database that already exists.
-async fn boot(db_path: &Path) -> axum::Router {
+/// The service, over the Dgraph namespace of the working directory.
+async fn boot(tmp: &Workdir) -> axum::Router {
     let mut config = AppConfig::default();
     config.security.admin_api_enabled = true;
-    config.rocksdb.path = db_path.to_string_lossy().into_owned();
+    tmp.apply(&mut config);
     let policy = r#"permit(principal, action == Admin::Action::"AccessAdminApi", resource);"#;
     let authorizer: Arc<dyn AuthorizerPort> = Arc::new(SharedAuthorizer::new(Arc::new(
         CedarAuthorizer::from_policies_unchecked(
@@ -70,34 +72,16 @@ async fn boot(db_path: &Path) -> axum::Router {
         )
         .unwrap(),
     )));
-    // The embedded database holds an exclusive lock, and releasing it is
-    // asynchronous, so the boot can arrive while the previous holder is
-    // still letting go. Only that error is retried.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    let state = loop {
-        match bootstrap(
-            &config,
-            BootstrapConfig {
-                register_iam_schema: false,
-                schema_version: None,
-                validate_schemas: false,
-            },
-        )
-        .await
-        {
-            Ok(state) => break state,
-            Err(error) => {
-                let message = error.to_string();
-                let lock_contention = message.contains("lock hold by current process")
-                    || message.contains("No locks available")
-                    || message.contains("Resource temporarily unavailable");
-                if !lock_contention || std::time::Instant::now() >= deadline {
-                    panic!("the service must start: {error}");
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    };
+    let state = bootstrap(
+        &config,
+        BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        },
+    )
+    .await
+    .expect("the service must start");
     let state = state
         .with_authenticator(Arc::new(Accounts))
         .with_authorization(authorizer);
@@ -135,52 +119,54 @@ async fn call(
     )
 }
 
-/// The row the store holds for a policy.
-async fn stored_row(path: &Path, policy_id: &str) -> Value {
-    let db = open(path).await;
-    let mut response = db
-        .query("SELECT created_at, updated_at FROM policy")
+/// The marks the store holds for the policies of the deployment.
+///
+/// The graph stores them as the exact response text, so what is read here is
+/// compared character for character with what a response said.
+async fn stored_row(tmp: &Workdir, policy_id: &str) -> Value {
+    let client = tmp.tenant().client().await;
+    let answer = client
+        .execute_dql(
+            "{ q(func: eq(hodei.iam.kind, \"Policy\")) { hodei.iam.created_at hodei.iam.updated_at } }",
+        )
         .await
         .expect("the rows must be readable");
-    assert!(
-        response.take_errors().is_empty(),
-        "the rows must be readable without errors"
-    );
-    let rows: Vec<Value> = response.take(0).expect("the rows must be readable");
+    let rows = answer.json["q"].as_array().cloned().unwrap_or_default();
     assert_eq!(
         rows.len(),
         1,
         "the store must hold exactly one row for the policy `{policy_id}`"
     );
-    rows.into_iter().next().expect("the row must exist")
+    let row = &rows[0];
+    json!({
+        "created_at": row["hodei.iam.created_at"],
+        "updated_at": row["hodei.iam.updated_at"],
+    })
 }
 
-/// Open a database that no other process holds.
-async fn open(path: &Path) -> Surreal<Db> {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    loop {
-        match Surreal::new::<RocksDb>(path).await {
-            Ok(db) => {
-                db.use_ns("hodei").use_db("artifacts").await.expect("ns/db");
-                return db;
-            }
-            Err(error) => {
-                let message = error.to_string();
-                let lock_contention = message.contains("lock hold by current process")
-                    || message.contains("No locks available");
-                if !lock_contention || std::time::Instant::now() >= deadline {
-                    panic!("the database must open: {error}");
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-            }
-        }
-    }
+/// Rewrite the stored policies as an older version of the service left them:
+/// without any mark.
+async fn strip_the_marks(tmp: &Workdir) {
+    use hodei_graph_client::{GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction};
+    let client = tmp.tenant().client().await;
+    client
+        .upsert(GraphUpsertTransaction {
+            query: "{ q(func: eq(hodei.iam.kind, \"Policy\")) { u as uid } }".to_string(),
+            blocks: vec![GraphMutationBlock {
+                cond: None,
+                set_nquads: String::new(),
+                delete_nquads: "uid(u) <hodei.iam.created_at> * .\nuid(u) <hodei.iam.updated_at> * .\n"
+                    .to_string(),
+            }],
+            commit_now: true,
+        })
+        .await
+        .expect("the marks are removed");
 }
 
 #[tokio::test]
 async fn the_creation_marks_are_persisted_and_the_update_moves_only_one_of_them() {
     let (app, tmp) = app().await;
-    let db_path = tmp.path().join("db");
 
     // Create the policy.
     let (status, created) = call(
@@ -238,12 +224,7 @@ async fn the_creation_marks_are_persisted_and_the_update_moves_only_one_of_them(
     );
 
     // The store holds the new marks, and the read reports them.
-    //
-    // The service is released first: the embedded database holds an exclusive
-    // lock while it is open, and the row can only be read by a process that
-    // does not hold it.
-    drop(app);
-    let row = stored_row(&db_path, "acme~marked").await;
+    let row = stored_row(&tmp, "acme~marked").await;
     assert_eq!(
         row["created_at"].as_str(),
         Some(updated_created_at.as_str())
@@ -257,7 +238,6 @@ async fn the_creation_marks_are_persisted_and_the_update_moves_only_one_of_them(
 #[tokio::test]
 async fn the_read_and_the_listing_report_the_stored_marks() {
     let (app, tmp) = app().await;
-    let db_path = tmp.path().join("db");
 
     let (status, created) = call(
         &app,
@@ -311,8 +291,7 @@ async fn the_read_and_the_listing_report_the_stored_marks() {
         .to_string();
 
     // And the store holds exactly those marks.
-    drop(app);
-    let row = stored_row(&db_path, "acme~readable").await;
+    let row = stored_row(&tmp, "acme~readable").await;
     assert_eq!(row["created_at"].as_str(), Some(listed_created.as_str()));
     assert_eq!(row["updated_at"].as_str(), Some(listed_updated.as_str()));
     assert_eq!(
@@ -335,29 +314,22 @@ async fn the_read_and_the_listing_report_the_stored_marks() {
 /// marks would look like it was created when it was read.
 #[tokio::test]
 async fn a_row_without_marks_is_reported_without_marks() {
-    let tmp = tempfile::tempdir().unwrap();
-    let db_path = tmp.path().join("db");
+    let (app, tmp) = app().await;
 
-    // A row written by an older version: no marks at all. It is written
-    // before the service starts, because the service holds the database
-    // while it runs.
-    {
-        let db = open(&db_path).await;
-        let mut response = db
-            .query(
-                "CREATE $id CONTENT { content: 'permit(principal, action, resource);', \
-                 account: 'acme', attached_principals: ['hrn:hodei:iam::acme:User/alice'] }",
-            )
-            .bind(("id", surrealdb::sql::Thing::from(("policy", "acme~legacy"))))
-            .await
-            .expect("the row must be writable");
-        assert!(
-            response.take_errors().is_empty(),
-            "the row must be writable without errors"
-        );
-    }
-
-    let app = boot(&db_path).await;
+    // A row written by an older version: no marks at all.
+    let (status, created) = call(
+        &app,
+        "POST",
+        "/api/v1/iam/policies",
+        Some(json!({
+            "policy_id": "legacy",
+            "policy_content": "permit(principal, action, resource);",
+            "attached_principals": ["hrn:hodei:iam::acme:User/alice"]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create: {created:?}");
+    strip_the_marks(&tmp).await;
 
     let (status, listed) = call(&app, "GET", "/api/v1/iam/policies", None).await;
     assert_eq!(status, StatusCode::OK, "list: {listed:?}");
