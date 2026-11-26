@@ -178,6 +178,36 @@ e2e/
 - **Videos**: Grabación en fallos para debugging
 - **Integración servidor**: Setup automático del servidor Rust
 
+### 3.4 E2E de la consola (`frontend/tests/e2e`)
+
+La consola se prueba contra el servicio real, sobre el perfil Dgraph (único
+perfil del servicio). `npx playwright test` en `frontend/` arranca, vía
+`webServer`, el fixture `tests/e2e/fixture/backend.mjs` (puertos propios
+18887/18888) y el servidor de desarrollo (5199). Requisitos:
+
+- **Dgraph con ACL** accesible, con el guardián del namespace galaxy. El
+  fixture crea un namespace ACL propio con un `groot` desechable y lo borra al
+  terminar. Variables: `HODEI_GRAPH_IT_ENDPOINT` (`host:puerto` gRPC, sin
+  `http://`), `HODEI_GRAPH_IT_ADMIN` (`host:puerto` HTTP, por defecto
+  `<host>:8080`), `HODEI_GRAPH_IT_USER` y `HODEI_GRAPH_IT_PASSWORD`.
+- **Binario del servicio**: `cargo build --bin hodei-artifacts-api`; el fixture
+  lo busca en `$CARGO_TARGET_DIR/debug/` o en `HODEI_API_BIN` si se indica.
+- **Navegador**: `npx playwright install chromium` (Playwright 1.65.1).
+
+Ejemplo con un alpha desechable (imagen fijada por digest, secreto ACL de 32
+bytes en `acl.secret`):
+
+```bash
+docker run -d --name hodei-e2e-dgraph -p 127.0.0.1::9080 -p 127.0.0.1::8080 \
+  -v "$PWD/acl.secret:/acl.secret:ro,z" \
+  docker.io/dgraph/dgraph:v25.5.1@sha256:f7459f391921c94db78f8205de9b4624210e2396c6b4ef5736838a906a38becb \
+  sh -c 'dgraph zero --my=localhost:5080 & sleep 3; dgraph alpha --my=localhost:7080 --zero=localhost:5080 --security "whitelist=0.0.0.0/0" --acl "secret-file=/acl.secret; access-ttl=24h; refresh-ttl=72h; jwt-alg=HS256"; wait'
+docker port hodei-e2e-dgraph   # puertos 9080 (gRPC) y 8080 (HTTP) asignados
+HODEI_GRAPH_IT_ENDPOINT=127.0.0.1:<9080> HODEI_GRAPH_IT_ADMIN=127.0.0.1:<8080> \
+HODEI_GRAPH_IT_USER=groot HODEI_GRAPH_IT_PASSWORD=password \
+  npx playwright test
+```
+
 ## 4. Ejecución de Tests
 
 **Tests unitarios**:
