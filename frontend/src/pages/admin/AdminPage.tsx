@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Database, KeyRound, Shield, Users } from 'lucide-react';
+import { Database, FlaskConical, KeyRound, Shield, Users } from 'lucide-react';
 import { PageHeader } from '@/components/layout/PageHeader';
 
 interface AdminDestination {
@@ -34,6 +34,14 @@ const ADMIN_DESTINATIONS: readonly AdminDestination[] = [
     to: '/settings/policies',
     badge: 'Policies',
     icon: Shield,
+  },
+  {
+    title: 'Policy Studio',
+    description:
+      'Edit, validate, simulate and activate the trust policy that decides promotions.',
+    to: '/console/policy-studio',
+    badge: 'Trust',
+    icon: FlaskConical,
   },
   {
     title: 'API Tokens',
