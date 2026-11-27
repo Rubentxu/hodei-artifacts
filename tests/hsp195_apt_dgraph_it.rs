@@ -392,7 +392,7 @@ fn signed_proxy_fixture(
     gzip.write_all(&packages).expect("Packages gzip input");
     let packages_gz = gzip.finish().expect("Packages gzip bytes");
     let release = format!(
-        "Origin: Hodei fixture\nSuite: stable\nCodename: bookworm\nDate: Mon, 24 Nov 2026 10:00:00 UTC\nArchitectures: amd64\nComponents: main\nSHA256:\n {} {} main/binary-amd64/Packages\n {} {} main/binary-amd64/Packages.gz\n",
+        "Origin: Hodei fixture\nSuite: stable\nCodename: bookworm\nDate: Tue, 24 Nov 2026 10:00:00 UTC\nArchitectures: amd64\nComponents: main\nSHA256:\n {} {} main/binary-amd64/Packages\n {} {} main/binary-amd64/Packages.gz\n",
         sha256_hex(&packages), packages.len(), sha256_hex(&packages_gz), packages_gz.len()
     )
     .into_bytes();

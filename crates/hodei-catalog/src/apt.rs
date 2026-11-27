@@ -687,6 +687,11 @@ pub struct AptProxyConfig {
     /// Operator-pinned OpenPGP public key used to authenticate proxy metadata
     /// before a group republishes its hashes.
     pub trusted_key_asc: Option<String>,
+    /// The oldest `Date` (seconds before now) of a `Release` the proxy still
+    /// serves. Upstream that stops publishing keeps a signed `Release` valid
+    /// forever when it carries no `Valid-Until`; this bound is the operator's
+    /// freeze detector. `None` means no age bound beyond `Valid-Until`.
+    pub max_metadata_age_secs: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -700,6 +705,8 @@ struct RawAptProxyConfig {
     architectures: Vec<String>,
     #[serde(default)]
     trusted_key_asc: Option<String>,
+    #[serde(default)]
+    max_metadata_age_secs: Option<u64>,
 }
 
 impl AptProxyConfig {
@@ -730,6 +737,7 @@ impl AptProxyConfig {
             components: raw.components,
             architectures: raw.architectures,
             trusted_key_asc: raw.trusted_key_asc,
+            max_metadata_age_secs: raw.max_metadata_age_secs,
         })
     }
 
@@ -776,6 +784,8 @@ pub struct ParsedRelease {
     pub suite: Option<String>,
     /// `Codename` header value, if present.
     pub codename: Option<String>,
+    /// `Date` timestamp, if present: when upstream produced the `Release`.
+    pub date: Option<chrono::DateTime<chrono::Utc>>,
     /// `Valid-Until` timestamp, if present.
     pub valid_until: Option<chrono::DateTime<chrono::Utc>>,
     /// Map from relative index path (e.g. `main/binary-amd64/Packages.xz`) to `(sha256_hex, size_bytes)`.
@@ -864,6 +874,7 @@ pub fn parse_release(text: &str) -> Result<ParsedRelease, AptError> {
     let mut suite = None;
     let mut codename = None;
     let mut valid_until = None;
+    let mut date = None;
     let mut sha256_entries = BTreeMap::new();
     let mut in_sha256 = false;
 
@@ -894,6 +905,12 @@ pub fn parse_release(text: &str) -> Result<ParsedRelease, AptError> {
             match key_lower.as_str() {
                 "suite" if !val.is_empty() => suite = Some(val.to_string()),
                 "codename" if !val.is_empty() => codename = Some(val.to_string()),
+                // An unreadable `Date` is not a parse error of the whole index:
+                // it stays `None`, and only a proxy that pins a key (and so
+                // needs the date to detect rollback) refuses it.
+                "date" if !val.is_empty() => {
+                    date = parse_apt_timestamp(val).ok();
+                }
                 "valid-until" if !val.is_empty() => {
                     valid_until = Some(parse_apt_timestamp(val)?);
                 }
@@ -914,6 +931,7 @@ pub fn parse_release(text: &str) -> Result<ParsedRelease, AptError> {
     Ok(ParsedRelease {
         suite,
         codename,
+        date,
         valid_until,
         sha256_entries,
     })
@@ -1404,5 +1422,22 @@ mod tests {
         let shared_pos = composed.find("Package: shared").unwrap();
         let zebra_pos = composed.find("Package: zebra").unwrap();
         assert!(alpha_pos < shared_pos && shared_pos < zebra_pos);
+    }
+
+    #[test]
+    fn release_date_is_parsed_and_an_unreadable_one_is_none() {
+        let sha = "SHA256:\n 00 1 main/binary-amd64/Packages\n";
+        let good = parse_release(&format!("Date: Tue, 17 Nov 2026 18:00:00 UTC\n{sha}")).unwrap();
+        assert_eq!(
+            good.date,
+            Some(
+                chrono::DateTime::parse_from_rfc3339("2026-11-17T18:00:00Z")
+                    .unwrap()
+                    .into()
+            )
+        );
+        let bad = parse_release(&format!("Date: not a date\n{sha}")).unwrap();
+        assert_eq!(bad.date, None);
+        assert_eq!(parse_release(sha).unwrap().date, None);
     }
 }

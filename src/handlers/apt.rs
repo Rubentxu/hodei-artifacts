@@ -777,6 +777,12 @@ async fn handle_proxy(
                 return Err(RawApiError::NotFound.into());
             }
             let is_inrelease = matches!(route, Route::InRelease { .. });
+            if apt_config.trusted_key_asc.is_some() {
+                // A pinned key means the index is authenticated, and what is
+                // authenticated is also checked for rollback and freeze
+                // before a byte of it is served (HSP-167).
+                active_parsed_release(state, context, repository, dist, correlation).await?;
+            }
             let (served, _parsed) =
                 resolve_proxy_release(state, context, repository, dist, is_inrelease, correlation)
                     .await?;
@@ -949,8 +955,15 @@ async fn handle_proxy(
             if !apt_config.allows_pool_path(path) {
                 return Err(RawApiError::NotFound.into());
             }
-            let entry =
-                find_deb_in_cached_snapshot(state, context, repository, &apt_config, path).await?;
+            let entry = find_deb_in_cached_snapshot(
+                state,
+                context,
+                repository,
+                &apt_config,
+                path,
+                correlation,
+            )
+            .await?;
             let served = the_proxy_asset_verified(
                 state,
                 context,
@@ -1043,6 +1056,89 @@ async fn resolve_proxy_release(
     Ok((served, parsed))
 }
 
+/// Rollback and freeze protection of a signature-verified `Release`
+/// (HSP-167). The caller has already verified the signature against the key
+/// the operator pinned; this decides whether that signed index may be served
+/// *now*: not expired, not frozen past the operator's bound, and not older
+/// than what the persisted ledger already accepted. Fail closed: without a
+/// ledger, or when it cannot answer, nothing is served.
+#[allow(clippy::too_many_arguments)]
+async fn enforce_metadata_guard(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    apt_config: &AptProxyConfig,
+    dist: &str,
+    bytes: &[u8],
+    is_inrelease: bool,
+    parsed: &ParsedRelease,
+    correlation: &str,
+) -> Result<(), Failure> {
+    use crate::proxy::metadata_guard::{self as guard, Refusal};
+
+    let resource = format!("{}/dists/{dist}", repository.repo_key);
+    let refuse = |refusal: Refusal| {
+        tracing::warn!(
+            target: "hodei_artifacts::proxy",
+            repository = %repository.repo_key,
+            distribution = dist,
+            code = refusal.code(),
+            "the signed mirror metadata was refused"
+        );
+        record_audit(
+            state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            "artifacts:VerifyMirrorMetadata",
+            &resource,
+            if matches!(refusal, Refusal::Unavailable) {
+                AuditResult::Failed
+            } else {
+                AuditResult::Denied
+            },
+            correlation,
+        );
+        let status = if matches!(refusal, Refusal::Unavailable) {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+        Failure::Plain(status, format!("{}: {refusal}", refusal.code()))
+    };
+    let Some(ledger) = state.mirror_metadata.as_ref() else {
+        return Err(refuse(Refusal::Unavailable));
+    };
+    let body = apt::extract_release_body(bytes, is_inrelease)
+        .map_err(|error| Failure::plain(StatusCode::BAD_GATEWAY, &error.to_string()))?;
+    let facts = guard::ReleaseFacts {
+        date: parsed.date,
+        valid_until: parsed.valid_until,
+        digest: format!("sha256:{}", {
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(body.as_bytes());
+            hasher
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        }),
+    };
+    let policy = guard::Policy {
+        max_age: apt_config
+            .max_metadata_age_secs
+            .map(|secs| chrono::Duration::seconds(i64::try_from(secs).unwrap_or(i64::MAX / 1000))),
+    };
+    let key = guard::MetadataKey {
+        account: context.account().as_str().to_string(),
+        repository: repository.repo_key.clone(),
+        distribution: dist.to_string(),
+    };
+    guard::admit(ledger.as_ref(), &key, &facts, &policy, chrono::Utc::now())
+        .await
+        .map(|_| ())
+        .map_err(refuse)
+}
+
 async fn active_parsed_release(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1073,6 +1169,18 @@ async fn active_parsed_release(
                     "upstream InRelease signature is invalid",
                 )
             })?;
+            enforce_metadata_guard(
+                state,
+                context,
+                repository,
+                &apt_config,
+                dist,
+                &bytes,
+                true,
+                &parsed,
+                correlation,
+            )
+            .await?;
             Ok(parsed)
         }
         Err(Failure::Raw(RawApiError::NotFound)) => {
@@ -1104,6 +1212,18 @@ async fn active_parsed_release(
                         "upstream Release signature is invalid",
                     )
                 })?;
+            enforce_metadata_guard(
+                state,
+                context,
+                repository,
+                &apt_config,
+                dist,
+                &release_bytes,
+                false,
+                &parsed,
+                correlation,
+            )
+            .await?;
             Ok(parsed)
         }
         Err(other) => Err(other),
@@ -1116,6 +1236,7 @@ async fn find_deb_in_cached_snapshot(
     repository: &RepositoryDescriptor,
     apt_config: &AptProxyConfig,
     pool_path: &str,
+    correlation: &str,
 ) -> Result<apt::DebIndexEntry, Failure> {
     let (reader, _) = the_catalog(state)?;
     let store = the_content_store(state)?;
@@ -1160,7 +1281,11 @@ async fn find_deb_in_cached_snapshot(
         if !parsed_releases.contains_key(&dist) {
             let inrel = format!("dists/{dist}/InRelease");
             let rel = format!("dists/{dist}/Release");
-            let loaded = if let Some(r_asset) = assets.iter().find(|a| a.asset_path == inrel) {
+            let loaded = if apt_config.trusted_key_asc.is_some() {
+                // An authenticated index is re-verified, and checked for
+                // rollback and freeze, before it vouches for a package.
+                active_parsed_release(state, context, repository, &dist, correlation).await?
+            } else if let Some(r_asset) = assets.iter().find(|a| a.asset_path == inrel) {
                 let bytes = store
                     .get(&r_asset.digest)
                     .await

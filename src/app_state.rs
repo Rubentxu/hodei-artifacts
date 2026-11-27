@@ -162,6 +162,10 @@ pub struct AppState {
     /// (HSP-164). Optional and fail-closed: without a source the surface
     /// answers 501 and nothing is written.
     pub(crate) repairer: Option<Arc<crate::recovery::Repairer>>,
+    /// The durable ledger of accepted mirror metadata (HSP-167): the highest
+    /// signed `Release` date per proxy lineage. A proxy that pins a signing
+    /// key and has no ledger refuses to serve its index (fail closed).
+    pub(crate) mirror_metadata: Option<Arc<dyn crate::proxy::metadata_guard::MirrorMetadataLedger>>,
     /// The ledger of trust grants: which digest the trusted channel of a
     /// repository may serve.
     ///
@@ -364,6 +368,7 @@ impl AppState {
             gc: None,
             scrub: None,
             repairer: None,
+            mirror_metadata: None,
             trust_ledger: None,
             proxy_plane: None,
             publishers: None,
@@ -444,6 +449,7 @@ impl AppState {
             gc: None,
             scrub: None,
             repairer: None,
+            mirror_metadata: None,
             trust_ledger: None,
             proxy_plane: None,
             publishers: None,
@@ -679,6 +685,15 @@ impl AppState {
     /// Inject the self-healing of one blob (HSP-164).
     pub fn with_repairer(mut self, repairer: Arc<crate::recovery::Repairer>) -> Self {
         self.repairer = Some(repairer);
+        self
+    }
+
+    /// Inject the ledger of accepted mirror metadata (HSP-167).
+    pub fn with_mirror_metadata(
+        mut self,
+        ledger: Arc<dyn crate::proxy::metadata_guard::MirrorMetadataLedger>,
+    ) -> Self {
+        self.mirror_metadata = Some(ledger);
         self
     }
 

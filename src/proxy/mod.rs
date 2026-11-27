@@ -7,11 +7,15 @@
 //! - [`cache`]: download coalescing, negative cache and metrics.
 //! - [`token`]: the tokens an upstream demands and that have already been requested.
 //! - [`dgraph_ledger`]: the durable receipt ledger over the graph (HSP-196).
+//! - [`metadata_guard`] and [`dgraph_metadata_ledger`]: rollback and freeze
+//!   protection of signed mirror indexes (HSP-167).
 
 pub mod cache;
 pub mod dgraph_ledger;
+pub mod dgraph_metadata_ledger;
 pub mod egress;
 pub mod fetch;
+pub mod metadata_guard;
 pub mod resolution;
 pub mod token;
 

@@ -291,6 +291,17 @@ pub async fn assemble_graph_profile(
     .with_allowed_credentials(config.proxy.allowed_credentials.iter().cloned())
     .with_offline(config.proxy.offline);
     let proxy_plane = Arc::new(crate::proxy::ProxyPlane::new(fetcher, provenance_ledger));
+    // The rollback/freeze ledger of signed mirror indexes (HSP-167): durable
+    // on the same graph, so the accepted dates survive a restart.
+    let mirror_metadata: Arc<dyn crate::proxy::metadata_guard::MirrorMetadataLedger> = Arc::new(
+        crate::proxy::dgraph_metadata_ledger::DgraphMirrorMetadataLedger::open(client.clone())
+            .await
+            .map_err(|error| {
+                BootstrapError::Initialization(format!(
+                    "the mirror metadata ledger cannot open on the graph at {endpoint}: {error}"
+                ))
+            })?,
+    );
 
     // GC and scrub: they read the roots of the same graph catalog and reclaim
     // from the same CAS; it is the only thing that deletes bytes.
@@ -339,6 +350,7 @@ pub async fn assemble_graph_profile(
         .with_apt_snapshot_store(catalog.clone())
         .with_trust_ledger(trust_ledger)
         .with_proxy_plane(proxy_plane)
+        .with_mirror_metadata(mirror_metadata)
         .with_trust_plane(plane)
         .with_policy_studio(lifecycle, config.trust.policy_id.clone())
         .with_content_store(content.clone())
