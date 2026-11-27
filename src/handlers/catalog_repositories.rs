@@ -768,6 +768,12 @@ fn the_config(body: &CreateRepositoryBody) -> Result<RepositoryConfig, CatalogRe
             "freeze is only supported on hosted raw and npm repositories".to_string(),
         ));
     }
+    // The apt settings (pinned key, rotation window, age bound) are read with
+    // the rules that serve them (HSP-324): a typo cannot silently weaken them.
+    if body.format == RepositoryFormat::Apt && config.config_settings.get("apt").is_some() {
+        crate::handlers::apt::validate_apt_settings(&config)
+            .map_err(CatalogRepositoryError::BadRequest)?;
+    }
     match body.mode {
         RepositoryMode::Hosted => Ok(config),
         RepositoryMode::Proxy => match UpstreamConfig::of(&config) {
