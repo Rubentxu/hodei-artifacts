@@ -200,6 +200,22 @@ pub async fn publish(
     };
     let current =
         the_current_asset(&state, &context, &target.repository, &target.asset_path).await?;
+    // A frozen repository refuses before a byte is read or written (HSP-322).
+    if let Err(refusal) = crate::publish_freeze::gate(
+        &state,
+        &context,
+        &repository,
+        &target.asset_path,
+        current.is_some(),
+        &correlation,
+    ) {
+        return Err(match refusal {
+            crate::publish_freeze::Refusal::Frozen => {
+                RawApiError::Conflict(crate::publish_freeze::REFUSED_REASON)
+            }
+            crate::publish_freeze::Refusal::Unavailable => RawApiError::Unavailable,
+        });
+    }
     let current_etag = current
         .as_ref()
         .map(|asset| conditional::the_etag(&asset.digest));
@@ -526,6 +542,23 @@ pub async fn delete(
         return Err(RawApiError::MethodNotAllowed(
             "deleting is served for hosted raw repositories only",
         ));
+    }
+    // A frozen repository refuses a deletion as it refuses a publication
+    // (HSP-322): removing a path changes what the repository serves.
+    if let Err(refusal) = crate::publish_freeze::gate(
+        &state,
+        &context,
+        &repository,
+        &target.asset_path,
+        true,
+        &correlation,
+    ) {
+        return Err(match refusal {
+            crate::publish_freeze::Refusal::Frozen => {
+                RawApiError::Conflict(crate::publish_freeze::REFUSED_REASON)
+            }
+            crate::publish_freeze::Refusal::Unavailable => RawApiError::Unavailable,
+        });
     }
     // Retention first. Without the collector's service the holds cannot be
     // read, and a deletion that cannot check them is not offered.

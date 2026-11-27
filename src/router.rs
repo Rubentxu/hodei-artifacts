@@ -640,6 +640,13 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
             get(crate::handlers::catalog_repositories::list_repositories)
                 .post(crate::handlers::catalog_repositories::create_repository),
         )
+        // Declaring and releasing the publication freeze (HSP-322): its own
+        // Cedar action, `ManageRepositoryFreeze`.
+        .route(
+            "/catalog/repositories/{name}/freeze",
+            axum::routing::put(crate::handlers::catalog_repositories::put_freeze)
+                .delete(crate::handlers::catalog_repositories::delete_freeze),
+        )
         // What can be created. The console offers the modalities that the
         // API serves, and it learns them here instead of keeping a table
         // of its own.

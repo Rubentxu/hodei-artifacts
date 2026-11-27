@@ -101,6 +101,16 @@ pub fn manage_mirror_metadata() -> ActionId {
     ActionId::new("artifacts", "ManageMirrorMetadata").expect("a valid action")
 }
 
+/// Declaring a publication freeze on a repository (HSP-322, from HSP-161).
+///
+/// A freeze blocks every publication of the repository (a denial-of-publication
+/// lever), so it is its own action: `CreateRepository`, `UploadAsset` and the
+/// other management actions never imply it. A policy has to grant it
+/// explicitly.
+pub fn manage_repository_freeze() -> ActionId {
+    ActionId::new("artifacts", "ManageRepositoryFreeze").expect("a valid action")
+}
+
 /// Managing the trusted publishers of a repository (HSP-152).
 ///
 /// A trusted publisher binds an OIDC identity to the publication into the
@@ -191,6 +201,7 @@ pub fn all() -> Vec<ActionId> {
         manage_storage_repair(),
         manage_storage_migration(),
         manage_mirror_metadata(),
+        manage_repository_freeze(),
         manage_trusted_publishers(),
         read_capsule(),
         access_admin_api(),
@@ -287,6 +298,7 @@ pub fn check_service_declared(
     check_declared(schema, &create_repository())?;
     check_declared(schema, &manage_repository_tags())?;
     check_declared(schema, &manage_repository_admission())?;
+    check_declared(schema, &manage_repository_freeze())?;
     check_scope_attributes_declared(schema)?;
     check_declared(schema, &download_asset())?;
     if admin_enabled {
@@ -388,6 +400,7 @@ mod scope_tests {
                 .expect("storage migration action declared");
             check_declared(&schema, &manage_mirror_metadata())
                 .expect("mirror metadata action declared");
+            check_declared(&schema, &manage_repository_freeze()).expect("freeze action declared");
         }
     }
 
