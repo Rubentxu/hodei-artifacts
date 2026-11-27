@@ -224,6 +224,8 @@ pipeline {
                         "--test hsp322c_dependency_freeze_dgraph_it",
                         // HSP-322 tramo d (HSP-165): repository time machine (read-only diff of two freezes) by the real router, Cedar, GC and Dgraph.
                         "--test hsp322d_time_machine_dgraph_it",
+                        // HSP-322 tramo e: hold/GC reads are paged to exhaustion, never silently truncated (>1000 holds, real Dgraph).
+                        "--test hsp322e_holds_paged_dgraph_it",
                         // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.
                         "--test hsp321j_publishers_dgraph_it",
                         // HSP-320 tramo 1: two independent nodes over one Dgraph; a revocation by A stops B within the watermark lease, fail-closed on partition.
