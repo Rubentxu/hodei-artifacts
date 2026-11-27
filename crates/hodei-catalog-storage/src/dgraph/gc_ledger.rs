@@ -1554,6 +1554,52 @@ fn quarantine_nquads(subject: &str, qkey: &str, quarantine: &Quarantined, create
 // The ledger's contract over the graph.
 // ---------------------------------------------------------------------------
 
+/// The predicates a hold row is read with.
+const HOLD_FIELDS: &str = "hodei.gc.hold.hold_id hodei.gc.hold.scope_kind hodei.gc.hold.account \
+     hodei.gc.hold.repository hodei.gc.hold.digest_of hodei.gc.hold.reason \
+     hodei.gc.hold.actor hodei.gc.hold.created_at hodei.gc.hold.expires_at";
+
+/// Reads one hold row.
+fn hold_of_node(node: &serde_json::Value) -> Result<ContentHold, CatalogError> {
+    let id = node_text(node, "hodei.gc.hold.hold_id")?;
+    let scope = match node_text(node, "hodei.gc.hold.scope_kind")?.as_str() {
+        "digest" => {
+            let digest_of = node_text(node, "hodei.gc.hold.digest_of")?;
+            let digest = split_digest_key(&digest_of).ok_or_else(|| {
+                CatalogError::corrupt("gc hold", digest_of, "the digest key is corrupt")
+            })?;
+            HoldScope::Digest { digest }
+        }
+        "repository" => HoldScope::Repository {
+            account: node_text(node, "hodei.gc.hold.account")?,
+            repository: node_text(node, "hodei.gc.hold.repository")?,
+        },
+        "account" => HoldScope::Account {
+            account: node_text(node, "hodei.gc.hold.account")?,
+        },
+        other => {
+            return Err(CatalogError::corrupt(
+                "gc hold",
+                id,
+                format!("'{other}' is not a hold scope"),
+            ));
+        }
+    };
+    Ok(ContentHold {
+        id,
+        scope,
+        reason: node_text(node, "hodei.gc.hold.reason")?,
+        actor: node_text(node, "hodei.gc.hold.actor")?,
+        created_at: parse_stamp(
+            "hodei.gc.hold.created_at",
+            &node_text(node, "hodei.gc.hold.created_at")?,
+        )?,
+        expires_at: node_option_text(node, "hodei.gc.hold.expires_at")
+            .map(|text| parse_stamp("hodei.gc.hold.expires_at", &text))
+            .transpose()?,
+    })
+}
+
 #[async_trait]
 impl ContentLedger for DgraphCatalogStore {
     fn supports_fenced_pass(&self) -> bool {
@@ -1570,57 +1616,29 @@ impl ContentLedger for DgraphCatalogStore {
     }
 
     async fn holds(&self) -> Result<Vec<ContentHold>, CatalogError> {
-        let query = "{ q(func: has(hodei.gc.hold.hold_id), orderasc: hodei.gc.hold.hold_id) { \
-             hodei.gc.hold.hold_id hodei.gc.hold.scope_kind hodei.gc.hold.account \
-             hodei.gc.hold.repository hodei.gc.hold.digest_of hodei.gc.hold.reason \
-             hodei.gc.hold.actor hodei.gc.hold.created_at hodei.gc.hold.expires_at } }";
-        let json = self.execute_dql_row(query).await?;
-        let nodes = json
-            .get("q")
+        let query = format!(
+            "{{ q(func: has(hodei.gc.hold.hold_id), orderasc: hodei.gc.hold.hold_id) {{ {HOLD_FIELDS} }} }}"
+        );
+        let json = self.execute_dql_row(&query).await?;
+        json.get("q")
             .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let mut holds = Vec::new();
-        for node in &nodes {
-            let id = node_text(node, "hodei.gc.hold.hold_id")?;
-            let scope = match node_text(node, "hodei.gc.hold.scope_kind")?.as_str() {
-                "digest" => {
-                    let digest_of = node_text(node, "hodei.gc.hold.digest_of")?;
-                    let digest = split_digest_key(&digest_of).ok_or_else(|| {
-                        CatalogError::corrupt("gc hold", digest_of, "the digest key is corrupt")
-                    })?;
-                    HoldScope::Digest { digest }
-                }
-                "repository" => HoldScope::Repository {
-                    account: node_text(node, "hodei.gc.hold.account")?,
-                    repository: node_text(node, "hodei.gc.hold.repository")?,
-                },
-                "account" => HoldScope::Account {
-                    account: node_text(node, "hodei.gc.hold.account")?,
-                },
-                other => {
-                    return Err(CatalogError::corrupt(
-                        "gc hold",
-                        id,
-                        format!("'{other}' is not a hold scope"),
-                    ));
-                }
-            };
-            holds.push(ContentHold {
-                id,
-                scope,
-                reason: node_text(node, "hodei.gc.hold.reason")?,
-                actor: node_text(node, "hodei.gc.hold.actor")?,
-                created_at: parse_stamp(
-                    "hodei.gc.hold.created_at",
-                    &node_text(node, "hodei.gc.hold.created_at")?,
-                )?,
-                expires_at: node_option_text(node, "hodei.gc.hold.expires_at")
-                    .map(|text| parse_stamp("hodei.gc.hold.expires_at", &text))
-                    .transpose()?,
-            });
-        }
-        Ok(holds)
+            .map(|nodes| nodes.iter().map(hold_of_node).collect())
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
+    /// A point read by the exact key: it never walks the other holds.
+    async fn hold(&self, id: &str) -> Result<Option<ContentHold>, CatalogError> {
+        let key = format!("hold|{}", key_part(id));
+        let query = format!(
+            "{{ q(func: eq(hodei.gc.hold.key, {})) {{ {HOLD_FIELDS} }} }}",
+            dql_string(&key)
+        );
+        let json = self.execute_dql_row(&query).await?;
+        json.get("q")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|nodes| nodes.first())
+            .map(hold_of_node)
+            .transpose()
     }
 
     async fn place_hold(&self, hold: &ContentHold) -> Result<(), CatalogError> {

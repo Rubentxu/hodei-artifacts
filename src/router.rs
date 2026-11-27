@@ -679,6 +679,16 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
             axum::routing::put(crate::handlers::publishers::put_publisher)
                 .delete(crate::handlers::publishers::delete_publisher),
         )
+        // Dependency freeze (HSP-161): an immutable view of a hosted repository,
+        // read only from its manifest and pinned against the GC. Creating and
+        // releasing one is the dedicated action `ManageDependencyFreeze`.
+        .route("/freezes", post(crate::handlers::freezes::create))
+        .route("/freezes/unpin", post(crate::handlers::freezes::unpin))
+        .route("/freezes/{id}", get(crate::handlers::freezes::manifest))
+        .route(
+            "/freezes/{id}/content/{*path}",
+            get(crate::handlers::freezes::content),
+        )
         .route("/promotions", post(crate::handlers::promotions::promote))
         .route(
             "/promotions/revoke",
