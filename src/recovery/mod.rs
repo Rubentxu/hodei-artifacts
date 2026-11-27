@@ -40,6 +40,7 @@ pub mod export;
 pub mod import;
 pub mod manifest;
 pub mod reconcile;
+pub mod repair;
 pub mod scrub;
 
 pub use cutover::{
@@ -59,6 +60,7 @@ pub use reconcile::{
     LEDGER_TABLE, PATH_TABLES, ReconcileError, ReconcileSubject, SemanticProjection, TAG_TABLE,
     gate_cutover, package_rows, prepare, prepare_from_sink,
 };
+pub use repair::{RepairError, RepairOutcome, Repairer, Was};
 pub use scrub::{Finding, RepairAction, RootRef, ScrubReport, ScrubSummary, Scrubber};
 
 /// Why a recovery operation was not performed.

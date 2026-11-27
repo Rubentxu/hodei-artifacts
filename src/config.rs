@@ -207,6 +207,22 @@ pub struct ContentConfig {
     /// record.
     #[serde(default)]
     pub s3: Option<S3ContentConfig>,
+    /// A directory holding a verified copy of the blobs (a replica, or the
+    /// blob directory of a backup) the self-healing may repair from
+    /// (HSP-164). It uses the same `<ab>/<cd>/<digest>` layout as `cas_path`.
+    ///
+    /// The source is a decision of the deployment, never of a request. When it
+    /// is absent `POST /api/v1/repair` answers 501 and writes nothing. It is
+    /// only read: no byte is ever written to it.
+    ///
+    /// Default: absent.
+    #[serde(default)]
+    pub repair_source_path: Option<String>,
+    /// The most bytes one repair may move (HSP-164).
+    ///
+    /// Default: 268435456 (256 MiB).
+    #[serde(default = "the_default_repair_max_bytes")]
+    pub repair_max_bytes: u64,
 }
 
 /// Which store of content the deployment uses.
@@ -332,6 +348,8 @@ impl Default for ContentConfig {
             gc_grace_secs: the_default_gc_grace_secs(),
             backend: ContentBackend::default(),
             s3: None,
+            repair_source_path: None,
+            repair_max_bytes: the_default_repair_max_bytes(),
         }
     }
 }
@@ -852,6 +870,11 @@ fn the_default_proxy_max_concurrent() -> usize {
 /// The default directory of the content.
 fn the_default_cas_path() -> String {
     "./data/hodei.cas".to_string()
+}
+
+/// The default ceiling of the bytes one repair may move.
+fn the_default_repair_max_bytes() -> u64 {
+    256 * 1024 * 1024
 }
 
 /// The default age of an interrupted write that the store cleans up.

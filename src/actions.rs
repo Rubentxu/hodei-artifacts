@@ -68,6 +68,17 @@ pub fn explore_repository_history() -> ActionId {
     ActionId::new("artifacts", "ExploreRepositoryHistory").expect("a valid action")
 }
 
+/// Repairing a damaged or missing blob of a repository from the configured
+/// repair source (HSP-164).
+///
+/// A repair writes into the content store, so it is its own action: reading
+/// or uploading to a repository, freezing it or reading its history never
+/// implies it. The bytes come only from the source the deployment configured,
+/// and only after they hash to the digest asked for.
+pub fn manage_storage_repair() -> ActionId {
+    ActionId::new("artifacts", "ManageStorageRepair").expect("a valid action")
+}
+
 /// Managing the trusted publishers of a repository (HSP-152).
 ///
 /// A trusted publisher binds an OIDC identity to the publication into the
@@ -144,6 +155,7 @@ pub fn all() -> Vec<ActionId> {
         manage_repository_admission(),
         manage_dependency_freeze(),
         explore_repository_history(),
+        manage_storage_repair(),
         manage_trusted_publishers(),
         read_capsule(),
         access_admin_api(),
@@ -328,6 +340,8 @@ mod scope_tests {
                 .expect("dependency freeze action declared");
             check_declared(&schema, &explore_repository_history())
                 .expect("repository history action declared");
+            check_declared(&schema, &manage_storage_repair())
+                .expect("storage repair action declared");
         }
     }
 

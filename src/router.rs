@@ -684,6 +684,9 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
         // releasing one is the dedicated action `ManageDependencyFreeze`.
         .route("/freezes", post(crate::handlers::freezes::create))
         .route("/freezes/unpin", post(crate::handlers::freezes::unpin))
+        // Self-healing of one blob (HSP-164): writes into the content store from
+        // the configured repair source; the dedicated action `ManageStorageRepair`.
+        .route("/repair", post(crate::handlers::repair::repair))
         // Time machine (HSP-165): read-only comparison of two freezes of one
         // repository; the dedicated action `ExploreRepositoryHistory`.
         .route("/freezes/diff", get(crate::handlers::time_machine::diff))

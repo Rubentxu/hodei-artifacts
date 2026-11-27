@@ -346,6 +346,50 @@ impl GcService {
             })
     }
 
+    /// Whether a root of `account` in `repository` references `digest`.
+    ///
+    /// The ledger is read one page at a time and the walk stops at the first
+    /// match, so the answer never materialises the account's roots. A ledger
+    /// that cannot page answers with its single read, filtered by account. A
+    /// failure is an error: "could not tell" is never "not referenced".
+    pub(crate) async fn references_digest(
+        &self,
+        account: &str,
+        repository: &str,
+        digest: &ContentDigest,
+    ) -> Result<bool, GcError> {
+        let matches = |root: &ContentRoot| {
+            root.account == account && root.repository == repository && &root.digest == digest
+        };
+        if !self.ledger.supports_fenced_pass() {
+            let roots = self.ledger.content_roots().await.map_err(|error| {
+                GcError::Unknown(format!("the roots could not be read: {error}"))
+            })?;
+            return Ok(roots.iter().any(matches));
+        }
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self
+                .ledger
+                .root_page(account, cursor.as_deref(), ROOT_PAGE_LIMIT)
+                .await?;
+            if page.roots.iter().any(matches) {
+                return Ok(true);
+            }
+            if !page.has_more {
+                return Ok(false);
+            }
+            cursor = Some(
+                page.roots
+                    .last()
+                    .map(|root| root.digest.to_string())
+                    .ok_or_else(|| {
+                        GcError::Unknown("a full root page carried no cursor".to_string())
+                    })?,
+            );
+        }
+    }
+
     /// The roots of every account, in pages of `page_limit`. Returns the
     /// roots and how many pages were read.
     pub(crate) async fn platform_roots(

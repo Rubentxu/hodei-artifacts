@@ -39,6 +39,7 @@ pub mod quota;
 pub mod raw;
 pub(crate) mod raw_group;
 pub mod reactions;
+pub mod repair;
 pub mod repositories;
 pub mod schemas;
 pub mod scrub;

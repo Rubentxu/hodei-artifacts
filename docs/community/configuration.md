@@ -190,6 +190,8 @@ vacío. Si no, el arranque falla.
 | --- | --- | --- |
 | `content.cas_path` | `./data/hodei.cas` | Ver sección 3. |
 | `content.gc_grace_secs` | `86400` | Gracia antes de que un blob sin referencias sea reclamable por la recolección. Mínimo 1; en producción, horas. |
+| `content.repair_source_path` | ausente | Directorio con una copia verificable de los blobs (réplica o directorio de blobs de un backup, mismo formato `<ab>/<cd>/<digest>`) desde el que `POST /api/v1/repair` puede reparar. Debe existir; el servicio solo lo lee. Sin él, la reparación responde 501. |
+| `content.repair_max_bytes` | `268435456` | Máximo de bytes que una reparación puede mover. |
 | `schema.version` | ninguna | Versión concreta del esquema (opcional). |
 
 ### 5.3 `[investigation]`
