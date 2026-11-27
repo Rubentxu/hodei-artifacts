@@ -81,5 +81,18 @@ repositorio y de la misma cuenta**, citando los hechos históricos que cada mani
   bytes; no se reconstruyen ni se devuelven) y `admitted_now` dice si el canal `trusted` lo admite hoy
   (`null` en canal abierto). Identidad histórica y permiso actual van separados.
 
+Orden de las respuestas: tras la identidad y la pertenencia a la cuenta (404), decide Cedar (403) con el
+repositorio de `from` (o el de `to` si `from` no se puede leer); solo después se dice si un freeze caducó
+(`410`, como en la lectura del manifiesto) o si son de repositorios distintos (`422`). Un freeze caducado
+cuyo manifiesto ya fue reclamado no nombra repositorio contra el que autorizar: es `404`.
+
+Limitaciones conocidas de este tramo:
+
+- `admitted_now: null` significa canal abierto (no hay concesión que consultar), no "desconocido".
+- La acción `ExploreRepositoryHistory` no está en `check_service_declared`, igual que
+  `ManageDependencyFreeze`: la declaración en el esquema se comprueba, la del servicio no.
+- Los digests citados se sondean uno a uno en el almacén (hasta 400 por petición).
+- Sin test de concurrencia ni de auditoría emitida.
+
 Fuera de este tramo: simulación de prohibición con blast radius inverso, sellos de política a una fecha
 de corte y selección de snapshot por instante.

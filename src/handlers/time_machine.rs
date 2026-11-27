@@ -111,17 +111,43 @@ pub async fn diff(
     // The account is checked first, from the registry alone, for both ids.
     registered(&state, &context, &query.from).await?;
     registered(&state, &context, &query.to).await?;
-    let from = load(&state, &context, &query.from).await?.manifest;
-    let to = load(&state, &context, &query.to).await?.manifest;
+    // Nothing that depends on the state of the freezes (expired, other
+    // repository) may be said before Cedar has decided, so the outcome of each
+    // load is held back until the gate. The repository to authorize against is
+    // the one of `from`, or of `to` when `from` cannot be read.
+    let loaded_from = load(&state, &context, &query.from).await;
+    let loaded_to = load(&state, &context, &query.to).await;
+    let repository = match (&loaded_from, &loaded_to) {
+        (Ok(loaded), _) | (_, Ok(loaded)) => loaded.manifest.repository.clone(),
+        // No readable manifest names no repository to authorize against: a
+        // lapsed freeze is then indistinguishable from absence, and only a
+        // failure of the store itself is reported as such.
+        (Err(a), Err(b)) => {
+            return Err(match (a, b) {
+                (FreezeFailure::Expired, FreezeFailure::Expired) => {
+                    ResolutionError::NotFound.into()
+                }
+                (FreezeFailure::Expired, _) => loaded_to.err().expect("an error"),
+                _ => loaded_from.err().expect("an error"),
+            });
+        }
+    };
+    let origin = the_origin(&state, &context, &repository).await?;
+    let action = crate::actions::explore_repository_history();
+    gate(&state, &context, &origin, action.clone(), &correlation)?;
+
+    // Past the gate the caller may know the state of the freezes.
+    let (loaded_from, loaded_to) = (loaded_from?, loaded_to?);
+    if !loaded_from.active || !loaded_to.active {
+        return Err(FreezeFailure::Expired);
+    }
+    let (from, to) = (loaded_from.manifest, loaded_to.manifest);
     if from.repository != to.repository {
         return Err(FreezeFailure::Plain(
             StatusCode::UNPROCESSABLE_ENTITY,
             "the two freezes belong to different repositories and are not comparable",
         ));
     }
-    let origin = the_origin(&state, &context, &from.repository).await?;
-    let action = crate::actions::explore_repository_history();
-    gate(&state, &context, &origin, action.clone(), &correlation)?;
 
     let result = facts(&state, &from, &to, &origin).await;
     let outcome = match result {

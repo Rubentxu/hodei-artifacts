@@ -671,9 +671,34 @@ async fn the_history_needs_its_own_action_and_never_crosses_accounts_or_reposito
     let (status, _) = diff(&v, &alice, &first, "not-an-id").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // Two repositories of one account are not comparable.
+    // Two repositories of one account are not comparable...
     let (status, body) = diff(&v, &alice, &first, &elsewhere).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    // ...but whoever lacks the action is told 403, not that state of the freezes.
+    let (status, body) = diff(&v, &bob, &first, &elsewhere).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+
+    // A lapsed freeze: 410 for whoever may read the history (as the manifest
+    // read does), and only 403 for whoever may not.
+    let (status, created) = freeze(&v, &alice, json!({"repository": "reg", "ttl_secs": 1})).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let lapsed = created["id"].as_str().unwrap().to_string();
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    let (status, body) = diff(&v, &alice, &first, &lapsed).await;
+    assert_eq!(status, StatusCode::GONE, "{body}");
+    let (status, body) = diff(&v, &alice, &lapsed, &second).await;
+    assert_eq!(status, StatusCode::GONE, "{body}");
+    let (status, body) = diff(&v, &bob, &first, &lapsed).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    let (status, _) = send(
+        &v.app,
+        Method::GET,
+        &format!("/api/v1/freezes/{lapsed}"),
+        &alice,
+        Vec::new(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::GONE, "the manifest read says the same");
 }
 
 #[tokio::test]
