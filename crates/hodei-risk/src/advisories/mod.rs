@@ -37,6 +37,7 @@
 
 pub mod catalog;
 pub mod feedback;
+pub mod lookalike;
 pub mod policy;
 pub mod signals;
 
@@ -45,6 +46,9 @@ pub use catalog::{
 };
 pub use feedback::{
     FeedbackError, Resolution, ReviewOutcome, ReviewerAuthorization, resolve_false_positive,
+};
+pub use lookalike::{
+    Lookalike, LookalikeKind, MIN_LEN_FOR_EDIT_DISTANCE, find_lookalike, skeleton,
 };
 pub use policy::{Decision, HeuristicPolicy, PolicyMode, Verdict, decide, quarantine_case};
 pub use signals::{
