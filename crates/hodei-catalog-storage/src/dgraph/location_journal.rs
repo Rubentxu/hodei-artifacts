@@ -17,9 +17,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
-use hodei_catalog::{
-    CatalogError, LocationEntry, LocationJournal, LocationLease, Phase,
-};
+use hodei_catalog::{CatalogError, LocationEntry, LocationJournal, LocationLease, Phase};
 use hodei_evidence::ContentDigest;
 use hodei_graph_client::{
     GraphClientError, GraphMutationBlock, GraphMutationPort, GraphUpsertTransaction, dql_string,

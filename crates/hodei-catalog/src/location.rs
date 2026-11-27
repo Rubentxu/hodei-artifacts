@@ -97,8 +97,10 @@ pub struct LocationLease {
 #[async_trait]
 pub trait LocationJournal: Send + Sync {
     /// The row of a digest, if it has one (no row means the origin serves).
-    async fn location_of(&self, digest: &ContentDigest)
-    -> Result<Option<LocationEntry>, CatalogError>;
+    async fn location_of(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<LocationEntry>, CatalogError>;
 
     /// Takes or renews the lease of a digest.
     ///
