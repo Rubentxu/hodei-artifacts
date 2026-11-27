@@ -102,6 +102,9 @@ enum Signal {
 struct SignalState {
     checked: Option<Instant>,
     mark: Signal,
+    /// Bumped by every settlement and every local write; a probe is only
+    /// applied if the epoch it began under is still the current one.
+    epoch: u64,
 }
 
 /// The ledger wrapped in a positives-only cache.
@@ -137,6 +140,7 @@ impl CachedTrustLedger {
             signal: Mutex::new(SignalState {
                 checked: None,
                 mark: Signal::Silent,
+                epoch: 0,
             }),
             generation: AtomicU64::new(0),
         }
@@ -170,47 +174,75 @@ impl CachedTrustLedger {
     /// is the lost signal: the whole cache is dropped (no old permit is
     /// left to renew), the lease is discarded, and the request is answered
     /// live from the ledger.
+    ///
+    /// Concurrent probes can finish out of order, so a settlement is only
+    /// applied if no other settlement (or write of this node) happened
+    /// since the probe began: a probe that read the watermark before a
+    /// revocation and finishes after a later probe already settled the
+    /// moved mark must NOT roll the mark back, or an entry stamped with the
+    /// old mark would match again and be served for another lease. A probe
+    /// that lost that race is discarded and the newer state is used (or, if
+    /// that state has no standing lease, the probe is simply repeated).
     async fn consult(&self) -> Signal {
-        {
-            let state = self
+        loop {
+            let started_at_epoch = {
+                let state = self
+                    .signal
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if let Some(checked) = state.checked
+                    && Instant::now().duration_since(checked) < self.verify
+                {
+                    return state.mark.clone();
+                }
+                state.epoch
+            };
+            let probed = self.inner.revocation_watermark().await;
+            if probed.is_err() {
+                // The lost signal drops the whole cache, whatever the
+                // order of arrival: the closed side never loses to a race.
+                self.fresh().clear();
+            }
+            let mut state = self
                 .signal
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            if let Some(checked) = state.checked
-                && Instant::now().duration_since(checked) < self.verify
-            {
-                return state.mark.clone();
+            let lost = probed.is_err();
+            if state.epoch != started_at_epoch && !lost {
+                // Another settlement or a local write happened while this
+                // probe was in flight: its reading may predate them.
+                if state.checked.is_some() {
+                    return state.mark.clone();
+                }
+                continue;
             }
-        }
-        match self.inner.revocation_watermark().await {
-            Ok(Some(mark)) => self.settle(Signal::Current(mark), Some(Instant::now())),
-            // A ledger without watermark never will have one: renew the
-            // lease so as not to probe on every request.
-            Ok(None) => self.settle(Signal::Silent, Some(Instant::now())),
-            Err(_) => {
-                self.fresh().clear();
-                self.settle(Signal::Lost, None)
-            }
+            state.epoch += 1;
+            let (mark, checked) = match probed {
+                Ok(Some(mark)) => (Signal::Current(mark), Some(Instant::now())),
+                // A ledger without watermark never will have one: renew
+                // the lease so as not to probe on every request.
+                Ok(None) => (Signal::Silent, Some(Instant::now())),
+                // Lost: the lease is discarded; every request probes again
+                // until the signal returns.
+                Err(_) => (Signal::Lost, None),
+            };
+            state.checked = checked;
+            state.mark = mark.clone();
+            return mark;
         }
     }
 
-    fn settle(&self, mark: Signal, checked: Option<Instant>) -> Signal {
+    /// Forgets the lease after a write of this node: the write moved the
+    /// world the authority describes, so the next request looks again. It
+    /// also bumps the epoch so a probe already in flight, which may have
+    /// read the watermark before the write, cannot renew the lease.
+    fn forget_signal(&self) {
         let mut state = self
             .signal
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        state.checked = checked;
-        state.mark = mark.clone();
-        mark
-    }
-
-    /// Forgets the lease after a write of this node: the write moved the
-    /// world the authority describes, so the next request looks again.
-    fn forget_signal(&self) {
-        self.signal
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .checked = None;
+        state.checked = None;
+        state.epoch += 1;
     }
 
     /// Whether the confirmed mark is still the one the snapshot was stamped
@@ -425,6 +457,7 @@ impl TrustLedger for CachedTrustLedger {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -437,6 +470,10 @@ mod tests {
         /// The watermark the ledger answers: `SILENT` (no signal), `LOST`
         /// (the probe fails) or a confirmed mark.
         mark: std::sync::atomic::AtomicI64,
+        /// When armed, the next watermark probe reads its value, announces
+        /// it entered (`.0`) and then waits to be released (`.1`) before
+        /// answering: a probe that finishes late.
+        gate: std::sync::Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
     }
 
     const SILENT: i64 = -1;
@@ -448,6 +485,7 @@ mod tests {
                 grants: tokio::sync::Mutex::new(grants),
                 reads: AtomicUsize::new(0),
                 mark: std::sync::atomic::AtomicI64::new(SILENT),
+                gate: std::sync::Mutex::new(None),
             }
         }
 
@@ -574,7 +612,13 @@ mod tests {
         }
 
         async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
-            match self.mark.load(Ordering::SeqCst) {
+            let value = self.mark.load(Ordering::SeqCst);
+            let gate = self.gate.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.notify_one();
+                release.notified().await;
+            }
+            match value {
                 SILENT => Ok(None),
                 LOST => Err(CatalogError::unavailable("the signal is lost")),
                 mark => Ok(Some(mark as u64)),
@@ -1207,5 +1251,72 @@ mod tests {
             );
         }
         assert_eq!(fake.the_reads(), 1, "the ttl rules without a signal");
+    }
+
+    /// HSP-320 review: probes that finish out of order must not roll the
+    /// mark back. P1 reads mark 1 before the revocation and answers late;
+    /// P2 (later) settles mark 2. If P1's stale settlement were applied,
+    /// the entry stamped 1 would match again and the revoked trust would be
+    /// served for another lease.
+    #[tokio::test]
+    async fn a_late_probe_does_not_roll_the_mark_back() {
+        use tokio::sync::Notify;
+        let digest = the_digest_of("late probe");
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![a_grant(&digest)]));
+        fake.set_mark(1);
+        let lease = Duration::from_millis(200);
+        let cached = std::sync::Arc::new(
+            CachedTrustLedger::new(fake.clone(), Duration::from_secs(60)).with_verify(lease),
+        );
+        // The entry, stamped with mark 1.
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("served")
+                .is_some()
+        );
+        tokio::time::sleep(lease + Duration::from_millis(50)).await;
+
+        // P1: the lease expired, so it probes; it reads mark 1 and stalls.
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        *fake.gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+        let p1 = {
+            let (cached, digest) = (cached.clone(), digest.clone());
+            tokio::spawn(async move {
+                cached
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                    .await
+            })
+        };
+        entered.notified().await;
+
+        // The foreign revocation is confirmed; a later probe P2 settles 2.
+        fake.revoke_digest("acme", "trusted-repo", &digest, "other", "cve", Utc::now())
+            .await
+            .expect("foreign revocation");
+        fake.set_mark(2);
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("P2 answers")
+                .is_none()
+        );
+
+        // P1 finally answers with its stale reading.
+        release.notify_one();
+        let _ = p1.await.expect("P1 finishes");
+
+        // Lease standing: the stale mark 1 must not have been restored.
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("answers")
+                .is_none(),
+            "the revoked trust was served after a late probe rolled the mark back"
+        );
     }
 }

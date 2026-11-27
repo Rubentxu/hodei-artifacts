@@ -272,6 +272,19 @@ pub trait TrustLedger: Send + Sync {
     /// in-process ledger nobody else writes to), and the caching wrapper
     /// then keeps its plain TTL semantics. A lost signal (`Err`) never
     /// renews a cached permit: the wrapper fails closed and reads the ledger.
+    ///
+    /// Contract notes:
+    /// - **Wrappers MUST forward this method.** The default is `Ok(None)`,
+    ///   which a caching layer reads as "no signal, the TTL rules": a
+    ///   `TrustLedger` wrapper that forgets to forward it silently turns a
+    ///   shared authority into a silent one and removes the bound.
+    /// - The watermark only covers **revocations**. A policy change or the
+    ///   expiry of `valid_until` is not signalled by it: those are judged
+    ///   per request by `TrustGrant::is_active_at` and by the policy plane,
+    ///   and nothing here promises that a cached entry honors them "never".
+    /// - It assumes confirmed revocation events are never deleted. If the
+    ///   counter ever goes down (a graph drop or a restore), consumers
+    ///   compare by equality, so the change is detected as a moved world.
     async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
         Ok(None)
     }

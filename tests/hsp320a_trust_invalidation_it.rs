@@ -95,6 +95,8 @@ fn unique(tag: &str) -> String {
 struct NodeLedger {
     inner: DgraphTrustStore,
     partitioned: AtomicBool,
+    /// Only the watermark probe fails; the book keeps answering.
+    probe_cut: AtomicBool,
     active_reads: AtomicUsize,
     probes: AtomicUsize,
 }
@@ -185,6 +187,9 @@ impl TrustLedger for NodeLedger {
 
     async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
         self.cut()?;
+        if self.probe_cut.load(Ordering::SeqCst) {
+            return Err(CatalogError::unavailable("the probe is lost"));
+        }
         self.probes.fetch_add(1, Ordering::SeqCst);
         self.inner.revocation_watermark().await
     }
@@ -205,6 +210,7 @@ impl Node {
         let ledger = Arc::new(NodeLedger {
             inner: store,
             partitioned: AtomicBool::new(false),
+            probe_cut: AtomicBool::new(false),
             active_reads: AtomicUsize::new(0),
             probes: AtomicUsize::new(0),
         });
@@ -469,4 +475,33 @@ async fn a_node_cut_off_from_the_authority_fails_closed_and_does_not_resurrect()
     // Healed: B reads the moved world and the revoked trust stays revoked.
     w.b.ledger.partitioned.store(false, Ordering::SeqCst);
     assert!(!w.b_serves().await, "healing does not resurrect the trust");
+}
+
+/// The probe fails while the book keeps answering: B must not renew the
+/// cached ALLOW; it drops the cache and answers from the live book, which
+/// already holds A's revocation.
+#[tokio::test]
+async fn a_lost_probe_with_a_live_book_answers_from_the_book_not_the_cache() {
+    let lease = Duration::from_millis(300);
+    let Some(w) = world("probecut", lease).await else {
+        return;
+    };
+    w.a_grants("d1").await;
+    assert!(w.b_serves().await);
+
+    w.b.ledger.probe_cut.store(true, Ordering::SeqCst);
+    assert_eq!(w.a_revokes("d1").await, 1);
+    tokio::time::sleep(lease + Duration::from_millis(100)).await;
+
+    let reads = w.b.reads();
+    assert!(
+        !w.b_serves().await,
+        "a lost probe must not keep serving the cached trust"
+    );
+    assert!(
+        w.b.reads() > reads,
+        "the answer came from the live book, not from the cache"
+    );
+    // Still cut: it keeps reading the live book each time.
+    assert!(!w.b_serves().await);
 }
