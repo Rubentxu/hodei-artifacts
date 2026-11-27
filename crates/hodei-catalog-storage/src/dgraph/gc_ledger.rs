@@ -1323,6 +1323,40 @@ impl DgraphCatalogStore {
         Ok(total)
     }
 
+    /// The `(account, repository)` pairs whose data-plane rows name this
+    /// digest, read fresh by exact digest in the four root families. Holds of
+    /// repository or account scope reach a blob through these owners.
+    pub async fn digest_owners_here(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Vec<(String, String)>, CatalogError> {
+        let mut owners = std::collections::BTreeSet::new();
+        for family in [
+            Family::Asset,
+            Family::Version,
+            Family::Reference,
+            Family::AptSnapshot,
+        ] {
+            let prefix = family.prefix();
+            let nodes = self
+                .all_nodes(
+                    &format!("eq({prefix}.digest, {})", dql_string(&digest.value)),
+                    "",
+                    &format!("{prefix}.account {prefix}.repository"),
+                    HOLDS_PAGE,
+                    MAX_GC_ROWS_READ,
+                )
+                .await?;
+            for node in &nodes {
+                owners.insert((
+                    node_text(node, &format!("{prefix}.account"))?,
+                    node_text(node, &format!("{prefix}.repository"))?,
+                ));
+            }
+        }
+        Ok(owners.into_iter().collect())
+    }
+
     // -----------------------------------------------------------------------
     // Shared internal reads.
     // -----------------------------------------------------------------------
@@ -1598,7 +1632,7 @@ fn hold_of_node(node: &serde_json::Value) -> Result<ContentHold, CatalogError> {
 }
 
 /// Rows requested per page of the hold read.
-const HOLDS_PAGE: usize = 500;
+pub(super) const HOLDS_PAGE: usize = 500;
 
 /// Defensive ceiling of the hold read. Past it the read fails closed: a
 /// truncated list would hide holds from the GC plan and from the per-account

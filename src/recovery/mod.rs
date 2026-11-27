@@ -38,9 +38,11 @@
 pub mod cutover;
 pub mod export;
 pub mod import;
+pub mod located;
 pub mod manifest;
 pub mod migrate;
 pub mod reconcile;
+pub mod relocate;
 pub mod repair;
 pub mod scrub;
 
@@ -55,12 +57,16 @@ pub use import::{
     MemorySink, Row, RowSink, SetReconciler, canonical_digest, canonicalize_id, import_export,
     read_batch, read_import_manifest,
 };
+pub use located::LocatedStore;
 pub use manifest::{BackupManifest, BlobEntry, Excluded, FORMAT, MetadataEntry};
 pub use migrate::{MigrateError, MigrationReport, Migrator, Moved};
 pub use reconcile::{
     ACCOUNT_TABLES, CutoverDecision, CutoverToken, Divergence, GRANT_TABLE, HEAD_TABLE,
     LEDGER_TABLE, PATH_TABLES, ReconcileError, ReconcileSubject, SemanticProjection, TAG_TABLE,
     gate_cutover, package_rows, prepare, prepare_from_sink,
+};
+pub use relocate::{
+    Operation as RelocateOperation, RelocateError, Relocated, RelocationReport, Relocator,
 };
 pub use repair::{RepairError, RepairOutcome, Repairer, Was};
 pub use scrub::{Finding, RepairAction, RootRef, ScrubReport, ScrubSummary, Scrubber};

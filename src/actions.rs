@@ -90,6 +90,16 @@ pub fn manage_storage_migration() -> ActionId {
     ActionId::new("artifacts", "ManageStorageMigration").expect("a valid action")
 }
 
+/// Moving the reads of blobs of a repository between stores and retiring the
+/// origin copy (HSP-325).
+///
+/// It changes where a digest is served from and can move the origin copy
+/// aside, so it is its own action: migrating (which only copies), repairing or
+/// freezing never implies it.
+pub fn manage_storage_relocation() -> ActionId {
+    ActionId::new("artifacts", "ManageStorageRelocation").expect("a valid action")
+}
+
 /// Reading or re-baselining the rollback/freeze state of the signed index of
 /// a proxy repository (HSP-167).
 ///
@@ -221,6 +231,7 @@ pub fn all() -> Vec<ActionId> {
         explore_repository_history(),
         manage_storage_repair(),
         manage_storage_migration(),
+        manage_storage_relocation(),
         manage_mirror_metadata(),
         manage_repository_freeze(),
         manage_trusted_publishers(),
@@ -431,6 +442,8 @@ mod scope_tests {
                 .expect("storage repair action declared");
             check_declared(&schema, &manage_storage_migration())
                 .expect("storage migration action declared");
+            check_declared(&schema, &manage_storage_relocation())
+                .expect("storage relocation action declared");
             check_declared(&schema, &manage_mirror_metadata())
                 .expect("mirror metadata action declared");
             check_declared(&schema, &verify_trust_passport())

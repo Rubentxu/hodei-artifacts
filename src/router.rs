@@ -708,6 +708,13 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
             "/storage/migrate",
             post(crate::handlers::storage_migration::migrate),
         )
+        // Location journal (HSP-325): switch the reads of a digest to the
+        // destination, retire the origin copy only after a verified destination
+        // and no hold, or roll back; `ManageStorageRelocation`.
+        .route(
+            "/storage/relocate",
+            post(crate::handlers::storage_relocation::relocate),
+        )
         // Verification of a trust passport against the roots the deployment
         // pinned (HSP-321). A verdict, never a credential; the dedicated action
         // `VerifyTrustPassport`. The repository is a query parameter so that

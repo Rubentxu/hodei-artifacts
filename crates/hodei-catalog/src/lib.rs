@@ -54,6 +54,7 @@ pub mod gc;
 pub mod gomod;
 pub mod group;
 pub mod hf;
+pub mod location;
 pub mod maven;
 pub mod model;
 pub mod namespaces;
@@ -81,6 +82,7 @@ pub use gc::{
 pub use group::{
     GroupConfig, GroupConfigError, GroupError, Lookup, Node, Walk, walk as walk_group,
 };
+pub use location::{LocationEntry, LocationJournal, LocationLease, Phase};
 pub use model::{
     AssetDeletion, AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope,
     MutableTag, PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome,

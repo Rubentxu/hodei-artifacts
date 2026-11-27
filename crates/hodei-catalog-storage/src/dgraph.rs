@@ -61,6 +61,7 @@ use kernel::application::ports::clock::Identity;
 use sha2::{Digest as _, Sha256};
 
 mod gc_ledger;
+mod location_journal;
 
 /// How many versions of a package one deletion removes. The rest is removed
 /// by repeating the request (the answer says `partial`).
@@ -2008,6 +2009,11 @@ impl DgraphCatalogStore {
         // graph's versioned schema.
         client
             .alter_schema(&gc_ledger::gc_schema_dql())
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        // The additive DDL of the location journal (HSP-325).
+        client
+            .alter_schema(&location_journal::location_schema_dql())
             .await
             .map_err(|error| CatalogError::unavailable(error.to_string()))?;
         Ok(Self {

@@ -3,7 +3,7 @@
 Copia blobs del CAS en servicio a un **segundo almacén** que el operador configuró (otro
 directorio, otro volumen o pool), verificando cada copia por re-hash. Es el primer paso de una
 migración de backend: **copiar y verificar**. No cambia hashes, coordenadas, grants ni clientes, y
-**nunca borra ni escribe el origen**.
+**nunca borra ni escribe el origen** (mover la lectura y apartar el origen es el tramo siguiente, HSP-325, descrito abajo).
 
 | Operación | Ruta | Autorización |
 | --- | --- | --- |
@@ -34,10 +34,9 @@ tras Cedar se audita **dentro de la tarea de migración** (aunque el cliente cue
   con la migración: ninguna borra ni pone en cuarentena en el destino).
 - **Verificada por lectura.** Tras escribir, el destino se re-verifica; solo entonces el digest es
   `migrated`. Un destino que confirma sin guardar, o que falla, queda `destination_failed`.
-- **El origen nunca se borra ni se escribe.** No hay todavía un interruptor de lectura por digest:
-  borrar la copia de origen quitaría el blob al almacén que lo sirve. Retirar el origen es un paso
-  posterior y explícito que este tramo no ofrece. Consecuencia: GC y holds no interactúan con la
-  migración (no hay borrado que proteger); la GC solo conoce el almacén de origen.
+- **La migración nunca borra ni escribe el origen.** Copiar no cambia la lectura: eso lo hace, de
+  forma explícita y reversible, `POST /api/v1/storage/relocate` (sección del journal más abajo).
+  Consecuencia: GC y holds no interactúan con la copia; con el journal, `retire` sí comprueba los holds.
 - **Idempotente y reanudable.** Lo que el destino ya verifica es `already_present` (no se lee el
   origen). Un fallo a medias deja el origen intacto y, a lo sumo, copias verificadas o ausentes:
   repetir la petición completa lo que falte. Una copia ya presente pero dañada en el destino se
@@ -75,8 +74,126 @@ tras Cedar se audita **dentro de la tarea de migración** (aunque el cliente cue
 Solo el perfil de grafo cablea la migración. El destino es un directorio de ficheros; el origen es
 el backend de contenido configurado (filesystem o S3).
 
+## Journal de ubicación y retirada verificada del origen (HSP-325)
+
+La migración solo copia. Para **cambiar la lectura** y **retirar el origen** sin perder datos hay un
+journal de ubicación por digest en Dgraph (`LocationJournal`, predicados `hodei.loc.*`), con lease y
+*fencing*, y una operación HTTP:
+
+| Operación | Ruta | Autorización |
+| --- | --- | --- |
+| Relocalizar | `POST /api/v1/storage/relocate` `{repository, operation: "switch"\|"retire"\|"rollback", digests:[...]}` (1..64) | acción Cedar dedicada `Artifacts::Action::"ManageStorageRelocation"` sobre el repositorio (ninguna otra la implica, ni `ManageStorageMigration`) |
+
+Fases por digest y adónde va la lectura:
+
+| Fase | Lectura | Copia del origen |
+| --- | --- | --- |
+| `origin` (sin fila = esta) | solo el origen | intacta |
+| `switched` | destino; si no tiene bytes verificados, cae al origen | intacta |
+| `retired` | destino; si no tiene bytes verificados, cae al origen | **apartada** (cuarentena versionada), nunca borrada |
+
+Transiciones permitidas: `origin→switched`, `switched→retired`, `switched→origin`, `retired→origin`
+(cualquier otra es `InvalidRequest`). `retire` es **reversible**: el origen se aparta con la
+cuarentena condicional del almacén (`quarantine_if_untouched`, solo si sigue siendo la versión
+observada) y `rollback` repone bytes verificados y devuelve la lectura. **No existe paso de
+purga/confirmación: ningún camino de este tramo borra una copia del origen** (el informe lleva
+`origin_deleted: false`).
+
+### Lease y fencing
+
+Cada fila lleva `fence` (entero **monótono**), `token`, `owner` y `lease_until`. Para escribir hay
+que tomar el lease del digest: sin fila o con lease expirado se toma con `fence+1` y token nuevo (el
+escritor anterior queda fuera); el mismo dueño con lease vivo renueva con el mismo token; otro dueño
+con lease vivo es `Conflict` (`busy` en el informe). Cada avance va **en una sola transacción**
+guardada por token, fence, lease vivo y la fase que se espera abandonar, y el veredicto sale de la
+relectura posterior al commit. Un escritor viejo o expirado que se reanuda recibe `fenced` y no cambia
+nada. El lease se renueva justo antes del único efecto sobre un almacén (apartar el origen) y un
+hueco en la reclamación (fence distinto) detiene la operación. Cada operación usa un dueño propio
+(dos tareas del mismo proceso no comparten lease).
+
+### Cuándo se retira el origen (todas, o nada)
+
+1. La fase es `switched` (si no, `not_switched`).
+2. Hay filas del catálogo que nombran el digest (`not_referenced` si no: no se pueden evaluar holds).
+3. **Ningún hold activo** lo alcanza: de digest, de repositorio **o de cuenta**. Los de repositorio y
+   cuenta se resuelven contra los propietarios del blob, leídos frescos de las filas raíz (activo,
+   versión, referencia, snapshot apt); los holds se leen paginados completos (falla cerrado si no se
+   pueden leer: `holds_unreadable`). Los holds se leen **antes** y **otra vez después** de apartar el
+   origen: si apareció uno, el origen se repone y la fase sigue en `switched` (`held`). Si además la
+   reposición **falla** (el almacén no acepta escrituras en ese instante), el resultado es
+   `held_origin_aside` (503, auditado `Failed`): hay un hold vigente **y** la copia del origen sigue
+   apartada (bytes intactos en cuarentena, destino sirviendo, fase `switched`); nunca se presenta como
+   un `held` limpio. Si ni siquiera se pudo leer el hold, `origin_aside`. La salida es `rollback`, que
+   repone el origen desde el destino verificado.
+   El identificador del hold se devuelve **solo si pertenece a la cuenta que llama** (holds de su
+   repositorio o de su cuenta); el de otra cuenta o uno de digest (sin cuenta) bloquea igual pero no
+   se nombra (`hold` ausente), para no filtrar su existencia ni su id entre cuentas.
+4. El destino se **relee y se hashea aquí** (no se confía en su palabra): ausente → `destination_absent`,
+   corrupto/mentiroso → `destination_corrupt`, caído → `destination_failed`.
+5. El almacén de origen sabe apartar condicionalmente (`unsupported` si no); la versión no cambió
+   mientras tanto (`raced` si cambió: no se toca).
+
+Todo fallo deja el origen exactamente como estaba. Si el origen ya no existe (p. ej. el proceso murió
+tras apartarlo y antes de escribir el journal), el reintento completa a `retired` con
+`origin_already_absent: true` sin inventar nada.
+
+### Interacción con GC, holds y repair
+
+- **GC**: sigue operando sobre el almacén de origen (`reclaimer`/`conditional` del `LocatedStore` son
+  los del origen). Los blobs referenciados siguen enraizados; la copia apartada no es de la GC. Una
+  pasada de GC concurrente con `retire`/`rollback` no pierde bytes (la copia verificada del destino
+  siempre existe antes de apartar el origen). Los holds frenan la retirada, no se alteran.
+- **Repair**: sigue sobre el origen. Si el origen está corrupto, `retire` no lo necesita (se apoya en
+  el destino verificado). Un repair tras `retire` puede **resucitar** la copia del origen desde la
+  fuente de reparación; el journal, no la presencia de la copia, decide adónde va la lectura.
+- `rollback` solo devuelve la lectura a un origen que **verifica ahora**; si falta lo repone desde el
+  destino verificado; si está corrupto (`origin_corrupt`) hay que repararlo primero; si no hay copia
+  verificable en ninguno (`nothing_to_restore`) no cambia nada.
+
+### Códigos y auditoría
+
+`200` todo lo pedido está donde lleva la operación; `207` parte sí; `409` nada, por causa lógica
+(hold, destino que no verifica, lease ajeno...); `503` nada y falló un almacén, el journal o la
+lectura de holds; `504` venció el plazo; `404` repositorio de otra cuenta o digest no referenciado por
+ese repositorio (indistinguible de la ausencia; **no se mueve nada**, ni los digests válidos de la
+misma petición); `403` sin la acción; `400` petición mal formada; `429 E_RELOCATE_BUSY` una operación
+por cuenta y 2 en total; `501` sin destino configurado. Cada intento tras Cedar se audita **dentro de la
+tarea spawneada**: `Allowed` si todo quedó donde se pidió, `Conflict` si fue parcial, `Failed` si nada,
+`Denied` digest ajeno (la denegación de Cedar la audita el gate). El recurso lleva `repo[n] op=<op>`,
+el recuento por estado y `set=<16 hex>`.
+
+### Modelo de amenaza
+
+| Amenaza | Defensa | Residuo declarado |
+| --- | --- | --- |
+| Escritor viejo/zombie avanza el journal | fence monótono + guarda token/fence/lease/fase en la transacción + relectura | un zombie puede ejecutar el apartado del origen ya iniciado tras perder el lease (ventana entre la renovación y el efecto); el destino verificado y la caída de lectura al otro almacén mantienen los bytes accesibles, y la fase la decide quien tiene el lease |
+| Perder datos por retirar sin copia buena | el destino se relee y hashea antes de apartar; el origen no se borra nunca, se aparta | no hay purga: la copia apartada ocupa espacio hasta que el operador decida (fuera de este tramo) |
+| Retirar algo retenido por un hold | holds de los tres alcances, leídos completos antes y después; falla cerrado | holds de repositorio/cuenta se resuelven por propietarios **directos** del blob (filas raíz); un propietario solo transitivo vía manifiesto no se calcula. La consecuencia está acotada: el origen queda apartado y reversible y el destino sirve |
+| Un hold aparece entre la comprobación y el apartado | segunda lectura de holds tras apartar; si aparece, se repone el origen | la ventana existe pero es reversible y detectada |
+| Destino corrupto o mentiroso | hash local sobre bytes releídos; un destino corrupto tras el switch no tapa un origen bueno (cae al origen) | si el destino se corrompe **después** de retirar el origen, la lectura falla; el destino no tiene reparación en este tramo (el rollback solo repone el origen desde un destino verificado) |
+| Sondeo entre cuentas | repositorio de la cuenta verificada, todos los digests referenciados por él, 404 uniforme | — |
+| Abuso de coste / bloqueo | 64 digests, tope por blob, 1 por cuenta y 2 globales, timeouts por llamada, plazo total, tarea inmune al cuelgue del cliente | — |
+| Journal caído o lento | las lecturas esperan al journal como mucho `DEFAULT_JOURNAL_TIMEOUT` (1 s por defecto, rango validado 100 ms a 10 s, `LocatedStore::with_journal_limits`); un fallo o timeout abre un *breaker* (5 s por defecto, rango 1 a 60 s) durante el cual no se pregunta al journal y se lee origen y luego destino (siempre verificados); un journal colgado cuesta un timeout por ventana, no uno por lectura; `switch`/`retire`/`rollback` fallan cerrado | durante la ventana del breaker un digest `retired` se lee primero del origen (falla y cae al destino, un viaje extra); con digest en `origin` no cambia nada. El breaker es por proceso, no compartido |
+
+### Límites conocidos del journal (no resueltos)
+
+- **Coste de lectura**: con destino configurado, cada lectura de contenido consulta la fila del digest
+  en Dgraph (una lectura puntual por clave). No hay caché en proceso a propósito (con varias réplicas
+  una caché haría que la lectura no siguiera al journal).
+- **Un solo destino** (el configurado) y dos fases de retirada; sin varios miembros por pool.
+- **El destino sigue fuera de GC/holds** (ver arriba): el journal no los adopta.
+- **Qué demuestran (y qué no) las pruebas de carrera**: las carreras con la GC y con el repair se ejecutan
+  de forma concurrente **sin forzar el entrelazado** (no hay barreras): prueban que los invariantes
+  (sin pérdida de bytes, fase coherente con el resultado de la retirada, lectura sirviendo) se cumplen
+  gane quien gane, no que se haya forzado un orden concreto. La prueba de la retirada estancada solo
+  cubre la rama de renovación con un intruso de lease **vivo** (`Conflict`, antes de apartar nada), no
+  la de fence distinto, y no cubre un zombi que se cuelga **después** de la renovación.
+- **No demostrado**: holds de propietarios transitivos vía manifiesto; el zombi en la ventana
+  renovación-efecto; scrub/repair sobre el destino (un destino corrupto tras retirar el origen no se
+  repara); varios destinos o S3.
+- **Sin purga** de la copia apartada ni de las filas del journal de digests ya borrados por la GC.
+
 ## Fuera de este tramo (decisiones de producto pendientes)
 
-Journal de pools y switch de lectura por digest (necesarios para retirar el origen con fencing frente
-a la GC y para rollback), varios miembros por pool, políticas de residencia/colocación por cuenta,
+Purga de la copia apartada, varios miembros por pool, políticas de residencia/colocación por cuenta,
 destino S3, selección de «todo el repositorio» sin enumerar digests, medición de RPO/RTO y coste/s.

@@ -238,6 +238,8 @@ pipeline {
                         "--test hsp322g_mirror_metadata_dgraph_it",
                         // HSP-324 (HST-9): mirror key rotation window with a cutoff (server clock), retired-key refusal with its own code, default max_metadata_age_secs, strict apt settings, by the real router, OpenPGP and Dgraph.
                         "--test hsp324_mirror_key_rotation_dgraph_it",
+                        // HSP-325 (HST-10): location journal per digest with lease and monotonic fencing, reads that follow the journal and verified, reversible retirement of the origin (destination re-read and hashed, no hold of any scope, rollback; races with GC and repair), by the real router, Cedar, GC, repair and Dgraph.
+                        "--test hsp325_location_journal_dgraph_it",
                         // HSP-321 tramo k (HSP-160): POST /passports/verify with roots pinned by the operator (windows, algorithms, canonical bytes, audience, revocation, bounded cost), by the real router, Cedar and Dgraph.
                         "--test hsp321k_passport_verify_dgraph_it",
                         // HSP-322 tramo 2 (HSP-161): publication freeze on hosted npm/raw, dedicated Cedar action, by the real router.
