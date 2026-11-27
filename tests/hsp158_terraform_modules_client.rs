@@ -566,3 +566,46 @@ fn base64_of(value: &str) -> String {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.encode(value)
 }
+
+/// HSP-329: the registry authenticates before it judges the path. Without a
+/// credential a malformed name, a missing repository and a malformed route
+/// all answer 401; with one, a malformed name is the same 404 as a
+/// repository that does not exist.
+#[test]
+fn the_registry_authenticates_before_it_judges_the_path() {
+    let deployment = Deployment::new();
+    deployment.seed_terraform(&[("modules-hosted", serde_json::Value::Null)]);
+    let mut service = deployment.start(&[]);
+    let port = service.port;
+    let token = support::token(FIRST_ACCOUNT, "alice");
+    let bearer = format!("Bearer {token}");
+
+    let invalid = "/terraform/Bad%2fName/v1/modules/hodei/demo/local/versions";
+    let missing = "/terraform/no-such-repository/v1/modules/hodei/demo/local/versions";
+    let malformed_route = "/terraform/modules-hosted/v1/modules/not-a-module";
+    let artifact = "/terraform/Bad%2fName/artifacts/hodei/demo/local/1.0.0.tar.gz";
+    for path in [invalid, missing, malformed_route, artifact] {
+        let (status, _, body) = socket_get(port, path, None);
+        assert_eq!(
+            status,
+            401,
+            "{path}: no credential, no answer about the path: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+
+    let (status_invalid, _, body_invalid) = socket_get(port, invalid, Some(&bearer));
+    let (status_missing, _, body_missing) = socket_get(port, missing, Some(&bearer));
+    assert_eq!(
+        status_invalid,
+        404,
+        "{}",
+        String::from_utf8_lossy(&body_invalid)
+    );
+    assert_eq!(
+        (status_invalid, body_invalid),
+        (status_missing, body_missing),
+        "a malformed name is the 404 of a repository that does not exist"
+    );
+    support::stop(&mut service);
+}

@@ -105,16 +105,27 @@ impl IntoResponse for Failure {
 /// The rest of the path of `/terraform/{repository}/{rest}`, without
 /// decoding: the protocol rules are the only ones that may
 /// interpret a `%2f`.
-fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
+///
+/// It only splits: it does not judge the repository name. Judging it
+/// before authenticating would tell an anonymous caller which names are
+/// well formed, so the name is validated by [`valid_name`] once the
+/// caller is known.
+pub(crate) fn the_split(uri: &OriginalUri) -> Result<(String, String), Failure> {
     let rest = uri
         .path()
         .strip_prefix("/terraform/")
         .ok_or(RawApiError::NotFound)?;
     let (repository, rest) = rest.split_once('/').ok_or(RawApiError::NotFound)?;
-    if !crate::raw::path::valid_repository_name(repository) || rest.is_empty() {
-        return Err(RawApiError::NotFound.into());
-    }
     Ok((repository.to_string(), rest.to_string()))
+}
+
+/// The repository name and the rest of the path are well formed. A
+/// malformed one is the same 404 as a repository that does not exist.
+pub(crate) fn valid_name(repository: &str, rest: &str) -> Result<(), RawApiError> {
+    if !crate::raw::path::valid_repository_name(repository) || rest.is_empty() {
+        return Err(RawApiError::NotFound);
+    }
+    Ok(())
 }
 
 /// Any request to `/terraform/{repository}/...`.
@@ -151,6 +162,7 @@ pub async fn handle(
     if let Some(query) = uri.query()
         && Claims::is_present(query)
     {
+        valid_name(&repository_key, &rest)?;
         let correlation = correlation_id(&headers, &state.identity);
         return redeem(
             &state,
@@ -165,6 +177,7 @@ pub async fn handle(
     }
     let context = the_context(&state, &headers).await?;
     let correlation = correlation_id(&headers, &state.identity);
+    valid_name(&repository_key, &rest)?;
     let route = Route::parse(&rest)?;
     let repository = the_repository_in(
         &state,
