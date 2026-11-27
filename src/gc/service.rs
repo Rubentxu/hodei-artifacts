@@ -147,6 +147,8 @@ pub struct GcService {
     /// process: two replicas exclude each other through the ledger, and a
     /// restarted process never mistakes itself for its dead predecessor.
     pass_owner: String,
+    /// How long the claim of a platform sweep lives between renewals.
+    sweep_lease: Duration,
 }
 
 impl GcService {
@@ -169,7 +171,17 @@ impl GcService {
             plan_flight: Mutex::new(()),
             plan_generation: AtomicU64::new(0),
             pass_owner: format!("gc-{}", uuid::Uuid::new_v4().simple()),
+            sweep_lease: SWEEP_LEASE,
         })
+    }
+
+    /// Overrides how long the claim of a platform sweep lives between
+    /// renewals (default one minute). A shorter lease makes a stalled
+    /// holder lose its scope sooner; the fence is the same.
+    #[must_use]
+    pub fn with_sweep_lease(mut self, lease: Duration) -> Self {
+        self.sweep_lease = lease;
+        self
     }
 
     /// The grace period.
@@ -563,7 +575,7 @@ impl GcService {
     }
 
     async fn sweep_fenced(self: &Arc<Self>, actor: &str) -> Result<SweepReport, GcError> {
-        let config = PassConfig::new(PLATFORM_SCOPE, self.pass_owner.clone(), SWEEP_LEASE)
+        let config = PassConfig::new(PLATFORM_SCOPE, self.pass_owner.clone(), self.sweep_lease)
             .across_accounts()
             .on_behalf_of(actor);
         let report = CoordinatedPass::new(Arc::clone(self), config).run().await?;
