@@ -188,7 +188,7 @@ Una promesa que no se puede comprobar no se acepta en silencio.
 | `401` | No hay credencial, o no es válida. |
 | `403` | La decisión de Cedar no es permiso. |
 | `404` | No hay nada en esa dirección, o el repositorio no existe en la cuenta verificada. |
-| `405` | El método no es el de la superficie: la ruta solo admite `PUT`, `GET` y `HEAD`. |
+| `405` | El método no es el de la superficie: la ruta solo admite `PUT`, `GET`, `HEAD` y `DELETE`; o `DELETE` sobre un repositorio que no es `raw` alojado. |
 | `409` | La dirección ya tiene otro contenido, y la política no permite reponer. |
 | `412` | Una condición que no se cumple. |
 | `413` | El contenido es más grande de lo que se admite. |
@@ -202,6 +202,32 @@ existe y el principal no puede usarlo; el `404` dice que para esta
 cuenta no hay nada. Un repositorio de otra cuenta es un `404`, porque un
 `403` diría que existe en algún sitio, y esa es la existencia que no se
 puede exponer.
+
+## El borrado (HSP-113)
+
+`DELETE /repository/{repositorio}/{*ruta}` borra el activo de esa dirección y
+la historia de la ruta (las versiones que quedaron al reponer con
+`raw.replace: allow`). Es un borrado **lógico**: el catálogo deja de nombrar
+el contenido y el blob queda para el recolector, que conserva lo que otra
+referencia o un hold (una congelación de dependencias, una retención legal)
+siga nombrando. Esta ruta no borra ningún byte.
+
+- Cedar decide con la acción dedicada `Artifacts::Action::"DeleteAsset"` sobre
+  el repositorio: subir, descargar o promover no la implican. Un bundle de
+  políticas tiene que declararla en su `schema.json` (los de `config/` ya lo
+  hacen); sin ella la decisión no se puede tomar y el borrado falla cerrado.
+- El orden es el de la superficie: credencial (`401`), ruta (`400`),
+  repositorio en la cuenta verificada (`404`, idéntico al de uno inexistente) y
+  después Cedar (`403`, auditado como `Denied`).
+- Solo repositorios `raw` alojados (`405` en el resto): los demás formatos
+  derivan metadatos de protocolo (manifiestos, packuments, índices) y
+  necesitan un borrado que conozca su formato.
+- Es idempotente: borrar lo que no está responde `200` con `deleted: false`, no
+  escribe nada y no añade un hecho a la auditoría. Un borrado que hizo algo se
+  audita (`Allowed`); uno que falla, `Failed`, y el activo sigue visible.
+- La búsqueda y la descarga leen las mismas filas que el borrado quita (activo,
+  referencia y versiones, en una sola transacción guardada con la misma guarda
+  que la publicación): no hay índice aparte que sincronizar.
 
 ## Configuración
 

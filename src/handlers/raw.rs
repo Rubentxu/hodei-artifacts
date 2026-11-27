@@ -441,6 +441,96 @@ pub async fn provenance(
     Ok(axum::Json(serde_json::json!({ "receipts": receipts })).into_response())
 }
 
+/// `DELETE /repository/{repository}/{*path}` (HSP-113)
+///
+/// Deletes the asset at that address and the history of its path. It is a
+/// **logical** deletion: the catalog stops naming the content and the blob is
+/// left for the garbage collector, which keeps whatever another reference or a
+/// hold (a dependency freeze, a legal hold) still names. No byte is deleted
+/// here.
+///
+/// The order is the one of the rest of the surface: authenticate, read the
+/// path, look up the repository in the verified account (another account's
+/// repository is the same 404 as one that never existed), and only then the
+/// dedicated Cedar action `DeleteAsset`. Past the gate, deleting what is not
+/// there answers `200` with `deleted: false`: the repetition of a deletion is
+/// harmless, and the answer does not depend on anything outside the caller's
+/// own repository.
+pub async fn delete(
+    State(state): State<AppState>,
+    uri: OriginalUri,
+    headers: HeaderMap,
+) -> Result<Response, RawApiError> {
+    let correlation = correlation_id(&headers, &state.identity);
+    let context = the_context(&state, &headers).await?;
+    let target = the_target(&uri)?;
+    let repository = the_repository(&state, &context, &target.repository).await?;
+    let action = crate::actions::delete_asset();
+    let resource = format!("{}/{}", target.repository, target.asset_path);
+    let audit = |result: AuditResult| {
+        record_audit(
+            &state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            &action.to_string(),
+            &resource,
+            result,
+            &correlation,
+        );
+    };
+    if let Err(error) = the_decision(&state, &context, action.clone(), &repository) {
+        audit(if matches!(error, RawApiError::Forbidden) {
+            AuditResult::Denied
+        } else {
+            AuditResult::Failed
+        });
+        return Err(error);
+    }
+    // Only a raw repository: the other formats derive protocol metadata from
+    // what they publish (manifests, packuments, indexes) and need a deletion
+    // that knows that format; this one never guesses.
+    if repository.format != RepositoryFormat::Raw || !repository.mode.accepts_client_writes() {
+        audit(AuditResult::Failed);
+        return Err(RawApiError::MethodNotAllowed(
+            "deleting is served for hosted raw repositories only",
+        ));
+    }
+    let (_, writer) = match the_catalog(&state) {
+        Ok(pair) => pair,
+        Err(error) => {
+            audit(AuditResult::Failed);
+            return Err(error);
+        }
+    };
+    let deletion = match writer
+        .delete_asset(
+            context.account().as_str(),
+            &target.repository,
+            &target.asset_path,
+        )
+        .await
+    {
+        Ok(deletion) => deletion,
+        Err(error) => {
+            audit(AuditResult::Failed);
+            return Err(the_publication_error(&error));
+        }
+    };
+    // A deletion that did something is a fact and is said; one that found
+    // nothing adds no fact (and leaves no trace to count).
+    if deletion.removed {
+        audit(AuditResult::Allowed);
+    }
+    let body = serde_json::json!({
+        "repository": target.repository,
+        "path": target.asset_path,
+        "deleted": deletion.removed,
+        "versions_removed": deletion.versions_removed,
+        "released": deletion.released.iter().map(ToString::to_string).collect::<Vec<_>>(),
+    });
+    Ok(axum::Json(body).into_response())
+}
+
 /// `GET /repository/{repository}/{*path}`
 ///
 /// Returns the content at that address.

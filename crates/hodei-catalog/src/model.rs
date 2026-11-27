@@ -853,6 +853,23 @@ pub enum AssetDisposition {
     Unchanged,
 }
 
+/// What a deletion of an asset left behind (HSP-113).
+///
+/// The deletion is logical: the catalog stops naming the content, and the
+/// bytes are the garbage collector's to reclaim (holds and other references
+/// keep them alive). Deleting what is not there is not an error: the result
+/// says `removed: false` and nothing was written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetDeletion {
+    /// Whether any row of the catalog was removed by this call.
+    pub removed: bool,
+    /// The contents the catalog no longer names because of this call
+    /// (the asset's own and the ones of the versions of its package).
+    pub released: Vec<ContentDigest>,
+    /// How many version rows were removed.
+    pub versions_removed: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
