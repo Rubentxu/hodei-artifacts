@@ -232,10 +232,14 @@ pipeline {
                         "--test hsp322h_storage_migration_dgraph_it",
                         // HSP-323 tramo h (HSP-113 AC3): logical deletion of an asset (Cedar DeleteAsset, 404 across accounts, idempotent, fail closed) keeps search, download and GC (holds) consistent, by the real router, Cedar, GC and Dgraph.
                         "--test hsp323h_asset_delete_dgraph_it",
+                        // HSP-323 tramo i (HSP-37): execution receipt exported from a REAL pinned PipelineK run, linked to the artifact by exact identity after re-hashing its bytes (idempotent, independent per run, no secrets, Cedar IngestExecutionReceipt, per account), by the real router, Cedar, GC and Dgraph.
+                        "--test hsp323i_pipelinek_receipt_dgraph_it",
                         // HSP-322 tramo g (HSP-167): rollback/freeze protection of the signed apt proxy index (persisted mark, fail-closed ledger, Cedar-gated reset), by the real router, OpenPGP and Dgraph.
                         "--test hsp322g_mirror_metadata_dgraph_it",
                         // HSP-321 tramo k (HSP-160): POST /passports/verify with roots pinned by the operator (windows, algorithms, canonical bytes, audience, revocation, bounded cost), by the real router, Cedar and Dgraph.
                         "--test hsp321k_passport_verify_dgraph_it",
+                        // HSP-322 tramo 2 (HSP-161): publication freeze on hosted npm/raw, dedicated Cedar action, by the real router.
+                        "--test hsp322b_freeze_dgraph_it",
                         // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.
                         "--test hsp321j_publishers_dgraph_it",
                         // HSP-320 tramo 1: two independent nodes over one Dgraph; a revocation by A stops B within the watermark lease, fail-closed on partition.

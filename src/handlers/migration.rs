@@ -372,6 +372,19 @@ pub async fn import(
             ));
         }
     }
+    // Migration does not run the freeze gate either (HSP-322): a frozen
+    // destination must not be written through the back door.
+    for plan in &plans {
+        if let AssetPlan::Import { destination } = plan
+            && descriptors
+                .get(destination)
+                .is_some_and(crate::publish_freeze::is_declared)
+        {
+            return Err(RawApiError::NotImplemented(
+                "migration into a repository that declares a freeze is not supported",
+            ));
+        }
+    }
     let correlation = correlation_id(&headers, &state.identity);
 
     let mut skipped: Vec<serde_json::Value> = Vec::new();

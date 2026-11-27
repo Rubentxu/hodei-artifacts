@@ -101,6 +101,16 @@ pub fn manage_mirror_metadata() -> ActionId {
     ActionId::new("artifacts", "ManageMirrorMetadata").expect("a valid action")
 }
 
+/// Declaring a publication freeze on a repository (HSP-322, from HSP-161).
+///
+/// A freeze blocks every publication of the repository (a denial-of-publication
+/// lever), so it is its own action: `CreateRepository`, `UploadAsset` and the
+/// other management actions never imply it. A policy has to grant it
+/// explicitly.
+pub fn manage_repository_freeze() -> ActionId {
+    ActionId::new("artifacts", "ManageRepositoryFreeze").expect("a valid action")
+}
+
 /// Managing the trusted publishers of a repository (HSP-152).
 ///
 /// A trusted publisher binds an OIDC identity to the publication into the
@@ -163,6 +173,16 @@ pub fn delete_asset() -> ActionId {
     ActionId::new("artifacts", "DeleteAsset").expect("a valid action")
 }
 
+/// Linking an execution receipt to an artifact of a repository (HSP-37).
+///
+/// A receipt is a claim about which run produced an artifact, and what the
+/// capsule shows about the builder is read from it. It is its own action:
+/// uploading, downloading or promoting never implies it, and a policy has to
+/// grant it explicitly to whoever may vouch for the origin of an artifact.
+pub fn ingest_execution_receipt() -> ActionId {
+    ActionId::new("artifacts", "IngestExecutionReceipt").expect("a valid action")
+}
+
 /// Promoting a digest of a repository to its trusted channel.
 ///
 /// It is the permission of **who** may promote. Whether the software
@@ -202,6 +222,7 @@ pub fn all() -> Vec<ActionId> {
         manage_storage_repair(),
         manage_storage_migration(),
         manage_mirror_metadata(),
+        manage_repository_freeze(),
         manage_trusted_publishers(),
         verify_trust_passport(),
         read_capsule(),
@@ -209,6 +230,7 @@ pub fn all() -> Vec<ActionId> {
         upload_asset(),
         download_asset(),
         delete_asset(),
+        ingest_execution_receipt(),
         promote_asset(),
         revoke_promotion(),
         investigate(),
@@ -306,6 +328,7 @@ pub fn check_service_declared(
     check_declared(schema, &create_repository())?;
     check_declared(schema, &manage_repository_tags())?;
     check_declared(schema, &manage_repository_admission())?;
+    check_declared(schema, &manage_repository_freeze())?;
     check_scope_attributes_declared(schema)?;
     check_declared(schema, &download_asset())?;
     if admin_enabled {
@@ -322,6 +345,9 @@ pub fn check_service_declared(
         // would leave every deletion without a verdict (a 500), so the
         // deployment refuses to start instead.
         check_declared(schema, &delete_asset())?;
+        // The receipts of execution (HSP-37) are ingested over the same raw
+        // surface; the same reasoning applies.
+        check_declared(schema, &ingest_execution_receipt())?;
     }
     if investigation_enabled {
         // The investigation surface asks for its own action: a bundle that
@@ -409,6 +435,7 @@ mod scope_tests {
                 .expect("mirror metadata action declared");
             check_declared(&schema, &verify_trust_passport())
                 .expect("passport verification action declared");
+            check_declared(&schema, &manage_repository_freeze()).expect("freeze action declared");
         }
     }
 
