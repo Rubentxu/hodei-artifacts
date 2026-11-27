@@ -85,3 +85,13 @@ quien pueda congelar; sin concesión, nadie puede declarar congelaciones.
 - La restauración de recuperación (`recovery::import`) no pasa por esta puerta.
 - La hora es la del servicio (`state.identity.now()`); con varios nodos, la
   deriva de reloj entre ellos mueve el instante efectivo de `until`.
+- El PUT y el DELETE de la congelación calculan su respuesta sobre la copia leída al
+  inicio: con un PUT concurrente, el DELETE puede responder `changed:false` aunque la
+  congelación esté activa (último gana, sin versión esperada).
+- La decisión de congelación usa el descriptor leído al inicio de la petición: una
+  congelación declarada durante una subida larga (cuerpo en streaming) o durante una
+  importación de migración no la detiene.
+- La migración se niega a importar mientras haya una congelación declarada, aunque su
+  `until` ya haya vencido, hasta que alguien la libere con DELETE.
+- Un `until` en el pasado se acepta; con ámbito `existing`, metadata/dist-tag de un
+  paquete inexistente y el DELETE raw de una ruta inexistente responden 409, no 404.

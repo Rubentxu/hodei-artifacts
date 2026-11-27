@@ -613,8 +613,9 @@ pub(crate) fn require_admission_management(
 /// Gate the declaration of a publication freeze behind `ManageRepositoryFreeze`
 /// (HSP-322). `CreateRepository` and `UploadAsset` never imply it.
 ///
-/// The Cedar decision comes first (403); an unreadable declaration is a 400 and
-/// nothing is created.
+/// An unreadable declaration is rejected (400) before this gate runs, so the
+/// caller only learns about the validity of their own input; once the declaration
+/// parses, the Cedar decision comes first (403) and nothing is created.
 pub(crate) fn require_freeze_management(
     state: &AppState,
     context: &VerifiedContext,
