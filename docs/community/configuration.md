@@ -216,6 +216,8 @@ vacío. Si no, el arranque falla.
 | `policy_id` | `default` | Identificador bajo el que se activa la política. |
 | `grant_max_validity_secs` | `86400` | Techo de vigencia de una concesión nueva. Mínimo 1. |
 | `sweep_interval_secs` | `60` | Intervalo del barrido que reevalúa concesiones; `0` desactiva el bucle. |
+| `revocation_verify_secs` | `5` | Plazo con el que la caché de admisión consulta la marca de agua de invalidación de la autoridad compartida (HSP-320): cota de cuánto puede un nodo seguir honrando una confianza revocada por otro. `0` consulta en cada petición. |
+| `cache_max_entries` | `65536` | Tope de concesiones que guarda en memoria la caché de admisión (HSP-330). Rango válido: 1 a 1048576; fuera de rango, o un campo desconocido en `[trust]`, detiene el arranque. Al llenarse se desaloja la entrada usada hace más tiempo (LRU determinista). Es un tope de memoria, no de confianza: una entrada desalojada se vuelve a leer del ledger vivo, de modo que bajarlo solo cuesta lecturas extra, nunca un permiso de más ni una revocación perdida; no añade latencia de revocación. |
 | `passport_verification_file` | ninguna | JSON con las raíces de confianza del pasaporte (ver [`passport-verify.md`](../security/passport-verify.md)). Sin él, `POST /api/v1/passports/verify` responde 501. Un fichero inválido detiene el arranque. |
 
 ### 5.5 `[proxy]`

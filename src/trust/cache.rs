@@ -29,6 +29,18 @@
 //!   started is served with the grant that admitted its request --the
 //!   revocation cuts new requests, not those already in flight--,
 //!   exactly as without a cache.
+//! - **Bounded by entries (HSP-330)**: the cache holds at most
+//!   `capacity` grants (`trust.cache_max_entries`). When a new key finds it
+//!   full, the **least recently used** entry is evicted: every hit and
+//!   every insertion stamps the entry with the next value of a strictly
+//!   increasing counter, and the victim is the entry with the smallest
+//!   stamp, so two runs with the same sequence of requests evict the same
+//!   keys (no dependence on hash order). The bound is a memory bound, not
+//!   a trust decision: an evicted key behaves exactly like an absence --the
+//!   live ledger is read again--, never like a permit, and a read of the
+//!   ledger is also what the watermark would have forced. Eviction only
+//!   ever removes entries, so it cannot keep a revoked trust alive nor
+//!   make a revocation be missed.
 //! - **Invalidation watermark (HSP-146 / HSP-320)**: this cache is the
 //!   only per-process state that can serve a revoked trust, and nodes
 //!   that share one Dgraph do not share it. Waiting for the `ttl` would
@@ -63,6 +75,14 @@ use hodei_evidence::ContentDigest;
 /// another instance can take to be noticed.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60);
 
+/// How many grants the cache keeps in memory at most
+/// (`trust.cache_max_entries`).
+///
+/// A memory bound, not a security one: evicting costs an extra read of the
+/// live ledger; letting the cache grow costs memory proportional to the
+/// number of distinct digests clients ask about.
+pub const DEFAULT_CAPACITY: usize = 65_536;
+
 /// The default lease of the watermark check: how often the cache asks the
 /// shared authority whether the world of invalidations moved. It is the
 /// staleness bound between nodes (the `ttl` stays the bound of the path
@@ -82,6 +102,9 @@ struct Entry {
     /// produced this entry. `None` is a ledger without signal: the `ttl`
     /// rules.
     stamp: Option<u64>,
+    /// Recency: the value of the cache clock at the last hit or insertion.
+    /// Unique per entry, so the eviction victim is never a tie.
+    used: u64,
 }
 
 /// What the shared authority said about the watermark.
@@ -115,6 +138,10 @@ struct SignalState {
 pub struct CachedTrustLedger {
     inner: std::sync::Arc<dyn TrustLedger>,
     ttl: Duration,
+    /// The most entries the map may hold.
+    capacity: usize,
+    /// Strictly increasing recency clock stamped on hits and insertions.
+    clock: AtomicU64,
     /// How often the shared authority's watermark is probed.
     verify: Duration,
     admitted: Mutex<HashMap<Key, Entry>>,
@@ -132,9 +159,22 @@ pub struct CachedTrustLedger {
 impl CachedTrustLedger {
     /// The real ledger, with the ttl each entry must have.
     pub fn new(inner: std::sync::Arc<dyn TrustLedger>, ttl: Duration) -> Self {
+        Self::with_capacity(inner, ttl, DEFAULT_CAPACITY)
+    }
+
+    /// The real ledger with the ttl and the entry bound explicit. A
+    /// capacity of zero is raised to one: the cache never holds more than
+    /// `capacity` entries, and never fewer than the one being inserted.
+    pub fn with_capacity(
+        inner: std::sync::Arc<dyn TrustLedger>,
+        ttl: Duration,
+        capacity: usize,
+    ) -> Self {
         Self {
             inner,
             ttl,
+            capacity: capacity.max(1),
+            clock: AtomicU64::new(0),
             verify: DEFAULT_VERIFY,
             admitted: Mutex::new(HashMap::new()),
             signal: Mutex::new(SignalState {
@@ -157,6 +197,40 @@ impl CachedTrustLedger {
     pub fn with_verify(mut self, verify_for: Duration) -> Self {
         self.verify = verify_for;
         self
+    }
+
+    /// How many grants the cache holds right now (expired ones are swept
+    /// first).
+    pub fn len(&self) -> usize {
+        self.fresh().len()
+    }
+
+    /// Whether the cache holds nothing.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The next recency stamp.
+    fn tick(&self) -> u64 {
+        self.clock.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Inserts under the bound. Replacing a key never evicts; a new key in
+    /// a full map first evicts the least recently used entry (the smallest
+    /// `used`, unique, hence deterministic). Expired entries are already
+    /// gone: `fresh()` swept them before this is called.
+    fn insert_bounded(&self, map: &mut HashMap<Key, Entry>, key: Key, mut entry: Entry) {
+        entry.used = self.tick();
+        if !map.contains_key(&key) && map.len() >= self.capacity {
+            let victim = map
+                .iter()
+                .min_by_key(|(_, kept)| kept.used)
+                .map(|(victim, _)| victim.clone());
+            if let Some(victim) = victim {
+                map.remove(&victim);
+            }
+        }
+        map.insert(key, entry);
     }
 
     fn key(account: &str, repository: &str, digest: &ContentDigest) -> Key {
@@ -379,8 +453,9 @@ impl TrustLedger for CachedTrustLedger {
         // is still the world's. Three clocks --validity, ttl, watermark--;
         // if one lies, the most closed wins.
         if !matches!(signal, Signal::Lost) {
-            let map = self.fresh();
-            if let Some(entry) = map.get(&key).filter(|entry| {
+            let mut map = self.fresh();
+            let tick = self.tick();
+            if let Some(entry) = map.get_mut(&key).filter(|entry| {
                 entry.grant.is_active_at(at)
                     && match (&entry.stamp, &signal) {
                         (Some(seen), Signal::Current(mark)) => seen == mark,
@@ -390,6 +465,8 @@ impl TrustLedger for CachedTrustLedger {
                         _ => false,
                     }
             }) {
+                // Only an entry that actually serves counts as used.
+                entry.used = tick;
                 return Ok(Some(entry.grant.clone()));
             }
         }
@@ -412,12 +489,14 @@ impl TrustLedger for CachedTrustLedger {
             // never a stale permit.
             let mut map = self.fresh();
             if gen_before == self.generation.load(Ordering::SeqCst) && self.mark_holds(&signal) {
-                map.insert(
+                self.insert_bounded(
+                    &mut map,
                     key,
                     Entry {
                         grant: active.clone(),
                         expires_at: Instant::now() + self.ttl,
                         stamp,
+                        used: 0,
                     },
                 );
             }
@@ -1318,5 +1397,164 @@ mod tests {
                 .is_none(),
             "the revoked trust was served after a late probe rolled the mark back"
         );
+    }
+
+    // ---- HSP-330: bounded cache with deterministic eviction ----
+
+    fn grants_for(labels: &[String]) -> Vec<TrustGrant> {
+        labels
+            .iter()
+            .map(|label| a_grant(&the_digest_of(label)))
+            .collect()
+    }
+
+    async fn ask(cached: &CachedTrustLedger, label: &str) -> bool {
+        cached
+            .active_grant("acme", "trusted-repo", &the_digest_of(label), Utc::now())
+            .await
+            .expect("the ledger answers")
+            .is_some()
+    }
+
+    /// With N+1 distinct keys the cache never exceeds N, and the evicted
+    /// key (the least recently used) is re-read from the live ledger.
+    #[tokio::test]
+    async fn n_plus_one_keys_never_exceed_the_bound_and_the_victim_is_reread() {
+        let labels: Vec<String> = (0..4).map(|i| format!("k{i}")).collect();
+        let fake = Arc::new(FakeLedger::new(grants_for(&labels)));
+        let cached = CachedTrustLedger::with_capacity(fake.clone(), Duration::from_secs(60), 3);
+        for label in &labels {
+            assert!(ask(&cached, label).await);
+            assert!(cached.len() <= 3, "the bound holds after every insertion");
+        }
+        assert_eq!(cached.len(), 3);
+        assert_eq!(fake.the_reads(), 4);
+
+        // k0 was the least recently used: it was evicted and is re-read.
+        assert!(ask(&cached, "k0").await);
+        assert_eq!(
+            fake.the_reads(),
+            5,
+            "the evicted key goes to the live ledger"
+        );
+        // k3 (most recent before that) is still cached: no read.
+        assert!(ask(&cached, "k3").await);
+        assert_eq!(fake.the_reads(), 5, "a surviving key is a cache hit");
+    }
+
+    /// A hit refreshes recency: the key just used survives, the one
+    /// untouched for longest is the victim.
+    #[tokio::test]
+    async fn a_hit_protects_its_entry_from_eviction() {
+        let labels: Vec<String> = (0..3).map(|i| format!("r{i}")).collect();
+        let fake = Arc::new(FakeLedger::new(grants_for(&labels)));
+        let cached = CachedTrustLedger::with_capacity(fake.clone(), Duration::from_secs(60), 2);
+        ask(&cached, "r0").await;
+        ask(&cached, "r1").await;
+        ask(&cached, "r0").await; // r0 is now more recent than r1
+        ask(&cached, "r2").await; // evicts r1, not r0
+        let reads = fake.the_reads();
+        ask(&cached, "r0").await;
+        assert_eq!(fake.the_reads(), reads, "r0 survived thanks to its hit");
+        ask(&cached, "r1").await;
+        assert_eq!(fake.the_reads(), reads + 1, "r1 was the victim");
+    }
+
+    /// Replaying the same sequence evicts the same keys, and the cache
+    /// matches a reference LRU model after every step (sweep over
+    /// capacities and a pseudo-random but fixed access pattern).
+    #[tokio::test]
+    async fn eviction_is_deterministic_and_matches_the_lru_model() {
+        let labels: Vec<String> = (0..9).map(|i| format!("m{i}")).collect();
+        for capacity in 1..=6usize {
+            let mut traces: Vec<Vec<usize>> = Vec::new();
+            for _run in 0..2 {
+                let fake = Arc::new(FakeLedger::new(grants_for(&labels)));
+                let cached = CachedTrustLedger::with_capacity(
+                    fake.clone(),
+                    Duration::from_secs(60),
+                    capacity,
+                );
+                // Reference model: most recent last.
+                let mut model: Vec<usize> = Vec::new();
+                let mut trace = Vec::new();
+                let mut seed: u64 = 0x9E37_79B9_7F4A_7C15 ^ capacity as u64;
+                for _ in 0..200 {
+                    seed = seed
+                        .wrapping_mul(6_364_136_223_846_793_005)
+                        .wrapping_add(1_442_695_040_888_963_407);
+                    let pick = ((seed >> 33) as usize) % labels.len();
+                    let reads = fake.the_reads();
+                    assert!(ask(&cached, &labels[pick]).await);
+                    let hit = fake.the_reads() == reads;
+                    assert_eq!(hit, model.contains(&pick), "hit/miss follows the model");
+                    model.retain(|k| *k != pick);
+                    model.push(pick);
+                    if model.len() > capacity {
+                        model.remove(0);
+                    }
+                    assert!(cached.len() <= capacity, "never above the bound");
+                    assert_eq!(cached.len(), model.len());
+                    trace.push(usize::from(hit));
+                }
+                traces.push(trace);
+            }
+            assert_eq!(
+                traces[0], traces[1],
+                "the same sequence evicts the same keys"
+            );
+        }
+    }
+
+    /// Eviction must never fail open on a revocation: an evicted key that
+    /// was revoked meanwhile is denied on re-read, and a surviving key is
+    /// invalidated by the watermark as before.
+    #[tokio::test]
+    async fn eviction_never_serves_a_revoked_trust() {
+        let labels: Vec<String> = (0..3).map(|i| format!("v{i}")).collect();
+        let fake = Arc::new(FakeLedger::new(grants_for(&labels)));
+        fake.set_mark(1);
+        let cached = CachedTrustLedger::with_capacity(fake.clone(), Duration::from_secs(60), 2)
+            .with_verify(Duration::ZERO);
+        ask(&cached, "v0").await;
+        ask(&cached, "v1").await;
+        ask(&cached, "v2").await; // evicts v0
+        // A foreign node revokes v0 (evicted) and v2 (cached).
+        for label in ["v0", "v2"] {
+            fake.revoke_digest(
+                "acme",
+                "trusted-repo",
+                &the_digest_of(label),
+                "other",
+                "cve",
+                Utc::now(),
+            )
+            .await
+            .expect("foreign revocation");
+        }
+        fake.set_mark(2);
+        assert!(
+            !ask(&cached, "v0").await,
+            "the evicted key is re-read: revoked"
+        );
+        assert!(
+            !ask(&cached, "v2").await,
+            "the cached key falls by the watermark"
+        );
+        assert!(
+            ask(&cached, "v1").await,
+            "the untouched grant is still served"
+        );
+    }
+
+    /// Zero is raised to one: the cache stays usable and bounded.
+    #[tokio::test]
+    async fn a_zero_capacity_is_raised_to_one() {
+        let labels: Vec<String> = (0..2).map(|i| format!("z{i}")).collect();
+        let fake = Arc::new(FakeLedger::new(grants_for(&labels)));
+        let cached = CachedTrustLedger::with_capacity(fake, Duration::from_secs(60), 0);
+        ask(&cached, "z0").await;
+        ask(&cached, "z1").await;
+        assert_eq!(cached.len(), 1);
     }
 }

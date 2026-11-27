@@ -62,7 +62,7 @@ no es un pasaporte; `429` saturado; `501` sin raíces; `503` sin veredicto; `408
 
 ## Límites conocidos
 
-La caché de revocación es la del ledger de confianza (`trust.revocation_verify_secs`, 5 s por defecto): una revocación puede tardar hasta ese plazo en verse; con 0 cada petición consulta la autoridad. Una concesión que ha **expirado** se informa con el código `revoked` (el ledger no distingue "revocada" de "ya no vigente"); la explicación lo dice.
+La caché de revocación es la del ledger de confianza (`trust.revocation_verify_secs`, 5 s por defecto): una revocación puede tardar hasta ese plazo en verse; con 0 cada petición consulta la autoridad. La caché está acotada por `trust.cache_max_entries` (65536 por defecto, HSP-330): una entrada desalojada se relee del ledger vivo, por lo que el tope no alarga ese plazo. Una concesión que ha **expirado** se informa con el código `revoked` (el ledger no distingue "revocada" de "ya no vigente"); la explicación lo dice.
 
 Los hashes SHA-1/SHA-224 con Ed25519 los rechaza la librería `pgp`; no hay
 prueba propia de ello. La caché de revocación usa `trust.revocation_verify_secs`

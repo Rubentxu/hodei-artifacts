@@ -183,10 +183,16 @@ pub async fn assemble_graph_profile(
     );
     // The cache checks the shared authority's invalidation watermark (HSP-320)
     // so that a revocation by another node is honored within the lease.
-    let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> =
-        Arc::new(CachedTrustLedger::with_default_ttl(trust).with_verify(
-            std::time::Duration::from_secs(config.trust.revocation_verify_secs),
-        ));
+    let trust_ledger: Arc<dyn hodei_catalog::TrustLedger> = Arc::new(
+        CachedTrustLedger::with_capacity(
+            trust,
+            crate::trust::cache::DEFAULT_TTL,
+            config.trust.cache_max_entries,
+        )
+        .with_verify(std::time::Duration::from_secs(
+            config.trust.revocation_verify_secs,
+        )),
+    );
 
     // 2b. The store the reads go through. With a migration destination the reads
     //    follow the location journal (HSP-325); the journal lives in the catalog
