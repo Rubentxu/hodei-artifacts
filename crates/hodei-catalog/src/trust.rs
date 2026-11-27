@@ -256,6 +256,25 @@ pub trait TrustLedger: Send + Sync {
         }
         Ok(active)
     }
+
+    /// The invalidation watermark: the durable revision of the shared
+    /// authority that the confirmed revocations have reached (HSP-146 /
+    /// HSP-320).
+    ///
+    /// It is the cheap signal that lets one node notice a revocation
+    /// confirmed by *another* node without waiting for a cache TTL: a
+    /// cached read carries the watermark observed before the authoritative
+    /// read, and comparing it with the authority's current one says whether
+    /// the world moved. A ledger that advances it with every confirmed
+    /// revocation, and never backwards, makes the comparison exact.
+    ///
+    /// `Ok(None)` is not a failure: it is a ledger without a watermark (an
+    /// in-process ledger nobody else writes to), and the caching wrapper
+    /// then keeps its plain TTL semantics. A lost signal (`Err`) never
+    /// renews a cached permit: the wrapper fails closed and reads the ledger.
+    async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
+        Ok(None)
+    }
 }
 
 /// A concession the validity sweep looks at: the row, with what the

@@ -387,6 +387,17 @@ pub struct TrustConfig {
     /// Default: 60.
     #[serde(default = "the_default_trust_sweep_interval_secs")]
     pub sweep_interval_secs: u64,
+    /// Lease, in seconds, with which the admission cache checks the
+    /// invalidation watermark of the shared authority (HSP-146 / HSP-320):
+    /// how often a cached permit asks again whether another node revoked
+    /// something. It is the upper bound of how long a node can keep honoring
+    /// a trust revoked by another node; without the signal it would be the
+    /// cache TTL (60 s). `0` is the strict profile: every request checks the
+    /// authority. Losing the signal never renews a cached ALLOW.
+    ///
+    /// Default: 5.
+    #[serde(default = "the_default_revocation_verify_secs")]
+    pub revocation_verify_secs: u64,
 }
 
 impl Default for TrustConfig {
@@ -397,6 +408,7 @@ impl Default for TrustConfig {
             policy_id: the_default_trust_policy_id(),
             grant_max_validity_secs: the_default_grant_max_validity_secs(),
             sweep_interval_secs: the_default_trust_sweep_interval_secs(),
+            revocation_verify_secs: the_default_revocation_verify_secs(),
         }
     }
 }
@@ -411,6 +423,10 @@ fn the_default_grant_max_validity_secs() -> u64 {
 
 fn the_default_trust_sweep_interval_secs() -> u64 {
     60
+}
+
+fn the_default_revocation_verify_secs() -> u64 {
+    5
 }
 
 /// The public address of the deployment.

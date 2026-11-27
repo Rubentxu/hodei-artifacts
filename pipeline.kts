@@ -220,6 +220,8 @@ pipeline {
                         "--test hsp321i_admission_dgraph_it",
                         // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.
                         "--test hsp321j_publishers_dgraph_it",
+                        // HSP-320 tramo 1: two independent nodes over one Dgraph; a revocation by A stops B within the watermark lease, fail-closed on partition.
+                        "--test hsp320a_trust_invalidation_it",
                         "--test hsp314_f3b3_reactor_wiring_it",
                         "--test hsp323_reaction_status_it",
                         // HSP-151 / HSP-321: the Policy Studio API over the real binary and Dgraph.

@@ -1170,6 +1170,40 @@ impl TrustLedger for DgraphTrustStore {
             .await
             .map_err(Into::into)
     }
+
+    /// The watermark of the shared authority (HSP-146 / HSP-320): how many
+    /// durable revocation events the graph has confirmed.
+    ///
+    /// No new state: it counts the SAME `HodeiTrustGrantEvent` nodes of kind
+    /// `"revoked"` that every confirming revocation writes inside its own
+    /// transaction (`revoke_where`). Events are never deleted, so the count
+    /// only moves forward; a repeated revocation confirms nothing and writes
+    /// nothing. The count is global to the graph (not per tenant): a foreign
+    /// revocation can only cost one extra read of the live book, never a
+    /// renewed permit. A response without the count block is a broken answer
+    /// and goes as `Err`, so the wrapper never renews a cached ALLOW on a
+    /// lost signal.
+    async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
+        let response = query_json(
+            &self.client,
+            "{ q(func: eq(hodei.trust.event.kind, \"revoked\")) { total: count(uid) } }",
+        )
+        .await
+        .map_err(CatalogError::from)?;
+        let rows = response
+            .get("q")
+            .and_then(Value::as_array)
+            .ok_or_else(|| CatalogError::unavailable("the revoked-event count did not answer"))?;
+        // No matching nodes answer an empty array, not a zero row: zero
+        // events is a confirmed zero, the watermark of a world nobody has
+        // revoked in yet.
+        let total = rows
+            .first()
+            .and_then(|row| row.get("total"))
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        Ok(Some(total))
+    }
 }
 
 #[async_trait]
