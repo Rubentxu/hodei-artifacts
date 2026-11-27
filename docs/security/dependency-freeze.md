@@ -92,6 +92,8 @@ Limitaciones conocidas de este tramo:
 - La acción `ExploreRepositoryHistory` no está en `check_service_declared`, igual que
   `ManageDependencyFreeze`: la declaración en el esquema se comprueba, la del servicio no.
 - Los digests citados se sondean uno a uno en el almacén (hasta 400 por petición).
+- `explain` acumula hasta 20 000 diferencias antes de truncar a 200 (acotado, pero con clones evitables).
+- `servable` carga todos los grants del repositorio para responder por <=400 digests, y `present` no comprueba el tamaño del blob.
 - Sin test de concurrencia ni de auditoría emitida.
 
 Fuera de este tramo: simulación de prohibición con blast radius inverso, sellos de política a una fecha
