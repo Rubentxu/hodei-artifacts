@@ -441,21 +441,50 @@ pub async fn provenance(
     Ok(axum::Json(serde_json::json!({ "receipts": receipts })).into_response())
 }
 
+/// How many released digests the answer of a deletion lists; the rest is only
+/// counted (`released_total`).
+const MAX_RELEASED_LISTED: usize = 100;
+
+/// The answer of a refusal that names its own code.
+fn refusal(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        axum::Json(serde_json::json!({"error": code, "message": message})),
+    )
+        .into_response()
+}
+
 /// `DELETE /repository/{repository}/{*path}` (HSP-113)
 ///
 /// Deletes the asset at that address and the history of its path. It is a
 /// **logical** deletion: the catalog stops naming the content and the blob is
 /// left for the garbage collector, which keeps whatever another reference or a
-/// hold (a dependency freeze, a legal hold) still names. No byte is deleted
-/// here.
+/// hold still names. No byte is deleted here.
 ///
-/// The order is the one of the rest of the surface: authenticate, read the
-/// path, look up the repository in the verified account (another account's
-/// repository is the same 404 as one that never existed), and only then the
-/// dedicated Cedar action `DeleteAsset`. Past the gate, deleting what is not
-/// there answers `200` with `deleted: false`: the repetition of a deletion is
-/// harmless, and the answer does not depend on anything outside the caller's
-/// own repository.
+/// # Retention
+///
+/// A **digest** hold protects its own bytes through the collector. A
+/// **repository** or **account** hold (a legal hold) is a promise about
+/// everything that scope references, and it is resolved from the references the
+/// catalog holds: deleting the rows would make the promise vacuous. So a
+/// deletion is refused with `409 E_DELETE_HELD` while an active hold of the
+/// repository or of the account is in force, and nothing is removed. The check
+/// reads the holds just before the write; a hold placed in the instant between
+/// the two is not seen (a window, not a guarantee), and the collector's own
+/// per-digest holds remain the last line.
+///
+/// # Order and answers
+///
+/// Authenticate, read the path, look up the repository in the verified account
+/// (another account's repository is the same 404 as one that never existed),
+/// the dedicated Cedar action `DeleteAsset` (403, audited), the retention check
+/// (409). Past the gates, deleting what is not there answers `200` with
+/// `deleted: false`. A deletion that removed something is said in the audit
+/// trail as it happened: the event is written with the removal in the same
+/// catalog transaction, and the diagnostic sink records `Allowed`, or `Conflict`
+/// when the answer is not a clean success (`409 E_DELETE_PARTIAL` more versions
+/// than one call removes, repeat it; `409 E_DELETE_UNSETTLED` the path was
+/// published again while deleting, or the verification could not be read).
 pub async fn delete(
     State(state): State<AppState>,
     uri: OriginalUri,
@@ -467,67 +496,145 @@ pub async fn delete(
     let repository = the_repository(&state, &context, &target.repository).await?;
     let action = crate::actions::delete_asset();
     let resource = format!("{}/{}", target.repository, target.asset_path);
-    let audit = |result: AuditResult| {
+    let audit = |resource: &str, result: AuditResult| {
         record_audit(
             &state,
             context.principal().subject().as_str(),
             context.account().as_str(),
             &action.to_string(),
-            &resource,
+            resource,
             result,
             &correlation,
         );
     };
     if let Err(error) = the_decision(&state, &context, action.clone(), &repository) {
-        audit(if matches!(error, RawApiError::Forbidden) {
-            AuditResult::Denied
-        } else {
-            AuditResult::Failed
-        });
+        audit(
+            &resource,
+            if matches!(error, RawApiError::Forbidden) {
+                AuditResult::Denied
+            } else {
+                AuditResult::Failed
+            },
+        );
         return Err(error);
     }
     // Only a raw repository: the other formats derive protocol metadata from
     // what they publish (manifests, packuments, indexes) and need a deletion
     // that knows that format; this one never guesses.
     if repository.format != RepositoryFormat::Raw || !repository.mode.accepts_client_writes() {
-        audit(AuditResult::Failed);
+        audit(&resource, AuditResult::Failed);
         return Err(RawApiError::MethodNotAllowed(
             "deleting is served for hosted raw repositories only",
+        ));
+    }
+    // Retention first. Without the collector's service the holds cannot be
+    // read, and a deletion that cannot check them is not offered.
+    let Some(gc) = state.gc.as_ref() else {
+        audit(&resource, AuditResult::Failed);
+        return Err(RawApiError::NotImplemented(
+            "deleting needs the garbage collection service to check the retention holds",
+        ));
+    };
+    let account = context.account().as_str();
+    let held = match gc.holds().await {
+        Ok(holds) => {
+            let now = chrono::Utc::now();
+            holds.iter().any(|hold| {
+                hold.is_active(now)
+                    && match &hold.scope {
+                        hodei_catalog::HoldScope::Repository {
+                            account: held_account,
+                            repository: held_repository,
+                        } => held_account == account && *held_repository == target.repository,
+                        hodei_catalog::HoldScope::Account {
+                            account: held_account,
+                        } => held_account == account,
+                        hodei_catalog::HoldScope::Digest { .. } => false,
+                    }
+            })
+        }
+        Err(_) => {
+            audit(&resource, AuditResult::Failed);
+            return Err(RawApiError::Unavailable);
+        }
+    };
+    if held {
+        audit(&resource, AuditResult::Denied);
+        return Ok(refusal(
+            StatusCode::CONFLICT,
+            "E_DELETE_HELD",
+            "an active retention hold of the repository or of the account is in force: nothing was deleted",
         ));
     }
     let (_, writer) = match the_catalog(&state) {
         Ok(pair) => pair,
         Err(error) => {
-            audit(AuditResult::Failed);
+            audit(&resource, AuditResult::Failed);
             return Err(error);
         }
     };
     let deletion = match writer
         .delete_asset(
-            context.account().as_str(),
+            account,
             &target.repository,
             &target.asset_path,
+            context.principal().subject().as_str(),
+            &correlation,
         )
         .await
     {
         Ok(deletion) => deletion,
         Err(error) => {
-            audit(AuditResult::Failed);
+            // The write is one guarded transaction: an error here means it did
+            // not commit, or that nothing can be said about it; either way no
+            // removal is claimed.
+            audit(&resource, AuditResult::Failed);
             return Err(the_publication_error(&error));
         }
     };
-    // A deletion that did something is a fact and is said; one that found
-    // nothing adds no fact (and leaves no trace to count).
+    // What is said is what happened: the counts travel in the resource.
+    let said = format!(
+        "{resource} versions={} released={}",
+        deletion.versions_removed,
+        deletion.released.len()
+    );
     if deletion.removed {
-        audit(AuditResult::Allowed);
+        audit(
+            &said,
+            if deletion.settled {
+                AuditResult::Allowed
+            } else {
+                AuditResult::Conflict
+            },
+        );
     }
+    let released_total = deletion.released.len();
     let body = serde_json::json!({
         "repository": target.repository,
         "path": target.asset_path,
         "deleted": deletion.removed,
         "versions_removed": deletion.versions_removed,
-        "released": deletion.released.iter().map(ToString::to_string).collect::<Vec<_>>(),
+        "released_total": released_total,
+        "released": deletion
+            .released
+            .iter()
+            .take(MAX_RELEASED_LISTED)
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
     });
+    if deletion.partial {
+        let mut body = body;
+        body["error"] = "E_DELETE_PARTIAL".into();
+        body["message"] =
+            "more versions than one deletion removes remain: repeat the request".into();
+        return Ok((StatusCode::CONFLICT, axum::Json(body)).into_response());
+    }
+    if !deletion.settled {
+        let mut body = body;
+        body["error"] = "E_DELETE_UNSETTLED".into();
+        body["message"] = "the path was published again while it was deleted, or the check afterwards could not be read: look at the path before assuming it is empty".into();
+        return Ok((StatusCode::CONFLICT, axum::Json(body)).into_response());
+    }
     Ok(axum::Json(body).into_response())
 }
 

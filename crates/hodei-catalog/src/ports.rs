@@ -543,10 +543,17 @@ pub trait CatalogWriter: Send + Sync {
     /// collector (which honors holds) reclaims it later. Deleting an asset
     /// that is not there is not an error (`removed: false`), so a retry
     /// after a lost answer is harmless.
+    ///
+    /// The audit event of the deletion (`actor`, `correlation_id`) is written
+    /// in the same transaction as the removal, like the one of a publication:
+    /// there is no removal without its event and no event without its removal.
+    /// At most a bounded number of versions go in one call (`partial`).
     async fn delete_asset(
         &self,
         principal_account: &str,
         repository: &str,
         asset_path: &str,
+        actor: &str,
+        correlation_id: &str,
     ) -> Result<AssetDeletion, CatalogError>;
 }

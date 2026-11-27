@@ -298,6 +298,12 @@ pub fn check_service_declared(
         // 403 instead of the service refusing to start.
         check_declared(schema, &upload_asset())?;
     }
+    if raw_enabled {
+        // The raw surface also deletes (HSP-113). A bundle without the action
+        // would leave every deletion without a verdict (a 500), so the
+        // deployment refuses to start instead.
+        check_declared(schema, &delete_asset())?;
+    }
     if investigation_enabled {
         // The investigation surface asks for its own action: a bundle that
         // does not declare it cannot grant it, and every request would end

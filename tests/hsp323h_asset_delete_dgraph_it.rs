@@ -51,9 +51,9 @@ use hodei_authz::{
 };
 use hodei_catalog::{
     AssetDeletion, AssetRecord, CatalogError, CatalogReader, CatalogSearch, CatalogWriter,
-    ContentLedger, DigestScope, MutableTag, PackageCoordinates, Publication, PublishOutcome,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustGrant,
-    TrustLedger, repository_hrn,
+    ContentLedger, DigestScope, HoldScope, MutableTag, PackageCoordinates, Publication,
+    PublishOutcome, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
+    TrustGrant, TrustLedger, repository_hrn,
 };
 use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
@@ -197,12 +197,14 @@ impl CatalogWriter for Flaky {
         account: &str,
         repository: &str,
         asset_path: &str,
+        actor: &str,
+        correlation_id: &str,
     ) -> Result<AssetDeletion, CatalogError> {
         if self.down.load(Ordering::SeqCst) {
             return Err(CatalogError::unavailable("the graph is down"));
         }
         self.inner
-            .delete_asset(account, repository, asset_path)
+            .delete_asset(account, repository, asset_path, actor, correlation_id)
             .await
     }
 }
@@ -222,6 +224,11 @@ struct Vertical {
 }
 
 async fn mount() -> Option<Vertical> {
+    mount_with(None).await
+}
+
+/// `cap`: how many versions one deletion may remove (the store's bound).
+async fn mount_with(cap: Option<usize>) -> Option<Vertical> {
     if !harness_available() {
         return None;
     }
@@ -243,12 +250,14 @@ async fn mount() -> Option<Vertical> {
     .expect("bootstrap must succeed");
 
     let trust = Arc::new(tenant.trust_store().await);
-    let store = Arc::new(
-        tenant
-            .catalog_store()
-            .await
-            .with_trust_ledger(trust.clone()),
-    );
+    let store = tenant
+        .catalog_store()
+        .await
+        .with_trust_ledger(trust.clone());
+    let store = Arc::new(match cap {
+        Some(cap) => store.with_delete_versions_cap(cap),
+        None => store,
+    });
     let down = Arc::new(AtomicBool::new(false));
     let reader: Arc<dyn CatalogReader> = store.clone();
     let writer: Arc<dyn CatalogWriter> = Arc::new(Flaky {
@@ -762,4 +771,155 @@ async fn promotion_and_reevaluation_are_reflected_by_the_search_and_a_deleted_as
     let (status, _) = delete(&v, &alice(), "tools", "bin/tool").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(found(&v, &alice(), trusted).await, ["bin/other"]);
+}
+
+/// The audit events the catalog outbox holds for deletions (the durable ones,
+/// written in the removal's own transaction).
+async fn outbox_deletions(v: &Vertical) -> Vec<(String, Option<String>)> {
+    use hodei_audit::AuditOutbox;
+    let outbox = hodei_catalog_storage::DgraphAuditOutbox::new(v.tenant.client().await);
+    let mut events: Vec<(String, Option<String>)> = outbox
+        .pending(Utc::now())
+        .await
+        .expect("the outbox answers")
+        .into_iter()
+        .filter(|entry| entry.event.action == "delete")
+        .map(|entry| (entry.event.resource.clone(), entry.event.digest.clone()))
+        .collect();
+    events.sort();
+    events
+}
+
+#[tokio::test]
+async fn a_repository_or_account_hold_refuses_the_deletion_until_it_is_released() {
+    let Some(v) = mount().await else { return };
+    seed(&v, ACCOUNT, "reg", json!({})).await;
+    seed(&v, ACCOUNT, "other-reg", json!({})).await;
+    upload(&v, "reg", &alice(), "a/one.bin", KEEP).await;
+    upload(&v, "other-reg", &alice(), "a/two.bin", DROP).await;
+
+    for (label, scope) in [
+        (
+            "repository",
+            HoldScope::Repository {
+                account: ACCOUNT.to_string(),
+                repository: "reg".to_string(),
+            },
+        ),
+        (
+            "account",
+            HoldScope::Account {
+                account: ACCOUNT.to_string(),
+            },
+        ),
+    ] {
+        let hold =
+            v.gc.place_hold("legal", scope, "legal hold", None)
+                .await
+                .expect("the hold is placed");
+        let (status, body) = delete(&v, &alice(), "reg", "a/one.bin").await;
+        assert_eq!(status, StatusCode::CONFLICT, "{label}");
+        assert_eq!(json_of(&body)["error"], "E_DELETE_HELD", "{label}");
+        assert_eq!(
+            found(&v, &alice(), "repository=reg").await,
+            ["a/one.bin"],
+            "{label}: nothing was removed"
+        );
+        assert_eq!(
+            download(&v, &alice(), "reg", "a/one.bin").await,
+            (StatusCode::OK, KEEP.to_vec())
+        );
+        // Even a path that is not there answers the hold, not a 200.
+        assert_eq!(
+            delete(&v, &alice(), "reg", "a/none.bin").await.0,
+            StatusCode::CONFLICT
+        );
+        if label == "repository" {
+            // The hold of one repository does not reach another.
+            let (status, _) = delete(&v, &alice(), "other-reg", "a/two.bin").await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        assert!(v.gc.release_hold(&hold.id).await.expect("released"));
+    }
+    assert_eq!(
+        results_of(&v)
+            .iter()
+            .filter(|r| **r == AuditResult::Denied)
+            .count(),
+        4
+    );
+
+    // Released: the same request deletes.
+    let (status, _) = delete(&v, &alice(), "reg", "a/one.bin").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(found(&v, &alice(), "repository=reg").await.is_empty());
+}
+
+#[tokio::test]
+async fn the_event_is_written_with_the_removal_and_says_what_happened() {
+    let Some(v) = mount().await else { return };
+    seed(&v, ACCOUNT, "reg", json!({})).await;
+    upload(&v, "reg", &alice(), "a/one.bin", KEEP).await;
+    assert!(outbox_deletions(&v).await.is_empty());
+
+    let (status, _) = delete(&v, &alice(), "reg", "a/one.bin").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        outbox_deletions(&v).await,
+        vec![(
+            "reg/a/one.bin".to_string(),
+            Some(digest_of(KEEP).to_string())
+        )],
+        "one durable event, naming the path and the content released"
+    );
+    // A failed deletion leaves no event, and a no-op adds none.
+    v.down.store(true, Ordering::SeqCst);
+    delete(&v, &alice(), "reg", "a/one.bin").await;
+    v.down.store(false, Ordering::SeqCst);
+    delete(&v, &alice(), "reg", "a/one.bin").await;
+    assert_eq!(outbox_deletions(&v).await.len(), 1);
+}
+
+#[tokio::test]
+async fn more_versions_than_the_bound_are_removed_by_repeating_the_request() {
+    let Some(v) = mount_with(Some(2)).await else {
+        return;
+    };
+    seed(&v, ACCOUNT, "reg", json!({"raw": {"replace": "allow"}})).await;
+    let releases: Vec<Vec<u8>> = (0..5)
+        .map(|n| format!("release number {n}").into_bytes())
+        .collect();
+    for bytes in &releases {
+        upload(&v, "reg", &alice(), "lib/x.bin", bytes).await;
+    }
+
+    // First call: the asset and two versions go, the rest is asked for again.
+    let (status, body) = delete(&v, &alice(), "reg", "lib/x.bin").await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let answer = json_of(&body);
+    assert_eq!(answer["error"], "E_DELETE_PARTIAL", "{answer}");
+    assert_eq!(answer["versions_removed"], 2);
+    assert!(found(&v, &alice(), "repository=reg").await.is_empty());
+
+    let mut rounds = 0;
+    loop {
+        rounds += 1;
+        assert!(rounds < 5, "the repetition converges");
+        let (status, body) = delete(&v, &alice(), "reg", "lib/x.bin").await;
+        if status == StatusCode::OK {
+            assert_eq!(json_of(&body)["deleted"], true);
+            break;
+        }
+        assert_eq!(status, StatusCode::CONFLICT);
+    }
+    // Nothing of the history is left for the collector to be held back by.
+    v.gc.sweep_platform("alice", ACCOUNT)
+        .await
+        .expect("a sweep");
+    for bytes in &releases {
+        assert!(!in_cas(&v, bytes).await);
+    }
+    // The answer lists a bounded number of digests and counts the rest.
+    let (_, body) = delete(&v, &alice(), "reg", "lib/x.bin").await;
+    assert_eq!(json_of(&body)["deleted"], false);
 }

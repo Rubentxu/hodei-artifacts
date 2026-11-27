@@ -62,6 +62,10 @@ use sha2::{Digest as _, Sha256};
 
 mod gc_ledger;
 
+/// How many versions of a package one deletion removes. The rest is removed
+/// by repeating the request (the answer says `partial`).
+pub const MAX_VERSIONS_PER_DELETE: usize = 1000;
+
 /// How many times the publication re-reads and retries before giving up.
 const WRITE_ATTEMPTS: usize = 6;
 
@@ -1861,20 +1865,23 @@ fn deletion_operation_id(
 }
 
 /// The query lines of a deletion: the asset, its reference, the versions of
-/// its package and the OTHER assets that still name that package (a package
-/// whose name another asset carries keeps its versions).
+/// its package (at most `cap`), the OTHER assets that still name that package
+/// (a package whose name another asset carries keeps its versions) and, when the
+/// deletion writes its audit event, the row that event would take.
 fn deletion_query_lines(
     account: &str,
     repository: &str,
     asset_path: &str,
     package: &str,
+    cap: usize,
+    event_id: Option<&str>,
 ) -> Vec<String> {
     let key = dql_string(&asset_key(account, repository, asset_path));
-    vec![
+    let mut lines = vec![
         format!("a as var(func: eq(hodei.catalog.asset.key, {key}))"),
         format!("rf as var(func: eq(hodei.catalog.reference.key, {key}))"),
         format!(
-            "vs as var(func: eq(hodei.catalog.version.repository, {repository})) \
+            "vs as var(func: eq(hodei.catalog.version.repository, {repository}), first: {cap}) \
              @filter(eq(hodei.catalog.version.account, {account}) AND \
              eq(hodei.catalog.version.package_name, {package}))",
             repository = dql_string(repository),
@@ -1890,24 +1897,50 @@ fn deletion_query_lines(
             account = dql_string(account),
             package = dql_string(package),
         ),
-    ]
+    ];
+    if let Some(event_id) = event_id {
+        lines.push(format!(
+            "ev as var(func: eq(hodei.catalog.outbox.key, {}))",
+            dql_string(event_id)
+        ));
+    }
+    lines
 }
 
-/// The blocks of a deletion, each under the parent's gate of the call.
-fn deletion_blocks(parent: &str) -> Vec<GraphMutationBlock> {
+/// The blocks of a deletion, each under the parent's gate of the call. When the
+/// deletion carries its audit event, every block also needs the event's row to
+/// be free: the removal and its event are one fact, as in a publication.
+fn deletion_blocks(parent: &str, event: Option<&AuditEvent>) -> Vec<GraphMutationBlock> {
+    let gate = if event.is_some() {
+        " AND eq(len(ev), 0)"
+    } else {
+        ""
+    };
     let delete_if = |cond: String, nquads: &str| GraphMutationBlock {
         cond: Some(cond),
         set_nquads: String::new(),
         delete_nquads: nquads.to_owned(),
     };
-    vec![
-        delete_if(format!("{parent} AND eq(len(a), 1)"), "uid(a) * * .\n"),
-        delete_if(format!("{parent} AND eq(len(rf), 1)"), "uid(rf) * * .\n"),
-        delete_if(
-            format!("{parent} AND gt(len(vs), 0) AND eq(len(ot), 0)"),
-            "uid(vs) * * .\n",
-        ),
-    ]
+    let mut blocks = Vec::new();
+    if let Some(event) = event {
+        blocks.push(GraphMutationBlock::set_if(
+            format!("{parent} AND (eq(len(a), 1) OR eq(len(rf), 1)){gate}"),
+            outbox_event_nquads(event),
+        ));
+    }
+    blocks.push(delete_if(
+        format!("{parent} AND eq(len(a), 1){gate}"),
+        "uid(a) * * .\n",
+    ));
+    blocks.push(delete_if(
+        format!("{parent} AND eq(len(rf), 1){gate}"),
+        "uid(rf) * * .\n",
+    ));
+    blocks.push(delete_if(
+        format!("{parent} AND gt(len(vs), 0) AND eq(len(ot), 0){gate}"),
+        "uid(vs) * * .\n",
+    ));
+    blocks
 }
 
 // ---------------------------------------------------------------------------
@@ -1923,6 +1956,8 @@ pub struct DgraphCatalogStore {
     probe: Option<Arc<dyn BlobIntegrityProbe>>,
     identity: Identity,
     trust: Option<Arc<dyn TrustLedger>>,
+    /// How many versions one deletion may remove (`MAX_VERSIONS_PER_DELETE`).
+    delete_versions_cap: usize,
 }
 
 impl std::fmt::Debug for DgraphCatalogStore {
@@ -1982,7 +2017,16 @@ impl DgraphCatalogStore {
             probe: None,
             identity: Identity::system(),
             trust: None,
+            delete_versions_cap: MAX_VERSIONS_PER_DELETE,
         })
+    }
+
+    /// The store with another bound of versions per deletion (a test hook and
+    /// a deployment knob): more versions than this are removed by repeating
+    /// the deletion.
+    pub fn with_delete_versions_cap(mut self, cap: usize) -> Self {
+        self.delete_versions_cap = cap.max(1);
+        self
     }
 
     /// The store with the ledger of the trust grants the search reads.
@@ -3382,6 +3426,8 @@ impl CatalogWriter for DgraphCatalogStore {
         principal_account: &str,
         repository: &str,
         asset_path: &str,
+        actor: &str,
+        correlation_id: &str,
     ) -> Result<AssetDeletion, CatalogError> {
         self.decide(&AccessRequest::asset(
             principal_account,
@@ -3421,78 +3467,123 @@ impl CatalogWriter for DgraphCatalogStore {
         }
 
         let guard = asset_guard_scope(principal_account, repository, asset_path)?;
-        let mut removed = false;
-        let mut released: Vec<ContentDigest> = Vec::new();
-        let mut versions_removed = 0usize;
-        for _attempt in 0..WRITE_ATTEMPTS {
-            // What is there NOW decides: the loop converges on "nothing of
-            // this path is left", and a state that is already clean writes
-            // nothing (idempotent, and no trace of a no-op).
-            let (asset, reference) = self
-                .the_asset_and_reference_rows(principal_account, repository, asset_path)
-                .await?;
-            // A raw path is its package; an asset that is already gone still
-            // names its history by the path.
-            let package = asset
-                .as_ref()
-                .map(|asset| asset.package_name.clone())
-                .unwrap_or_else(|| asset_path.to_string());
-            let versions = self
-                .the_package_versions(principal_account, repository, &package)
-                .await?;
-            let others = self
-                .the_other_assets_of_package(principal_account, repository, asset_path, &package)
-                .await?;
-            let versions: Vec<VersionRow> = if others { Vec::new() } else { versions };
-            if asset.is_none() && reference.is_none() && versions.is_empty() {
-                return Ok(AssetDeletion {
-                    removed,
-                    released,
-                    versions_removed,
-                });
-            }
-            let mut digests: Vec<ContentDigest> = Vec::new();
-            digests.extend(asset.iter().map(|asset| asset.digest.clone()));
-            digests.extend(reference.iter().map(|reference| reference.digest.clone()));
-            digests.extend(versions.iter().map(|version| version.digest.clone()));
-            for digest in digests {
-                if !released.contains(&digest) {
-                    released.push(digest);
-                }
-            }
-            versions_removed += versions.len();
+        let cap = self.delete_versions_cap;
 
-            let operation = deletion_operation_id(
+        // One read of what is there decides. An absent path short-circuits:
+        // no other asset is asked about and nothing is written.
+        let (asset, reference) = self
+            .the_asset_and_reference_rows(principal_account, repository, asset_path)
+            .await?;
+        // A raw path is its package; an asset that is already gone still names
+        // its history by the path.
+        let package = asset
+            .as_ref()
+            .map(|asset| asset.package_name.clone())
+            .unwrap_or_else(|| asset_path.to_string());
+        let mut versions = self
+            .the_package_versions(principal_account, repository, &package, cap + 1)
+            .await?;
+        if asset.is_none() && reference.is_none() && versions.is_empty() {
+            return Ok(AssetDeletion {
+                removed: false,
+                released: Vec::new(),
+                versions_removed: 0,
+                settled: true,
+                partial: false,
+            });
+        }
+        if !versions.is_empty()
+            && self
+                .the_other_assets_of_package(principal_account, repository, asset_path, &package)
+                .await?
+        {
+            versions.clear();
+        }
+        let partial = versions.len() > cap;
+        versions.truncate(cap);
+
+        let mut released: Vec<ContentDigest> = Vec::new();
+        let mut digests: Vec<ContentDigest> = Vec::new();
+        digests.extend(asset.iter().map(|asset| asset.digest.clone()));
+        digests.extend(reference.iter().map(|reference| reference.digest.clone()));
+        digests.extend(versions.iter().map(|version| version.digest.clone()));
+        for digest in digests {
+            if !released.contains(&digest) {
+                released.push(digest);
+            }
+        }
+
+        // The event of the fact goes in the same transaction as the removal; a
+        // path with no asset and no reference (only history) removes rows
+        // without an event: there was nothing published to say it about.
+        let event = asset
+            .as_ref()
+            .map(|row| &row.digest)
+            .or(reference.as_ref().map(|row| &row.digest))
+            .map(|digest| {
+                AuditEvent::new(
+                    self.identity.new_id(),
+                    AuditContext::new(
+                        actor.to_string(),
+                        principal_account.to_string(),
+                        correlation_id.to_string(),
+                    ),
+                    self.identity.now(),
+                    "delete",
+                    format!("{repository}/{asset_path}"),
+                    Some(format!("{}:{}", digest.algorithm, digest.value)),
+                    AuditResult::Allowed,
+                )
+            });
+        let operation = deletion_operation_id(
+            principal_account,
+            repository,
+            asset_path,
+            &self.identity.new_id(),
+        );
+        let effect = GuardedEffect {
+            query_lines: deletion_query_lines(
                 principal_account,
                 repository,
                 asset_path,
-                &self.identity.new_id(),
-            );
-            let effect = GuardedEffect {
-                query_lines: deletion_query_lines(
-                    principal_account,
-                    repository,
-                    asset_path,
-                    &package,
-                ),
-                set_nquads: String::new(),
-                recorded_result: "deleted".to_owned(),
-            };
-            self.guards
-                .execute_guarded_composite(
-                    &guard,
-                    &operation,
-                    RevisionDemand::Advance,
-                    effect,
-                    &|current| deletion_blocks(parent_gate(current)),
-                )
+                &package,
+                cap,
+                event.as_ref().map(|event| event.event_id.as_str()),
+            ),
+            set_nquads: String::new(),
+            recorded_result: "deleted".to_owned(),
+        };
+        self.guards
+            .execute_guarded_composite(
+                &guard,
+                &operation,
+                RevisionDemand::Advance,
+                effect,
+                &|current| deletion_blocks(parent_gate(current), event.as_ref()),
+            )
+            .await
+            .map_err(the_guard_error)?;
+
+        // The verification read. What it finds is reported, never deleted: a
+        // publication that committed after the pass is somebody's, not ours.
+        let settled = match self
+            .the_asset_and_reference_rows(principal_account, repository, asset_path)
+            .await
+        {
+            Ok((None, None)) => self
+                .the_package_versions(principal_account, repository, &package, 1)
                 .await
-                .map_err(the_guard_error)?;
-            removed = true;
-        }
-        Err(CatalogError::unavailable(
-            "the deletion did not settle: the path kept changing under it",
-        ))
+                .map(|left| left.is_empty() || versions.is_empty())
+                .unwrap_or(false),
+            _ => false,
+        };
+        Ok(AssetDeletion {
+            removed: true,
+            released,
+            versions_removed: versions.len(),
+            settled: settled && !partial,
+            partial,
+        })
     }
 }
 
@@ -3503,9 +3594,10 @@ impl DgraphCatalogStore {
         account: &str,
         repository: &str,
         package: &str,
+        limit: usize,
     ) -> Result<Vec<VersionRow>, CatalogError> {
         let query = format!(
-            "{{ q(func: eq(hodei.catalog.version.repository, {repository})) \
+            "{{ q(func: eq(hodei.catalog.version.repository, {repository}), first: {limit}) \
              @filter(eq(hodei.catalog.version.account, {account}) AND \
              eq(hodei.catalog.version.package_name, {package})) {{ {VERSION_FIELDS} }} }}",
             repository = dql_string(repository),
