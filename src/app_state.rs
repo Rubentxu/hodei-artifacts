@@ -171,6 +171,9 @@ pub struct AppState {
     /// The relocation of reads and the verified retirement of the origin copy,
     /// through the location journal (HSP-325).
     pub(crate) relocator: Option<Arc<crate::recovery::Relocator>>,
+    /// The read-only tiering advisor: the validated ladder and its bounds
+    /// (HSP-326). Without it `GET /api/v1/storage/tiering/advice` answers 501.
+    pub(crate) tiering: Option<Arc<crate::tiering::TieringAdvisor>>,
     /// The verifier of trust passports, with the roots the operator pinned
     /// (HSP-321). Without it `POST /api/v1/passports/verify` answers 501.
     pub(crate) passport_verifier: Option<Arc<crate::passport_verify::PassportVerifier>>,
@@ -384,6 +387,7 @@ impl AppState {
             repairer: None,
             migrator: None,
             relocator: None,
+            tiering: None,
             passport_verifier: None,
             mirror_metadata: None,
             trust_ledger: None,
@@ -470,6 +474,7 @@ impl AppState {
             repairer: None,
             migrator: None,
             relocator: None,
+            tiering: None,
             passport_verifier: None,
             mirror_metadata: None,
             trust_ledger: None,
@@ -743,6 +748,12 @@ impl AppState {
     /// Inject the relocation of reads between stores (HSP-325).
     pub fn with_relocator(mut self, relocator: Arc<crate::recovery::Relocator>) -> Self {
         self.relocator = Some(relocator);
+        self
+    }
+
+    /// Inject the read-only tiering advisor (HSP-326).
+    pub fn with_tiering(mut self, advisor: Arc<crate::tiering::TieringAdvisor>) -> Self {
+        self.tiering = Some(advisor);
         self
     }
 

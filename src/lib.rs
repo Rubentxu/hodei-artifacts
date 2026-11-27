@@ -55,6 +55,7 @@ pub mod resolution;
 pub mod risk_facts;
 pub mod router;
 pub mod signed_url;
+pub mod tiering;
 pub mod time_machine;
 pub mod trust;
 pub mod typosquat;

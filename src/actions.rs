@@ -100,6 +100,17 @@ pub fn manage_storage_relocation() -> ActionId {
     ActionId::new("artifacts", "ManageStorageRelocation").expect("a valid action")
 }
 
+/// Asking the read-only tiering advisor which tier each blob of a repository
+/// would belong to (HSP-326).
+///
+/// The advisor writes nothing and executes no placement, but it reads the
+/// ledger and the store metadata of the whole repository and cites sizes and
+/// costs, so it is its own action: reading or publishing never implies it, and
+/// neither does `ManageStorageRelocation` (which moves bytes).
+pub fn explore_storage_tiering() -> ActionId {
+    ActionId::new("artifacts", "ExploreStorageTiering").expect("a valid action")
+}
+
 /// Reading or re-baselining the rollback/freeze state of the signed index of
 /// a proxy repository (HSP-167).
 ///
@@ -232,6 +243,7 @@ pub fn all() -> Vec<ActionId> {
         manage_storage_repair(),
         manage_storage_migration(),
         manage_storage_relocation(),
+        explore_storage_tiering(),
         manage_mirror_metadata(),
         manage_repository_freeze(),
         manage_trusted_publishers(),
@@ -444,6 +456,8 @@ mod scope_tests {
                 .expect("storage migration action declared");
             check_declared(&schema, &manage_storage_relocation())
                 .expect("storage relocation action declared");
+            check_declared(&schema, &explore_storage_tiering())
+                .expect("storage tiering action declared");
             check_declared(&schema, &manage_mirror_metadata())
                 .expect("mirror metadata action declared");
             check_declared(&schema, &verify_trust_passport())
