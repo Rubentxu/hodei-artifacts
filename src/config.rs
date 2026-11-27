@@ -470,6 +470,7 @@ impl Default for ContentConfig {
 /// every promotion is refused with a recorded decision: a missing policy
 /// is never a permit.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TrustConfig {
     /// A JSON file with the trust policy (`TrustPolicy`).
     ///
@@ -537,6 +538,38 @@ pub struct TrustConfig {
     /// Default: 5.
     #[serde(default = "the_default_revocation_verify_secs")]
     pub revocation_verify_secs: u64,
+    /// Maximum number of grants the admission cache keeps in memory
+    /// (HSP-330). When it is full, the least recently used entry is evicted
+    /// deterministically. It is a memory bound, never a trust decision: an
+    /// evicted entry behaves like an absence and is re-read from the live
+    /// ledger, so lowering it only costs extra reads, never an extra ALLOW.
+    ///
+    /// Default: 65536. Valid range: 1 to 1048576; a value outside it stops
+    /// the boot.
+    #[serde(default = "the_default_cache_max_entries")]
+    pub cache_max_entries: usize,
+}
+
+/// Smallest accepted `trust.cache_max_entries`.
+pub const MIN_TRUST_CACHE_ENTRIES: usize = 1;
+/// Largest accepted `trust.cache_max_entries`.
+pub const MAX_TRUST_CACHE_ENTRIES: usize = 1_048_576;
+
+impl TrustConfig {
+    /// Check the trust section: the cache bound must be inside its range.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if !(MIN_TRUST_CACHE_ENTRIES..=MAX_TRUST_CACHE_ENTRIES).contains(&self.cache_max_entries) {
+            return Err(ConfigError::Message(format!(
+                "Invalid trust.cache_max_entries {}: it must be between {} and {}. \
+                 Set HODEI_TRUST__CACHE_MAX_ENTRIES inside that range (default {}).",
+                self.cache_max_entries,
+                MIN_TRUST_CACHE_ENTRIES,
+                MAX_TRUST_CACHE_ENTRIES,
+                crate::trust::cache::DEFAULT_CAPACITY
+            )));
+        }
+        Ok(())
+    }
 }
 
 impl Default for TrustConfig {
@@ -549,6 +582,7 @@ impl Default for TrustConfig {
             grant_max_validity_secs: the_default_grant_max_validity_secs(),
             sweep_interval_secs: the_default_trust_sweep_interval_secs(),
             revocation_verify_secs: the_default_revocation_verify_secs(),
+            cache_max_entries: the_default_cache_max_entries(),
         }
     }
 }
@@ -567,6 +601,10 @@ fn the_default_trust_sweep_interval_secs() -> u64 {
 
 fn the_default_revocation_verify_secs() -> u64 {
     5
+}
+
+fn the_default_cache_max_entries() -> usize {
+    crate::trust::cache::DEFAULT_CAPACITY
 }
 
 /// The public address of the deployment.
@@ -1532,6 +1570,7 @@ impl AppConfig {
         self.quota.validate()?;
         self.public_url.validate()?;
         self.signing.validate()?;
+        self.trust.validate()?;
         Ok(())
     }
 
@@ -2184,6 +2223,19 @@ mod tests {
         assert!(config.validate().is_ok(), "the floor itself is allowed");
     }
 
+    /// HSP-330: a trust cache bound out of range stops the whole boot.
+    #[test]
+    fn a_trust_cache_bound_out_of_range_refuses_the_configuration() {
+        let mut config = a_graph_config();
+        config.trust.cache_max_entries = 0;
+        let error = config.validate().expect_err("zero is out of range");
+        assert!(error.to_string().contains("trust.cache_max_entries"));
+        config.trust.cache_max_entries = MAX_TRUST_CACHE_ENTRIES + 1;
+        assert!(config.validate().is_err());
+        config.trust.cache_max_entries = 1;
+        assert!(config.validate().is_ok());
+    }
+
     #[test]
     fn test_config_validation() {
         // The graph is required: a configuration without `[graph]` is the
@@ -2794,5 +2846,59 @@ mod repair_config_tests {
         let mut zero = with(&dest);
         zero.migration_max_blob_bytes = 0;
         assert!(zero.validate().is_err());
+    }
+}
+
+#[cfg(test)]
+mod trust_cache_config_tests {
+    use super::*;
+
+    #[test]
+    fn the_default_cache_bound_is_the_documented_one_and_valid() {
+        let trust = TrustConfig::default();
+        assert_eq!(trust.cache_max_entries, 65_536);
+        assert!(trust.validate().is_ok());
+    }
+
+    #[test]
+    fn the_cache_bound_is_validated_at_both_ends() {
+        for (value, ok) in [
+            (0, false),
+            (1, true),
+            (MAX_TRUST_CACHE_ENTRIES, true),
+            (MAX_TRUST_CACHE_ENTRIES + 1, false),
+        ] {
+            let trust = TrustConfig {
+                cache_max_entries: value,
+                ..TrustConfig::default()
+            };
+            assert_eq!(trust.validate().is_ok(), ok, "value {value}");
+            if !ok {
+                assert!(
+                    trust
+                        .validate()
+                        .unwrap_err()
+                        .to_string()
+                        .contains("trust.cache_max_entries")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_unknown_trust_field_is_refused_and_the_known_one_is_read() {
+        let read = |toml: &str| {
+            Config::builder()
+                .add_source(File::from_str(toml, ::config::FileFormat::Toml))
+                .build()
+                .unwrap()
+                .try_deserialize::<TrustConfig>()
+        };
+        assert_eq!(
+            read("cache_max_entries = 128").unwrap().cache_max_entries,
+            128
+        );
+        assert!(read("cache_max_entriez = 128").is_err());
+        assert!(read("cache_max_entries = -1").is_err());
     }
 }

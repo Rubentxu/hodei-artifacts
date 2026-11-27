@@ -20,6 +20,10 @@
 //! - **Fail closed**: B partitioned from the authority (the real Dgraph
 //!   stays up for A; B's ledger is cut by a switch) never renews a cached
 //!   ALLOW past the lease, and after healing it does not resurrect it.
+//! - **Bounded cache (HSP-330)**: with a cache of N entries and N+1 keys,
+//!   the evicted key is re-read from the live Dgraph (so a revocation made
+//!   by another node is denied at once, even inside the lease), and a
+//!   cached key still falls to the watermark within the bound.
 //! - **Normal path**: a repeated read on B is a cache hit (no ledger
 //!   read), and a re-grant under a new decision is served at once.
 //!
@@ -203,6 +207,15 @@ struct Node {
 
 impl Node {
     async fn open(tenant: &Tenant, verify: Duration) -> Option<Self> {
+        Self::open_bounded(
+            tenant,
+            verify,
+            hodei_artifacts_api::trust::cache::DEFAULT_CAPACITY,
+        )
+        .await
+    }
+
+    async fn open_bounded(tenant: &Tenant, verify: Duration, capacity: usize) -> Option<Self> {
         let client = open_client().await?;
         let store = DgraphTrustStore::open(client, tenant.clone())
             .await
@@ -214,7 +227,8 @@ impl Node {
             active_reads: AtomicUsize::new(0),
             probes: AtomicUsize::new(0),
         });
-        let cache = CachedTrustLedger::new(ledger.clone(), TTL).with_verify(verify);
+        let cache =
+            CachedTrustLedger::with_capacity(ledger.clone(), TTL, capacity).with_verify(verify);
         Some(Self { ledger, cache })
     }
 
@@ -504,4 +518,92 @@ async fn a_lost_probe_with_a_live_book_answers_from_the_book_not_the_cache() {
     );
     // Still cut: it keeps reading the live book each time.
     assert!(!w.b_serves().await);
+}
+
+/// HSP-330: a bounded cache on node B over the real Dgraph. B holds at most
+/// 2 entries and serves 3 distinct digests, so the first one is evicted.
+/// Node A then revokes the evicted digest and a cached one:
+///
+/// - the evicted digest is re-read from the live ledger and denied at once
+///   (inside the lease: a miss is a read, never a verdict from memory);
+/// - the cached digest falls to the watermark within the bound;
+/// - the untouched digest keeps being honored;
+/// - at no point does B hold more than 2 entries.
+#[tokio::test]
+async fn an_evicted_key_is_reread_live_and_the_watermark_still_invalidates_the_cached_ones() {
+    let tenant = Tenant::new(&unique("bounded")).expect("the run tenant is valid");
+    let Some(a) = Node::open(&tenant, VERIFY).await else {
+        return;
+    };
+    let b = Node::open_bounded(&tenant, VERIFY, 2)
+        .await
+        .expect("node B opens");
+    let account = unique("acct");
+    let repo = "raw";
+    let digests: Vec<ContentDigest> = (0..3)
+        .map(|i| ContentDigest::of_bytes(unique(&format!("bytes{i}")).as_bytes()))
+        .collect();
+    for (i, digest) in digests.iter().enumerate() {
+        a.cache
+            .grant(&[a_grant(&account, repo, digest, &format!("d{i}"))])
+            .await
+            .expect("node A grants");
+    }
+
+    for digest in &digests {
+        assert!(b.serves(&account, repo, digest).await, "B honors the grant");
+        assert!(b.cache.len() <= 2, "the cache never exceeds its bound");
+    }
+    assert_eq!(b.cache.len(), 2);
+
+    // digests[0] was the least recently used: evicted. It is a live read.
+    let reads = b.reads();
+    assert!(b.serves(&account, repo, &digests[0]).await);
+    assert_eq!(b.reads(), reads + 1, "the evicted key goes to Dgraph");
+    // That insertion evicted digests[1]; digests[2] and [0] are cached now.
+    assert!(b.cache.len() <= 2);
+
+    // A revokes digests[1] (evicted on B) and digests[2] (cached on B).
+    assert_eq!(
+        a.cache
+            .revoke_decision(&account, repo, "d1", "alice", "cve", Utc::now())
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        a.cache
+            .revoke_decision(&account, repo, "d2", "alice", "cve", Utc::now())
+            .await
+            .unwrap(),
+        1
+    );
+    let confirmed = Instant::now();
+
+    // The evicted key is denied on the very next request, inside the lease.
+    assert!(
+        !b.serves(&account, repo, &digests[1]).await,
+        "an evicted key revoked elsewhere is re-read live and denied"
+    );
+    assert!(
+        confirmed.elapsed() < VERIFY,
+        "the denial came before the lease expired: it was a live read"
+    );
+
+    // The cached revoked key falls within the watermark bound.
+    let deadline = VERIFY + SLACK;
+    loop {
+        if !b.serves(&account, repo, &digests[2]).await {
+            break;
+        }
+        assert!(
+            confirmed.elapsed() <= deadline,
+            "B still honors a cached trust revoked {:?} ago",
+            confirmed.elapsed()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // The untouched grant is still honored and the bound still holds.
+    assert!(b.serves(&account, repo, &digests[0]).await);
+    assert!(b.cache.len() <= 2);
 }
