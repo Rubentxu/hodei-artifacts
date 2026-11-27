@@ -304,3 +304,50 @@ fn a_trusted_mirror_does_not_serve_a_digest_without_a_concession() {
 
     support::stop(&mut service);
 }
+
+/// HSP-329: the caller is authenticated before the path is judged. Without a
+/// credential every name answers 401, so the mirror cannot be used to tell
+/// well formed names from malformed ones; with a credential a malformed name
+/// is the same 404 as a repository that does not exist.
+#[test]
+fn the_mirror_authenticates_before_it_judges_the_repository_name() {
+    let deployment = Deployment::new();
+    deployment.seed_terraform_proxies(&[(
+        "tf-mirror",
+        json!({
+            "upstream": {
+                "id": "lab",
+                "url": "http://127.0.0.1:9/",
+                "scopes": ["/"],
+                "max_bytes": 65536,
+            },
+        }),
+    )]);
+    let token = support::token(support::FIRST_ACCOUNT, "alice");
+    let mut service = deployment.start(&[]);
+    let port = service.port;
+    let tail = format!("{PROVIDER}/index.json");
+    let invalid = format!("/terraform/Bad%2fName/{tail}");
+    let missing = format!("/terraform/no-such-repository/{tail}");
+    let valid = format!("/terraform/tf-mirror/{tail}");
+
+    for path in [&invalid, &missing, &valid] {
+        let anonymous = call(port, "GET", path, "");
+        assert_eq!(
+            anonymous.status,
+            401,
+            "{path}: no credential, no answer about the path: {}",
+            text_of(&anonymous)
+        );
+    }
+
+    let invalid = call(port, "GET", &invalid, &token);
+    let missing = call(port, "GET", &missing, &token);
+    assert_eq!(invalid.status, 404, "{}", text_of(&invalid));
+    assert_eq!(
+        (invalid.status, invalid.body),
+        (missing.status, missing.body),
+        "a malformed name is the 404 of a repository that does not exist"
+    );
+    support::stop(&mut service);
+}
