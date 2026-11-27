@@ -79,6 +79,17 @@ pub fn manage_storage_repair() -> ActionId {
     ActionId::new("artifacts", "ManageStorageRepair").expect("a valid action")
 }
 
+/// Migrating blobs of a repository to the configured destination store
+/// (HSP-163).
+///
+/// A migration reads the content store and writes a second one, at a cost the
+/// deployment bounds, so it is its own action: reading, publishing, repairing
+/// or freezing never implies it. The destination is the deployment's, never the
+/// request's, and the origin is never written or deleted by it.
+pub fn manage_storage_migration() -> ActionId {
+    ActionId::new("artifacts", "ManageStorageMigration").expect("a valid action")
+}
+
 /// Reading or re-baselining the rollback/freeze state of the signed index of
 /// a proxy repository (HSP-167).
 ///
@@ -167,6 +178,7 @@ pub fn all() -> Vec<ActionId> {
         manage_dependency_freeze(),
         explore_repository_history(),
         manage_storage_repair(),
+        manage_storage_migration(),
         manage_mirror_metadata(),
         manage_trusted_publishers(),
         read_capsule(),
@@ -354,6 +366,8 @@ mod scope_tests {
                 .expect("repository history action declared");
             check_declared(&schema, &manage_storage_repair())
                 .expect("storage repair action declared");
+            check_declared(&schema, &manage_storage_migration())
+                .expect("storage migration action declared");
             check_declared(&schema, &manage_mirror_metadata())
                 .expect("mirror metadata action declared");
         }

@@ -687,6 +687,12 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
         // Self-healing of one blob (HSP-164): writes into the content store from
         // the configured repair source; the dedicated action `ManageStorageRepair`.
         .route("/repair", post(crate::handlers::repair::repair))
+        // Verified migration of blobs to the configured destination store
+        // (HSP-163): copy and verify, never delete; `ManageStorageMigration`.
+        .route(
+            "/storage/migrate",
+            post(crate::handlers::storage_migration::migrate),
+        )
         // Rollback/freeze state of a proxy's signed index (HSP-167); the
         // dedicated action `ManageMirrorMetadata`.
         .route(
