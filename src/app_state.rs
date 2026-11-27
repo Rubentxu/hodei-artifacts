@@ -110,6 +110,9 @@ pub struct AppState {
     /// the evidence is read through a port and not through a concrete
     /// store.
     pub(crate) evidence_reader: Arc<dyn EvidenceReader>,
+    /// The admission of execution receipts (HSP-37), when the evidence
+    /// context is wired.
+    pub(crate) receipt_ingestor: Option<Arc<crate::execution_receipt::ReceiptIngestor>>,
     /// The facts of risk the promotion decision measures against.
     ///
     /// It is a port and not a store: a deployment without the impact
@@ -359,6 +362,7 @@ impl AppState {
             repository_reader,
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
+            receipt_ingestor: None,
             risk_facts: Arc::new(crate::risk_facts::UnmeasuredRiskFacts),
             audit_sink,
             catalog_reader: None,
@@ -441,6 +445,7 @@ impl AppState {
             repository_reader,
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
+            receipt_ingestor: None,
             risk_facts: Arc::new(crate::risk_facts::UnmeasuredRiskFacts),
             audit_sink,
             catalog_reader: None,
@@ -509,6 +514,15 @@ impl AppState {
     /// Replace the reader of the accepted evidence.
     pub fn with_evidence_store(mut self, store: Arc<dyn EvidenceReader>) -> Self {
         self.evidence_reader = store;
+        self
+    }
+
+    /// Wire the admission of execution receipts.
+    pub fn with_receipt_ingestor(
+        mut self,
+        ingestor: Arc<crate::execution_receipt::ReceiptIngestor>,
+    ) -> Self {
+        self.receipt_ingestor = Some(ingestor);
         self
     }
 

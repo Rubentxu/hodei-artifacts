@@ -15,6 +15,7 @@ pub mod capsules;
 pub mod cargo;
 pub mod catalog_repositories;
 pub mod conan;
+pub mod execution_receipts;
 pub mod freezes;
 pub mod galaxy;
 pub mod gc;

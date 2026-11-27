@@ -684,6 +684,13 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
         // read only from its manifest and pinned against the GC. Creating and
         // releasing one is the dedicated action `ManageDependencyFreeze`.
         .route("/freezes", post(crate::handlers::freezes::create))
+        // Execution receipts (HSP-37): links the receipt of the run that
+        // produced an artifact to its exact identity, after re-hashing the
+        // bytes; the dedicated action `IngestExecutionReceipt`.
+        .route(
+            "/execution-receipts",
+            post(crate::handlers::execution_receipts::ingest),
+        )
         .route("/freezes/unpin", post(crate::handlers::freezes::unpin))
         // Self-healing of one blob (HSP-164): writes into the content store from
         // the configured repair source; the dedicated action `ManageStorageRepair`.
