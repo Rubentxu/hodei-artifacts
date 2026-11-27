@@ -112,6 +112,7 @@ pub struct AppState {
     pub(crate) evidence_reader: Arc<dyn EvidenceReader>,
     /// The admission of execution receipts (HSP-37), when the evidence
     /// context is wired.
+    pub(crate) receipt_limits: crate::execution_receipt::ReceiptLimits,
     pub(crate) receipt_ingestor: Option<Arc<crate::execution_receipt::ReceiptIngestor>>,
     /// The facts of risk the promotion decision measures against.
     ///
@@ -363,6 +364,7 @@ impl AppState {
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
             receipt_ingestor: None,
+            receipt_limits: crate::execution_receipt::ReceiptLimits::default(),
             risk_facts: Arc::new(crate::risk_facts::UnmeasuredRiskFacts),
             audit_sink,
             catalog_reader: None,
@@ -446,6 +448,7 @@ impl AppState {
             repository_writer,
             evidence_reader: Arc::new(EmptyEvidenceReader),
             receipt_ingestor: None,
+            receipt_limits: crate::execution_receipt::ReceiptLimits::default(),
             risk_facts: Arc::new(crate::risk_facts::UnmeasuredRiskFacts),
             audit_sink,
             catalog_reader: None,
@@ -514,6 +517,12 @@ impl AppState {
     /// Replace the reader of the accepted evidence.
     pub fn with_evidence_store(mut self, store: Arc<dyn EvidenceReader>) -> Self {
         self.evidence_reader = store;
+        self
+    }
+
+    /// Bound the admission of execution receipts.
+    pub fn with_receipt_limits(mut self, limits: crate::execution_receipt::ReceiptLimits) -> Self {
+        self.receipt_limits = limits;
         self
     }
 

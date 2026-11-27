@@ -55,7 +55,8 @@ use chrono::Utc;
 use hodei_artifacts_api::audit::InMemoryAuditSink;
 use hodei_artifacts_api::authorization::{AuthorizerPort, SharedAuthorizer};
 use hodei_artifacts_api::execution_receipt::{
-    ExecutionReceiptV1, PINNED_PIPELINEK_VERSION, PipelinekExport, export_from_pipelinek,
+    ExecutionReceiptV1, PINNED_PIPELINEK_VERSION, PipelinekExport, ReceiptLimits,
+    export_from_pipelinek,
 };
 use hodei_artifacts_api::gc::GcService;
 use hodei_artifacts_api::{AppConfig, BootstrapConfig, bootstrap, router::build_router};
@@ -174,6 +175,10 @@ struct Vertical {
 }
 
 async fn mount() -> Option<Vertical> {
+    mount_with(None).await
+}
+
+async fn mount_with(limits: Option<ReceiptLimits>) -> Option<Vertical> {
     if !harness_available() {
         return None;
     }
@@ -210,6 +215,10 @@ async fn mount() -> Option<Vertical> {
     );
     let audit = Arc::new(InMemoryAuditSink::new());
     let content: Arc<dyn BlobStore> = cas.clone();
+    let state = match limits {
+        Some(limits) => state.with_receipt_limits(limits),
+        None => state,
+    };
     let state = state
         .with_catalog(reader, writer)
         .with_trust_ledger(trust.clone())
@@ -637,7 +646,11 @@ async fn the_same_receipt_three_times_is_one_logical_receipt() {
     for _ in 0..3 {
         let (status, answer, raw) =
             post(&v, Some(&alice()), "builds", "app/service.bin", &receipt).await;
-        assert!(status.is_success(), "{}", String::from_utf8_lossy(&raw));
+        assert!(
+            status.is_success(),
+            "{status} {}",
+            String::from_utf8_lossy(&raw)
+        );
         results.push((
             status.as_u16(),
             answer["result"].as_str().unwrap().to_string(),
@@ -933,9 +946,23 @@ async fn refusals_are_closed_and_accounts_are_isolated() {
         post(&v, Some(&alice()), "builds", "app/service.bin", &unpinned).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(answer["error"], "E_RECEIPT_INVALID");
-    // A path that names nothing.
+    // A finish time in the future, or before PipelineK could have existed.
+    for when in ["2999-01-01T00:00:00Z", "1970-01-01T00:00:00Z"] {
+        let mut bad_time = receipt.clone();
+        bad_time["finished_at"] = json!(when);
+        let (status, answer, _) =
+            post(&v, Some(&alice()), "builds", "app/service.bin", &bad_time).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{when}");
+        assert_eq!(answer["error"], "E_RECEIPT_INVALID");
+    }
+    // A path that names nothing: audited as a failure after Cedar.
     let (status, _, _) = post(&v, Some(&alice()), "builds", "app/missing.bin", &receipt).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(
+        audit_results(&v),
+        ["Denied", "Denied", "Denied", "Denied", "Denied", "Failed"],
+        "every way out after Cedar is audited"
+    );
     assert_eq!(
         stored(&v, ACCOUNT, &subject).await,
         0,
@@ -971,4 +998,227 @@ async fn refusals_are_closed_and_accounts_are_isolated() {
     let (status, _) = builder_links(&v, &mallory(), &subject).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(builder_links(&v, &alice(), &subject).await.1.len(), 1);
+}
+
+#[tokio::test]
+async fn a_receipt_never_makes_the_builder_verified() {
+    use hodei_evidence::CapsuleAssembler;
+    use hodei_evidence::domain::capsule::{DimensionName, DimensionState};
+    use hodei_evidence::{
+        ContentRef, EvidenceId, EvidenceRecord, EvidenceType, EvidenceVerification, Normalization,
+        Producer, SourceRef,
+    };
+    use hodei_trust_policy::{Requirement, RequirementKind, TrustContext, TrustPolicy, evaluate};
+
+    let Some(v) = mount().await else { return };
+    let run = &runs().a;
+    seed(&v, ACCOUNT, "builds").await;
+    upload(&v, &alice(), "builds", "app/service.bin", &run.artifact).await;
+    let subject = artifact(ACCOUNT, "builds", &run.artifact);
+    let (status, _, _) = post(
+        &v,
+        Some(&alice()),
+        "builds",
+        "app/service.bin",
+        &as_value(&export(run)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Over HTTP: the builder dimension holds the receipt as a declaration.
+    let (_, bytes) = send(
+        &v.app,
+        Method::GET,
+        &format!("/api/v1/capsules?hrn={}", encode(&subject.to_string())),
+        Some(&alice()),
+        Vec::new(),
+    )
+    .await;
+    let capsule = json_of(&bytes);
+    let builder = capsule["profile"]["dimensions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|d| d["name"] == "builder_trust")
+        .expect("the builder dimension");
+    assert_ne!(builder["state"], "VERIFIED");
+    assert_eq!(builder["state"], "UNVERIFIED");
+    assert_eq!(
+        builder["evidence"][0]["verification"]["status"],
+        "UNVERIFIED"
+    );
+    assert_eq!(
+        builder["evidence"][0]["verification"]["method"],
+        "exporter-declared"
+    );
+
+    // The promotion policy that demands a verified builder keeps denying.
+    let policy = TrustPolicy::new(
+        "needs-a-verified-builder",
+        "1.0.0",
+        vec![Requirement::denying(RequirementKind::Dimension {
+            dimension: DimensionName::BuilderTrust,
+            accepts: vec![DimensionState::Verified],
+        })],
+    );
+    let records = v
+        .evidence
+        .evidence_of_subject(ACCOUNT, &subject)
+        .await
+        .unwrap();
+    let real = CapsuleAssembler::new().assemble(&subject, &records, Utc::now());
+    let decision = evaluate(&TrustContext::builder(&real).build(), &policy);
+    assert!(
+        !decision.advances(),
+        "a receipt is not a verified builder: {decision:?}"
+    );
+
+    // The control: the same policy IS satisfiable by evidence that is verified,
+    // so the denial above is the receipt's status and nothing else.
+    let verified = EvidenceRecord::builder(EvidenceId::new("control"), subject.clone())
+        .subjects(vec![subject.clone()])
+        .evidence_type(EvidenceType::BuildMetadata)
+        .source(SourceRef::by_external_id("control"))
+        .content(ContentRef::by_digest(ContentDigest::of_bytes(b"control")))
+        .observed_at(Utc::now())
+        .recorded_at(Utc::now())
+        .verification(EvidenceVerification::verified("signed-by-pinned-key"))
+        .normalization(Normalization::new("control", "1.0.0"))
+        .producer(Producer::new("connector", "pipelinek"))
+        .build();
+    let ok = CapsuleAssembler::new().assemble(&subject, &[verified], Utc::now());
+    assert!(evaluate(&TrustContext::builder(&ok).build(), &policy).advances());
+}
+
+#[tokio::test]
+async fn a_different_receipt_for_the_same_run_and_digest_is_a_conflict_not_a_replacement() {
+    let Some(v) = mount().await else { return };
+    let run = &runs().a;
+    seed(&v, ACCOUNT, "builds").await;
+    upload(&v, &alice(), "builds", "app/service.bin", &run.artifact).await;
+    let subject = artifact(ACCOUNT, "builds", &run.artifact);
+    let original = export(run);
+    let (status, first, _) = post(
+        &v,
+        Some(&alice()),
+        "builds",
+        "app/service.bin",
+        &as_value(&original),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    // Same account, run and digest; a different declared revision.
+    let mut other = original.clone();
+    other.source_revision = "f".repeat(40);
+    let (status, answer, _) = post(
+        &v,
+        Some(&alice()),
+        "builds",
+        "app/service.bin",
+        &as_value(&other),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(answer["error"], "E_RECEIPT_CONFLICT");
+
+    // The original is untouched and nothing else was recorded.
+    let records = v
+        .evidence
+        .evidence_of_subject(ACCOUNT, &subject)
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    let kept: ExecutionReceiptV1 =
+        serde_json::from_slice(&v.cas.get(&records[0].content().digest).await.unwrap()).unwrap();
+    assert_eq!(kept, original);
+    assert_eq!(builder_links(&v, &alice(), &subject).await.1.len(), 1);
+    // The retention the refused attempt placed was released; the original's stays.
+    let hold = |receipt: &ExecutionReceiptV1| {
+        format!(
+            "receipt-{}",
+            ContentDigest::of_bytes(&receipt.canonical_bytes()).value
+        )
+    };
+    assert!(v.gc.hold(&hold(&other)).await.unwrap().is_none());
+    assert!(v.gc.hold(&hold(&original)).await.unwrap().is_some());
+    assert_eq!(audit_results(&v), ["Allowed", "Denied"]);
+
+    // The control: the same content again is the idempotent answer.
+    let (status, again, _) = post(
+        &v,
+        Some(&alice()),
+        "builds",
+        "app/service.bin",
+        &as_value(&original),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(again["evidence_id"], first["evidence_id"]);
+}
+
+#[tokio::test]
+async fn the_admission_is_bounded_in_size_and_in_concurrency() {
+    let run = &runs().a;
+    // Size: the artifact is larger than what the service re-hashes.
+    let Some(v) = mount_with(Some(ReceiptLimits::new(16, 4))).await else {
+        return;
+    };
+    seed(&v, ACCOUNT, "builds").await;
+    upload(&v, &alice(), "builds", "app/service.bin", &run.artifact).await;
+    assert!(run.artifact.len() > 16);
+    let (status, answer, _) = post(
+        &v,
+        Some(&alice()),
+        "builds",
+        "app/service.bin",
+        &as_value(&export(run)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(answer["error"], "E_ARTIFACT_TOO_LARGE");
+    assert_eq!(
+        stored(&v, ACCOUNT, &artifact(ACCOUNT, "builds", &run.artifact)).await,
+        0
+    );
+    // The control: an artifact within the bound links under the same limits.
+    let small = b"small artifact";
+    upload(&v, &alice(), "builds", "app/small.bin", small).await;
+    let digest = ContentDigest::of_bytes(small).to_string();
+    let (status, _, raw) = post(
+        &v,
+        Some(&alice()),
+        "builds",
+        "app/small.bin",
+        &as_value(&export_with(run, &digest)),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "{}",
+        String::from_utf8_lossy(&raw)
+    );
+    assert_eq!(audit_results(&v), ["Denied", "Allowed"]);
+
+    // Concurrency: no free slot is a 429 and nothing is read or written.
+    let Some(busy) = mount_with(Some(ReceiptLimits::new(1 << 30, 0))).await else {
+        return;
+    };
+    seed(&busy, ACCOUNT, "builds").await;
+    upload(&busy, &alice(), "builds", "app/service.bin", &run.artifact).await;
+    let (status, answer, _) = post(
+        &busy,
+        Some(&alice()),
+        "builds",
+        "app/service.bin",
+        &as_value(&export(run)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(answer["error"], "E_RECEIPT_BUSY");
+    assert_eq!(
+        stored(&busy, ACCOUNT, &artifact(ACCOUNT, "builds", &run.artifact)).await,
+        0
+    );
 }

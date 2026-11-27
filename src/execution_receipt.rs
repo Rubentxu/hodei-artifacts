@@ -20,17 +20,24 @@
 //!
 //! # Trust model (what a receipt does and does not prove)
 //!
-//! PipelineK's events say that a run with an id finished with an outcome at a
-//! time. They do **not** carry the digest of the produced artifact nor the
-//! source revision: those are declared by the operator that exports the
-//! receipt. Hodei does not take the digest on faith: the service re-hashes the
-//! bytes it holds for the artifact and refuses the receipt when they differ.
-//! The revision is a declaration of the exporter and is recorded as such.
+//! A receipt proves one thing: the digest it declares is the digest of the
+//! bytes Hodei holds for the artifact (the service re-hashes them). It does
+//! **not** prove who produced it. The producer is **not authenticated**: anyone
+//! who holds the Cedar action `IngestExecutionReceipt` can write a receipt
+//! that names any run id and any revision, and PipelineK's events do not carry
+//! the digest or the revision at all (the exporter declares them).
+//!
+//! Because of that a receipt is recorded as evidence that is **Unverified**
+//! (method `exporter-declared`), and it can never make the `builder_trust`
+//! dimension `Verified`. A `Verified` builder needs a receipt signed by a
+//! pinned key of the producer: that is a later slice and a product decision.
+//! The full statement is in `docs/security/execution-receipts.md`.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use hodei_evidence::ports::EvidenceStore;
 use hodei_evidence::{
     ContentDigest, ContentStore, EvidenceIngestion, EvidenceType, EvidenceVerification,
     IngestionEnvelope, IngestionOutcome, IngestionRequest, Normalization, Producer, SourceRef,
@@ -53,6 +60,12 @@ pub const PINNED_PIPELINEK_VERSION: &str = "0.97.0";
 
 /// The schema identifier of the receipt.
 pub const RECEIPT_SCHEMA: &str = "hodei.execution-receipt/1";
+
+/// How far in the future the finish time of a receipt may be (clock skew).
+pub const FUTURE_TOLERANCE_SECS: i64 = 300;
+
+/// The earliest finish time a receipt may claim.
+pub const EARLIEST_FINISH: &str = "2024-01-01T00:00:00Z";
 
 /// The producer name a receipt of this adapter carries.
 pub const PRODUCER_NAME: &str = "pipelinek";
@@ -113,12 +126,19 @@ fn is_id_char(character: char) -> bool {
 }
 
 impl ExecutionReceiptV1 {
-    /// Checks the receipt against the contract, failing closed.
+    /// Checks the receipt against the contract at the current time.
+    pub fn validate(&self) -> Result<(), ReceiptError> {
+        self.validate_at(Utc::now())
+    }
+
+    /// Checks the receipt against the contract, failing closed, as of `now`.
     ///
     /// The checks are external to any JSON Schema: the producer identity, the
-    /// pinned version and the charset of every field. A value that is not in
-    /// the expected charset is refused and never echoed in the error.
-    pub fn validate(&self) -> Result<(), ReceiptError> {
+    /// pinned version, the charset of every field and the time of the run,
+    /// which cannot be in the future (beyond [`FUTURE_TOLERANCE_SECS`]) nor
+    /// before [`EARLIEST_FINISH`]. A value that is not in the expected
+    /// charset is refused and never echoed in the error.
+    pub fn validate_at(&self, now: DateTime<Utc>) -> Result<(), ReceiptError> {
         if self.schema != RECEIPT_SCHEMA {
             return Err(ReceiptError::Schema);
         }
@@ -140,7 +160,14 @@ impl ExecutionReceiptV1 {
         if self.digest().is_none() {
             return Err(ReceiptError::Field("subject_digest"));
         }
-        if DateTime::parse_from_rfc3339(&self.finished_at).is_err() {
+        let finished = DateTime::parse_from_rfc3339(&self.finished_at)
+            .map_err(|_| ReceiptError::Field("finished_at"))?
+            .with_timezone(&Utc);
+        let earliest = DateTime::parse_from_rfc3339(EARLIEST_FINISH)
+            .expect("a valid constant")
+            .with_timezone(&Utc);
+        if finished > now + chrono::Duration::seconds(FUTURE_TOLERANCE_SECS) || finished < earliest
+        {
             return Err(ReceiptError::Field("finished_at"));
         }
         if self.outcome != "success" {
@@ -319,16 +346,13 @@ pub enum Linked {
     Created(String),
     /// The same receipt had been admitted: nothing was written.
     Existing(String),
-    /// A different receipt for the same run and artifact replaced the reading;
-    /// the previous record is kept in the history.
-    Revised(String),
 }
 
 impl Linked {
     /// The id of the evidence record.
     pub fn evidence_id(&self) -> &str {
         match self {
-            Self::Created(id) | Self::Existing(id) | Self::Revised(id) => id,
+            Self::Created(id) | Self::Existing(id) => id,
         }
     }
 }
@@ -339,6 +363,10 @@ pub enum IngestError {
     /// The evidence pipeline refused the delivery.
     #[error("the evidence pipeline refused the receipt")]
     Refused,
+    /// The same identity (account, run, digest) already holds a different
+    /// receipt: it is not replaced silently.
+    #[error("a different receipt already exists for this run and artifact")]
+    Conflict,
     /// A store was not available.
     #[error("the evidence store is not available")]
     Unavailable,
@@ -370,6 +398,45 @@ impl ContentStore for BlobBackedContent {
             Err(BlobError::NotFound) => Ok(None),
             Err(error) => Err(StoreError::Unavailable(error.to_string())),
         }
+    }
+}
+
+/// How a receipt is recorded: **Unverified**, never `Verified`.
+///
+/// The digest was re-hashed against the stored bytes, but the producer is not
+/// authenticated, so nothing here is a proof of who built the artifact.
+fn exporter_declared() -> EvidenceVerification {
+    EvidenceVerification {
+        status: hodei_evidence::VerificationStatus::Unverified,
+        method: Some("exporter-declared".to_string()),
+        verified_by: None,
+    }
+}
+
+/// The bounds of the admission: the largest artifact that is re-hashed and how
+/// many admissions run at once. They bound the CPU and the I/O one caller can
+/// make the service spend.
+#[derive(Clone)]
+pub struct ReceiptLimits {
+    /// The largest artifact, in bytes, whose bytes are re-hashed.
+    pub max_artifact_bytes: u64,
+    /// Admissions in flight.
+    pub concurrency: Arc<tokio::sync::Semaphore>,
+}
+
+impl ReceiptLimits {
+    /// Limits of a given size and concurrency.
+    pub fn new(max_artifact_bytes: u64, concurrency: usize) -> Self {
+        Self {
+            max_artifact_bytes,
+            concurrency: Arc::new(tokio::sync::Semaphore::new(concurrency)),
+        }
+    }
+}
+
+impl Default for ReceiptLimits {
+    fn default() -> Self {
+        Self::new(1024 * 1024 * 1024, 4)
     }
 }
 
@@ -410,6 +477,26 @@ impl ReceiptIngestor {
             .map_err(|_| IngestError::Refused)?
             .with_timezone(&Utc);
 
+        let external_id = format!("{account}/{}/{digest}", receipt.run_id);
+        let content_digest = ContentDigest::of_bytes(&bytes);
+        // The same identity with different content is a conflict, not a
+        // silent replacement: look before writing. (A race between this read
+        // and the write is documented in docs/security/execution-receipts.md.)
+        let previous = self
+            .evidence
+            .find_by_external_id(
+                &Producer::new("connector", PRODUCER_NAME)
+                    .with_version(receipt.producer.version.clone()),
+                &external_id,
+            )
+            .await
+            .map_err(|_| IngestError::Unavailable)?;
+        if let Some(previous) = previous
+            && previous.content().digest != content_digest
+        {
+            return Err(IngestError::Conflict);
+        }
+
         let ledger = DgraphEventLedger::open(self.client.clone(), account)
             .await
             .map_err(|_| IngestError::Unavailable)?;
@@ -437,11 +524,11 @@ impl ReceiptIngestor {
             evidence_type: EvidenceType::BuildMetadata,
             schema_uri: Some(RECEIPT_SCHEMA.to_string()),
             schema_version: Some("1".to_string()),
-            source: SourceRef::by_external_id(format!("{account}/{}/{digest}", receipt.run_id)),
-            content_digest: ContentDigest::of_bytes(&bytes),
+            source: SourceRef::by_external_id(external_id),
+            content_digest,
             observed_at,
             valid_from: None,
-            verification: EvidenceVerification::verified("sha256-rehash-of-stored-bytes"),
+            verification: exporter_declared(),
             normalization: Normalization::new("hodei-execution-receipt", "1.0.0"),
             correlation_id: None,
             relation_claim: None,
@@ -463,9 +550,10 @@ impl ReceiptIngestor {
             IngestionOutcome::AlreadyAccepted { evidence_id } => {
                 Ok(Linked::Existing(evidence_id.to_string()))
             }
-            IngestionOutcome::Revised { evidence_id, .. } => {
-                Ok(Linked::Revised(evidence_id.to_string()))
-            }
+            // Only reachable when another delivery slipped in between the
+            // check above and the write: the revision exists, and it is
+            // reported as the conflict it is.
+            IngestionOutcome::Revised { .. } => Err(IngestError::Conflict),
             IngestionOutcome::Rejected { .. } => Err(IngestError::Refused),
         }
     }
@@ -589,6 +677,35 @@ mod tests {
             .unwrap()
             .replace("\"outcome\"", "\"note\":\"x\",\"outcome\"");
         assert!(serde_json::from_str::<ExecutionReceiptV1>(&smuggled).is_err());
+    }
+
+    #[test]
+    fn the_finish_time_is_bounded() {
+        let now = DateTime::parse_from_rfc3339("2026-11-27T08:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let at = |text: &str| {
+            let mut r = receipt();
+            r.finished_at = text.into();
+            r.validate_at(now)
+        };
+        assert!(at("2026-11-27T08:03:00Z").is_ok(), "within the tolerance");
+        assert_eq!(
+            at("2026-11-27T08:06:00Z"),
+            Err(ReceiptError::Field("finished_at"))
+        );
+        assert_eq!(
+            at("2999-01-01T00:00:00Z"),
+            Err(ReceiptError::Field("finished_at"))
+        );
+        assert_eq!(
+            at("2023-12-31T23:59:59Z"),
+            Err(ReceiptError::Field("finished_at"))
+        );
+        assert_eq!(
+            at("1970-01-01T00:00:00Z"),
+            Err(ReceiptError::Field("finished_at"))
+        );
     }
 
     #[test]
