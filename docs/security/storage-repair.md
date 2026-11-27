@@ -30,8 +30,25 @@ supera el tope; `501` sin fuente configurada o almacén sin cuarentena condicion
 - **Aislamiento por cuenta**: el repositorio es de la cuenta verificada y el digest debe estar
   referenciado por una fila de ese repositorio (lectura paginada del libro, se detiene al primer
   acierto).
-- **Costes acotados**: una reparación a la vez y `content.repair_max_bytes` (256 MiB por defecto)
-  comprobado antes de mover bytes.
+- **Costes acotados**: `content.repair_max_bytes` (256 MiB por defecto, debe ser > 0) se aplica a la
+  fuente **y** al blob propio del almacén: la longitud se lee de metadatos y un blob por encima del
+  tope no se lee, ni se verifica ni se repara (`413`), aunque esté sano. El `BlobStore` no ofrece
+  verificación en streaming; el tope es lo que acota la memoria. Las reparaciones se serializan
+  **por digest** (no hay candado global: una fuente lenta de una cuenta no bloquea a otras), como
+  mucho 4 a la vez, y cada llamada a fuente o almacén tiene un timeout (30 s) con fallo cerrado
+  `504 E_REPAIR_TIMEOUT`.
+- **Inmune a la cancelación del cliente**: la reparación se ejecuta en una tarea propia; si el cliente
+  cuelga a mitad, cuarentena y publicación terminan igualmente.
+- **Auditoría completa tras Cedar**: se audita lo hecho (`Allowed`), el digest no referenciado
+  (`Denied`) y los 5xx/501 (`Failed`). Sin fuente configurada, quien no tiene la acción recibe 403 y
+  quien la tiene 501.
+- **Validación al arrancar**: `repair_max_bytes > 0` y `repair_source_path` distinto de `cas_path`
+  (ninguno contiene al otro); si no, el servicio no arranca.
+
+## Alcance de perfil
+
+Solo el perfil de grafo (el único) cablea la reparación; cualquier arranque sin él ignora
+`repair_source_path` y la ruta responde 501.
 
 ## Fuera de este tramo
 

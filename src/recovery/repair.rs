@@ -12,20 +12,35 @@
 //! - a corrupt blob is not deleted: it is moved to a quarantine name (kept for
 //!   forensics) only if it is still the very version that was observed, and the
 //!   store then publishes the verified bytes under the digest;
-//! - one repair at a time, with a ceiling on the bytes a repair may move;
+//! - repairs are serialised **per digest** (never globally: one account's slow
+//!   source cannot hold another's repair), at most [`MAX_CONCURRENT`] at once,
+//!   every call to the source or the store has a timeout, and the ceiling on
+//!   bytes applies to the store's own blob too: a blob above the ceiling is not
+//!   read, verified or repaired (413);
+//! - once started, a repair runs to completion even if the client goes away:
+//!   the work is spawned, so a dropped request never leaves a quarantined blob
+//!   with nothing published in its place;
 //! - repairing twice is the same as repairing once: the second finds a sound
 //!   blob and does nothing.
 //!
 //! Any failure leaves the answer "not repaired" and says why. It never invents
 //! bytes and never reports a repair it did not verify afterwards.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use hodei_evidence::ContentDigest;
 use hodei_hub::reclaim::ConditionalOutcome;
 use hodei_hub::{BlobError, BlobStore};
 use serde::Serialize;
+
+/// The most repairs that run at the same time.
+pub const MAX_CONCURRENT: usize = 4;
+
+/// How long a call to the source or the store may take by default.
+pub const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// What was wrong with the blob that was repaired.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -84,6 +99,9 @@ pub enum RepairError {
     /// owns it now and nothing was touched.
     #[error("the blob changed while it was being repaired")]
     Raced,
+    /// The source or the store did not answer in time; nothing is claimed.
+    #[error("the repair source or the content store timed out")]
+    TimedOut,
     /// The store failed, or the repaired blob did not verify afterwards.
     #[error("the content store failed during the repair")]
     StoreFailed,
@@ -91,12 +109,36 @@ pub enum RepairError {
 
 /// The repair of one blob.
 pub struct Repairer {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     store: Arc<dyn BlobStore>,
     source: Arc<dyn BlobStore>,
     max_bytes: u64,
-    /// One repair at a time: the second request of a pair finds the blob
-    /// already sound instead of racing the first.
-    running: tokio::sync::Mutex<()>,
+    io_timeout: Duration,
+    /// The digests being repaired: each has its own lock, so only repairs of
+    /// the same digest wait for each other.
+    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// Bounds the repairs in flight (and so the bytes held in memory).
+    permits: tokio::sync::Semaphore,
+}
+
+/// Removes the per-digest lock entry when nobody else is waiting on it.
+struct LockEntry<'a> {
+    inner: &'a Inner,
+    key: String,
+}
+
+impl Drop for LockEntry<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut locks) = self.inner.locks.lock()
+            && let Some(lock) = locks.get(&self.key)
+            && Arc::strong_count(lock) <= 2
+        {
+            locks.remove(&self.key);
+        }
+    }
 }
 
 impl Repairer {
@@ -104,29 +146,100 @@ impl Repairer {
     /// than `max_bytes` for one blob.
     pub fn new(store: Arc<dyn BlobStore>, source: Arc<dyn BlobStore>, max_bytes: u64) -> Self {
         Self {
-            store,
-            source,
-            max_bytes,
-            running: tokio::sync::Mutex::new(()),
+            inner: Arc::new(Inner {
+                store,
+                source,
+                max_bytes,
+                io_timeout: DEFAULT_IO_TIMEOUT,
+                locks: Mutex::new(HashMap::new()),
+                permits: tokio::sync::Semaphore::new(MAX_CONCURRENT),
+            }),
+        }
+    }
+
+    /// The same repairer with another timeout for each call to the source or
+    /// the store.
+    pub fn with_io_timeout(self, io_timeout: Duration) -> Self {
+        let old = &self.inner;
+        Self {
+            inner: Arc::new(Inner {
+                store: old.store.clone(),
+                source: old.source.clone(),
+                max_bytes: old.max_bytes,
+                io_timeout,
+                locks: Mutex::new(HashMap::new()),
+                permits: tokio::sync::Semaphore::new(MAX_CONCURRENT),
+            }),
         }
     }
 
     /// The ceiling on the bytes of one repair.
     pub fn max_bytes(&self) -> u64 {
-        self.max_bytes
+        self.inner.max_bytes
     }
 
     /// Repairs the blob named by `digest`, if it needs it.
+    ///
+    /// The work is spawned and awaited: if the caller is dropped (the client
+    /// hung up) the repair still finishes, so the store is never left between
+    /// the quarantine of the damaged blob and the publication of the good one.
     pub async fn repair(&self, digest: &ContentDigest) -> Result<RepairOutcome, RepairError> {
-        let _one_at_a_time = self.running.lock().await;
+        let inner = self.inner.clone();
+        let digest = digest.clone();
+        tokio::spawn(async move { inner.run(&digest).await })
+            .await
+            .map_err(|error| {
+                tracing::error!(%error, "the repair task failed");
+                RepairError::StoreFailed
+            })?
+    }
+}
+
+impl Inner {
+    /// One call to the source or the store, bounded in time.
+    async fn io<T>(&self, call: impl Future<Output = T>) -> Result<T, RepairError> {
+        tokio::time::timeout(self.io_timeout, call)
+            .await
+            .map_err(|_| RepairError::TimedOut)
+    }
+
+    async fn run(&self, digest: &ContentDigest) -> Result<RepairOutcome, RepairError> {
         let started = Instant::now();
+        let _permit = self
+            .io(self.permits.acquire())
+            .await?
+            .map_err(|_| RepairError::StoreFailed)?;
+        let key = digest.to_string();
+        let lock = {
+            let mut locks = self.locks.lock().map_err(|_| RepairError::StoreFailed)?;
+            locks.entry(key.clone()).or_default().clone()
+        };
+        let _entry = LockEntry { inner: self, key };
+        let _same_digest = self.io(lock.lock()).await?;
+
+        // The ceiling applies to the store's own blob first: its length is
+        // read from metadata, and nothing above the ceiling is ever read or
+        // verified (a sound giant is as refused as a damaged one).
+        let present = match self.io(self.store.length(digest)).await? {
+            Ok(length) if length > self.max_bytes => {
+                return Err(RepairError::TooLarge {
+                    max: self.max_bytes,
+                });
+            }
+            Ok(_) => true,
+            Err(BlobError::NotFound) => false,
+            Err(error) => {
+                tracing::error!(%error, "the repair could not measure the blob");
+                return Err(RepairError::StoreFailed);
+            }
+        };
 
         // The version that is observed is pinned *before* it is judged, so the
         // version judged damaged is the only one that can be moved away.
         let marker = match self.store.conditional() {
-            Some(conditional) if conditional.supports_conditional_delete() => {
-                match conditional.head_marker(digest).await {
-                    Ok(marker) => Some(marker),
+            Some(conditional) if present && conditional.supports_conditional_delete() => {
+                match self.io(conditional.head_marker(digest)).await? {
+                    Ok(marker) => marker,
                     Err(error) => {
                         tracing::error!(%error, "the repair could not read the blob version");
                         return Err(RepairError::StoreFailed);
@@ -136,7 +249,12 @@ impl Repairer {
             _ => None,
         };
 
-        let was = match self.store.verify(digest).await {
+        let verdict = if present {
+            self.io(self.store.verify(digest)).await?
+        } else {
+            Err(BlobError::NotFound)
+        };
+        let was = match verdict {
             Ok(()) => return Ok(RepairOutcome::AlreadySound),
             Err(BlobError::Corrupted { .. } | BlobError::LengthMismatch { .. }) => Was::Corrupt,
             Err(BlobError::NotFound) => Was::Absent,
@@ -147,7 +265,7 @@ impl Repairer {
         };
 
         // The ceiling is checked before any byte is moved.
-        match self.source.length(digest).await {
+        match self.io(self.source.length(digest)).await? {
             Ok(length) if length > self.max_bytes => {
                 return Err(RepairError::TooLarge {
                     max: self.max_bytes,
@@ -160,7 +278,7 @@ impl Repairer {
                 return Err(RepairError::SourceFailed);
             }
         }
-        let bytes = match self.source.get(digest).await {
+        let bytes = match self.io(self.source.get(digest)).await? {
             Ok(bytes) => bytes,
             Err(BlobError::NotFound) => return Err(RepairError::SourceUnavailable),
             Err(BlobError::Corrupted { .. } | BlobError::LengthMismatch { .. }) => {
@@ -184,14 +302,13 @@ impl Repairer {
 
         let mut quarantined = false;
         if was == Was::Corrupt {
-            let (Some(conditional), Some(marker)) = (self.store.conditional(), marker.flatten())
-            else {
+            let (Some(conditional), Some(marker)) = (self.store.conditional(), marker) else {
                 return Err(RepairError::Unsupported);
             };
             let key = conditional.quarantine_key_of(digest, &format!("repair-{}", unique_suffix()));
-            match conditional
-                .quarantine_if_untouched(digest, &marker, &key)
-                .await
+            match self
+                .io(conditional.quarantine_if_untouched(digest, &marker, &key))
+                .await?
             {
                 Ok(ConditionalOutcome::Applied { .. }) => quarantined = true,
                 // Gone: someone removed it meanwhile; the key is free anyway.
@@ -204,7 +321,7 @@ impl Repairer {
             }
         }
 
-        match self.store.put(&bytes).await {
+        match self.io(self.store.put(&bytes)).await? {
             Ok(stored) if &stored == digest => {}
             Ok(_) => return Err(RepairError::StoreFailed),
             Err(error) => {
@@ -213,7 +330,7 @@ impl Repairer {
             }
         }
         // A repair that is not read back is a claim, not a fact.
-        if self.store.verify(digest).await.is_err() {
+        if !matches!(self.io(self.store.verify(digest)).await?, Ok(())) {
             return Err(RepairError::StoreFailed);
         }
         Ok(RepairOutcome::Repaired {

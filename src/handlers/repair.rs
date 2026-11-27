@@ -87,57 +87,54 @@ pub async fn repair(
     let digest = parse_digest(&body.digest).ok_or(ResolutionError::BadRequest(
         "the digest is not sha256:<64 hex>",
     ))?;
-    let repairer = state.repairer.clone().ok_or(ResolutionError::NotImplemented(
-        "self-healing needs a configured repair source: a repair that cannot verify its bytes is not offered",
-    ))?;
-    let gc = state.gc.clone().ok_or(ResolutionError::NotImplemented(
-        "self-healing needs the durable catalog to know what a repository references",
-    ))?;
-
     // The repository is the caller's own or it does not exist; Cedar decides
     // afterwards and a denial never degrades to a 404.
     let origin = the_repository_in(&state, &context, &body.repository, &ANY_FORMAT).await?;
     let action = crate::actions::manage_storage_repair();
     gate(&state, &context, &origin, action.clone(), &correlation)?;
 
+    // Past the gate every outcome is audited: what was refused, what failed
+    // and what was done.
+    let audited = action.to_string();
     let account = context.account().as_str().to_string();
     let resource = format!("{}@{}", body.repository, digest);
+    let record = |result: AuditResult| {
+        audit(&state, &context, &audited, &resource, result, &correlation);
+    };
+    let (Some(repairer), Some(gc)) = (state.repairer.clone(), state.gc.clone()) else {
+        record(AuditResult::Failed);
+        return Err(ResolutionError::NotImplemented(
+            "self-healing needs a configured repair source and the durable catalog: a repair that cannot verify its bytes is not offered",
+        )
+        .into());
+    };
+
     // Only what this repository references can be repaired through it.
-    let referenced = gc
+    let referenced = match gc
         .references_digest(&account, &body.repository, &digest)
         .await
-        .map_err(|error| {
+    {
+        Ok(referenced) => referenced,
+        Err(error) => {
             tracing::error!(%error, "the repair could not read the references");
-            ResolutionError::Unavailable
-        })?;
+            record(AuditResult::Failed);
+            return Err(ResolutionError::Unavailable.into());
+        }
+    };
     if !referenced {
+        record(AuditResult::Denied);
         return Err(ResolutionError::NotFound.into());
     }
 
-    let audited = action.to_string();
     match repairer.repair(&digest).await {
         Ok(outcome) => {
-            audit(
-                &state,
-                &context,
-                &audited,
-                &resource,
-                AuditResult::Allowed,
-                &correlation,
-            );
+            record(AuditResult::Allowed);
             let mut answer = serde_json::to_value(&outcome).unwrap_or_default();
             answer["digest"] = serde_json::Value::String(digest.to_string());
             Ok((StatusCode::OK, Json(answer)).into_response())
         }
         Err(error) => {
-            audit(
-                &state,
-                &context,
-                &audited,
-                &resource,
-                AuditResult::Failed,
-                &correlation,
-            );
+            record(AuditResult::Failed);
             let (status, code) = match error {
                 RepairError::SourceUnavailable => (StatusCode::CONFLICT, "E_REPAIR_UNAVAILABLE"),
                 RepairError::SourceMismatch => {
@@ -148,6 +145,7 @@ pub async fn repair(
                 }
                 RepairError::Raced => (StatusCode::CONFLICT, "E_REPAIR_RACED"),
                 RepairError::Unsupported => (StatusCode::NOT_IMPLEMENTED, "E_REPAIR_UNSUPPORTED"),
+                RepairError::TimedOut => (StatusCode::GATEWAY_TIMEOUT, "E_REPAIR_TIMEOUT"),
                 RepairError::SourceFailed | RepairError::StoreFailed => {
                     (StatusCode::SERVICE_UNAVAILABLE, "E_REPAIR_FAILED")
                 }

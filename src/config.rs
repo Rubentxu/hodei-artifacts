@@ -220,6 +220,9 @@ pub struct ContentConfig {
     pub repair_source_path: Option<String>,
     /// The most bytes one repair may move (HSP-164).
     ///
+    /// It also bounds how much of the store's own blob a repair will read or
+    /// verify: a blob above it is refused (413). Must be greater than zero.
+    ///
     /// Default: 268435456 (256 MiB).
     #[serde(default = "the_default_repair_max_bytes")]
     pub repair_max_bytes: u64,
@@ -287,6 +290,38 @@ impl ContentConfig {
                 the_minimum_gc_grace_secs(),
                 self.gc_grace_secs
             )));
+        }
+        // The repair ceiling also bounds how much of the store's own blobs a
+        // repair reads, so zero would refuse every repair: say so at boot.
+        if self.repair_max_bytes == 0 {
+            return Err(ConfigError::Message(
+                "Invalid content configuration: repair_max_bytes must be greater than zero"
+                    .to_string(),
+            ));
+        }
+        if let Some(source) = self.repair_source_path.as_deref() {
+            if source.trim().is_empty() {
+                return Err(ConfigError::Message(
+                    "Invalid content configuration: repair_source_path is set but empty"
+                        .to_string(),
+                ));
+            }
+            // A source that is the store itself (or lives inside it) would
+            // "repair" a blob from its own damaged copy.
+            if self.backend == ContentBackend::Filesystem {
+                let canonical = |path: &str| {
+                    std::fs::canonicalize(path)
+                        .unwrap_or_else(|_| std::path::PathBuf::from(path.trim_end_matches('/')))
+                };
+                let (source, store) = (canonical(source), canonical(&self.cas_path));
+                if source.starts_with(&store) || store.starts_with(&source) {
+                    return Err(ConfigError::Message(format!(
+                        "Invalid content configuration: repair_source_path '{}' must be a different directory from cas_path '{}' (neither may contain the other)",
+                        source.display(),
+                        store.display()
+                    )));
+                }
+            }
         }
         // A backend chosen is a backend that has to be configured. The
         // service does not fall back to the directory when the table is
@@ -2577,5 +2612,48 @@ keys = [
             assert!(!redacted.contains(leaked), "{leaked} leaked: {redacted}");
         }
         assert!(redacted.contains("id=k1"), "{redacted}");
+    }
+}
+
+#[cfg(test)]
+mod repair_config_tests {
+    use super::*;
+
+    #[test]
+    fn a_zero_repair_ceiling_is_refused_at_boot() {
+        let content = ContentConfig {
+            repair_max_bytes: 0,
+            ..Default::default()
+        };
+        let error = content.validate().expect_err("zero refuses every repair");
+        assert!(error.to_string().contains("repair_max_bytes"), "{error}");
+    }
+
+    #[test]
+    fn the_repair_source_cannot_be_the_store_or_live_inside_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cas = tmp.path().join("cas");
+        std::fs::create_dir_all(cas.join("inner")).unwrap();
+        for source in [cas.clone(), cas.join("inner")] {
+            let content = ContentConfig {
+                cas_path: cas.to_string_lossy().into_owned(),
+                repair_source_path: Some(source.to_string_lossy().into_owned()),
+                ..Default::default()
+            };
+            let error = content
+                .validate()
+                .expect_err("the store is not its own source");
+            assert!(error.to_string().contains("repair_source_path"), "{error}");
+        }
+        let replica = tmp.path().join("replica");
+        std::fs::create_dir_all(&replica).unwrap();
+        let content = ContentConfig {
+            cas_path: cas.to_string_lossy().into_owned(),
+            repair_source_path: Some(replica.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        content
+            .validate()
+            .expect("a separate directory is a valid source");
     }
 }

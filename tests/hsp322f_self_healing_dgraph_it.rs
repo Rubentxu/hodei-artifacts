@@ -149,17 +149,26 @@ permit(principal == Iam::User::"hrn:hodei:iam::{other}:User/mallory",
 struct FlakyStore {
     inner: Arc<FileBlobStore>,
     put_fails: Arc<AtomicBool>,
+    /// How many times the router's store was asked to read or verify.
+    reads: Arc<AtomicU64>,
+    /// A delay (ms) added to every `put`, to catch a client that hangs up.
+    put_delay_ms: Arc<AtomicU64>,
 }
 
 #[async_trait]
 impl BlobStore for FlakyStore {
     async fn put(&self, bytes: &[u8]) -> Result<ContentDigest, BlobError> {
+        let delay = self.put_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
         if self.put_fails.load(Ordering::SeqCst) {
             return Err(BlobError::Unavailable("the store is full".to_string()));
         }
         self.inner.put(bytes).await
     }
     async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.inner.get(digest).await
     }
     async fn exists(&self, digest: &ContentDigest) -> Result<bool, BlobError> {
@@ -173,6 +182,7 @@ impl BlobStore for FlakyStore {
         digest: &ContentDigest,
         policy: ReadPolicy,
     ) -> Result<Vec<u8>, BlobError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.inner.get_with(digest, policy).await
     }
     async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError> {
@@ -187,6 +197,7 @@ impl BlobStore for FlakyStore {
         self.inner.read_range(digest, offset, length).await
     }
     async fn verify(&self, digest: &ContentDigest) -> Result<(), BlobError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
         self.inner.verify(digest).await
     }
     fn reclaimer(&self) -> Option<&dyn BlobReclaim> {
@@ -214,6 +225,17 @@ struct Source {
     inner: Arc<FileBlobStore>,
     mode: Arc<Mutex<SourceMode>>,
     reads: Arc<AtomicU64>,
+    /// The digest (hex) whose reads never answer, as a hung source would.
+    stall: Arc<Mutex<Option<String>>>,
+}
+
+impl Source {
+    async fn maybe_stall(&self, digest: &ContentDigest) {
+        let stalled = self.stall.lock().unwrap().clone();
+        if stalled.as_deref() == Some(digest.value.as_str()) {
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 #[async_trait]
@@ -223,6 +245,7 @@ impl BlobStore for Source {
     }
     async fn get(&self, digest: &ContentDigest) -> Result<Vec<u8>, BlobError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
+        self.maybe_stall(digest).await;
         let mode = *self.mode.lock().unwrap();
         match mode {
             SourceMode::Honest => self.inner.get(digest).await,
@@ -245,6 +268,7 @@ impl BlobStore for Source {
     }
     async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError> {
         self.reads.fetch_add(1, Ordering::SeqCst);
+        self.maybe_stall(digest).await;
         if *self.mode.lock().unwrap() == SourceMode::Down {
             return Err(BlobError::Unavailable("network down".to_string()));
         }
@@ -271,6 +295,9 @@ struct Vertical {
     mode: Arc<Mutex<SourceMode>>,
     reads: Arc<AtomicU64>,
     put_fails: Arc<AtomicBool>,
+    store_reads: Arc<AtomicU64>,
+    put_delay_ms: Arc<AtomicU64>,
+    stall: Arc<Mutex<Option<String>>>,
     audit: Arc<hodei_artifacts_api::audit::InMemoryAuditSink>,
     #[allow(dead_code)]
     tmp: TempDir,
@@ -317,9 +344,14 @@ async fn mount(account: &str, other: &str, repair_max: Option<u64>) -> Option<Ve
     let cas = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the CAS"));
     let source = Arc::new(FileBlobStore::new(tmp.path().join("replica")).expect("the replica"));
     let put_fails = Arc::new(AtomicBool::new(false));
+    let store_reads = Arc::new(AtomicU64::new(0));
+    let put_delay_ms = Arc::new(AtomicU64::new(0));
+    let stall = Arc::new(Mutex::new(None));
     let flaky: Arc<dyn BlobStore> = Arc::new(FlakyStore {
         inner: cas.clone(),
         put_fails: put_fails.clone(),
+        reads: store_reads.clone(),
+        put_delay_ms: put_delay_ms.clone(),
     });
     let mode = Arc::new(Mutex::new(SourceMode::Honest));
     let reads = Arc::new(AtomicU64::new(0));
@@ -338,8 +370,11 @@ async fn mount(account: &str, other: &str, repair_max: Option<u64>) -> Option<Ve
             inner: source.clone(),
             mode: mode.clone(),
             reads: reads.clone(),
+            stall: stall.clone(),
         });
-        state = state.with_repairer(Arc::new(Repairer::new(flaky, source_view, max)));
+        state = state.with_repairer(Arc::new(
+            Repairer::new(flaky, source_view, max).with_io_timeout(Duration::from_secs(2)),
+        ));
     }
     Some(Vertical {
         app: build_router(state, &config),
@@ -349,6 +384,9 @@ async fn mount(account: &str, other: &str, repair_max: Option<u64>) -> Option<Ve
         mode,
         reads,
         put_fails,
+        store_reads,
+        put_delay_ms,
+        stall,
         audit,
         tmp,
     })
@@ -696,6 +734,11 @@ async fn another_account_or_repository_cannot_repair_or_probe_a_digest_it_does_n
         reads,
         "the source was never consulted"
     );
+    // What was refused after Cedar is on the audit trail; absence is not.
+    assert_eq!(
+        results(&v, ACTION),
+        vec![AuditResult::Denied, AuditResult::Denied]
+    );
 }
 
 #[tokio::test]
@@ -767,6 +810,16 @@ async fn every_failure_of_the_source_or_the_store_fails_closed() {
     let (status, answer) = repair(&v, &alice, "reg", &digest).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(on_disk(&v, CONTENT).as_deref(), Some(CONTENT));
+    assert_eq!(
+        results(&v, ACTION),
+        vec![
+            AuditResult::Failed,
+            AuditResult::Failed,
+            AuditResult::Failed,
+            AuditResult::Allowed
+        ],
+        "every failure is audited, then the success"
+    );
 }
 
 #[tokio::test]
@@ -795,4 +848,106 @@ async fn a_deployment_without_a_repair_source_offers_no_repair() {
     let (status, _) = repair(&v, &alice, "reg", &digest).await;
     assert_eq!(status, StatusCode::NOT_IMPLEMENTED);
     assert_eq!(on_disk(&v, CONTENT), Some(damaged));
+    assert_eq!(results(&v, ACTION), vec![AuditResult::Failed]);
+}
+
+#[tokio::test]
+async fn a_sound_blob_above_the_ceiling_is_refused_without_being_read() {
+    let account = unique_account();
+    let Some(v) = mount(&account, "zz", Some(8)).await else {
+        return;
+    };
+    let digest = published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    let before = on_disk(&v, CONTENT);
+    let reads = v.store_reads.load(Ordering::SeqCst);
+
+    let (status, answer) = repair(&v, &alice, "reg", &digest).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{answer}");
+    assert_eq!(answer["error"], "E_REPAIR_TOO_LARGE");
+    assert_eq!(
+        v.store_reads.load(Ordering::SeqCst),
+        reads,
+        "a blob above the ceiling is neither read nor verified"
+    );
+    assert_eq!(on_disk(&v, CONTENT), before);
+}
+
+#[tokio::test]
+async fn a_hung_source_of_one_account_does_not_block_another_and_times_out_closed() {
+    let account = unique_account();
+    let other = format!("{account}x");
+    let Some(v) = mount(&account, &other, Some(1 << 20)).await else {
+        return;
+    };
+    let digest = published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    let mallory = format!("mallory@{other}");
+    // The second account has its own blob, damaged, with a healthy replica.
+    let mine: &[u8] = b"the other account's artifact";
+    seed(&v, &other, "mine", RepositoryFormat::Raw, json!({})).await;
+    upload(&v, "mine", &mallory, "m.bin", mine).await;
+    v.source.put(mine).await.unwrap();
+    std::fs::write(path_of(&v, mine), b"rot").unwrap();
+    let damaged = damage(&v, CONTENT);
+
+    // The first account's repair hangs on its source.
+    *v.stall.lock().unwrap() = Some(ContentDigest::of_bytes(CONTENT).value);
+    let app = v.app.clone();
+    let hung = tokio::spawn({
+        let (alice, digest) = (alice.clone(), digest.clone());
+        async move {
+            let body = serde_json::to_vec(&json!({"repository": "reg", "digest": digest})).unwrap();
+            send(&app, Method::POST, "/api/v1/repair", &alice, body).await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let started = std::time::Instant::now();
+    let (status, answer) = repair(&v, &mallory, "mine", &digest_of(mine)).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "another account's repair was held up by a hung source: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(on_disk(&v, mine).as_deref(), Some(mine));
+
+    // The hung one ends closed, with a timeout, and wrote nothing.
+    let (status, bytes) = hung.await.expect("the request task");
+    assert_eq!(
+        status,
+        StatusCode::GATEWAY_TIMEOUT,
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    assert_eq!(json_of(&bytes)["error"], "E_REPAIR_TIMEOUT");
+    assert_eq!(on_disk(&v, CONTENT), Some(damaged));
+}
+
+#[tokio::test]
+async fn a_client_that_hangs_up_mid_repair_does_not_leave_the_blob_missing() {
+    let account = unique_account();
+    let Some(v) = mount(&account, "zz", Some(1 << 20)).await else {
+        return;
+    };
+    let digest = published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    damage(&v, CONTENT);
+    // The write takes a while: the client leaves after the damaged blob was
+    // moved aside and before the good one is published.
+    v.put_delay_ms.store(800, Ordering::SeqCst);
+    let app = v.app.clone();
+    let request = tokio::spawn(async move {
+        let body = serde_json::to_vec(&json!({"repository": "reg", "digest": digest})).unwrap();
+        send(&app, Method::POST, "/api/v1/repair", &alice, body).await
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    request.abort();
+    tokio::time::sleep(Duration::from_millis(1800)).await;
+    assert_eq!(
+        on_disk(&v, CONTENT).as_deref(),
+        Some(CONTENT),
+        "the repair finished although nobody was waiting for it"
+    );
 }

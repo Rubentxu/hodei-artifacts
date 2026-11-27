@@ -373,20 +373,16 @@ impl GcService {
                 .ledger
                 .root_page(account, cursor.as_deref(), ROOT_PAGE_LIMIT)
                 .await?;
-            if page.roots.iter().any(matches) {
-                return Ok(true);
+            match reference_walk(&page.roots, page.has_more, digest, &matches) {
+                ReferenceWalk::Found => return Ok(true),
+                ReferenceWalk::Absent => return Ok(false),
+                ReferenceWalk::Next(next) => cursor = Some(next),
+                ReferenceWalk::NoCursor => {
+                    return Err(GcError::Unknown(
+                        "a full root page carried no cursor".to_string(),
+                    ));
+                }
             }
-            if !page.has_more {
-                return Ok(false);
-            }
-            cursor = Some(
-                page.roots
-                    .last()
-                    .map(|root| root.digest.to_string())
-                    .ok_or_else(|| {
-                        GcError::Unknown("a full root page carried no cursor".to_string())
-                    })?,
-            );
         }
     }
 
@@ -741,6 +737,37 @@ pub(crate) async fn scope_roots(
     }
 }
 
+/// What one page of roots says about a digest that is being searched.
+#[derive(Debug, PartialEq, Eq)]
+enum ReferenceWalk {
+    Found,
+    Absent,
+    Next(String),
+    NoCursor,
+}
+
+/// Decides, for one page, whether the walk is over. Pages are ordered by
+/// digest, so once the last digest of a page is past the one searched no later
+/// page can hold it and the walk stops without reading them.
+fn reference_walk(
+    roots: &[ContentRoot],
+    has_more: bool,
+    searched: &ContentDigest,
+    matches: &dyn Fn(&ContentRoot) -> bool,
+) -> ReferenceWalk {
+    if roots.iter().any(matches) {
+        return ReferenceWalk::Found;
+    }
+    if !has_more {
+        return ReferenceWalk::Absent;
+    }
+    match roots.last().map(|root| root.digest.to_string()) {
+        Some(last) if last > searched.to_string() => ReferenceWalk::Absent,
+        Some(last) => ReferenceWalk::Next(last),
+        None => ReferenceWalk::NoCursor,
+    }
+}
+
 pub(crate) fn parse_digest(text: &str) -> Option<ContentDigest> {
     let value = text.strip_prefix("sha256:")?;
     Some(ContentDigest::sha256(value))
@@ -749,5 +776,65 @@ pub(crate) fn parse_digest(text: &str) -> Option<ContentDigest> {
 impl From<BlobError> for GcError {
     fn from(error: BlobError) -> Self {
         Self::Store(format!("{error:?}"))
+    }
+}
+
+#[cfg(test)]
+mod reference_walk_tests {
+    use super::*;
+    use hodei_catalog::RootKind;
+
+    fn root(seed: char) -> ContentRoot {
+        ContentRoot {
+            kind: RootKind::Asset,
+            account: "acme".into(),
+            repository: "r".into(),
+            subject: "s".into(),
+            digest: ContentDigest::sha256(seed.to_string().repeat(64)),
+        }
+    }
+
+    fn searched(seed: char) -> ContentDigest {
+        ContentDigest::sha256(seed.to_string().repeat(64))
+    }
+
+    #[test]
+    fn the_walk_stops_once_a_page_is_past_the_digest_searched() {
+        let page = [root('1'), root('5')];
+        let never = |_: &ContentRoot| false;
+        assert_eq!(
+            reference_walk(&page, true, &searched('3'), &never),
+            ReferenceWalk::Absent,
+            "the next pages only hold greater digests"
+        );
+    }
+
+    #[test]
+    fn the_walk_goes_on_while_the_page_is_before_the_digest_searched() {
+        let page = [root('1'), root('2')];
+        let never = |_: &ContentRoot| false;
+        let ReferenceWalk::Next(cursor) = reference_walk(&page, true, &searched('9'), &never)
+        else {
+            panic!("the walk must continue");
+        };
+        assert_eq!(cursor, root('2').digest.to_string());
+        assert_eq!(
+            reference_walk(&page, false, &searched('9'), &never),
+            ReferenceWalk::Absent
+        );
+        assert_eq!(
+            reference_walk(&[], true, &searched('9'), &never),
+            ReferenceWalk::NoCursor
+        );
+    }
+
+    #[test]
+    fn a_match_in_the_page_ends_the_walk() {
+        let page = [root('1'), root('3')];
+        let hit = |r: &ContentRoot| r.digest == searched('3');
+        assert_eq!(
+            reference_walk(&page, true, &searched('3'), &hit),
+            ReferenceWalk::Found
+        );
     }
 }
