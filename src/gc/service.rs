@@ -73,6 +73,18 @@ pub enum GcError {
     Invalid(String),
 }
 
+/// The references of one repository, read page by page (HSP-326).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReferenceScan {
+    /// Each digest and its logical references (the most rows of one root kind
+    /// that name it in the repository), by digest.
+    pub(crate) digests: Vec<(ContentDigest, u32)>,
+    /// The ledger rows read to get here (other repositories' rows included).
+    pub(crate) rows_read: usize,
+    /// Where to resume when a bound cut the walk short.
+    pub(crate) next_after: Option<String>,
+}
+
 /// The result of a sweep.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SweepReport {
@@ -438,6 +450,81 @@ impl GcService {
                 }
             }
         }
+    }
+
+    /// The digests a repository of `account` references, in digest order, with
+    /// how many roots name each (HSP-326). It only reads.
+    ///
+    /// The walk resumes after `after` and is bounded twice: it stops after
+    /// `max_digests` digests or once `max_rows` ledger rows were read, and then
+    /// says where to resume (`next_after`). It needs a ledger that pages: one
+    /// that would have to materialise the whole census is refused, and any read
+    /// failure is an error, never a short list.
+    pub(crate) async fn repository_references(
+        &self,
+        account: &str,
+        repository: &str,
+        after: Option<&ContentDigest>,
+        max_digests: usize,
+        max_rows: usize,
+    ) -> Result<ReferenceScan, GcError> {
+        if !self.ledger.supports_fenced_pass() {
+            return Err(GcError::Unsupported);
+        }
+        let mut cursor: Option<String> = after.map(ToString::to_string);
+        // A published path leaves one row per kind of root (asset, version,
+        // reference), so the logical references are the most rows of any one kind.
+        type Kinds = std::collections::BTreeMap<&'static str, u32>;
+        let mut found: std::collections::BTreeMap<String, (ContentDigest, Kinds)> =
+            Default::default();
+        let mut rows_read = 0usize;
+        let mut next_after = None;
+        loop {
+            let page = self
+                .ledger
+                .root_page(account, cursor.as_deref(), ROOT_PAGE_LIMIT.min(max_rows))
+                .await?;
+            rows_read += page.roots.len();
+            for root in &page.roots {
+                if root.account == account && root.repository == repository {
+                    *found
+                        .entry(root.digest.to_string())
+                        .or_insert_with(|| (root.digest.clone(), Kinds::new()))
+                        .1
+                        .entry(root.kind.as_str())
+                        .or_default() += 1;
+                }
+            }
+            let last = page.roots.last().map(|root| root.digest.to_string());
+            if found.len() > max_digests {
+                // Keep exactly `max_digests` and resume after the last kept.
+                let keep: Vec<String> = found.keys().take(max_digests).cloned().collect();
+                found.retain(|key, _| keep.contains(key));
+                next_after = keep.last().cloned();
+                break;
+            }
+            if !page.has_more {
+                break;
+            }
+            let Some(last) = last else {
+                return Err(GcError::Unknown(
+                    "a full root page carried no cursor".to_string(),
+                ));
+            };
+            if rows_read >= max_rows {
+                next_after = Some(last);
+                break;
+            }
+            cursor = Some(last);
+        }
+        Ok(ReferenceScan {
+            digests: found
+                .into_values()
+                .map(|(digest, kinds)| (digest, kinds.into_values().max().unwrap_or(0)))
+                .collect(),
+            rows_read,
+            next_after,
+        })
     }
 
     /// The roots of every account, in pages of `page_limit`. Returns the

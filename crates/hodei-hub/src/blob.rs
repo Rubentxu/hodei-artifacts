@@ -332,6 +332,16 @@ pub trait BlobStore: Send + Sync {
     /// The length of the content, without reading it.
     async fn length(&self, digest: &ContentDigest) -> Result<u64, BlobError>;
 
+    /// How long ago the content was last written or reused, from metadata only
+    /// (HSP-326).
+    ///
+    /// `Ok(None)` means the store keeps no such date: it is "unknown", never
+    /// "old". It reads nothing of the content and writes nothing.
+    async fn age(&self, digest: &ContentDigest) -> Result<Option<Duration>, BlobError> {
+        let _ = digest;
+        Ok(None)
+    }
+
     /// Reads a **range** of the content.
     ///
     /// The range starts at `offset` and has `length` bytes. It is the way
@@ -1052,6 +1062,22 @@ impl BlobStore for FileBlobStore {
             Ok(metadata) => Ok(metadata.len()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(BlobError::NotFound),
             Err(error) => Err(BlobError::Unavailable(error.to_string())),
+        }
+    }
+
+    async fn age(&self, digest: &ContentDigest) -> Result<Option<Duration>, BlobError> {
+        let unavailable = |error: std::io::Error| BlobError::Unavailable(error.to_string());
+        match tokio::fs::metadata(self.the_path_of(digest)).await {
+            Ok(metadata) => {
+                let modified = metadata.modified().map_err(unavailable)?;
+                Ok(Some(
+                    SystemTime::now()
+                        .duration_since(modified)
+                        .unwrap_or(Duration::ZERO),
+                ))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(BlobError::NotFound),
+            Err(error) => Err(unavailable(error)),
         }
     }
 

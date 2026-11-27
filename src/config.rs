@@ -1075,6 +1075,12 @@ pub struct AppConfig {
     #[serde(default)]
     pub content: ContentConfig,
 
+    /// The tiers, thresholds and cost bounds of the read-only tiering advisor
+    /// (HSP-326). Absent: `GET /api/v1/storage/tiering/advice` answers 501. A
+    /// section with an unknown field or an out-of-range value stops the boot.
+    #[serde(default)]
+    pub tiering: Option<crate::tiering::TieringConfig>,
+
     /// The limits of the investigation surface.
     #[serde(default)]
     pub investigation: InvestigationConfig,
@@ -1519,6 +1525,9 @@ impl AppConfig {
             .map_err(|error| ConfigError::Message(error.to_string()))?;
         self.logging.validate()?;
         self.content.validate()?;
+        if let Some(tiering) = &self.tiering {
+            tiering.validate().map_err(ConfigError::Message)?;
+        }
         self.investigation.validate()?;
         self.quota.validate()?;
         self.public_url.validate()?;

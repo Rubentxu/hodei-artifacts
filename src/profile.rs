@@ -462,6 +462,14 @@ pub async fn assemble_graph_profile(
             state
         }
     };
+    // The tiering advisor opens only with a validated ladder: without one the
+    // endpoint answers closed (HSP-326).
+    let state = match config.tiering.clone() {
+        Some(tiering) => state.with_tiering(Arc::new(
+            crate::tiering::TieringAdvisor::new(tiering).map_err(BootstrapError::Initialization)?,
+        )),
+        None => state,
+    };
     let state = state.with_audit_sink(Arc::new(TracingAuditSink));
 
     tracing::info!(

@@ -715,6 +715,13 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
             "/storage/relocate",
             post(crate::handlers::storage_relocation::relocate),
         )
+        // Read-only tiering advice (HSP-326): which configured tier each digest
+        // of a repository would belong to, citing the facts used; it places
+        // nothing; the dedicated action `ExploreStorageTiering`.
+        .route(
+            "/storage/tiering/advice",
+            get(crate::handlers::storage_tiering::advice),
+        )
         // Verification of a trust passport against the roots the deployment
         // pinned (HSP-321). A verdict, never a credential; the dedicated action
         // `VerifyTrustPassport`. The repository is a query parameter so that

@@ -281,6 +281,10 @@ impl BlobStore for LocatedStore {
         first_that_answers!(self, digest, |store| store.length(digest))
     }
 
+    async fn age(&self, digest: &ContentDigest) -> Result<Option<std::time::Duration>, BlobError> {
+        first_that_answers!(self, digest, |store| store.age(digest))
+    }
+
     async fn read_range(
         &self,
         digest: &ContentDigest,
