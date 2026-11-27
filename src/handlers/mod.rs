@@ -25,6 +25,7 @@ pub mod iam;
 pub mod investigation;
 pub(crate) mod maven;
 pub mod migration;
+pub mod mirror_metadata;
 pub mod npm;
 pub mod nuget;
 pub mod oci;

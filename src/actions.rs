@@ -79,6 +79,17 @@ pub fn manage_storage_repair() -> ActionId {
     ActionId::new("artifacts", "ManageStorageRepair").expect("a valid action")
 }
 
+/// Reading or re-baselining the rollback/freeze state of the signed index of
+/// a proxy repository (HSP-167).
+///
+/// Re-baselining tells the proxy to accept the next verified `Release`
+/// whatever its date, so it is its own action: downloading, publishing or
+/// managing the repository never implies it, and a policy has to grant it
+/// explicitly to whoever may decide that an upstream legitimately went back.
+pub fn manage_mirror_metadata() -> ActionId {
+    ActionId::new("artifacts", "ManageMirrorMetadata").expect("a valid action")
+}
+
 /// Managing the trusted publishers of a repository (HSP-152).
 ///
 /// A trusted publisher binds an OIDC identity to the publication into the
@@ -156,6 +167,7 @@ pub fn all() -> Vec<ActionId> {
         manage_dependency_freeze(),
         explore_repository_history(),
         manage_storage_repair(),
+        manage_mirror_metadata(),
         manage_trusted_publishers(),
         read_capsule(),
         access_admin_api(),
@@ -342,6 +354,8 @@ mod scope_tests {
                 .expect("repository history action declared");
             check_declared(&schema, &manage_storage_repair())
                 .expect("storage repair action declared");
+            check_declared(&schema, &manage_mirror_metadata())
+                .expect("mirror metadata action declared");
         }
     }
 

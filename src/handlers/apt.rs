@@ -777,9 +777,53 @@ async fn handle_proxy(
                 return Err(RawApiError::NotFound.into());
             }
             let is_inrelease = matches!(route, Route::InRelease { .. });
-            let (served, _parsed) =
-                resolve_proxy_release(state, context, repository, dist, is_inrelease, correlation)
-                    .await?;
+            if apt_config.trusted_key_asc.is_some() {
+                // A pinned key means the index is authenticated, and what is
+                // authenticated is also checked for rollback and freeze
+                // (HSP-167). What is served is exactly the asset that was
+                // verified and judged: one resolution, no second fetch.
+                let kind = if is_inrelease {
+                    ReleaseKind::InRelease
+                } else {
+                    ReleaseKind::Detached
+                };
+                let verified = verified_release(
+                    state,
+                    context,
+                    repository,
+                    &apt_config,
+                    dist,
+                    kind,
+                    correlation,
+                )
+                .await?;
+                let served = if is_inrelease {
+                    verified.inrelease
+                } else {
+                    verified.release
+                }
+                .ok_or(RawApiError::NotFound)?;
+                return serve_proxy_response(
+                    state,
+                    context,
+                    repository,
+                    &served,
+                    "text/plain",
+                    head,
+                    correlation,
+                )
+                .await;
+            }
+            let (served, _parsed) = resolve_proxy_release(
+                state,
+                context,
+                repository,
+                dist,
+                is_inrelease,
+                false,
+                correlation,
+            )
+            .await?;
             serve_proxy_response(
                 state,
                 context,
@@ -794,6 +838,29 @@ async fn handle_proxy(
         Route::ReleaseSignature { dist } => {
             if !apt_config.allows_dist(dist) {
                 return Err(RawApiError::NotFound.into());
+            }
+            if apt_config.trusted_key_asc.is_some() {
+                let verified = verified_release(
+                    state,
+                    context,
+                    repository,
+                    &apt_config,
+                    dist,
+                    ReleaseKind::Detached,
+                    correlation,
+                )
+                .await?;
+                let served = verified.signature.ok_or(RawApiError::NotFound)?;
+                return serve_proxy_response(
+                    state,
+                    context,
+                    repository,
+                    &served,
+                    "application/pgp-signature",
+                    head,
+                    correlation,
+                )
+                .await;
             }
             let release_path = format!("dists/{dist}/Release");
             let sig_path = format!("dists/{dist}/Release.gpg");
@@ -949,8 +1016,15 @@ async fn handle_proxy(
             if !apt_config.allows_pool_path(path) {
                 return Err(RawApiError::NotFound.into());
             }
-            let entry =
-                find_deb_in_cached_snapshot(state, context, repository, &apt_config, path).await?;
+            let entry = find_deb_in_cached_snapshot(
+                state,
+                context,
+                repository,
+                &apt_config,
+                path,
+                correlation,
+            )
+            .await?;
             let served = the_proxy_asset_verified(
                 state,
                 context,
@@ -1001,6 +1075,7 @@ async fn resolve_proxy_release(
     repository: &RepositoryDescriptor,
     dist: &str,
     is_inrelease: bool,
+    force_fetch: bool,
     correlation: &str,
 ) -> Result<(ProxyServed, ParsedRelease), Failure> {
     let asset_path = if is_inrelease {
@@ -1014,7 +1089,7 @@ async fn resolve_proxy_release(
         repository,
         &asset_path,
         None,
-        false,
+        force_fetch,
         correlation,
     )
     .await
@@ -1043,6 +1118,251 @@ async fn resolve_proxy_release(
     Ok((served, parsed))
 }
 
+/// Which signed form of the index a caller needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseKind {
+    /// The clearsigned `InRelease`.
+    InRelease,
+    /// `Release` with its detached `Release.gpg`.
+    Detached,
+    /// `InRelease`, falling back to the detached pair when upstream has none.
+    Either,
+}
+
+/// A signed index that was verified against the operator-pinned key and
+/// judged for rollback and freeze, together with the exact assets it rests on.
+/// Serving these assets (digest-addressed) is serving what was judged.
+struct VerifiedRelease {
+    parsed: ParsedRelease,
+    inrelease: Option<ProxyServed>,
+    release: Option<ProxyServed>,
+    signature: Option<ProxyServed>,
+}
+
+/// Rollback and freeze judgement of a signature-verified `Release` body
+/// (HSP-167). The caller has verified the signature against the key the
+/// operator pinned and parsed the very text it verified. Fail closed: without
+/// a ledger, or when it cannot answer, nothing is served. The error carries
+/// whether a forced refetch of the metadata could change the verdict.
+#[allow(clippy::too_many_arguments)]
+async fn enforce_metadata_guard(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    apt_config: &AptProxyConfig,
+    dist: &str,
+    body: &str,
+    parsed: &ParsedRelease,
+    correlation: &str,
+) -> Result<(), Failure> {
+    use crate::proxy::metadata_guard::{self as guard, Refusal};
+
+    let resource = format!("{}/dists/{dist}", repository.repo_key);
+    let refuse = |refusal: Refusal| {
+        tracing::warn!(
+            target: "hodei_artifacts::proxy",
+            repository = %repository.repo_key,
+            distribution = dist,
+            code = refusal.code(),
+            "the signed mirror metadata was refused"
+        );
+        record_audit(
+            state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            "artifacts:VerifyMirrorMetadata",
+            &resource,
+            if matches!(refusal, Refusal::Unavailable) {
+                AuditResult::Failed
+            } else {
+                AuditResult::Denied
+            },
+            correlation,
+        );
+        let status = if matches!(refusal, Refusal::Unavailable) {
+            StatusCode::SERVICE_UNAVAILABLE
+        } else {
+            StatusCode::BAD_GATEWAY
+        };
+        Failure::Plain(status, format!("{}: {refusal}", refusal.code()))
+    };
+    let Some(ledger) = state.mirror_metadata.as_ref() else {
+        return Err(refuse(Refusal::Unavailable));
+    };
+    let facts = guard::ReleaseFacts {
+        date: parsed.date,
+        valid_until: parsed.valid_until,
+        digest: guard::body_digest(body),
+    };
+    let policy = guard::Policy::bounded(apt_config.max_metadata_age_secs);
+    let key = guard::MetadataKey {
+        account: context.account().as_str().to_string(),
+        repository: repository.repo_key.clone(),
+        distribution: dist.to_string(),
+    };
+    guard::admit(ledger.as_ref(), &key, &facts, &policy, chrono::Utc::now())
+        .await
+        .map(|_| ())
+        .map_err(refuse)
+}
+
+/// One resolution of the signed index, verified and judged.
+#[allow(clippy::too_many_arguments)]
+async fn verify_once(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    apt_config: &AptProxyConfig,
+    trusted_key: &str,
+    dist: &str,
+    kind: ReleaseKind,
+    force: bool,
+    correlation: &str,
+) -> Result<VerifiedRelease, Failure> {
+    let invalid = |what: &'static str| Failure::plain(StatusCode::BAD_GATEWAY, what);
+    if kind != ReleaseKind::Detached {
+        match resolve_proxy_release(state, context, repository, dist, true, force, correlation)
+            .await
+        {
+            Ok((served, _)) => {
+                let bytes = the_content_store(state)?
+                    .get(&served.asset.digest)
+                    .await
+                    .map_err(|error| the_blob_error(&error))?;
+                // Parse the text the signature covers, not the armor around it.
+                let text = MetadataSigner::verify_cleartext_text(&bytes, trusted_key)
+                    .map_err(|_| invalid("upstream InRelease signature is invalid"))?;
+                let parsed = apt::parse_release(&text)
+                    .map_err(|error| Failure::plain(StatusCode::BAD_GATEWAY, &error.to_string()))?;
+                enforce_metadata_guard(
+                    state,
+                    context,
+                    repository,
+                    apt_config,
+                    dist,
+                    &text,
+                    &parsed,
+                    correlation,
+                )
+                .await?;
+                return Ok(VerifiedRelease {
+                    parsed,
+                    inrelease: Some(served),
+                    release: None,
+                    signature: None,
+                });
+            }
+            Err(Failure::Raw(RawApiError::NotFound)) if kind == ReleaseKind::Either => {}
+            Err(other) => return Err(other),
+        }
+    }
+    let (release, _) =
+        resolve_proxy_release(state, context, repository, dist, false, force, correlation).await?;
+    let release_bytes = the_content_store(state)?
+        .get(&release.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    let signature_path = format!("dists/{dist}/Release.gpg");
+    // Release and Release.gpg must come from one generation: refresh the
+    // signature when the Release is newer than what is cached for it.
+    let cached_signature =
+        the_current_asset(state, context, &repository.repo_key, &signature_path).await?;
+    let force_signature = force
+        || cached_signature
+            .as_ref()
+            .is_some_and(|sig| release.asset.updated_at > sig.updated_at);
+    let signature = the_proxy_asset_verified(
+        state,
+        context,
+        repository,
+        &signature_path,
+        None,
+        force_signature,
+        correlation,
+    )
+    .await?;
+    let signature_bytes = the_content_store(state)?
+        .get(&signature.asset.digest)
+        .await
+        .map_err(|error| the_blob_error(&error))?;
+    MetadataSigner::verify_detached(&release_bytes, &signature_bytes, trusted_key)
+        .map_err(|_| invalid("upstream Release signature is invalid"))?;
+    let text = std::str::from_utf8(&release_bytes)
+        .map_err(|_| invalid("upstream Release is not valid UTF-8"))?
+        .to_string();
+    let parsed = apt::parse_release(&text)
+        .map_err(|error| Failure::plain(StatusCode::BAD_GATEWAY, &error.to_string()))?;
+    enforce_metadata_guard(
+        state,
+        context,
+        repository,
+        apt_config,
+        dist,
+        &text,
+        &parsed,
+        correlation,
+    )
+    .await?;
+    Ok(VerifiedRelease {
+        parsed,
+        inrelease: None,
+        release: Some(release),
+        signature: Some(signature),
+    })
+}
+
+/// Resolves, verifies and judges the signed index of `dist`.
+///
+/// A refusal may come from stale cached metadata (a replay cached once, or a
+/// refresh that raced another request), so a 502 is retried once with a forced
+/// refetch before it is final: the verdict is then about what upstream serves
+/// now. Nothing refused is ever served, and a 503 (ledger) is never retried.
+async fn verified_release(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    apt_config: &AptProxyConfig,
+    dist: &str,
+    kind: ReleaseKind,
+    correlation: &str,
+) -> Result<VerifiedRelease, Failure> {
+    let trusted_key = apt_config.trusted_key_asc.as_deref().ok_or_else(|| {
+        Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "the APT proxy group member has no operator-pinned signing key",
+        )
+    })?;
+    let first = verify_once(
+        state,
+        context,
+        repository,
+        apt_config,
+        trusted_key,
+        dist,
+        kind,
+        false,
+        correlation,
+    )
+    .await;
+    match first {
+        Err(Failure::Plain(StatusCode::BAD_GATEWAY, _)) => {
+            verify_once(
+                state,
+                context,
+                repository,
+                apt_config,
+                trusted_key,
+                dist,
+                kind,
+                true,
+                correlation,
+            )
+            .await
+        }
+        other => other,
+    }
+}
+
 async fn active_parsed_release(
     state: &AppState,
     context: &hodei_authz::VerifiedContext,
@@ -1054,60 +1374,17 @@ async fn active_parsed_release(
         tracing::warn!(error = %error, member = %repository.repo_key, "invalid apt proxy configuration");
         Failure::plain(StatusCode::BAD_GATEWAY, "the apt proxy configuration is invalid")
     })?;
-    let trusted_key = apt_config.trusted_key_asc.as_deref().ok_or_else(|| {
-        Failure::plain(
-            StatusCode::BAD_GATEWAY,
-            "the APT proxy group member has no operator-pinned signing key",
-        )
-    })?;
-
-    match resolve_proxy_release(state, context, repository, dist, true, correlation).await {
-        Ok((served, parsed)) => {
-            let bytes = the_content_store(state)?
-                .get(&served.asset.digest)
-                .await
-                .map_err(|error| the_blob_error(&error))?;
-            MetadataSigner::verify_cleartext(&bytes, trusted_key).map_err(|_| {
-                Failure::plain(
-                    StatusCode::BAD_GATEWAY,
-                    "upstream InRelease signature is invalid",
-                )
-            })?;
-            Ok(parsed)
-        }
-        Err(Failure::Raw(RawApiError::NotFound)) => {
-            let (release, parsed) =
-                resolve_proxy_release(state, context, repository, dist, false, correlation).await?;
-            let release_bytes = the_content_store(state)?
-                .get(&release.asset.digest)
-                .await
-                .map_err(|error| the_blob_error(&error))?;
-            let signature_path = format!("dists/{dist}/Release.gpg");
-            let signature = the_proxy_asset_verified(
-                state,
-                context,
-                repository,
-                &signature_path,
-                None,
-                false,
-                correlation,
-            )
-            .await?;
-            let signature_bytes = the_content_store(state)?
-                .get(&signature.asset.digest)
-                .await
-                .map_err(|error| the_blob_error(&error))?;
-            MetadataSigner::verify_detached(&release_bytes, &signature_bytes, trusted_key)
-                .map_err(|_| {
-                    Failure::plain(
-                        StatusCode::BAD_GATEWAY,
-                        "upstream Release signature is invalid",
-                    )
-                })?;
-            Ok(parsed)
-        }
-        Err(other) => Err(other),
-    }
+    verified_release(
+        state,
+        context,
+        repository,
+        &apt_config,
+        dist,
+        ReleaseKind::Either,
+        correlation,
+    )
+    .await
+    .map(|verified| verified.parsed)
 }
 
 async fn find_deb_in_cached_snapshot(
@@ -1116,6 +1393,7 @@ async fn find_deb_in_cached_snapshot(
     repository: &RepositoryDescriptor,
     apt_config: &AptProxyConfig,
     pool_path: &str,
+    correlation: &str,
 ) -> Result<apt::DebIndexEntry, Failure> {
     let (reader, _) = the_catalog(state)?;
     let store = the_content_store(state)?;
@@ -1126,6 +1404,7 @@ async fn find_deb_in_cached_snapshot(
 
     let mut parsed_releases: std::collections::BTreeMap<String, ParsedRelease> =
         std::collections::BTreeMap::new();
+    let mut untrusted_dists: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for asset in &assets {
         let Ok(route) = Route::parse(&asset.asset_path) else {
@@ -1160,7 +1439,30 @@ async fn find_deb_in_cached_snapshot(
         if !parsed_releases.contains_key(&dist) {
             let inrel = format!("dists/{dist}/InRelease");
             let rel = format!("dists/{dist}/Release");
-            let loaded = if let Some(r_asset) = assets.iter().find(|a| a.asset_path == inrel) {
+            let loaded = if apt_config.trusted_key_asc.is_some() {
+                // An authenticated index is re-verified, and checked for
+                // rollback and freeze, before it vouches for a package. A
+                // distribution whose index cannot be trusted (rolled back,
+                // frozen, unreachable, absent) vouches for nothing, but it
+                // does not stop the others from answering: it is skipped.
+                if untrusted_dists.contains(&dist) {
+                    continue;
+                }
+                match active_parsed_release(state, context, repository, &dist, correlation).await {
+                    Ok(parsed) => parsed,
+                    Err(error) => {
+                        tracing::warn!(
+                            target: "hodei_artifacts::proxy",
+                            repository = %repository.repo_key,
+                            distribution = %dist,
+                            ?error,
+                            "a distribution with an untrusted index is skipped"
+                        );
+                        untrusted_dists.insert(dist.clone());
+                        continue;
+                    }
+                }
+            } else if let Some(r_asset) = assets.iter().find(|a| a.asset_path == inrel) {
                 let bytes = store
                     .get(&r_asset.digest)
                     .await

@@ -687,6 +687,16 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
         // Self-healing of one blob (HSP-164): writes into the content store from
         // the configured repair source; the dedicated action `ManageStorageRepair`.
         .route("/repair", post(crate::handlers::repair::repair))
+        // Rollback/freeze state of a proxy's signed index (HSP-167); the
+        // dedicated action `ManageMirrorMetadata`.
+        .route(
+            "/mirror-metadata",
+            get(crate::handlers::mirror_metadata::show),
+        )
+        .route(
+            "/mirror-metadata/reset",
+            post(crate::handlers::mirror_metadata::reset),
+        )
         // Time machine (HSP-165): read-only comparison of two freezes of one
         // repository; the dedicated action `ExploreRepositoryHistory`.
         .route("/freezes/diff", get(crate::handlers::time_machine::diff))
