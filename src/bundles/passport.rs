@@ -1145,6 +1145,12 @@ pub struct PinnedSigner {
 /// The full reading re-reads the same layer under its digest and the caller
 /// compares again, so a lie here can only cause a refusal.
 pub fn read_passport_origin(layout: &Path) -> Result<super::manifest::Origin, BundleError> {
+    read_passport_shape(layout).map(|(origin, _)| origin)
+}
+
+/// [`read_passport_origin`] and the number of assets the bundle declares: a
+/// cheap, lenient read that lets the caller bound the cost before verifying.
+pub fn read_passport_shape(layout: &Path) -> Result<(super::manifest::Origin, usize), BundleError> {
     let malformed = |what: &str| -> BundleError {
         PassportProblem::new(PassportProblemCode::Malformed, what.to_string()).into()
     };
@@ -1167,7 +1173,7 @@ pub fn read_passport_origin(layout: &Path) -> Result<super::manifest::Origin, Bu
             raw_blob(release).map_err(|_| malformed("the release layer is not in the layout"))?;
         let manifest: BundleManifest = serde_json::from_slice(&release_bytes)
             .map_err(|_| malformed("the bundle manifest cannot be read"))?;
-        return Ok(manifest.origin);
+        return Ok((manifest.origin, manifest.assets.len()));
     }
     Err(malformed("the layout holds no passport"))
 }

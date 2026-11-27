@@ -117,25 +117,35 @@ pub async fn verify(
             )
             .into());
         };
-        let Some(slot) = verifier.try_slot() else {
-            record(AuditResult::Failed);
-            let mut response = respond(
-                StatusCode::TOO_MANY_REQUESTS,
-                json!({ "verdict": "none", "explanation": "too many verifications are running" }),
-            );
-            response
-                .headers_mut()
-                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
-            return Ok(response);
-        };
-
+        // The body is read BEFORE a verification slot is taken and under a
+        // deadline: a caller that trickles bytes occupies a task, never a slot.
         // Base64 inflates by a third; the margin covers the envelope.
         let ceiling = verifier.max_document_bytes() / 3 * 4 + 64 * 1024;
-        let bytes = match axum::body::to_bytes(request.into_body(), ceiling).await {
+        let bytes = match read_body(request.into_body(), ceiling, verifier.body_deadline()).await {
             Ok(bytes) => bytes,
-            Err(_) => {
+            Err(BodyFailure::TooLarge) => {
                 record(AuditResult::Denied);
                 return Ok(invalid(refusals::TOO_LARGE));
+            }
+            Err(BodyFailure::Timeout) => {
+                record(AuditResult::Failed);
+                return Ok(respond(
+                    StatusCode::REQUEST_TIMEOUT,
+                    json!({
+                        "verdict": "none",
+                        "explanation": "the request body did not arrive in time",
+                    }),
+                ));
+            }
+            Err(BodyFailure::Read) => {
+                record(AuditResult::Failed);
+                return Ok(respond(
+                    StatusCode::BAD_REQUEST,
+                    json!({
+                        "verdict": "none",
+                        "explanation": "the request body could not be read",
+                    }),
+                ));
             }
         };
         let document: PassportDocument = match serde_json::from_slice(&bytes) {
@@ -147,6 +157,22 @@ pub async fn verify(
                 );
             }
         };
+        let Some(slot) = verifier.try_slot() else {
+            record(AuditResult::Failed);
+            let mut response = respond(
+                StatusCode::TOO_MANY_REQUESTS,
+                json!({ "verdict": "none", "explanation": "too many verifications are running" }),
+            );
+            response
+                .headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("1"));
+            return Ok(response);
+        };
+        // The slot lives until this task ends (the ledger phase included); the
+        // blocking verification holds a second reference, so it is released
+        // only when both are done, even if the deadline gave the CPU work up.
+        let slot = std::sync::Arc::new(slot);
+        let _held = slot.clone();
         let now = state.identity.now();
 
         // The cryptography is CPU bound and runs off the request task; the
@@ -180,7 +206,15 @@ pub async fn verify(
             record(AuditResult::Failed);
             return Ok(no_verdict("the revocation ledger is not available"));
         };
-        match check_revocation(ledger.as_ref(), &account, &sound, now).await {
+        match check_revocation(
+            ledger.as_ref(),
+            &account,
+            &sound,
+            now,
+            verifier.ledger_deadline(),
+        )
+        .await
+        {
             Err(_) => {
                 record(AuditResult::Failed);
                 return Ok(no_verdict("the revocation ledger could not be read"));
@@ -211,4 +245,35 @@ pub async fn verify(
         ))
     });
     task.await.map_err(|_| ResolutionError::Unavailable)?
+}
+
+enum BodyFailure {
+    TooLarge,
+    Timeout,
+    Read,
+}
+
+/// Reads the body up to `ceiling` bytes within `deadline`, telling apart a
+/// body that is too large, one that did not arrive and one that broke.
+async fn read_body(
+    body: Body,
+    ceiling: usize,
+    deadline: std::time::Duration,
+) -> Result<Vec<u8>, BodyFailure> {
+    use futures_util::StreamExt;
+    let reading = async {
+        let mut stream = body.into_data_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|_| BodyFailure::Read)?;
+            if bytes.len().saturating_add(chunk.len()) > ceiling {
+                return Err(BodyFailure::TooLarge);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    };
+    tokio::time::timeout(deadline, reading)
+        .await
+        .map_err(|_| BodyFailure::Timeout)?
 }

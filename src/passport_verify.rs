@@ -64,7 +64,7 @@ use crate::bundles::capsule_dgraph::{DecisionState, map_decision_state};
 use crate::bundles::manifest::DecisionEvidence;
 use crate::bundles::passport::{
     PassportPolicy, PassportProblemCode, PinnedSigner, ReaderExpectations, problem_code_of,
-    read_passport_origin, verify_passport_pinned,
+    read_passport_shape, verify_passport_pinned,
 };
 use crate::openpgp::MetadataSigner;
 
@@ -76,13 +76,20 @@ pub const DEFAULT_MAX_DOCUMENT_BYTES: usize = 8 * 1024 * 1024;
 pub const HARD_MAX_DOCUMENT_BYTES: usize = 64 * 1024 * 1024;
 /// The most blobs a document may carry.
 pub const MAX_BLOBS: usize = 512;
-/// The most decisions of one passport that are asked of the ledger.
-pub const MAX_LEDGER_LOOKUPS: usize = 256;
+/// The most decisions of one passport that are asked of the ledger: the most
+/// assets a bundle can honestly enumerate, so the cap is the bundle's own.
+pub const MAX_LEDGER_LOOKUPS: usize = crate::bundles::manifest::MAX_BUNDLE_ASSETS;
+/// How many ledger reads of one verification may be in flight.
+pub const LEDGER_CONCURRENCY: usize = 8;
+/// The default deadline of the whole revocation phase, in seconds.
+pub const DEFAULT_LEDGER_DEADLINE_SECS: u64 = 10;
+/// The default deadline to read the request body, in seconds.
+pub const DEFAULT_BODY_DEADLINE_SECS: u64 = 15;
 /// The most verifications that run at once.
 pub const MAX_CONCURRENT: usize = 4;
 /// How long a verification may take before it is given up as unavailable.
 pub const VERIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
-/// How long one ledger read may take.
+/// How long one ledger read may take (the whole phase has its own deadline).
 pub const LEDGER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// The largest clock skew an operator may allow.
 pub const MAX_SKEW_SECS: u64 = 300;
@@ -110,13 +117,22 @@ pub struct RootEntry {
     /// From this instant the trust is taken back, whatever was frozen.
     #[serde(default)]
     pub revoked_at: Option<DateTime<Utc>>,
+    /// Retiring is **not** a cut by itself: the passport states its own
+    /// freeze time, so a key that leaked after retirement could forge a
+    /// passport dated inside the window. By default a root must also be
+    /// within its window **now** (by the server's clock). Setting this keeps
+    /// verifying what the revision froze while it was active, after it is
+    /// retired; to take trust back, set `revoked_at`.
+    #[serde(default)]
+    pub historical_ok: bool,
 }
 
 /// One OpenPGP certificate that may sign passport manifests.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignerEntry {
-    /// An operator label; never trusted for anything.
+    /// An operator label, used only in the boot errors; never trusted for
+    /// anything and never part of a verdict.
     pub id: String,
     pub public_key_armor: String,
     pub valid_from: DateTime<Utc>,
@@ -124,6 +140,10 @@ pub struct SignerEntry {
     pub valid_until: Option<DateTime<Utc>>,
     #[serde(default)]
     pub revoked_at: Option<DateTime<Utc>>,
+    /// As [`RootEntry::historical_ok`]: after `valid_until`, keep accepting
+    /// what was frozen inside the window. Off by default.
+    #[serde(default)]
+    pub historical_ok: bool,
 }
 
 /// The operator's verification file.
@@ -146,6 +166,14 @@ pub struct VerificationFile {
     pub min_slsa_level: u8,
     #[serde(default)]
     pub max_document_bytes: Option<usize>,
+    /// The deadline of the whole revocation phase, in seconds (1..=30,
+    /// default 10). Past it the answer is 503: no verdict.
+    #[serde(default)]
+    pub ledger_deadline_secs: Option<u64>,
+    /// The deadline to read the request body, in seconds (1..=60, default
+    /// 15). Past it the answer is 408 and no verification slot was taken.
+    #[serde(default)]
+    pub body_deadline_secs: Option<u64>,
     pub provenance_roots: Vec<RootEntry>,
     pub signers: Vec<SignerEntry>,
 }
@@ -172,12 +200,14 @@ struct SignerPin {
     valid_from: DateTime<Utc>,
     valid_until: Option<DateTime<Utc>>,
     revoked_at: Option<DateTime<Utc>>,
+    historical_ok: bool,
 }
 
 /// The verifier a deployment mounts: its roots, fixed at boot.
 pub struct PassportVerifier {
     roots: TrustRoots,
     revisions: Vec<RootRevision>,
+    historical_roots: std::collections::BTreeSet<(String, u32)>,
     signers: Vec<SignerPin>,
     policy: PassportPolicy,
     issuer: Option<String>,
@@ -185,6 +215,8 @@ pub struct PassportVerifier {
     skew: Duration,
     min_level: u8,
     max_document_bytes: usize,
+    ledger_deadline: std::time::Duration,
+    body_deadline: std::time::Duration,
     slots: Arc<Semaphore>,
 }
 
@@ -249,11 +281,29 @@ impl PassportVerifier {
         if file.provenance_roots.len() > MAX_ROOTS || file.signers.len() > MAX_ROOTS {
             return Err(invalid("too many pinned roots or signers"));
         }
-        if file.policy.trusted_builders.is_empty() {
-            return Err(invalid("the policy must trust at least one builder"));
+        // The chain verification expects ONE builder identity; accepting a
+        // list and honouring only its first entry would trust less than the
+        // operator wrote, so a list of several is refused.
+        if file.policy.trusted_builders.len() != 1 {
+            return Err(invalid(
+                "the policy must name exactly one trusted builder (the verification expects one builder identity)",
+            ));
+        }
+        let ledger_deadline_secs = file
+            .ledger_deadline_secs
+            .unwrap_or(DEFAULT_LEDGER_DEADLINE_SECS);
+        if !(1..=30).contains(&ledger_deadline_secs) {
+            return Err(invalid("ledger_deadline_secs must be between 1 and 30"));
+        }
+        let body_deadline_secs = file
+            .body_deadline_secs
+            .unwrap_or(DEFAULT_BODY_DEADLINE_SECS);
+        if !(1..=60).contains(&body_deadline_secs) {
+            return Err(invalid("body_deadline_secs must be between 1 and 60"));
         }
 
         let mut revisions = Vec::new();
+        let mut historical_roots = std::collections::BTreeSet::new();
         let mut roots = TrustRoots::new();
         let mut seen_keys = std::collections::BTreeSet::new();
         let mut seen_revisions = std::collections::BTreeSet::new();
@@ -273,6 +323,14 @@ impl PassportVerifier {
             let point = decode_hex(&entry.public_point_hex)
                 .filter(|point| point.len() == 65 && point[0] == 0x04)
                 .ok_or_else(|| invalid("a root point is not an uncompressed P-256 point"))?;
+            // On the curve, not only the right length: a point that is not a
+            // P-256 point can never verify anything and is an operator error.
+            if p256::PublicKey::from_sec1_bytes(&point).is_err() {
+                return Err(invalid("a root point is not on the P-256 curve"));
+            }
+            if entry.historical_ok {
+                historical_roots.insert((entry.lineage.clone(), entry.revision));
+            }
             if let Some(retired) = entry.retired_at
                 && retired < entry.activated_at
             {
@@ -322,12 +380,14 @@ impl PassportVerifier {
                 valid_from: entry.valid_from,
                 valid_until: entry.valid_until,
                 revoked_at: entry.revoked_at,
+                historical_ok: entry.historical_ok,
             });
         }
 
         Ok(Self {
             roots,
             revisions,
+            historical_roots,
             signers,
             policy: file.policy,
             issuer: file.issuer,
@@ -335,6 +395,8 @@ impl PassportVerifier {
             skew: Duration::seconds(file.clock_skew_secs as i64),
             min_level: file.min_slsa_level,
             max_document_bytes,
+            ledger_deadline: std::time::Duration::from_secs(ledger_deadline_secs),
+            body_deadline: std::time::Duration::from_secs(body_deadline_secs),
             slots: Arc::new(Semaphore::new(MAX_CONCURRENT)),
         })
     }
@@ -342,6 +404,16 @@ impl PassportVerifier {
     /// The ceiling of a document, in bytes.
     pub fn max_document_bytes(&self) -> usize {
         self.max_document_bytes
+    }
+
+    /// The deadline of the whole revocation phase.
+    pub fn ledger_deadline(&self) -> std::time::Duration {
+        self.ledger_deadline
+    }
+
+    /// The deadline to read the request body.
+    pub fn body_deadline(&self) -> std::time::Duration {
+        self.body_deadline
     }
 
     /// Takes one of the verification slots, or `None` when all are busy.
@@ -467,7 +539,7 @@ pub mod refusals {
     );
     pub const REVOKED: Refusal = refusal(
         "revoked",
-        "a promotion decision the passport cites no longer backs its digest",
+        "a promotion decision the passport cites no longer backs its digest (revoked, or its grant is no longer in force)",
     );
     pub const SUPERSEDED: Refusal = refusal(
         "superseded",
@@ -562,12 +634,17 @@ impl PassportVerifier {
 
         // 1. Audience first: nothing about the validity of a passport that is
         // not the caller's is ever computed or said.
-        let origin = read_passport_origin(path).map_err(|error| {
+        let (origin, asset_count) = read_passport_shape(path).map_err(|error| {
             tracing::debug!(%error, "the passport origin cannot be read");
             refusal_of_code(problem_code_of(&error))
         })?;
         if origin.account != account || origin.repository != repository {
             return Err(refusals::AUDIENCE_MISMATCH);
+        }
+        // The cost cap comes before any cryptography: a passport that cites
+        // more decisions than a bundle can enumerate is not read further.
+        if asset_count > MAX_LEDGER_LOOKUPS {
+            return Err(refusals::TOO_LARGE);
         }
 
         // 2. The reading under the operator's roots, signer and policy.
@@ -608,6 +685,15 @@ impl PassportVerifier {
         {
             return Err(refusals::SIGNER_NOT_VALID);
         }
+        // `verified_at` is the signer's own claim: a signer that is out of its
+        // window by the server's clock cannot vouch for a time it names itself
+        // (a leaked retired key could date a forgery inside the window), unless
+        // the operator marked the entry `historical_ok`.
+        if !pin.historical_ok
+            && (now < pin.valid_from || pin.valid_until.is_some_and(|until| now > until))
+        {
+            return Err(refusals::SIGNER_NOT_VALID);
+        }
 
         // 4. Temporal validity: nbf and exp, with a bounded skew.
         if verified_at > now + self.skew || reading.manifest.exported_at > now + self.skew {
@@ -644,10 +730,20 @@ impl PassportVerifier {
                 return Err(refusals::VERIFICATION_FAILED);
             }
         }
+        // Defense in depth: the chain verification already refuses a revoked
+        // root (and says `signer-revoked`); the same fact is asserted here on
+        // the operator's own entry so that it holds even if that stops being so.
         if root.is_revoked_at(now) {
             return Err(refusals::SIGNER_REVOKED);
         }
         if verified_at < root.activated_at || root.retired_at.is_some_and(|at| verified_at > at) {
+            return Err(refusals::ROOT_NOT_VALID);
+        }
+        // As for the signer: the window must also hold now, by the server's
+        // clock, unless the operator kept the revision `historical_ok`.
+        if !self.historical_roots.contains(&(lineage.clone(), revision))
+            && (now < root.activated_at || root.retired_at.is_some_and(|at| now > at))
+        {
             return Err(refusals::ROOT_NOT_VALID);
         }
 
@@ -686,22 +782,33 @@ impl PassportVerifier {
 pub struct LedgerUnavailable;
 
 /// Asks the trust ledger, now, whether each cited decision still backs its
-/// digest. `Ok(None)` is "all still in force"; any failure to ask is
-/// [`LedgerUnavailable`], never a pass.
+/// digest. `Ok(None)` is "all still in force"; any failure to ask, including
+/// the whole phase exceeding `deadline`, is [`LedgerUnavailable`], never a
+/// pass. At most [`LEDGER_CONCURRENCY`] reads are in flight; results are taken
+/// in the order of the citations so the first refusal is deterministic.
 pub async fn check_revocation(
     ledger: &dyn TrustLedger,
     account: &str,
     sound: &Sound,
     now: DateTime<Utc>,
+    deadline: std::time::Duration,
 ) -> Result<Option<Refusal>, LedgerUnavailable> {
-    for cited in &sound.cited {
+    // Reads go in batches of `LEDGER_CONCURRENCY`, joined in citation order,
+    // so the number in flight is bounded and the first refusal deterministic.
+    async fn read_one(
+        ledger: &dyn TrustLedger,
+        account: &str,
+        repository: &str,
+        cited: &CitedDecision,
+        now: DateTime<Utc>,
+    ) -> Result<DecisionState, LedgerUnavailable> {
         let digest = {
             let hex = well_formed_digest(&cited.digest).ok_or(LedgerUnavailable)?;
             hodei_evidence::ContentDigest::sha256(hex)
         };
         let grant = tokio::time::timeout(
             LEDGER_TIMEOUT,
-            ledger.active_grant(account, &sound.repository, &digest, now),
+            ledger.active_grant(account, repository, &digest, now),
         )
         .await
         .map_err(|_| LedgerUnavailable)?
@@ -709,11 +816,26 @@ pub async fn check_revocation(
             tracing::error!(%error, "the trust ledger could not be read for a passport");
             LedgerUnavailable
         })?;
-        match map_decision_state(Some(&cited.decision), grant.as_ref()) {
-            DecisionState::Active | DecisionState::NoDecision => {}
-            DecisionState::Revoked => return Ok(Some(refusals::REVOKED)),
-            DecisionState::Superseded { .. } => return Ok(Some(refusals::SUPERSEDED)),
-        }
+        // A grant that is no longer in force (revoked or expired) reads as
+        // "no active grant" and is reported as `revoked`.
+        Ok(map_decision_state(Some(&cited.decision), grant.as_ref()))
     }
-    Ok(None)
+    let phase = async {
+        for batch in sound.cited.chunks(LEDGER_CONCURRENCY) {
+            let reads = batch
+                .iter()
+                .map(|cited| read_one(ledger, account, &sound.repository, cited, now));
+            for state in futures_util::future::join_all(reads).await {
+                match state? {
+                    DecisionState::Active | DecisionState::NoDecision => {}
+                    DecisionState::Revoked => return Ok(Some(refusals::REVOKED)),
+                    DecisionState::Superseded { .. } => return Ok(Some(refusals::SUPERSEDED)),
+                }
+            }
+        }
+        Ok(None)
+    };
+    tokio::time::timeout(deadline, phase)
+        .await
+        .map_err(|_| LedgerUnavailable)?
 }

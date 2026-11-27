@@ -231,6 +231,10 @@ tokio = { workspace = true }
 async-trait = { workspace = true }
 futures-util = { workspace = true }
 
+# P-256 point validation of the operator's pinned provenance roots (HSP-321k);
+# verification itself stays on the workspace's ring-based chain.
+p256 = { version = "0.13", default-features = false, features = ["arithmetic", "ecdsa", "std"] }
+
 # Web framework
 axum = { workspace = true }
 tower = { workspace = true }

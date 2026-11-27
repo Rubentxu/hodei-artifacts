@@ -213,6 +213,27 @@ fn export_passport_with(
     signer: &MetadataSigner,
     verified_at: DateTime<Utc>,
 ) -> PathBuf {
+    export_passport_under(
+        bundle_dir,
+        name,
+        published,
+        signing,
+        signer,
+        verified_at,
+        hsp160_policy_for_it(),
+    )
+}
+
+/// As [`export_passport_with`], under a given policy.
+fn export_passport_under(
+    bundle_dir: &Path,
+    name: &str,
+    published: &SignedRoot,
+    signing: &SignedRoot,
+    signer: &MetadataSigner,
+    verified_at: DateTime<Utc>,
+    policy: PassportPolicy,
+) -> PathBuf {
     let capsule_dir = bundle_dir.join("oci");
     let digest = capsule_digest(&capsule_dir);
     let revision = published.revision(1, verified_at - Duration::days(30));
@@ -222,7 +243,7 @@ fn export_passport_with(
         capsule_dir: &capsule_dir,
         capsule_image_digest: digest.clone(),
         provenance: hsp160_provenance(signing, &digest),
-        policy: hsp160_policy_for_it(),
+        policy,
         roots: &roots,
         published_revisions: vec![revision],
         verified_at,
@@ -468,6 +489,61 @@ impl TrustLedger for DownLedger {
     }
 }
 
+/// A ledger that answers every read an hour from now.
+struct SlowLedger;
+
+#[async_trait]
+impl TrustLedger for SlowLedger {
+    async fn grant(&self, g: &[TrustGrant]) -> Result<(), CatalogError> {
+        DownLedger.grant(g).await
+    }
+    async fn revoke_decision(
+        &self,
+        a: &str,
+        b: &str,
+        c: &str,
+        d: &str,
+        e: &str,
+        f: DateTime<Utc>,
+    ) -> Result<u64, CatalogError> {
+        DownLedger.revoke_decision(a, b, c, d, e, f).await
+    }
+    async fn revoke_decision_for_account(
+        &self,
+        a: &str,
+        b: &str,
+        c: &str,
+        d: &str,
+        e: DateTime<Utc>,
+    ) -> Result<u64, CatalogError> {
+        DownLedger.revoke_decision_for_account(a, b, c, d, e).await
+    }
+    async fn revoke_digest(
+        &self,
+        a: &str,
+        b: &str,
+        c: &ContentDigest,
+        d: &str,
+        e: &str,
+        f: DateTime<Utc>,
+    ) -> Result<u64, CatalogError> {
+        DownLedger.revoke_digest(a, b, c, d, e, f).await
+    }
+    async fn active_grant(
+        &self,
+        _: &str,
+        _: &str,
+        _: &ContentDigest,
+        _: DateTime<Utc>,
+    ) -> Result<Option<TrustGrant>, CatalogError> {
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+        Ok(None)
+    }
+    async fn grants_of(&self, a: &str, b: &str) -> Result<Vec<TrustGrant>, CatalogError> {
+        DownLedger.grants_of(a, b).await
+    }
+}
+
 #[derive(Default)]
 struct Opts {
     /// The operator's file; `None` mounts no verifier (501).
@@ -477,6 +553,8 @@ struct Opts {
     at: Option<DateTime<Utc>>,
     /// Load the verifier through `trust.passport_verification_file`.
     through_file: bool,
+    /// A ledger of the test's own (slow, broken...).
+    ledger: Option<Arc<dyn TrustLedger>>,
 }
 
 struct Mounted {
@@ -554,6 +632,9 @@ async fn mount(world: &World, opts: Opts) -> Mounted {
     }
     if opts.ledger_down {
         state = state.with_trust_ledger(Arc::new(DownLedger));
+    }
+    if let Some(ledger) = opts.ledger {
+        state = state.with_trust_ledger(ledger);
     }
     std::mem::forget(keep);
     Mounted {
@@ -1021,20 +1102,78 @@ async fn roots_windows_policy_and_the_provenance_key_are_the_operators() {
     );
 
     // A rotated lineage keeps verifying what its retired revision froze while
-    // it was active (rotation is not revocation).
-    let rotated = mount_with(Box::new(move |file| {
-        file["provenance_roots"][0]["retired_at"] = json!((v + Duration::minutes(5)).to_rfc3339());
-        file["provenance_roots"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({
-                "lineage": "alpha", "revision": 2, "key_id": "hsp321k-alpha-v2",
-                "public_point_hex": format!("04{}", "11".repeat(64)),
-                "issuer": ISSUER, "activated_at": (v + Duration::minutes(5)).to_rfc3339(),
-            }));
-    }))
-    .await;
+    // it was active, as long as the revision is still inside its window by the
+    // server's clock (rotation is not revocation).
+    let next = SignedRoot::generate("hsp321k-alpha-v2", "alpha", ISSUER);
+    let next_point: String = next.point.iter().map(|b| format!("{b:02x}")).collect();
+    let rotate = {
+        let next_point = next_point.clone();
+        move |historical: bool| {
+            let next_point = next_point.clone();
+            Box::new(move |file: &mut Value| {
+                file["provenance_roots"][0]["retired_at"] =
+                    json!((v + Duration::minutes(5)).to_rfc3339());
+                file["provenance_roots"][0]["historical_ok"] = json!(historical);
+                file["provenance_roots"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({
+                        "lineage": "alpha", "revision": 2, "key_id": "hsp321k-alpha-v2",
+                        "public_point_hex": next_point,
+                        "issuer": ISSUER, "activated_at": (v + Duration::minutes(5)).to_rfc3339(),
+                    }));
+            }) as Box<dyn FnOnce(&mut Value)>
+        }
+    };
+    let mount_at = |at: DateTime<Utc>, tweak: Box<dyn FnOnce(&mut Value)>| {
+        let text = roots_json(&world, tweak);
+        mount(
+            &world,
+            Opts {
+                roots: Some(text),
+                at: Some(at),
+                ..Opts::default()
+            },
+        )
+    };
+    let rotated = mount_at(v + Duration::minutes(1), rotate(false)).await;
     let (status, body) = verify(&rotated.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // H3: the freeze time is the signer's own claim. Once the revision is
+    // retired by the server's clock it no longer vouches for it, even for a
+    // freeze dated inside its window ...
+    let after = v + Duration::minutes(10);
+    let retired_now = mount_at(after, rotate(false)).await;
+    assert_refused(
+        &verify(&retired_now.app, "alice@acme", "mirror", &document).await,
+        "root-not-valid",
+    );
+    // ... unless the operator keeps the revision `historical_ok`.
+    let historical = mount_at(after, rotate(true)).await;
+    let (status, body) = verify(&historical.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    // The same for the passport signer's `valid_until`.
+    let signer_closed = mount_at(
+        after,
+        Box::new(move |file| {
+            file["signers"][0]["valid_until"] = json!((v + Duration::minutes(5)).to_rfc3339());
+        }),
+    )
+    .await;
+    assert_refused(
+        &verify(&signer_closed.app, "alice@acme", "mirror", &document).await,
+        "signer-not-valid",
+    );
+    let signer_historical = mount_at(
+        after,
+        Box::new(move |file| {
+            file["signers"][0]["valid_until"] = json!((v + Duration::minutes(5)).to_rfc3339());
+            file["signers"][0]["historical_ok"] = json!(true);
+        }),
+    )
+    .await;
+    let (status, body) = verify(&signer_historical.app, "alice@acme", "mirror", &document).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
     // The passport signer outside its window, and revoked.
@@ -1315,4 +1454,322 @@ async fn the_cost_of_a_document_is_bounded() {
     let outcome = verify(&small.app, "alice@acme", "mirror", &document).await;
     assert_eq!(outcome.0, StatusCode::PAYLOAD_TOO_LARGE, "{outcome:?}");
     assert_ne!(outcome.1["verdict"], "valid");
+}
+
+// ------------------------------------------------- review hardening (H1..H6)
+
+async fn post_body(app: &Router, repository: &str, body: Body) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/v1/passports/verify?repository={repository}"))
+                .header(header::HOST, "127.0.0.1")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, "Bearer alice@acme")
+                .body(body)
+                .unwrap(),
+        )
+        .await
+        .expect("a response");
+    let status = response.status();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// A body that sends one byte and then never anything else.
+fn trickling_body() -> Body {
+    use futures_util::StreamExt;
+    Body::from_stream(
+        futures_util::stream::once(async {
+            Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"{"))
+        })
+        .chain(futures_util::stream::pending()),
+    )
+}
+
+#[tokio::test]
+async fn a_slow_ledger_is_no_verdict_within_the_deadline_and_the_slot_is_held_then_freed() {
+    let world = world().await;
+    let document = document_of(&world.layout);
+    let mounted = mount(
+        &world,
+        Opts {
+            roots: Some(roots_json(&world, |file| {
+                file["ledger_deadline_secs"] = json!(1)
+            })),
+            ledger: Some(Arc::new(SlowLedger)),
+            ..Opts::default()
+        },
+    )
+    .await;
+
+    // One request: the ledger answers in an hour; the answer is 503 within
+    // the deadline (a few seconds, never the hour).
+    let started = std::time::Instant::now();
+    let (status, body) = verify(&mounted.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["verdict"], "none");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(4),
+        "the ledger phase has a deadline: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(results(&mounted), vec![AuditResult::Failed]);
+
+    // The slot is held through the ledger phase: four verifications waiting
+    // on the ledger occupy all four slots, so a fifth is told to retry (429).
+    let mut waiting = Vec::new();
+    for _ in 0..4 {
+        let app = mounted.app.clone();
+        let document = document.clone();
+        waiting.push(tokio::spawn(async move {
+            verify(&app, "alice@acme", "mirror", &document).await
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+    let (status, body) = verify(&mounted.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    for task in waiting {
+        let (status, _) = task.await.unwrap();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+    // And freed afterwards: the next one reaches the ledger (503), not 429.
+    let (status, body) = verify(&mounted.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+}
+
+#[tokio::test]
+async fn the_body_is_read_under_a_deadline_before_any_slot_and_its_failures_are_told_apart() {
+    let world = world().await;
+    let document = document_of(&world.layout);
+    let mounted = mount(
+        &world,
+        Opts {
+            roots: Some(roots_json(&world, |file| {
+                file["body_deadline_secs"] = json!(1)
+            })),
+            ..Opts::default()
+        },
+    )
+    .await;
+
+    // Four callers that trickle their body (slowloris) hold no slot: a good
+    // request meanwhile is verified, not told 429.
+    let mut slow = Vec::new();
+    for _ in 0..4 {
+        let app = mounted.app.clone();
+        slow.push(tokio::spawn(async move {
+            post_body(&app, "mirror", trickling_body()).await
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let (status, body) = verify(&mounted.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    for task in slow {
+        let (status, body) = task.await.unwrap();
+        assert_eq!(status, StatusCode::REQUEST_TIMEOUT, "{body}");
+        assert_ne!(body["verdict"], "valid");
+    }
+
+    // A body that breaks is a 400, not "too large".
+    use futures_util::StreamExt;
+    let broken = Body::from_stream(
+        futures_util::stream::once(async {
+            Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"{"))
+        })
+        .chain(futures_util::stream::once(async {
+            Err(std::io::Error::other("connection reset"))
+        })),
+    );
+    let (status, body) = post_body(&mounted.app, "mirror", broken).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    // A body that is too large is still a 413.
+    let (status, _) = post_body(
+        &mounted.app,
+        "mirror",
+        Body::from(vec![b' '; 12 * 1024 * 1024]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+
+    // The audit says exactly what happened.
+    let mut seen = results(&mounted);
+    seen.sort_by_key(|result| format!("{result:?}"));
+    let count = |wanted: AuditResult| seen.iter().filter(|r| **r == wanted).count();
+    assert_eq!(count(AuditResult::Allowed), 1, "{seen:?}");
+    assert_eq!(
+        count(AuditResult::Failed),
+        5,
+        "four timeouts and a broken body: {seen:?}"
+    );
+    assert_eq!(
+        count(AuditResult::Denied),
+        1,
+        "the oversized body: {seen:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_file_that_would_trust_more_or_less_than_it_says_does_not_boot() {
+    let world = world().await;
+    assert!(PassportVerifier::from_json(&roots_json(&world, |_| {})).is_ok());
+
+    // A point of the right length that is not on the curve.
+    let off_curve = roots_json(&world, |file| {
+        file["provenance_roots"][0]["public_point_hex"] = json!(format!("04{}", "11".repeat(64)));
+    });
+    let error = PassportVerifier::from_json(&off_curve).unwrap_err();
+    assert!(error.to_string().contains("curve"), "{error}");
+
+    // A list of builders of which only the first would be honoured.
+    let two_builders = roots_json(&world, |file| {
+        file["policy"]["trusted_builders"] =
+            json!(["https://builder.example/a", "https://builder.example/b"]);
+    });
+    assert!(PassportVerifier::from_json(&two_builders).is_err());
+
+    // Deadlines out of range, and fields that have no effect.
+    for (field, value) in [
+        ("ledger_deadline_secs", 0),
+        ("ledger_deadline_secs", 31),
+        ("body_deadline_secs", 0),
+        ("body_deadline_secs", 61),
+    ] {
+        let text = roots_json(&world, |file| file[field] = json!(value));
+        assert!(
+            PassportVerifier::from_json(&text).is_err(),
+            "{field}={value}"
+        );
+    }
+    let unknown = roots_json(&world, |file| file["trusted_builder_ids"] = json!(["x"]));
+    assert!(PassportVerifier::from_json(&unknown).is_err());
+
+    // A file configured where there is no graph profile is not ignored: the
+    // boot refuses the whole configuration.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("roots.json");
+    std::fs::write(&path, roots_json(&world, |_| {})).unwrap();
+    let mut config = AppConfig::default();
+    config.trust.passport_verification_file = Some(path.to_string_lossy().into_owned());
+    assert!(config.graph.is_none());
+    let booted = bootstrap(
+        &config,
+        BootstrapConfig {
+            register_iam_schema: false,
+            schema_version: None,
+            validate_schemas: false,
+        },
+    )
+    .await;
+    assert!(booted.is_err());
+}
+
+#[tokio::test]
+async fn the_operators_minimum_level_is_enforced_on_a_lower_passport() {
+    let world = world().await;
+    let weak = PassportPolicy {
+        builder_identity_proven: false,
+        hermetic_declared_complete: false,
+        ..hsp160_policy_for_it()
+    };
+    let layout = export_passport_under(
+        &world.bundle_dir,
+        "weak.passport",
+        &world.alpha,
+        &world.alpha,
+        &world.signer,
+        world.verified_at,
+        weak.clone(),
+    );
+    let document = document_of(&layout);
+    let at_least = |minimum: u8| {
+        let weak = weak.clone();
+        mount(
+            &world,
+            Opts {
+                roots: Some(roots_json(&world, move |file| {
+                    file["policy"] = serde_json::to_value(&weak).unwrap();
+                    file["min_slsa_level"] = json!(minimum);
+                })),
+                ..Opts::default()
+            },
+        )
+    };
+    let (status, body) = verify(&at_least(1).await.app, "alice@acme", "mirror", &document).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let level: u8 = body["slsa_result"]
+        .as_str()
+        .unwrap()
+        .chars()
+        .last()
+        .and_then(|digit| digit.to_digit(10))
+        .expect("a level") as u8;
+    assert!(level < 3, "the weak passport asserts a lower level: {body}");
+    for minimum in (level + 1)..=3 {
+        assert_refused(
+            &verify(
+                &at_least(minimum).await.app,
+                "alice@acme",
+                "mirror",
+                &document,
+            )
+            .await,
+            "verification-failed",
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_passport_citing_more_decisions_than_a_bundle_can_hold_is_too_large_before_any_crypto() {
+    let world = world().await;
+    // Room for the document itself: the cap under test is the decisions', not the bytes'.
+    let mounted = mount(
+        &world,
+        Opts {
+            roots: Some(roots_json(&world, |file| {
+                file["max_document_bytes"] = json!(32 * 1024 * 1024)
+            })),
+            ..Opts::default()
+        },
+    )
+    .await;
+    let big = variant(&world, "big");
+    let (position, mut image, _) = find_manifest(&big, PASSPORT_ARTIFACT_TYPE);
+    let layers = image["layers"].as_array().unwrap().clone();
+    let (at, mut release) = layers
+        .iter()
+        .enumerate()
+        .find_map(|(at, layer)| {
+            let bytes = std::fs::read(blob_file(&big, layer["digest"].as_str()?)).ok()?;
+            let value: Value = serde_json::from_slice(&bytes).ok()?;
+            value["assets"].is_array().then_some((at, value))
+        })
+        .expect("the release layer");
+    let template = release["assets"][0].clone();
+    let limit = hodei_artifacts_api::passport_verify::MAX_LEDGER_LOOKUPS;
+    release["assets"] = Value::Array(
+        (0..=limit)
+            .map(|n| {
+                let mut asset = template.clone();
+                asset["asset_path"] = json!(format!("tools/{n:06}.bin"));
+                asset
+            })
+            .collect(),
+    );
+    let (digest, size) = put_blob(&big, &serde_json::to_vec(&release).unwrap());
+    image["layers"][at]["digest"] = json!(digest);
+    image["layers"][at]["size"] = json!(size);
+    let (manifest_digest, manifest_size) =
+        put_blob(&big, &serde_json::to_vec_pretty(&image).unwrap());
+    set_index_entry(&big, position, &manifest_digest, manifest_size);
+
+    let outcome = verify(&mounted.app, "alice@acme", "mirror", &document_of(&big)).await;
+    assert_refused(&outcome, "too-large");
+    assert_eq!(results(&mounted), vec![AuditResult::Denied]);
 }
