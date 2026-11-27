@@ -61,3 +61,25 @@ Las rutas requieren el servicio de GC (501 si no está).
 Export/import offline y reconciliación (AC4); Maven y PyPI; repositorios proxy/group; protocolo
 nativo del cliente contra el freeze (el packument guardado conserva las URL del origen);
 override explícito para servir revocados; listado de freezes; limpieza de holds caducados.
+
+## Time machine: comparar dos freezes (HSP-165, tramo 1)
+
+`GET /api/v1/freezes/diff?from=<id>&to=<id>` explica la diferencia entre dos freezes **del mismo
+repositorio y de la misma cuenta**, citando los hechos históricos que cada manifiesto registró
+(ruta, paquete, versión, digest, tamaño). No hay un segundo ledger: la historia son los manifiestos.
+
+- **Solo lectura**: no escribe decisiones, concesiones, holds ni freezes; solo el evento de auditoría
+  del acceso. La respuesta es función de los dos manifiestos más el estado de hoy de los digests citados.
+- **Autorización**: acción Cedar dedicada `Artifacts::Action::"ExploreRepositoryHistory"` sobre el
+  repositorio origen, evaluada ahora. `DownloadAsset` o `ManageDependencyFreeze` no la implican.
+- **Aislamiento**: un freeze de otra cuenta es `404`, igual que uno inexistente, sea cual sea el lado.
+  Dos repositorios distintos son `422`.
+- **Cotas**: se listan como máximo 200 diferencias (`total_changes` es exacto, `truncated` avisa) y solo
+  se consultan en el almacén los digests listados; cada freeze ya está acotado a 10 000 rutas.
+- **Falla cerrado**: si el almacén o el libro de confianza no responden, es `503` sin respuesta parcial.
+- **Cobertura honesta**: por digest citado, `availability` es `present` o `gone` (el colector retiró los
+  bytes; no se reconstruyen ni se devuelven) y `admitted_now` dice si el canal `trusted` lo admite hoy
+  (`null` en canal abierto). Identidad histórica y permiso actual van separados.
+
+Fuera de este tramo: simulación de prohibición con blast radius inverso, sellos de política a una fecha
+de corte y selección de snapshot por instante.

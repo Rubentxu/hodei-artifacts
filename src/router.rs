@@ -684,6 +684,9 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
         // releasing one is the dedicated action `ManageDependencyFreeze`.
         .route("/freezes", post(crate::handlers::freezes::create))
         .route("/freezes/unpin", post(crate::handlers::freezes::unpin))
+        // Time machine (HSP-165): read-only comparison of two freezes of one
+        // repository; the dedicated action `ExploreRepositoryHistory`.
+        .route("/freezes/diff", get(crate::handlers::time_machine::diff))
         .route("/freezes/{id}", get(crate::handlers::freezes::manifest))
         .route(
             "/freezes/{id}/content/{*path}",
