@@ -636,6 +636,15 @@ pipeline {
                 sh(
                     "cargo test --workspace --test hsp192_gc_ledger_dgraph_it -- --test-threads=1"
                 )
+                // Dos nodos reales sobre un mismo Dgraph (HSP-331): sin
+                // HODEI_GRAPH_IT_ENDPOINT se salta; con el alpha real dos
+                // aplicaciones independientes barren con el GC coordinado:
+                // lease vigente => 409, expirada => generacion superior, el
+                // zombie no borra y una particion falla cerrada. Un solo
+                // hilo: comparten alpha y directorio de contenido.
+                sh(
+                    "cargo test --workspace --test hsp331_gc_two_nodes_dgraph_it -- --test-threads=1"
+                )
                 // El humo del perfil productivo sobre la autoridad unica
                 // (HSP-209): sin HODEI_GRAPH_IT_ENDPOINT se salta; con el
                 // alpha real arranca el binario con RUN_MODE=dgraph
