@@ -58,6 +58,16 @@ pub fn manage_dependency_freeze() -> ActionId {
     ActionId::new("artifacts", "ManageDependencyFreeze").expect("a valid action")
 }
 
+/// Reading the history of a repository through the time machine (HSP-165).
+///
+/// The history lists paths, versions and digests of frozen views, and says
+/// which bytes are still in the store. It is its own action: being able to
+/// download an asset does not imply being able to compare what a repository
+/// served at different moments.
+pub fn explore_repository_history() -> ActionId {
+    ActionId::new("artifacts", "ExploreRepositoryHistory").expect("a valid action")
+}
+
 /// Managing the trusted publishers of a repository (HSP-152).
 ///
 /// A trusted publisher binds an OIDC identity to the publication into the
@@ -133,6 +143,7 @@ pub fn all() -> Vec<ActionId> {
         manage_repository_tags(),
         manage_repository_admission(),
         manage_dependency_freeze(),
+        explore_repository_history(),
         manage_trusted_publishers(),
         read_capsule(),
         access_admin_api(),
@@ -315,6 +326,8 @@ mod scope_tests {
                 .expect("admission action declared");
             check_declared(&schema, &manage_dependency_freeze())
                 .expect("dependency freeze action declared");
+            check_declared(&schema, &explore_repository_history())
+                .expect("repository history action declared");
         }
     }
 

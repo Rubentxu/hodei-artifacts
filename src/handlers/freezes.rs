@@ -147,7 +147,7 @@ fn gc_of(state: &AppState) -> Result<&std::sync::Arc<crate::gc::GcService>, Free
     })
 }
 
-fn audit(
+pub(crate) fn audit(
     state: &AppState,
     context: &VerifiedContext,
     action: &str,
@@ -167,7 +167,7 @@ fn audit(
 }
 
 /// Cedar decision of `action` on the origin repository; the denial is audited.
-fn gate(
+pub(crate) fn gate(
     state: &AppState,
     context: &VerifiedContext,
     repository: &RepositoryDescriptor,
@@ -200,9 +200,9 @@ fn gate(
 }
 
 /// A freeze loaded from the store and proven to be a freeze.
-struct Loaded {
-    manifest: FreezeManifest,
-    active: bool,
+pub(crate) struct Loaded {
+    pub(crate) manifest: FreezeManifest,
+    pub(crate) active: bool,
 }
 
 /// The registry hold of a freeze of the caller's account, by a point read.
@@ -210,7 +210,7 @@ struct Loaded {
 /// The account is checked **first**, from the registry hold alone: nothing
 /// about a freeze of another account (expired, malformed, unreadable) is
 /// distinguishable from its absence.
-async fn registered(
+pub(crate) async fn registered(
     state: &AppState,
     context: &VerifiedContext,
     id: &str,
@@ -231,7 +231,7 @@ async fn registered(
 
 /// Loads a freeze of the caller's account. It exists only if its registry
 /// hold does, the manifest bytes digest to the id, and the account matches.
-async fn load(
+pub(crate) async fn load(
     state: &AppState,
     context: &VerifiedContext,
     id: &str,
@@ -260,7 +260,7 @@ async fn load(
     })
 }
 
-async fn the_origin(
+pub(crate) async fn the_origin(
     state: &AppState,
     context: &VerifiedContext,
     repository: &str,
