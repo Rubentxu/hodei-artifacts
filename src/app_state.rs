@@ -168,6 +168,9 @@ pub struct AppState {
     pub(crate) repairer: Option<Arc<crate::recovery::Repairer>>,
     /// The verified migration of blobs to the configured destination (HSP-163).
     pub(crate) migrator: Option<Arc<crate::recovery::Migrator>>,
+    /// The verifier of trust passports, with the roots the operator pinned
+    /// (HSP-321). Without it `POST /api/v1/passports/verify` answers 501.
+    pub(crate) passport_verifier: Option<Arc<crate::passport_verify::PassportVerifier>>,
     /// The durable ledger of accepted mirror metadata (HSP-167): the highest
     /// signed `Release` date per proxy lineage. A proxy that pins a signing
     /// key and has no ledger refuses to serve its index (fail closed).
@@ -377,6 +380,7 @@ impl AppState {
             scrub: None,
             repairer: None,
             migrator: None,
+            passport_verifier: None,
             mirror_metadata: None,
             trust_ledger: None,
             proxy_plane: None,
@@ -461,6 +465,7 @@ impl AppState {
             scrub: None,
             repairer: None,
             migrator: None,
+            passport_verifier: None,
             mirror_metadata: None,
             trust_ledger: None,
             proxy_plane: None,
@@ -712,6 +717,15 @@ impl AppState {
     /// Inject the self-healing of one blob (HSP-164).
     pub fn with_repairer(mut self, repairer: Arc<crate::recovery::Repairer>) -> Self {
         self.repairer = Some(repairer);
+        self
+    }
+
+    /// Inject the trust passport verifier with the operator's pinned roots.
+    pub fn with_passport_verifier(
+        mut self,
+        verifier: Arc<crate::passport_verify::PassportVerifier>,
+    ) -> Self {
+        self.passport_verifier = Some(verifier);
         self
     }
 

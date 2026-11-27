@@ -708,6 +708,14 @@ fn repository_v1_routes(app_state: AppState, investigation_enabled: bool) -> Rou
             "/storage/migrate",
             post(crate::handlers::storage_migration::migrate),
         )
+        // Verification of a trust passport against the roots the deployment
+        // pinned (HSP-321). A verdict, never a credential; the dedicated action
+        // `VerifyTrustPassport`. The repository is a query parameter so that
+        // Cedar decides before the document is read.
+        .route(
+            "/passports/verify",
+            post(crate::handlers::passports::verify),
+        )
         // Rollback/freeze state of a proxy's signed index (HSP-167); the
         // dedicated action `ManageMirrorMetadata`.
         .route(

@@ -37,6 +37,7 @@ pub mod migration;
 pub mod oci;
 pub mod openapi;
 pub mod openpgp;
+pub mod passport_verify;
 pub mod profile;
 pub mod proxy;
 pub mod public_url;

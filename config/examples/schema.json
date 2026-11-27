@@ -237,6 +237,16 @@
             "Artifacts::Repository"
           ]
         }
+      },
+      "VerifyTrustPassport": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
       }
     }
   },
