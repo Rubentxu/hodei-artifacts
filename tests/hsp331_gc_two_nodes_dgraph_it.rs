@@ -280,7 +280,12 @@ impl Relay {
     /// Cut the route: stop accepting and drop every live connection.
     async fn cut(&self) {
         self.accept.abort();
-        for task in self.connections.lock().expect("relay connections").drain(..) {
+        for task in self
+            .connections
+            .lock()
+            .expect("relay connections")
+            .drain(..)
+        {
             task.abort();
         }
         // Let the aborts land before the caller acts.
@@ -378,7 +383,10 @@ fn sweep(node: &Node) -> JoinHandle<(StatusCode, Value)> {
         let response = app.oneshot(request).await.expect("a response");
         let status = response.status();
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
     })
 }
 
@@ -420,7 +428,10 @@ impl Observer {
 
     /// Leave bytes in the store that no catalog names: a real orphan.
     fn plant_orphan(&self, label: &str) -> ContentDigest {
-        let content = format!("hsp331-orphan-{label}-{}", Utc::now().timestamp_nanos_opt().unwrap());
+        let content = format!(
+            "hsp331-orphan-{label}-{}",
+            Utc::now().timestamp_nanos_opt().unwrap()
+        );
         let digest = ContentDigest::of_bytes(content.as_bytes());
         let path = self.blob_path(&digest);
         std::fs::create_dir_all(path.parent().expect("a blob directory")).expect("blob directory");
@@ -497,7 +508,10 @@ async fn a_live_lease_excludes_the_other_node_and_the_zombie_deletes_nothing() {
         lease_a.generation,
         lease_b.generation
     );
-    assert_ne!(lease_b.token, lease_a.token, "the take-over has a new token");
+    assert_ne!(
+        lease_b.token, lease_a.token,
+        "the take-over has a new token"
+    );
 
     // (3) The zombie wakes up holding generation {A}: it is fenced and the
     // byte it meant to sweep is still there, because B has not deleted it yet.
@@ -520,7 +534,10 @@ async fn a_live_lease_excludes_the_other_node_and_the_zombie_deletes_nothing() {
     let (status, body) = answer(taker).await;
     assert_eq!(status, StatusCode::OK, "B finishes: {body}");
     assert_eq!(body["report"]["deleted"], 1, "exactly one deletion: {body}");
-    assert_eq!(body["report"]["resumed"], true, "B resumed A's durable mark: {body}");
+    assert_eq!(
+        body["report"]["resumed"], true,
+        "B resumed A's durable mark: {body}"
+    );
     assert!(!seen.present(&orphan), "the orphan was reclaimed by B");
     let trace = seen.deletion(&orphan).await.expect("the deletion trace");
     assert_eq!(trace.state, DeletionState::Confirmed);
@@ -555,7 +572,10 @@ async fn a_partitioned_node_fails_closed() {
     );
     assert_ne!(status, StatusCode::OK);
     assert!(seen.present(&orphan), "the cut-off pass deleted nothing");
-    assert!(seen.deletion(&orphan).await.is_none(), "and recorded nothing");
+    assert!(
+        seen.deletion(&orphan).await.is_none(),
+        "and recorded nothing"
+    );
 
     // A new request on the cut-off node cannot even claim.
     let (status, body) = answer(sweep(&cut_off)).await;
@@ -574,12 +594,19 @@ async fn a_partitioned_node_fails_closed() {
             assert_eq!(body["report"]["deleted"], 1, "{body}");
             break;
         }
-        assert_eq!(status, StatusCode::CONFLICT, "only the stale claim blocks: {body}");
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "only the stale claim blocks: {body}"
+        );
         assert!(
             waited.elapsed() < LEASE + Duration::from_secs(20),
             "the healthy node never took over"
         );
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
-    assert!(!seen.present(&orphan), "the healthy node reclaimed the orphan");
+    assert!(
+        !seen.present(&orphan),
+        "the healthy node reclaimed the orphan"
+    );
 }
