@@ -736,6 +736,20 @@ async fn another_account_gets_the_404_of_absence_and_never_sees_foreign_digests(
 
     // A repository that is only alice's is the same 404 as one that never existed.
     seed(&v, &account, "only-alice").await;
+    let secret = format!("a secret of another repository {account}").into_bytes();
+    upload(
+        &v,
+        "only-alice",
+        &format!("alice@{account}"),
+        "secret.bin",
+        &secret,
+    )
+    .await;
+    // Within one account a repository lists only what it references itself.
+    let (_, reg) = advice(&v, &format!("alice@{account}"), "repository=reg").await;
+    assert!(!reg.to_string().contains(&digest_of(&secret)), "{reg}");
+    let (_, only) = advice(&v, &format!("alice@{account}"), "repository=only-alice").await;
+    assert_eq!(only["entries"].as_array().unwrap().len(), 1, "{only}");
     let (hidden, hidden_body) = advice(&v, &mallory, "repository=only-alice").await;
     let (absent, absent_body) = advice(&v, &mallory, "repository=never-existed").await;
     assert_eq!(
