@@ -21,7 +21,8 @@
 //!   reported verified that was not read back.
 //!
 //! Answers: `200` everything named is verified in the destination; `207` some
-//! is and some is not (the report says which); `503` nothing is verified and a
+//! is and some is not (the report says which); `504` the deadline of the request
+//! passed (what was done is reported, the rest is `deferred`); `503` nothing is verified and a
 //! store failed; `409` nothing is verified for another reason (absent or
 //! corrupt origin, blob too large). The body is always the report.
 
@@ -94,73 +95,140 @@ pub async fn migrate(
     let action = crate::actions::manage_storage_migration();
     gate(&state, &context, &origin, action.clone(), &correlation)?;
 
-    // Past the gate every outcome is audited.
-    let audited = action.to_string();
+    // Past the gate everything runs in a task of its own: a client that hangs
+    // up neither leaves the migration without a trace (the audit is written
+    // here, not after the response) nor keeps a place of the migrator.
     let account = context.account().as_str().to_string();
-    let resource = format!("{}[{}]", body.repository, digests.len());
-    let record = |result: AuditResult| {
-        audit(&state, &context, &audited, &resource, result, &correlation);
-    };
-    let (Some(migrator), Some(gc)) = (state.migrator.clone(), state.gc.clone()) else {
-        record(AuditResult::Failed);
-        return Err(ResolutionError::NotImplemented(
-            "storage migration needs a configured destination and the durable catalog: a migration that cannot verify its bytes is not offered",
-        )
-        .into());
-    };
+    let repository = body.repository.clone();
+    let task = tokio::spawn(async move {
+        let audited = action.to_string();
+        let record = |resource: &str, result: AuditResult| {
+            audit(&state, &context, &audited, resource, result, &correlation);
+        };
+        let count = digests.len();
+        let resource = format!("{repository}[{count}]");
+        let (Some(migrator), Some(gc)) = (state.migrator.clone(), state.gc.clone()) else {
+            record(&resource, AuditResult::Failed);
+            return Err(ResolutionError::NotImplemented(
+                "storage migration needs a configured destination and the durable catalog: a migration that cannot verify its bytes is not offered",
+            )
+            .into());
+        };
+        // The place comes first: the reads of the ledger are bounded by it too.
+        let place = match migrator.reserve(&account) {
+            Ok(place) => place,
+            Err(error) => {
+                record(&resource, AuditResult::Failed);
+                return Ok(refused(error));
+            }
+        };
 
-    // Only what this repository references can be migrated through it, and
-    // one stranger digest refuses the whole request before anything moves.
-    for digest in &digests {
-        match gc
-            .references_digest(&account, &body.repository, digest)
-            .await
-        {
-            Ok(true) => {}
-            Ok(false) => {
-                record(AuditResult::Denied);
+        // Only what this repository references can be migrated through it, and
+        // one stranger digest refuses the whole request before anything moves.
+        // One pass over the roots, under a timeout.
+        let referenced = tokio::time::timeout(
+            REFERENCES_TIMEOUT,
+            gc.references_all(&account, &repository, &digests),
+        )
+        .await;
+        match referenced {
+            Ok(Ok(true)) => {}
+            Ok(Ok(false)) => {
+                record(&resource, AuditResult::Denied);
                 return Err(ResolutionError::NotFound.into());
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::error!(%error, "the migration could not read the references");
-                record(AuditResult::Failed);
+                record(&resource, AuditResult::Failed);
+                return Err(ResolutionError::Unavailable.into());
+            }
+            Err(_) => {
+                tracing::error!("the migration timed out reading the references");
+                record(&resource, AuditResult::Failed);
                 return Err(ResolutionError::Unavailable.into());
             }
         }
-    }
 
-    match migrator.migrate(&digests).await {
-        Ok(report) => {
-            let any_failed = report
-                .entries
-                .iter()
-                .any(|entry| matches!(entry.moved, Moved::SourceFailed | Moved::DestinationFailed));
-            let verified = report.migrated + report.already_present;
-            let status = if report.pending == 0 {
-                StatusCode::OK
-            } else if verified > 0 {
-                StatusCode::MULTI_STATUS
-            } else if any_failed {
-                StatusCode::SERVICE_UNAVAILABLE
-            } else {
-                StatusCode::CONFLICT
-            };
-            record(if report.pending == 0 {
-                AuditResult::Allowed
-            } else {
-                AuditResult::Failed
-            });
-            Ok((status, Json(report)).into_response())
+        match migrator.migrate(&place, &digests).await {
+            Ok(report) => {
+                let any_failed = report.entries.iter().any(|entry| {
+                    matches!(entry.moved, Moved::SourceFailed | Moved::DestinationFailed)
+                });
+                let verified = report.migrated + report.already_present;
+                let status = if report.pending == 0 {
+                    StatusCode::OK
+                } else if report.deadline_exceeded {
+                    StatusCode::GATEWAY_TIMEOUT
+                } else if verified > 0 {
+                    StatusCode::MULTI_STATUS
+                } else if any_failed {
+                    StatusCode::SERVICE_UNAVAILABLE
+                } else {
+                    StatusCode::CONFLICT
+                };
+                // Complete is `Allowed`, partial is `Conflict` and nothing
+                // verified is `Failed`; the resource carries the counts.
+                let result = if report.pending == 0 {
+                    AuditResult::Allowed
+                } else if verified > 0 {
+                    AuditResult::Conflict
+                } else {
+                    AuditResult::Failed
+                };
+                // The audit field is bounded (256 chars): the counts by state come
+                // first and the digests are bound by a hash of the set.
+                let mut states: std::collections::BTreeMap<String, usize> = Default::default();
+                for entry in &report.entries {
+                    let name = serde_json::to_value(&entry.moved)
+                        .ok()
+                        .and_then(|v| v["outcome"].as_str().map(str::to_string))
+                        .unwrap_or_default();
+                    *states.entry(name).or_default() += 1;
+                }
+                let states = states
+                    .iter()
+                    .map(|(name, count)| format!("{name}={count}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let set = ContentDigest::of_bytes(
+                    digests
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                        .as_bytes(),
+                );
+                record(
+                    &format!(
+                        "{resource} {states} bytes={} set={}",
+                        report.bytes_copied,
+                        &set.value[..16]
+                    ),
+                    result,
+                );
+                Ok((status, Json(report)).into_response())
+            }
+            Err(error) => {
+                record(&resource, AuditResult::Failed);
+                Ok(refused(error))
+            }
         }
-        Err(error) => {
-            record(AuditResult::Failed);
-            let (status, code) = match error {
-                MigrateError::TooMany { .. } => (StatusCode::BAD_REQUEST, "E_MIGRATE_TOO_MANY"),
-                MigrateError::Busy => (StatusCode::TOO_MANY_REQUESTS, "E_MIGRATE_BUSY"),
-                MigrateError::Failed => (StatusCode::SERVICE_UNAVAILABLE, "E_MIGRATE_FAILED"),
-            };
-            let payload = serde_json::json!({"error": code, "message": error.to_string()});
-            Ok((status, Json(payload)).into_response())
-        }
-    }
+    });
+    task.await.unwrap_or_else(|error| {
+        tracing::error!(%error, "the migration task failed");
+        Ok(refused(MigrateError::Failed))
+    })
+}
+
+/// How long the single pass over the references may take.
+const REFERENCES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+fn refused(error: MigrateError) -> Response {
+    let (status, code) = match error {
+        MigrateError::TooMany { .. } => (StatusCode::BAD_REQUEST, "E_MIGRATE_TOO_MANY"),
+        MigrateError::Busy => (StatusCode::TOO_MANY_REQUESTS, "E_MIGRATE_BUSY"),
+        MigrateError::Failed => (StatusCode::SERVICE_UNAVAILABLE, "E_MIGRATE_FAILED"),
+    };
+    let payload = serde_json::json!({"error": code, "message": error.to_string()});
+    (status, Json(payload)).into_response()
 }

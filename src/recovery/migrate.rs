@@ -19,7 +19,10 @@
 //!   the rest, so repeating a migration is the same as running it once;
 //! - the cost is bounded: blobs per request, bytes per blob, bytes per request
 //!   (what does not fit is `deferred`, to be asked for again), at most
-//!   [`MAX_CONCURRENT`] migrations at once, and a timeout on every call;
+//!   [`MAX_CONCURRENT`] migrations at once and **one per account** (one account
+//!   cannot hold every place), a timeout on every call and a **deadline on the
+//!   whole request**: when it passes, what was done stays reported and what was
+//!   not is `deferred` (the request fails closed and can be repeated);
 //! - the garbage collection and the repair are untouched: nothing here deletes
 //!   or quarantines, so a hold is irrelevant and a blob that the GC or a repair
 //!   removes while it is being read is reported absent or corrupt, never copied.
@@ -40,6 +43,9 @@ pub const MAX_BLOBS_PER_REQUEST: usize = 64;
 
 /// How long a call to either store may take by default.
 pub const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How long a whole request may hold its place by default.
+pub const DEFAULT_DEADLINE: Duration = Duration::from_secs(300);
 
 /// What happened to one digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -106,6 +112,9 @@ pub struct MigrationReport {
     pub bytes_copied: u64,
     /// Always `true`: a migration never deletes or writes the origin.
     pub source_retained: bool,
+    /// Whether the deadline of the request passed: what was not done is
+    /// `deferred`.
+    pub deadline_exceeded: bool,
     /// How long it took, in milliseconds.
     pub elapsed_ms: u64,
 }
@@ -119,7 +128,8 @@ pub enum MigrateError {
         /// The ceiling.
         max: usize,
     },
-    /// The migrations that may run at once are running.
+    /// The migrations that may run at once are running, or this account already
+    /// has one.
     #[error("too many migrations are running")]
     Busy,
     /// The migration task itself failed.
@@ -134,7 +144,25 @@ pub struct Migrator {
     max_blob_bytes: u64,
     max_request_bytes: u64,
     io_timeout: Duration,
+    deadline: Duration,
     permits: Arc<tokio::sync::Semaphore>,
+    accounts: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+}
+
+/// The place of one migration: one of the global places and the only one its
+/// account may hold. Both come back when it is dropped.
+pub struct Reservation {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    accounts: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    account: String,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if let Ok(mut accounts) = self.accounts.lock() {
+            accounts.remove(&self.account);
+        }
+    }
 }
 
 impl Migrator {
@@ -152,7 +180,9 @@ impl Migrator {
             max_blob_bytes,
             max_request_bytes,
             io_timeout: DEFAULT_IO_TIMEOUT,
+            deadline: DEFAULT_DEADLINE,
             permits: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT)),
+            accounts: Arc::default(),
         }
     }
 
@@ -162,13 +192,43 @@ impl Migrator {
         self
     }
 
-    /// Migrates `digests` (duplicates are dropped, order is kept).
+    /// The same migrator with another deadline for a whole request.
+    pub fn with_deadline(mut self, deadline: Duration) -> Self {
+        self.deadline = deadline;
+        self
+    }
+
+    /// Takes a place for `account`, or says there is none: one migration per
+    /// account and [`MAX_CONCURRENT`] overall. The place is held until the
+    /// reservation is dropped.
+    pub fn reserve(&self, account: &str) -> Result<Reservation, MigrateError> {
+        let mut accounts = self.accounts.lock().map_err(|_| MigrateError::Failed)?;
+        if accounts.contains(account) {
+            return Err(MigrateError::Busy);
+        }
+        let permit = self
+            .permits
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| MigrateError::Busy)?;
+        accounts.insert(account.to_string());
+        Ok(Reservation {
+            _permit: permit,
+            accounts: self.accounts.clone(),
+            account: account.to_string(),
+        })
+    }
+
+    /// Migrates `digests` (duplicates are dropped, order is kept) under a
+    /// place taken with [`Self::reserve`].
     ///
-    /// The work is spawned and awaited: a client that hangs up does not leave a
-    /// copy half done (the stores only ever publish whole, verified blobs, but
-    /// the destination is left coherent and the permit is always returned).
+    /// The caller runs this in a task of its own (the handler does) so that a
+    /// client that hangs up neither leaves the work half reported nor keeps the
+    /// place: the stores only ever publish whole, verified blobs and the place
+    /// is returned when the reservation is dropped.
     pub async fn migrate(
         &self,
+        _place: &Reservation,
         digests: &[ContentDigest],
     ) -> Result<MigrationReport, MigrateError> {
         let mut unique: Vec<ContentDigest> = Vec::with_capacity(digests.len());
@@ -182,28 +242,15 @@ impl Migrator {
                 max: MAX_BLOBS_PER_REQUEST,
             });
         }
-        let permit = self
-            .permits
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| MigrateError::Busy)?;
         let run = Run {
             source: self.source.clone(),
             destination: self.destination.clone(),
             max_blob_bytes: self.max_blob_bytes,
             max_request_bytes: self.max_request_bytes,
             io_timeout: self.io_timeout,
+            deadline: Instant::now() + self.deadline,
         };
-        let task = tokio::spawn(async move {
-            let _permit = permit;
-            run.go(&unique).await
-        });
-        // A task that panicked produced nothing: that is a failure, never an
-        // invented report.
-        task.await.map_err(|error| {
-            tracing::error!(%error, "the migration task failed");
-            MigrateError::Failed
-        })
+        Ok(run.go(&unique).await)
     }
 
     /// The ceiling on the bytes of one blob.
@@ -213,7 +260,12 @@ impl Migrator {
 }
 
 impl MigrationReport {
-    fn of(entries: Vec<Entry>, bytes_copied: u64, elapsed: Duration) -> Self {
+    fn of(
+        entries: Vec<Entry>,
+        bytes_copied: u64,
+        deadline_exceeded: bool,
+        elapsed: Duration,
+    ) -> Self {
         let migrated = entries
             .iter()
             .filter(|e| matches!(e.moved, Moved::Migrated { .. }))
@@ -230,6 +282,7 @@ impl MigrationReport {
             pending,
             bytes_copied,
             source_retained: true,
+            deadline_exceeded,
             elapsed_ms: u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX),
         }
     }
@@ -241,6 +294,7 @@ struct Run {
     max_blob_bytes: u64,
     max_request_bytes: u64,
     io_timeout: Duration,
+    deadline: Instant,
 }
 
 impl Run {
@@ -250,7 +304,8 @@ impl Run {
         &self,
         call: impl Future<Output = Result<T, BlobError>>,
     ) -> Result<T, BlobError> {
-        tokio::time::timeout(self.io_timeout, call)
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        tokio::time::timeout(self.io_timeout.min(remaining), call)
             .await
             .unwrap_or_else(|_| Err(BlobError::Unavailable("the call timed out".to_string())))
     }
@@ -258,15 +313,26 @@ impl Run {
     async fn go(&self, digests: &[ContentDigest]) -> MigrationReport {
         let started = Instant::now();
         let mut copied = 0u64;
+        let mut exceeded = false;
         let mut entries = Vec::with_capacity(digests.len());
         for digest in digests {
-            let moved = self.one(digest, &mut copied).await;
+            // Past the deadline nothing else is started: it is reported
+            // `deferred` and asked for again.
+            exceeded = exceeded || Instant::now() >= self.deadline;
+            let moved = if exceeded {
+                Moved::Deferred
+            } else {
+                self.one(digest, &mut copied).await
+            };
             entries.push(Entry {
                 digest: digest.to_string(),
                 moved,
             });
         }
-        MigrationReport::of(entries, copied, started.elapsed())
+        // A call cut short by the deadline is also a deadline hit.
+        exceeded = exceeded
+            || (Instant::now() >= self.deadline && entries.iter().any(|e| !e.moved.is_verified()));
+        MigrationReport::of(entries, copied, exceeded, started.elapsed())
     }
 
     async fn one(&self, digest: &ContentDigest, copied: &mut u64) -> Moved {

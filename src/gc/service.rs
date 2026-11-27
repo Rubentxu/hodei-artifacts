@@ -386,6 +386,60 @@ impl GcService {
         }
     }
 
+    /// Whether **every** digest of `digests` is referenced by a root of `account`
+    /// in `repository`, answered in one pass over the account's roots (pages are
+    /// ordered by digest, so the walk stops once past the largest digest wanted).
+    /// A failure is an error: "could not tell" is never "referenced".
+    pub(crate) async fn references_all(
+        &self,
+        account: &str,
+        repository: &str,
+        digests: &[ContentDigest],
+    ) -> Result<bool, GcError> {
+        let mut wanted: std::collections::HashSet<String> =
+            digests.iter().map(ToString::to_string).collect();
+        let Some(largest) = wanted.iter().max().cloned() else {
+            return Ok(true);
+        };
+        let take = |wanted: &mut std::collections::HashSet<String>, roots: &[ContentRoot]| {
+            for root in roots {
+                if root.account == account && root.repository == repository {
+                    wanted.remove(&root.digest.to_string());
+                }
+            }
+        };
+        if !self.ledger.supports_fenced_pass() {
+            let roots = self.ledger.content_roots().await.map_err(|error| {
+                GcError::Unknown(format!("the roots could not be read: {error}"))
+            })?;
+            take(&mut wanted, &roots);
+            return Ok(wanted.is_empty());
+        }
+        let mut cursor: Option<String> = None;
+        loop {
+            let page = self
+                .ledger
+                .root_page(account, cursor.as_deref(), ROOT_PAGE_LIMIT)
+                .await?;
+            take(&mut wanted, &page.roots);
+            if wanted.is_empty() {
+                return Ok(true);
+            }
+            if !page.has_more {
+                return Ok(false);
+            }
+            match page.roots.last().map(|root| root.digest.to_string()) {
+                Some(last) if last > largest => return Ok(false),
+                Some(last) => cursor = Some(last),
+                None => {
+                    return Err(GcError::Unknown(
+                        "a full root page carried no cursor".to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
     /// The roots of every account, in pages of `page_limit`. Returns the
     /// roots and how many pages were read.
     pub(crate) async fn platform_roots(

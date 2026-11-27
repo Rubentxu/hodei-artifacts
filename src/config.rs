@@ -368,7 +368,17 @@ impl ContentConfig {
                 std::fs::canonicalize(path)
                     .unwrap_or_else(|_| std::path::PathBuf::from(path.trim_end_matches('/')))
             };
-            let destination = canonical(destination);
+            // The destination must exist and resolve: a path that cannot be
+            // canonicalised cannot be compared with the origin, so it is refused
+            // rather than compared raw.
+            let destination = match std::fs::canonicalize(destination) {
+                Ok(path) if path.is_dir() => path,
+                _ => {
+                    return Err(ConfigError::Message(format!(
+                        "Invalid content configuration: migration_destination_path '{destination}' must be an existing directory"
+                    )));
+                }
+            };
             let mut others: Vec<&str> = self.repair_source_path.as_deref().into_iter().collect();
             if self.backend == ContentBackend::Filesystem {
                 others.push(&self.cas_path);

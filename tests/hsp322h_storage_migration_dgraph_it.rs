@@ -167,6 +167,8 @@ struct Wrapper {
     down: Arc<AtomicBool>,
     /// `put` of this digest (hex) never answers.
     put_stalls: Arc<Mutex<Option<String>>>,
+    /// A delay (ms) added to every `put`, to catch a client that hangs up.
+    put_delay_ms: Arc<AtomicU64>,
     /// How many times the store was asked for bytes.
     reads: Arc<AtomicU64>,
 }
@@ -181,6 +183,7 @@ impl Wrapper {
             lies: Arc::new(AtomicBool::new(false)),
             down: Arc::new(AtomicBool::new(false)),
             put_stalls: Arc::new(Mutex::new(None)),
+            put_delay_ms: Arc::new(AtomicU64::new(0)),
             reads: Arc::new(AtomicU64::new(0)),
         })
     }
@@ -200,6 +203,10 @@ impl BlobStore for Wrapper {
         let stalled = self.put_stalls.lock().unwrap().clone();
         if stalled.as_deref() == Some(digest.value.as_str()) {
             std::future::pending::<()>().await;
+        }
+        let delay = self.put_delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
         if self.put_fails.load(Ordering::SeqCst)
             || self.put_fails_for.lock().unwrap().as_deref() == Some(digest.value.as_str())
@@ -263,11 +270,14 @@ impl BlobStore for Wrapper {
 struct Caps {
     blob: u64,
     request: u64,
+    /// The deadline of a whole request.
+    deadline: Duration,
 }
 
 const BIG: Caps = Caps {
     blob: 1 << 20,
     request: 1 << 24,
+    deadline: Duration::from_secs(300),
 };
 
 struct Vertical {
@@ -349,7 +359,8 @@ async fn mount(account: &str, other: &str, caps: Option<Caps>) -> Option<Vertica
     if let Some(caps) = caps {
         state = state.with_migrator(Arc::new(
             Migrator::new(origin_view, destination.clone(), caps.blob, caps.request)
-                .with_io_timeout(Duration::from_secs(2)),
+                .with_io_timeout(Duration::from_secs(2))
+                .with_deadline(caps.deadline),
         ));
     }
     Some(Vertical {
@@ -627,7 +638,24 @@ async fn bytes_that_do_not_hash_in_the_origin_are_never_written_and_the_repair_h
         Some(rotten),
         "the migration does not touch the origin"
     );
-    assert_eq!(results(&v), vec![AuditResult::Failed]);
+    assert_eq!(
+        results(&v),
+        vec![AuditResult::Conflict],
+        "a partial migration is not a total failure"
+    );
+    let trace = v
+        .audit
+        .events()
+        .iter()
+        .find(|e| e.action == ACTION)
+        .map(|e| e.resource.clone())
+        .unwrap_or_default();
+    assert!(
+        trace.contains("migrated=1")
+            && trace.contains("source_corrupt=1")
+            && trace.contains("set="),
+        "the audit carries the counts by state and a binding to the digests: {trace}"
+    );
 
     // An origin that lies (hands over other bytes as if they were the content)
     // is caught by the hash made here, not by the store's own check.
@@ -830,6 +858,7 @@ async fn the_cost_is_bounded_and_what_does_not_fit_is_resumable() {
     let caps = Caps {
         blob: B.len() as u64,
         request: (A.len() + C.len()) as u64 + 1,
+        deadline: Duration::from_secs(300),
     };
     let Some(v) = mount(&account, "zz", Some(caps)).await else {
         return;
@@ -865,6 +894,7 @@ async fn a_blob_above_the_per_blob_ceiling_is_refused_without_being_read() {
     let caps = Caps {
         blob: 8,
         request: 1 << 20,
+        deadline: Duration::from_secs(300),
     };
     let Some(v) = mount(&account, "zz", Some(caps)).await else {
         return;
@@ -885,44 +915,133 @@ async fn a_blob_above_the_per_blob_ceiling_is_refused_without_being_read() {
 }
 
 #[tokio::test]
-async fn only_so_many_migrations_run_at_once_and_a_hung_destination_times_out_closed() {
+async fn one_account_cannot_hold_every_place_and_a_hung_destination_times_out_closed() {
+    let account = unique_account();
+    let other = format!("{account}x");
+    let Some(v) = mount(&account, &other, Some(BIG)).await else {
+        return;
+    };
+    published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    let mallory = format!("mallory@{other}");
+    seed(&v, &other, "mine").await;
+    let theirs: &[u8] = b"the other account's artifact";
+    upload(&v, "mine", &mallory, "t.bin", theirs).await;
+    *v.destination.put_stalls.lock().unwrap() = Some(ContentDigest::of_bytes(A).value);
+
+    let app = v.app.clone();
+    let hung = tokio::spawn({
+        let token = alice.clone();
+        async move {
+            let body = serde_json::to_vec(&json!({"repository": "reg", "digests": [digest_of(A)]}))
+                .unwrap();
+            send(&app, Method::POST, "/api/v1/storage/migrate", &token, body).await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // The same account has its place taken: a second migration is turned away.
+    let (status, answer) = migrate(&v, &alice, "reg", &[B]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{answer}");
+    assert_eq!(answer["error"], "E_MIGRATE_BUSY");
+    // Another account is not held up by it.
+    let started = std::time::Instant::now();
+    let (status, answer) = migrate(&v, &mallory, "mine", &[theirs]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "another account was held up: {:?}",
+        started.elapsed()
+    );
+
+    let (status, bytes) = hung.await.expect("the request task");
+    let answer = json_of(&bytes);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert_eq!(outcome_of(&answer, A), "destination_failed");
+    assert_eq!(in_dest(&v, A), None);
+    assert_eq!(in_origin(&v, A).as_deref(), Some(A));
+    // The place came back.
+    *v.destination.put_stalls.lock().unwrap() = None;
+    let (status, _) = migrate(&v, &alice, "reg", &[A]).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn the_deadline_of_a_request_fails_closed_reports_what_was_done_and_frees_the_place() {
+    let account = unique_account();
+    let caps = Caps {
+        deadline: Duration::from_millis(1200),
+        ..BIG
+    };
+    let Some(v) = mount(&account, "zz", Some(caps)).await else {
+        return;
+    };
+    published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    // C goes first and is done; then the destination hangs on A for longer than
+    // the deadline; B is never started.
+    *v.destination.put_stalls.lock().unwrap() = Some(ContentDigest::of_bytes(A).value);
+    let started = std::time::Instant::now();
+    let (status, answer) = migrate(&v, &alice, "reg", &[C, A, B]).await;
+    assert_eq!(status, StatusCode::GATEWAY_TIMEOUT, "{answer}");
+    assert_eq!(answer["deadline_exceeded"], true);
+    assert_eq!(
+        outcome_of(&answer, C),
+        "migrated",
+        "what was done is reported"
+    );
+    assert_eq!(outcome_of(&answer, A), "destination_failed");
+    assert_eq!(
+        outcome_of(&answer, B),
+        "deferred",
+        "what was not started is resumable"
+    );
+    assert!(
+        started.elapsed() < Duration::from_millis(1900),
+        "the deadline, not the per-call timeout, bounded the request: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(in_dest(&v, C).as_deref(), Some(C));
+    assert_eq!(in_dest(&v, B), None);
+    assert_eq!(in_origin(&v, A).as_deref(), Some(A));
+
+    // The place is free again and the retry finishes what was left.
+    *v.destination.put_stalls.lock().unwrap() = None;
+    let (status, answer) = migrate(&v, &alice, "reg", &[C, A, B]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(outcome_of(&answer, C), "already_present");
+    assert_eq!(outcome_of(&answer, A), "migrated");
+    assert_eq!(outcome_of(&answer, B), "migrated");
+}
+
+#[tokio::test]
+async fn a_client_that_hangs_up_mid_migration_still_leaves_the_copy_and_the_audit_trace() {
     let account = unique_account();
     let Some(v) = mount(&account, "zz", Some(BIG)).await else {
         return;
     };
     published(&v, &account).await;
     let alice = format!("alice@{account}");
-    *v.destination.put_stalls.lock().unwrap() = Some(ContentDigest::of_bytes(A).value);
-
-    let spawn = |blob: &'static [u8]| {
-        let (app, token) = (v.app.clone(), alice.clone());
-        tokio::spawn(async move {
-            let body =
-                serde_json::to_vec(&json!({"repository": "reg", "digests": [digest_of(blob)]}))
-                    .unwrap();
-            send(&app, Method::POST, "/api/v1/storage/migrate", &token, body).await
-        })
-    };
-    let first = spawn(A);
-    let second = spawn(A);
-    tokio::time::sleep(Duration::from_millis(500)).await;
-    // Both permits are held by the hung destination: a third is turned away.
-    let (status, answer) = migrate(&v, &alice, "reg", &[B]).await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{answer}");
-    assert_eq!(answer["error"], "E_MIGRATE_BUSY");
-
-    for hung in [first, second] {
-        let (status, bytes) = hung.await.expect("the request task");
-        let answer = json_of(&bytes);
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
-        assert_eq!(outcome_of(&answer, A), "destination_failed");
-    }
-    assert_eq!(in_dest(&v, A), None);
-    assert_eq!(in_origin(&v, A).as_deref(), Some(A));
-    // The permits came back.
-    *v.destination.put_stalls.lock().unwrap() = None;
-    let (status, _) = migrate(&v, &alice, "reg", &[A]).await;
-    assert_eq!(status, StatusCode::OK);
+    v.destination.put_delay_ms.store(800, Ordering::SeqCst);
+    let app = v.app.clone();
+    let request = tokio::spawn(async move {
+        let body =
+            serde_json::to_vec(&json!({"repository": "reg", "digests": [digest_of(A)]})).unwrap();
+        send(&app, Method::POST, "/api/v1/storage/migrate", &alice, body).await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    request.abort();
+    assert!(results(&v).is_empty(), "nothing is recorded before it ends");
+    tokio::time::sleep(Duration::from_millis(1800)).await;
+    assert_eq!(
+        in_dest(&v, A).as_deref(),
+        Some(A),
+        "the migration finished although nobody was waiting for it"
+    );
+    assert_eq!(
+        results(&v),
+        vec![AuditResult::Allowed],
+        "and it left its trace"
+    );
 }
 
 #[tokio::test]
