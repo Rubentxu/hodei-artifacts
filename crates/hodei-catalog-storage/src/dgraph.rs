@@ -44,12 +44,12 @@ use hodei_catalog::search::{
 };
 use hodei_catalog::{
     AccessDecision, AccessRequest, AptCasReference, AptGroupSnapshot, AptSnapshotKey,
-    AptSnapshotMember, AptSnapshotStore, AssetDisposition, AssetRecord, BlobIntegrityProbe,
-    BlobLocation, BlobProbeError, BlobReference, CatalogAction, CatalogAuthorizer, CatalogError,
-    CatalogReader, CatalogResource, CatalogSearch, CatalogWriter, DigestScope, MutableTag,
-    PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, ServeChannel,
-    TrustLedger, TrustState,
+    AptSnapshotMember, AptSnapshotStore, AssetDeletion, AssetDisposition, AssetRecord,
+    BlobIntegrityProbe, BlobLocation, BlobProbeError, BlobReference, CatalogAction,
+    CatalogAuthorizer, CatalogError, CatalogReader, CatalogResource, CatalogSearch, CatalogWriter,
+    DigestScope, MutableTag, PackageCoordinates, PackageVersion, Precondition, Publication,
+    PublishOutcome, ReferrerRecord, RepositoryConfig, RepositoryDescriptor, RepositoryFormat,
+    RepositoryMode, ServeChannel, TrustLedger, TrustState,
 };
 use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use hodei_graph_client::guard::{GuardKind, GuardScope, GuardedEffect};
@@ -61,6 +61,10 @@ use kernel::application::ports::clock::Identity;
 use sha2::{Digest as _, Sha256};
 
 mod gc_ledger;
+
+/// How many versions of a package one deletion removes. The rest is removed
+/// by repeating the request (the answer says `partial`).
+pub const MAX_VERSIONS_PER_DELETE: usize = 1000;
 
 /// How many times the publication re-reads and retries before giving up.
 const WRITE_ATTEMPTS: usize = 6;
@@ -1835,6 +1839,110 @@ fn the_blocks(
     blocks
 }
 
+/// The deterministic-looking but unique operation identifier of a deletion.
+///
+/// A deletion is NOT the same fact when it is repeated after a republication
+/// (delete, publish the same bytes, delete again), so the marker carries a
+/// fresh nonce: the once-only replay of the guard must never swallow a later
+/// deletion. Deleting twice is harmless by construction (the second finds
+/// nothing), so a retry needs no replay.
+fn deletion_operation_id(
+    account: &str,
+    repository: &str,
+    asset_path: &str,
+    nonce: &str,
+) -> OperationId {
+    let mut hasher = Sha256::new();
+    hasher.update(account.as_bytes());
+    hasher.update([0]);
+    hasher.update(repository.as_bytes());
+    hasher.update([0]);
+    hasher.update(asset_path.as_bytes());
+    hasher.update([0]);
+    hasher.update(nonce.as_bytes());
+    OperationId::new(&format!("del-{:x}", hasher.finalize()))
+        .expect("a sha256-derived operation id is always valid")
+}
+
+/// The query lines of a deletion: the asset, its reference, the versions of
+/// its package (at most `cap`), the OTHER assets that still name that package
+/// (a package whose name another asset carries keeps its versions) and, when the
+/// deletion writes its audit event, the row that event would take.
+fn deletion_query_lines(
+    account: &str,
+    repository: &str,
+    asset_path: &str,
+    package: &str,
+    cap: usize,
+    event_id: Option<&str>,
+) -> Vec<String> {
+    let key = dql_string(&asset_key(account, repository, asset_path));
+    let mut lines = vec![
+        format!("a as var(func: eq(hodei.catalog.asset.key, {key}))"),
+        format!("rf as var(func: eq(hodei.catalog.reference.key, {key}))"),
+        format!(
+            "vs as var(func: eq(hodei.catalog.version.repository, {repository}), first: {cap}) \
+             @filter(eq(hodei.catalog.version.account, {account}) AND \
+             eq(hodei.catalog.version.package_name, {package}))",
+            repository = dql_string(repository),
+            account = dql_string(account),
+            package = dql_string(package),
+        ),
+        format!(
+            "ot as var(func: eq(hodei.catalog.asset.repository, {repository})) \
+             @filter(eq(hodei.catalog.asset.account, {account}) AND \
+             eq(hodei.catalog.asset.package_name, {package}) AND \
+             NOT eq(hodei.catalog.asset.key, {key}))",
+            repository = dql_string(repository),
+            account = dql_string(account),
+            package = dql_string(package),
+        ),
+    ];
+    if let Some(event_id) = event_id {
+        lines.push(format!(
+            "ev as var(func: eq(hodei.catalog.outbox.key, {}))",
+            dql_string(event_id)
+        ));
+    }
+    lines
+}
+
+/// The blocks of a deletion, each under the parent's gate of the call. When the
+/// deletion carries its audit event, every block also needs the event's row to
+/// be free: the removal and its event are one fact, as in a publication.
+fn deletion_blocks(parent: &str, event: Option<&AuditEvent>) -> Vec<GraphMutationBlock> {
+    let gate = if event.is_some() {
+        " AND eq(len(ev), 0)"
+    } else {
+        ""
+    };
+    let delete_if = |cond: String, nquads: &str| GraphMutationBlock {
+        cond: Some(cond),
+        set_nquads: String::new(),
+        delete_nquads: nquads.to_owned(),
+    };
+    let mut blocks = Vec::new();
+    if let Some(event) = event {
+        blocks.push(GraphMutationBlock::set_if(
+            format!("{parent} AND (eq(len(a), 1) OR eq(len(rf), 1)){gate}"),
+            outbox_event_nquads(event),
+        ));
+    }
+    blocks.push(delete_if(
+        format!("{parent} AND eq(len(a), 1){gate}"),
+        "uid(a) * * .\n",
+    ));
+    blocks.push(delete_if(
+        format!("{parent} AND eq(len(rf), 1){gate}"),
+        "uid(rf) * * .\n",
+    ));
+    blocks.push(delete_if(
+        format!("{parent} AND gt(len(vs), 0) AND eq(len(ot), 0){gate}"),
+        "uid(vs) * * .\n",
+    ));
+    blocks
+}
+
 // ---------------------------------------------------------------------------
 // The store.
 // ---------------------------------------------------------------------------
@@ -1848,6 +1956,8 @@ pub struct DgraphCatalogStore {
     probe: Option<Arc<dyn BlobIntegrityProbe>>,
     identity: Identity,
     trust: Option<Arc<dyn TrustLedger>>,
+    /// How many versions one deletion may remove (`MAX_VERSIONS_PER_DELETE`).
+    delete_versions_cap: usize,
 }
 
 impl std::fmt::Debug for DgraphCatalogStore {
@@ -1907,7 +2017,16 @@ impl DgraphCatalogStore {
             probe: None,
             identity: Identity::system(),
             trust: None,
+            delete_versions_cap: MAX_VERSIONS_PER_DELETE,
         })
+    }
+
+    /// The store with another bound of versions per deletion (a test hook and
+    /// a deployment knob): more versions than this are removed by repeating
+    /// the deletion.
+    pub fn with_delete_versions_cap(mut self, cap: usize) -> Self {
+        self.delete_versions_cap = cap.max(1);
+        self
     }
 
     /// The store with the ledger of the trust grants the search reads.
@@ -3300,6 +3419,232 @@ impl CatalogWriter for DgraphCatalogStore {
         Err(CatalogError::invalid(
             "the dgraph raw slice does not serve asset moves",
         ))
+    }
+
+    async fn delete_asset(
+        &self,
+        principal_account: &str,
+        repository: &str,
+        asset_path: &str,
+        actor: &str,
+        correlation_id: &str,
+    ) -> Result<AssetDeletion, CatalogError> {
+        self.decide(&AccessRequest::asset(
+            principal_account,
+            CatalogAction::Delete,
+            repository,
+            asset_path,
+        ))
+        .await?;
+        if asset_path.trim().is_empty() {
+            return Err(CatalogError::invalid("the path of the asset is empty"));
+        }
+
+        // The repository has to exist and accept client writes, like any
+        // other write: a deletion is a client write.
+        let row = self
+            .the_repository_row(principal_account, repository)
+            .await?
+            .ok_or_else(|| CatalogError::missing("repository", repository.to_string()))?;
+        if row.account != principal_account || row.repo_key != repository {
+            return Err(CatalogError::corrupt(
+                "repository",
+                repository.to_string(),
+                "the row does not carry the identity its key names",
+            ));
+        }
+        let mode = RepositoryMode::parse(&row.mode).ok_or_else(|| {
+            CatalogError::corrupt(
+                "repository",
+                repository.to_string(),
+                "the mode is not a mode",
+            )
+        })?;
+        if !mode.accepts_client_writes() {
+            return Err(CatalogError::invalid(
+                "this repository does not accept deletions from a client",
+            ));
+        }
+
+        let guard = asset_guard_scope(principal_account, repository, asset_path)?;
+        let cap = self.delete_versions_cap;
+
+        // One read of what is there decides. An absent path short-circuits:
+        // no other asset is asked about and nothing is written.
+        let (asset, reference) = self
+            .the_asset_and_reference_rows(principal_account, repository, asset_path)
+            .await?;
+        // A raw path is its package; an asset that is already gone still names
+        // its history by the path.
+        let package = asset
+            .as_ref()
+            .map(|asset| asset.package_name.clone())
+            .unwrap_or_else(|| asset_path.to_string());
+        let mut versions = self
+            .the_package_versions(principal_account, repository, &package, cap + 1)
+            .await?;
+        if asset.is_none() && reference.is_none() && versions.is_empty() {
+            return Ok(AssetDeletion {
+                removed: false,
+                released: Vec::new(),
+                versions_removed: 0,
+                settled: true,
+                partial: false,
+            });
+        }
+        if !versions.is_empty()
+            && self
+                .the_other_assets_of_package(principal_account, repository, asset_path, &package)
+                .await?
+        {
+            versions.clear();
+        }
+        let partial = versions.len() > cap;
+        versions.truncate(cap);
+
+        let mut released: Vec<ContentDigest> = Vec::new();
+        let mut digests: Vec<ContentDigest> = Vec::new();
+        digests.extend(asset.iter().map(|asset| asset.digest.clone()));
+        digests.extend(reference.iter().map(|reference| reference.digest.clone()));
+        digests.extend(versions.iter().map(|version| version.digest.clone()));
+        for digest in digests {
+            if !released.contains(&digest) {
+                released.push(digest);
+            }
+        }
+
+        // The event of the fact goes in the same transaction as the removal; a
+        // path with no asset and no reference (only history) removes rows
+        // without an event: there was nothing published to say it about.
+        let event = asset
+            .as_ref()
+            .map(|row| &row.digest)
+            .or(reference.as_ref().map(|row| &row.digest))
+            .map(|digest| {
+                AuditEvent::new(
+                    self.identity.new_id(),
+                    AuditContext::new(
+                        actor.to_string(),
+                        principal_account.to_string(),
+                        correlation_id.to_string(),
+                    ),
+                    self.identity.now(),
+                    "delete",
+                    format!("{repository}/{asset_path}"),
+                    Some(format!("{}:{}", digest.algorithm, digest.value)),
+                    AuditResult::Allowed,
+                )
+            });
+        let operation = deletion_operation_id(
+            principal_account,
+            repository,
+            asset_path,
+            &self.identity.new_id(),
+        );
+        let effect = GuardedEffect {
+            query_lines: deletion_query_lines(
+                principal_account,
+                repository,
+                asset_path,
+                &package,
+                cap,
+                event.as_ref().map(|event| event.event_id.as_str()),
+            ),
+            set_nquads: String::new(),
+            recorded_result: "deleted".to_owned(),
+        };
+        self.guards
+            .execute_guarded_composite(
+                &guard,
+                &operation,
+                RevisionDemand::Advance,
+                effect,
+                &|current| deletion_blocks(parent_gate(current), event.as_ref()),
+            )
+            .await
+            .map_err(the_guard_error)?;
+
+        // The verification read. What it finds is reported, never deleted: a
+        // publication that committed after the pass is somebody's, not ours.
+        let settled = match self
+            .the_asset_and_reference_rows(principal_account, repository, asset_path)
+            .await
+        {
+            Ok((None, None)) => self
+                .the_package_versions(principal_account, repository, &package, 1)
+                .await
+                .map(|left| left.is_empty() || versions.is_empty())
+                .unwrap_or(false),
+            _ => false,
+        };
+        Ok(AssetDeletion {
+            removed: true,
+            released,
+            versions_removed: versions.len(),
+            settled: settled && !partial,
+            partial,
+        })
+    }
+}
+
+impl DgraphCatalogStore {
+    /// The version rows of a package, without authorizing.
+    async fn the_package_versions(
+        &self,
+        account: &str,
+        repository: &str,
+        package: &str,
+        limit: usize,
+    ) -> Result<Vec<VersionRow>, CatalogError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.catalog.version.repository, {repository}), first: {limit}) \
+             @filter(eq(hodei.catalog.version.account, {account}) AND \
+             eq(hodei.catalog.version.package_name, {package})) {{ {VERSION_FIELDS} }} }}",
+            repository = dql_string(repository),
+            account = dql_string(account),
+            package = dql_string(package),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .map(|nodes| nodes.iter().map(VersionRow::from_node).collect())
+            .unwrap_or_else(|| Ok(Vec::new()))
+    }
+
+    /// Whether another asset of the repository still names the package.
+    async fn the_other_assets_of_package(
+        &self,
+        account: &str,
+        repository: &str,
+        asset_path: &str,
+        package: &str,
+    ) -> Result<bool, CatalogError> {
+        let query = format!(
+            "{{ q(func: eq(hodei.catalog.asset.repository, {repository}), first: 1) \
+             @filter(eq(hodei.catalog.asset.account, {account}) AND \
+             eq(hodei.catalog.asset.package_name, {package}) AND \
+             NOT eq(hodei.catalog.asset.key, {key})) {{ uid }} }}",
+            repository = dql_string(repository),
+            account = dql_string(account),
+            package = dql_string(package),
+            key = dql_string(&asset_key(account, repository, asset_path)),
+        );
+        let response = self
+            .client
+            .execute_dql(&query)
+            .await
+            .map_err(|error| CatalogError::unavailable(error.to_string()))?;
+        Ok(response
+            .json
+            .get("q")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|rows| !rows.is_empty()))
     }
 }
 

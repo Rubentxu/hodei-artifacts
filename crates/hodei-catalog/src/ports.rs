@@ -11,8 +11,9 @@ use thiserror::Error;
 
 use crate::error::CatalogError;
 use crate::model::{
-    AssetRecord, BlobLocation, BlobReference, MutableTag, PackageCoordinates, PackageVersion,
-    Publication, PublishOutcome, ReferrerRecord, RepositoryConfig, RepositoryDescriptor,
+    AssetDeletion, AssetRecord, BlobLocation, BlobReference, MutableTag, PackageCoordinates,
+    PackageVersion, Publication, PublishOutcome, ReferrerRecord, RepositoryConfig,
+    RepositoryDescriptor,
 };
 use crate::search::{SearchPage, SearchQuery};
 
@@ -123,6 +124,8 @@ pub enum CatalogAction {
     MoveAsset,
     /// Create or reconfigure a repository.
     Configure,
+    /// Delete an asset and the history of its path.
+    Delete,
 }
 
 impl CatalogAction {
@@ -134,6 +137,7 @@ impl CatalogAction {
             CatalogAction::MoveTag => "move the tag",
             CatalogAction::MoveAsset => "move the asset",
             CatalogAction::Configure => "configure",
+            CatalogAction::Delete => "delete",
         }
     }
 }
@@ -530,4 +534,26 @@ pub trait CatalogWriter: Send + Sync {
         asset_path: &str,
         coordinates: PackageCoordinates,
     ) -> Result<AssetRecord, CatalogError>;
+
+    /// Deletes an asset: its row, the reference to its blob and the versions
+    /// of its package, in one atomic operation.
+    ///
+    /// The deletion is logical and never touches bytes: once the rows are
+    /// gone nothing in the catalog keeps the digest alive, and the garbage
+    /// collector (which honors holds) reclaims it later. Deleting an asset
+    /// that is not there is not an error (`removed: false`), so a retry
+    /// after a lost answer is harmless.
+    ///
+    /// The audit event of the deletion (`actor`, `correlation_id`) is written
+    /// in the same transaction as the removal, like the one of a publication:
+    /// there is no removal without its event and no event without its removal.
+    /// At most a bounded number of versions go in one call (`partial`).
+    async fn delete_asset(
+        &self,
+        principal_account: &str,
+        repository: &str,
+        asset_path: &str,
+        actor: &str,
+        correlation_id: &str,
+    ) -> Result<AssetDeletion, CatalogError>;
 }

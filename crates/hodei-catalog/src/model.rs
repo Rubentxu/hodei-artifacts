@@ -853,6 +853,38 @@ pub enum AssetDisposition {
     Unchanged,
 }
 
+/// What a deletion of an asset left behind (HSP-113).
+///
+/// The deletion is logical: the catalog stops naming the content, and the
+/// bytes are the garbage collector's to reclaim (holds and other references
+/// keep them alive). Deleting what is not there is not an error: the result
+/// says `removed: false` and nothing was written.
+///
+/// # Semantics under concurrency
+///
+/// One guarded pass removes what the pass read. A publication of the same path
+/// that commits **after** it is not deleted: the verification read that follows
+/// reports it as `settled: false`, and the caller says so instead of pretending
+/// the path is empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AssetDeletion {
+    /// Whether any row of the catalog was removed by this call.
+    pub removed: bool,
+    /// The contents the catalog no longer names because of this call
+    /// (the asset's own and the ones of the versions of its package).
+    pub released: Vec<ContentDigest>,
+    /// How many version rows were removed.
+    pub versions_removed: usize,
+    /// Whether the verification read found nothing of the path left. `false`
+    /// means a version row is still there (see `partial`) or the path was
+    /// published again while the deletion ran; a failed verification read
+    /// also leaves it `false`: what was not read back is not reported settled.
+    pub settled: bool,
+    /// Whether more versions than one deletion may remove were found: the
+    /// rest is removed by repeating the request.
+    pub partial: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

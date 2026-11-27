@@ -82,10 +82,10 @@ pub use group::{
     GroupConfig, GroupConfigError, GroupError, Lookup, Node, Walk, walk as walk_group,
 };
 pub use model::{
-    AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope, MutableTag,
-    PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome, ReferrerRecord,
-    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustState,
-    repository_hrn,
+    AssetDeletion, AssetDisposition, AssetRecord, BlobLocation, BlobReference, DigestScope,
+    MutableTag, PackageCoordinates, PackageVersion, Precondition, Publication, PublishOutcome,
+    ReferrerRecord, RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode,
+    TrustState, repository_hrn,
 };
 pub use namespaces::{Judgement, MAX_RESERVED, NamespacePolicy, NamespacePolicyError, OnConflict};
 pub use ports::{

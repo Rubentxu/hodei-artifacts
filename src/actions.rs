@@ -141,6 +141,17 @@ pub fn download_asset() -> ActionId {
     ActionId::new("artifacts", "DownloadAsset").expect("a valid action")
 }
 
+/// Deleting an asset of a repository, with the history of its path (HSP-113).
+///
+/// A deletion is logical: the catalog stops naming the content, and the
+/// garbage collector decides later whether the bytes can go (holds and other
+/// references keep them). It is its own action: uploading, downloading or
+/// promoting never implies it, and a policy has to grant it explicitly to
+/// whoever may take content out of a repository.
+pub fn delete_asset() -> ActionId {
+    ActionId::new("artifacts", "DeleteAsset").expect("a valid action")
+}
+
 /// Promoting a digest of a repository to its trusted channel.
 ///
 /// It is the permission of **who** may promote. Whether the software
@@ -185,6 +196,7 @@ pub fn all() -> Vec<ActionId> {
         access_admin_api(),
         upload_asset(),
         download_asset(),
+        delete_asset(),
         promote_asset(),
         revoke_promotion(),
         investigate(),
@@ -285,6 +297,12 @@ pub fn check_service_declared(
         // bundle cannot decide on a push, and every request would end in a
         // 403 instead of the service refusing to start.
         check_declared(schema, &upload_asset())?;
+    }
+    if raw_enabled {
+        // The raw surface also deletes (HSP-113). A bundle without the action
+        // would leave every deletion without a verdict (a 500), so the
+        // deployment refuses to start instead.
+        check_declared(schema, &delete_asset())?;
     }
     if investigation_enabled {
         // The investigation surface asks for its own action: a bundle that

@@ -435,7 +435,8 @@ fn raw_routes(app_state: AppState) -> Router {
             "/repository/{*target}",
             axum::routing::put(crate::handlers::raw::publish)
                 .get(crate::handlers::raw::download)
-                .head(crate::handlers::raw::describe),
+                .head(crate::handlers::raw::describe)
+                .delete(crate::handlers::raw::delete),
         )
         // The npm registry surface. It is read raw as well: the name of a
         // scoped package arrives as `@scope%2fname` and only the protocol

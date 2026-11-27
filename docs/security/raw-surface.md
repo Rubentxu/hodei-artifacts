@@ -188,7 +188,7 @@ Una promesa que no se puede comprobar no se acepta en silencio.
 | `401` | No hay credencial, o no es válida. |
 | `403` | La decisión de Cedar no es permiso. |
 | `404` | No hay nada en esa dirección, o el repositorio no existe en la cuenta verificada. |
-| `405` | El método no es el de la superficie: la ruta solo admite `PUT`, `GET` y `HEAD`. |
+| `405` | El método no es el de la superficie: la ruta solo admite `PUT`, `GET`, `HEAD` y `DELETE`; o `DELETE` sobre un repositorio que no es `raw` alojado. |
 | `409` | La dirección ya tiene otro contenido, y la política no permite reponer. |
 | `412` | Una condición que no se cumple. |
 | `413` | El contenido es más grande de lo que se admite. |
@@ -202,6 +202,65 @@ existe y el principal no puede usarlo; el `404` dice que para esta
 cuenta no hay nada. Un repositorio de otra cuenta es un `404`, porque un
 `403` diría que existe en algún sitio, y esa es la existencia que no se
 puede exponer.
+
+## El borrado (HSP-113)
+
+`DELETE /repository/{repositorio}/{*ruta}` borra el activo de esa dirección y
+la historia de la ruta (las versiones que quedaron al reponer con
+`raw.replace: allow`). Es un borrado **lógico**: el catálogo deja de nombrar
+el contenido y el blob queda para el recolector. Esta ruta no borra ningún byte.
+
+- **Cedar.** Acción dedicada `Artifacts::Action::"DeleteAsset"` sobre el
+  repositorio: subir, descargar o promover no la implican. Un bundle que no la
+  declare no puede decidir (Cedar da `Indeterminate`, un `500`), así que el
+  arranque lo comprueba: con la superficie raw activa el servicio **no
+  arranca** si el `schema.json` no declara `DeleteAsset` (los de `config/` ya
+  la declaran).
+- **Orden.** Credencial (`401`), ruta (`400`), repositorio en la cuenta
+  verificada (`404`, idéntico al de uno inexistente), Cedar (`403`, auditado
+  `Denied`), retención (`409`).
+- **Retención.** Un hold por **digest** protege sus bytes ante el recolector.
+  Un hold de **repositorio** o de **cuenta** (retención legal) se resuelve a
+  partir de las referencias del catálogo, y borrar las filas lo vaciaría: por
+  eso mientras haya un hold activo que alcance al repositorio o a la cuenta, el
+  borrado es `409 E_DELETE_HELD` y no quita nada (también si la ruta no
+  existe). Sin el servicio del recolector no se pueden leer los holds y el
+  borrado no se ofrece (`501`). Los holds se leen justo antes de escribir: uno
+  puesto entre la lectura y la escritura no se ve (una ventana, no una
+  garantía).
+- **Solo `raw` alojado** (`405` en el resto): los demás formatos derivan
+  metadatos de protocolo (manifiestos, packuments, índices) y necesitan un
+  borrado que conozca su formato.
+- **Idempotente.** Borrar lo que no está responde `200` con `deleted: false`,
+  sin escribir nada ni añadir hechos. Una ruta ausente se resuelve con una
+  lectura del activo y otra de las versiones (no se pregunta por otros
+  activos).
+- **Una pasada y una verificación.** Una sola transacción guardada, con la misma
+  guarda que la publicación, quita el activo, su referencia y las versiones del
+  paquete (la ruta es el paquete). Después una relectura verifica. Lo que una
+  publicación concurrente de la misma ruta haya escrito **después** de la pasada
+  no se borra: la respuesta es `409 E_DELETE_UNSETTLED` y dice qué se quitó. La
+  misma respuesta sale si la relectura no se pudo hacer: lo que no se leyó no se
+  da por resuelto.
+- **Acotado.** Una llamada quita como mucho 1000 versiones. Si hay más responde
+  `409 E_DELETE_PARTIAL` y repetir la petición continúa (el activo ya no está y
+  el resto de la historia sí). `released` lista como mucho 100 digests y
+  `released_total` los cuenta todos.
+- **Auditoría.** El evento (`delete`, ruta y digest liberado) se escribe en el
+  outbox del catálogo **en la misma transacción** que el borrado, como el de una
+  publicación: no hay borrado sin evento ni evento sin borrado. Un borrado sin
+  efecto no deja evento, y uno que falla antes de confirmar tampoco. El sumidero
+  de diagnóstico registra el estado real: `Allowed`, `Conflict` si el borrado
+  quitó filas pero la respuesta no es un éxito limpio, `Denied` (permiso o
+  retención) o `Failed` (nada se quitó o no se puede afirmar). Una ruta que solo
+  conserva historia (sin activo ni referencia) se limpia sin evento: no hay nada
+  publicado de lo que dar fe.
+- **Etiquetas.** Las filas `tag` solo las escribe el push de OCI (`move_tag`); un
+  repositorio raw no las crea, así que ninguna referencia a las versiones
+  borradas puede existir allí y este borrado no las toca.
+- **Lectura.** La búsqueda y la descarga leen las mismas filas que el borrado
+  quita (activo, referencia y versiones): no hay un índice aparte que
+  sincronizar.
 
 ## Configuración
 
