@@ -48,12 +48,62 @@ que un atacante no puede envenenar la marca con una fecha lejana.
 re-emisión tras rotar la clave). No acepta bytes: añade un paso de re-baseline y el siguiente `Release`
 que pase la firma anclada pasa a ser la nueva marca. Cualquier otra cuenta recibe `404`.
 
-## Rotación de claves
+## Rotación de claves (HSP-324)
 
-Se rota cambiando `apt.trusted_key_asc` en la configuración del repositorio (decisión del operador, como
-hasta ahora). La marca monótona sigue vigente: si el upstream re-emite con la nueva clave un `Release`
-con `Date` mayor, se acepta sin más; si la `Date` no avanza, hay que hacer `reset` explícito. No hay
-cadena de raíces TUF ni delegación: ver limitaciones.
+Una rotación es una ventana con fecha de corte declarada por el operador en `config_settings.apt`:
+
+```json
+"apt": {
+  "trusted_key_asc": "<clave anclada actual>",
+  "key_rotation": { "next_key_asc": "<clave nueva>", "cutoff": "2026-12-15T00:00:00Z" }
+}
+```
+
+- **Antes de `cutoff`** se aceptan las firmas de las dos claves (anclada y nueva), en `InRelease` y
+  en `Release` + `Release.gpg`.
+- **Desde `cutoff`** (el instante exacto ya cuenta como pasado) solo la nueva. Una firma de la clave
+  retirada se rechaza con `502` y código propio `E_METADATA_KEY_RETIRED` (auditada como
+  `artifacts:VerifyMirrorMetadata` `Denied`), distinto del genérico "signature is invalid" que recibe
+  una tercera clave desconocida. Nunca toca la marca del ledger.
+- El corte se evalúa **con el reloj del servidor**, una vez por resolución. Ni una cabecera `Date`
+  del cliente, ni la `Date` del `Release`, ni el upstream lo mueven; una clave retirada no puede
+  reactivarse desde el cliente: solo la edición de la configuración por el operador (con la
+  autoridad que ya tiene) cambia las claves vigentes.
+- Para cerrar la rotación, tras el corte el operador pone la clave nueva en `trusted_key_asc` y
+  elimina `key_rotation`.
+- Fallo cerrado y arranque estricto: los campos desconocidos de `apt` se rechazan, `key_rotation`
+  exige `trusted_key_asc`, un `cutoff` que no sea RFC 3339 o una clave que no sea un certificado
+  permitido (Ed25519) o que sea igual a la anclada se rechazan al **declarar el repositorio**
+  (`POST /api/v1/catalog/repositories` responde `400`). Una declaración inválida que ya estuviera
+  almacenada no sirve nada (`502`), nunca se interpreta con generosidad.
+
+### Efecto sobre el ledger anti-rollback
+
+El ledger no guarda con qué clave se firmó: guarda `Date` y digest del cuerpo verificado. Por tanto:
+
+- Un `Release` aceptado con la clave vieja antes del corte **sigue siendo la marca** tras el corte
+  (la marca no se invalida ni se reinicia al rotar). No hace falta `reset`.
+- Pero la verificación se repite en cada petición: tras el corte ese mismo `Release` firmado con la
+  clave vieja **ya no se sirve** (`E_METADATA_KEY_RETIRED`) aunque estuviera aceptado y en caché.
+- El upstream que re-firma con la clave nueva el mismo contenido (misma `Date`, mismo digest) es
+  idempotente: se sirve sin avanzar la marca. Con `Date` mayor, avanza. Con `Date` menor es
+  `E_METADATA_ROLLBACK` como siempre; con la misma `Date` y otro contenido, `E_METADATA_FORK`.
+- Si el upstream re-emite con la nueva clave pero con `Date` que no avanza y otro contenido, sigue
+  haciendo falta `reset` explícito (sin cambios respecto a HSP-167).
+
+### Cota de antigüedad por defecto
+
+Un proxy con `trusted_key_asc` que no fija `apt.max_metadata_age_secs` recibe el valor por defecto
+**604 800 s (7 días)** (`DEFAULT_MAX_METADATA_AGE_SECS`): un `Release` con `Date` más antigua es
+`E_METADATA_FROZEN`. Hoy existe un único perfil productivo (el de grafo, HSP-314 F4), así que el
+valor por defecto es único y vive en el código; no hay un valor distinto por perfil porque no hay
+más perfiles. El operador lo sobrescribe por repositorio con un valor explícito (y puede dar uno muy
+grande, acotado a ~100 años, para "sin límite práctico"). Sin `trusted_key_asc` no hay cota ni
+protección.
+
+**Compatibilidad:** los repos que ya anclaban clave sin `max_metadata_age_secs` pasan a rechazar
+metadatos de más de 7 días; un upstream que publica con menos frecuencia (p. ej. un snapshot
+fijo) debe fijar un valor explícito mayor.
 
 ## Contrato de despliegue
 
@@ -73,6 +123,10 @@ cadena de raíces TUF ni delegación: ver limitaciones.
   marca que rechaza sucesores legítimos hasta alcanzarla (como mucho 5 minutos).
 - Dos `Release` legítimos con la misma `Date` (resolución de un segundo) y contenido distinto se rechazan
   como fork.
+- La ventana de rotación acepta dos claves de forma simultánea, sin umbral ni delegación; la clave
+  nueva no se prueba contra un anclaje independiente (es lo que el operador declara).
+- Los miembros de un grupo apt usan la misma verificación (`verified_release`), pero la ventana solo
+  está demostrada por el router sobre un proxy directo.
 - `max_metadata_age_secs` se acota a unos 100 años: un valor absurdo equivale a "sin límite práctico".
 - El subject del ledger escapa `%` y `/` de cuenta, repositorio y distribución.
 

@@ -236,6 +236,8 @@ pipeline {
                         "--test hsp323i_pipelinek_receipt_dgraph_it",
                         // HSP-322 tramo g (HSP-167): rollback/freeze protection of the signed apt proxy index (persisted mark, fail-closed ledger, Cedar-gated reset), by the real router, OpenPGP and Dgraph.
                         "--test hsp322g_mirror_metadata_dgraph_it",
+                        // HSP-324 (HST-9): mirror key rotation window with a cutoff (server clock), retired-key refusal with its own code, default max_metadata_age_secs, strict apt settings, by the real router, OpenPGP and Dgraph.
+                        "--test hsp324_mirror_key_rotation_dgraph_it",
                         // HSP-321 tramo k (HSP-160): POST /passports/verify with roots pinned by the operator (windows, algorithms, canonical bytes, audience, revocation, bounded cost), by the real router, Cedar and Dgraph.
                         "--test hsp321k_passport_verify_dgraph_it",
                         // HSP-322 tramo 2 (HSP-161): publication freeze on hosted npm/raw, dedicated Cedar action, by the real router.

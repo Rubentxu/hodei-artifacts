@@ -690,8 +690,48 @@ pub struct AptProxyConfig {
     /// The oldest `Date` (seconds before now) of a `Release` the proxy still
     /// serves. Upstream that stops publishing keeps a signed `Release` valid
     /// forever when it carries no `Valid-Until`; this bound is the operator's
-    /// freeze detector. `None` means no age bound beyond `Valid-Until`.
+    /// freeze detector. When the proxy pins a key and omits it, it is
+    /// [`DEFAULT_MAX_METADATA_AGE_SECS`]; `None` only for a proxy without a
+    /// pinned key (which has no freeze protection at all).
     pub max_metadata_age_secs: Option<u64>,
+    /// A key-rotation window (HSP-324): see [`KeyRotation`].
+    pub key_rotation: Option<KeyRotation>,
+}
+
+/// The default `apt.max_metadata_age_secs` of a proxy that pins a key and does
+/// not set one: seven days. Every profile shares it (there is a single
+/// production profile, the graph one); an operator overrides it per repository.
+pub const DEFAULT_MAX_METADATA_AGE_SECS: u64 = 7 * 86_400;
+
+/// A key-rotation window (HSP-324).
+///
+/// Until `cutoff` the proxy trusts the pinned `trusted_key_asc` **and**
+/// `next_key_asc`; from `cutoff` on only `next_key_asc`. The cutoff is judged
+/// against the server clock, never against anything the client or the
+/// upstream says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRotation {
+    /// The key that replaces the pinned one.
+    pub next_key_asc: String,
+    /// The instant (UTC) from which the pinned key is retired.
+    pub cutoff: chrono::DateTime<chrono::Utc>,
+}
+
+/// The keys a proxy trusts at one instant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedKeys<'a> {
+    /// Keys whose signature is accepted.
+    pub active: Vec<&'a str>,
+    /// The key retired by a rotation whose cutoff has passed: its signature
+    /// is refused with a reason of its own.
+    pub retired: Option<&'a str>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawKeyRotation {
+    next_key_asc: String,
+    cutoff: String,
 }
 
 #[derive(Deserialize)]
@@ -707,9 +747,31 @@ struct RawAptProxyConfig {
     trusted_key_asc: Option<String>,
     #[serde(default)]
     max_metadata_age_secs: Option<u64>,
+    #[serde(default)]
+    key_rotation: Option<RawKeyRotation>,
 }
 
 impl AptProxyConfig {
+    /// The keys trusted at `now` (the server clock). `None` when the proxy
+    /// pins no key. Fail closed: the cutoff instant itself is already retired.
+    pub fn trusted_keys(&self, now: chrono::DateTime<chrono::Utc>) -> Option<TrustedKeys<'_>> {
+        let pinned = self.trusted_key_asc.as_deref()?;
+        Some(match &self.key_rotation {
+            None => TrustedKeys {
+                active: vec![pinned],
+                retired: None,
+            },
+            Some(rotation) if now < rotation.cutoff => TrustedKeys {
+                active: vec![pinned, rotation.next_key_asc.as_str()],
+                retired: None,
+            },
+            Some(rotation) => TrustedKeys {
+                active: vec![rotation.next_key_asc.as_str()],
+                retired: Some(pinned),
+            },
+        })
+    }
+
     /// Reads and validates `config_settings.apt` if present.
     pub fn of(config: &RepositoryConfig) -> Result<Self, UpstreamConfigError> {
         let Some(value) = config.config_settings.get("apt") else {
@@ -732,12 +794,48 @@ impl AptProxyConfig {
                 )));
             }
         }
+        let key_rotation = match raw.key_rotation {
+            None => None,
+            Some(_) if raw.trusted_key_asc.is_none() => {
+                return Err(UpstreamConfigError(
+                    "apt.key_rotation needs apt.trusted_key_asc".to_string(),
+                ));
+            }
+            Some(rotation) => {
+                if rotation.next_key_asc.trim().is_empty()
+                    || Some(rotation.next_key_asc.as_str()) == raw.trusted_key_asc.as_deref()
+                {
+                    return Err(UpstreamConfigError(
+                        "apt.key_rotation.next_key_asc must be a key other than the pinned one"
+                            .to_string(),
+                    ));
+                }
+                let cutoff = chrono::DateTime::parse_from_rfc3339(&rotation.cutoff)
+                    .map_err(|error| {
+                        UpstreamConfigError(format!(
+                            "apt.key_rotation.cutoff is not an RFC 3339 instant: {error}"
+                        ))
+                    })?
+                    .with_timezone(&chrono::Utc);
+                Some(KeyRotation {
+                    next_key_asc: rotation.next_key_asc,
+                    cutoff,
+                })
+            }
+        };
+        // A proxy that authenticates its index is also bounded in age: an
+        // omitted bound means the default, never "no bound".
+        let max_metadata_age_secs = match (raw.max_metadata_age_secs, &raw.trusted_key_asc) {
+            (None, Some(_)) => Some(DEFAULT_MAX_METADATA_AGE_SECS),
+            (explicit, _) => explicit,
+        };
         Ok(Self {
             distributions: raw.distributions,
             components: raw.components,
             architectures: raw.architectures,
             trusted_key_asc: raw.trusted_key_asc,
-            max_metadata_age_secs: raw.max_metadata_age_secs,
+            max_metadata_age_secs,
+            key_rotation,
         })
     }
 
@@ -1111,6 +1209,62 @@ pub fn compose_packages_index<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_with(apt: serde_json::Value) -> RepositoryConfig {
+        let mut config = RepositoryConfig::new(crate::DigestScope::Global);
+        config.config_settings = serde_json::json!({ "apt": apt });
+        config
+    }
+
+    #[test]
+    fn a_pinned_proxy_gets_the_seven_day_age_bound_unless_it_sets_its_own() {
+        let pinned =
+            AptProxyConfig::of(&config_with(serde_json::json!({"trusted_key_asc": "k"}))).unwrap();
+        assert_eq!(pinned.max_metadata_age_secs, Some(7 * 86_400));
+        let explicit = AptProxyConfig::of(&config_with(
+            serde_json::json!({"trusted_key_asc": "k", "max_metadata_age_secs": 60}),
+        ))
+        .unwrap();
+        assert_eq!(explicit.max_metadata_age_secs, Some(60));
+        let unpinned = AptProxyConfig::of(&config_with(serde_json::json!({}))).unwrap();
+        assert_eq!(unpinned.max_metadata_age_secs, None);
+    }
+
+    #[test]
+    fn the_rotation_window_selects_the_keys_by_the_clock_and_the_cutoff_is_retired() {
+        let cutoff = chrono::DateTime::parse_from_rfc3339("2026-12-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let config = AptProxyConfig::of(&config_with(serde_json::json!({
+            "trusted_key_asc": "old",
+            "key_rotation": {"next_key_asc": "new", "cutoff": "2026-12-01T00:00:00Z"}
+        })))
+        .unwrap();
+        let before = config
+            .trusted_keys(cutoff - chrono::Duration::seconds(1))
+            .unwrap();
+        assert_eq!(before.active, vec!["old", "new"]);
+        assert_eq!(before.retired, None);
+        let at = config.trusted_keys(cutoff).unwrap();
+        assert_eq!(at.active, vec!["new"]);
+        assert_eq!(at.retired, Some("old"));
+    }
+
+    #[test]
+    fn an_unreadable_rotation_is_refused() {
+        for apt in [
+            serde_json::json!({"key_rotation": {"next_key_asc": "n", "cutoff": "2026-12-01T00:00:00Z"}}),
+            serde_json::json!({"trusted_key_asc": "o", "key_rotation": {"next_key_asc": "n", "cutoff": "soon"}}),
+            serde_json::json!({"trusted_key_asc": "o", "key_rotation": {"next_key_asc": "o", "cutoff": "2026-12-01T00:00:00Z"}}),
+            serde_json::json!({"trusted_key_asc": "o", "key_rotation": {"next_key_asc": " ", "cutoff": "2026-12-01T00:00:00Z"}}),
+            serde_json::json!({"trusted_key_asc": "o", "key_rotation": {"next_key_asc": "n", "cutoff": "2026-12-01T00:00:00Z", "extra": 1}}),
+        ] {
+            assert!(
+                AptProxyConfig::of(&config_with(apt.clone())).is_err(),
+                "{apt}"
+            );
+        }
+    }
 
     const FULL_CONTROL: &str = concat!(
         "Package: hello-hodei\n",

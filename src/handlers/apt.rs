@@ -1206,6 +1206,71 @@ async fn enforce_metadata_guard(
         .map_err(refuse)
 }
 
+/// Verifies with whichever active key signed, and refuses a retired key's
+/// signature with a reason of its own (`E_METADATA_KEY_RETIRED`, audited).
+#[allow(clippy::too_many_arguments)]
+fn verify_with_keys<T>(
+    state: &AppState,
+    context: &hodei_authz::VerifiedContext,
+    repository: &RepositoryDescriptor,
+    dist: &str,
+    keys: &hodei_catalog::apt::TrustedKeys<'_>,
+    correlation: &str,
+    invalid: &'static str,
+    verify: impl Fn(&str) -> Result<T, crate::openpgp::OpenPgpError>,
+) -> Result<T, Failure> {
+    for key in &keys.active {
+        if let Ok(verified) = verify(key) {
+            return Ok(verified);
+        }
+    }
+    if keys.retired.is_some_and(|key| verify(key).is_ok()) {
+        tracing::warn!(
+            target: "hodei_artifacts::proxy",
+            repository = %repository.repo_key,
+            distribution = dist,
+            "the signed mirror metadata was signed by a retired key"
+        );
+        record_audit(
+            state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            "artifacts:VerifyMirrorMetadata",
+            &format!("{}/dists/{dist}", repository.repo_key),
+            AuditResult::Denied,
+            correlation,
+        );
+        return Err(Failure::plain(
+            StatusCode::BAD_GATEWAY,
+            "E_METADATA_KEY_RETIRED: the signed Release was signed by a key retired by the rotation",
+        ));
+    }
+    Err(Failure::plain(StatusCode::BAD_GATEWAY, invalid))
+}
+
+/// Validates the apt settings of a repository that is being declared: unknown
+/// fields, an unreadable rotation, or a key that is not an allowed
+/// certificate are refused up front, never interpreted generously (HSP-324).
+pub(crate) fn validate_apt_settings(
+    config: &hodei_catalog::RepositoryConfig,
+) -> Result<(), String> {
+    let apt_config = AptProxyConfig::of(config).map_err(|error| error.to_string())?;
+    let mut fingerprints = Vec::new();
+    for key in apt_config
+        .trusted_key_asc
+        .iter()
+        .chain(apt_config.key_rotation.iter().map(|r| &r.next_key_asc))
+    {
+        let fingerprint = MetadataSigner::pinned_fingerprint(key)
+            .map_err(|error| format!("apt key is not a usable certificate: {error}"))?;
+        if fingerprints.contains(&fingerprint) {
+            return Err("apt.key_rotation.next_key_asc is the pinned key".to_string());
+        }
+        fingerprints.push(fingerprint);
+    }
+    Ok(())
+}
+
 /// One resolution of the signed index, verified and judged.
 #[allow(clippy::too_many_arguments)]
 async fn verify_once(
@@ -1213,7 +1278,7 @@ async fn verify_once(
     context: &hodei_authz::VerifiedContext,
     repository: &RepositoryDescriptor,
     apt_config: &AptProxyConfig,
-    trusted_key: &str,
+    keys: &hodei_catalog::apt::TrustedKeys<'_>,
     dist: &str,
     kind: ReleaseKind,
     force: bool,
@@ -1230,8 +1295,16 @@ async fn verify_once(
                     .await
                     .map_err(|error| the_blob_error(&error))?;
                 // Parse the text the signature covers, not the armor around it.
-                let text = MetadataSigner::verify_cleartext_text(&bytes, trusted_key)
-                    .map_err(|_| invalid("upstream InRelease signature is invalid"))?;
+                let text = verify_with_keys(
+                    state,
+                    context,
+                    repository,
+                    dist,
+                    keys,
+                    correlation,
+                    "upstream InRelease signature is invalid",
+                    |key| MetadataSigner::verify_cleartext_text(&bytes, key),
+                )?;
                 let parsed = apt::parse_release(&text)
                     .map_err(|error| Failure::plain(StatusCode::BAD_GATEWAY, &error.to_string()))?;
                 enforce_metadata_guard(
@@ -1285,8 +1358,16 @@ async fn verify_once(
         .get(&signature.asset.digest)
         .await
         .map_err(|error| the_blob_error(&error))?;
-    MetadataSigner::verify_detached(&release_bytes, &signature_bytes, trusted_key)
-        .map_err(|_| invalid("upstream Release signature is invalid"))?;
+    verify_with_keys(
+        state,
+        context,
+        repository,
+        dist,
+        keys,
+        correlation,
+        "upstream Release signature is invalid",
+        |key| MetadataSigner::verify_detached(&release_bytes, &signature_bytes, key),
+    )?;
     let text = std::str::from_utf8(&release_bytes)
         .map_err(|_| invalid("upstream Release is not valid UTF-8"))?
         .to_string();
@@ -1326,7 +1407,9 @@ async fn verified_release(
     kind: ReleaseKind,
     correlation: &str,
 ) -> Result<VerifiedRelease, Failure> {
-    let trusted_key = apt_config.trusted_key_asc.as_deref().ok_or_else(|| {
+    // The server clock decides which keys are trusted (HSP-324): once per
+    // resolution, so one request never mixes two verdicts about the window.
+    let keys = apt_config.trusted_keys(chrono::Utc::now()).ok_or_else(|| {
         Failure::plain(
             StatusCode::BAD_GATEWAY,
             "the APT proxy group member has no operator-pinned signing key",
@@ -1337,7 +1420,7 @@ async fn verified_release(
         context,
         repository,
         apt_config,
-        trusted_key,
+        &keys,
         dist,
         kind,
         false,
@@ -1351,7 +1434,7 @@ async fn verified_release(
                 context,
                 repository,
                 apt_config,
-                trusted_key,
+                &keys,
                 dist,
                 kind,
                 true,
