@@ -699,17 +699,16 @@ impl DgraphCatalogStore {
         scope: &str,
         _now: DateTime<Utc>,
     ) -> Result<Option<GcRun>, CatalogError> {
-        let query = format!(
-            "{{ q(func: eq(hodei.gc.run.scope, {})) \
-             @filter(eq(hodei.gc.run.state, \"marked\")) {{ hodei.gc.run.run_id }} }}",
-            dql_string(scope),
-        );
-        let json = self.execute_dql_row(&query).await?;
-        let run_id = json
-            .get("q")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default()
+        let nodes = self
+            .all_nodes(
+                &format!("eq(hodei.gc.run.scope, {})", dql_string(scope)),
+                "@filter(eq(hodei.gc.run.state, \"marked\"))",
+                "hodei.gc.run.run_id",
+                HOLDS_PAGE,
+                MAX_GC_ROWS_READ,
+            )
+            .await?;
+        let run_id = nodes
             .iter()
             .filter_map(|node| node.get("hodei.gc.run.run_id").and_then(|v| v.as_str()))
             .min()
@@ -1068,19 +1067,17 @@ impl DgraphCatalogStore {
         &self,
         run_id: &str,
     ) -> Result<Vec<Quarantined>, CatalogError> {
-        let query = format!(
-            "{{ q(func: eq(hodei.gc.quarantine.run_id, {})) {{ \
-             hodei.gc.quarantine.digest_of hodei.gc.quarantine.length \
-             hodei.gc.quarantine.quarantine_key hodei.gc.quarantine.marker \
-             hodei.gc.quarantine.at }} }}",
-            dql_string(run_id),
-        );
-        let json = self.execute_dql_row(&query).await?;
-        let nodes = json
-            .get("q")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let nodes = self
+            .all_nodes(
+                &format!("eq(hodei.gc.quarantine.run_id, {})", dql_string(run_id)),
+                "",
+                "hodei.gc.quarantine.digest_of hodei.gc.quarantine.length \
+                 hodei.gc.quarantine.quarantine_key hodei.gc.quarantine.marker \
+                 hodei.gc.quarantine.at",
+                HOLDS_PAGE,
+                MAX_GC_ROWS_READ,
+            )
+            .await?;
         let mut items = Vec::new();
         for node in &nodes {
             let digest_of = node_text(node, "hodei.gc.quarantine.digest_of")?;
@@ -1123,7 +1120,7 @@ impl DgraphCatalogStore {
         after: Option<&str>,
         limit: usize,
     ) -> Result<RootPage, CatalogError> {
-        let limit = limit.max(1);
+        let limit = limit.clamp(1, ROOT_PAGE_MAX);
         let account = scope_owner(scope);
         let cursor = after.map(cursor_of_digest).transpose()?;
         let mut fetched: Vec<CensusRow> = Vec::new();
@@ -1253,28 +1250,22 @@ impl DgraphCatalogStore {
         family: Family,
         value: &str,
     ) -> Result<Vec<CensusRow>, CatalogError> {
-        let query = format!(
-            "{{ q(func: eq({}.account, {})) @filter(eq({}.digest, {})) {{ \
-             {}.key {}.account {}.repository {}.digest_algorithm {}.digest {} }} }}",
-            family.prefix(),
-            dql_string(account),
-            family.prefix(),
-            dql_string(value),
-            family.prefix(),
-            family.prefix(),
-            family.prefix(),
-            family.prefix(),
-            family.prefix(),
-            family.detail(),
+        let p = family.prefix();
+        let fields = format!(
+            "{p}.key {p}.account {p}.repository {p}.digest_algorithm {p}.digest {}",
+            family.detail()
         );
-        let json = self.execute_dql_row(&query).await?;
-        json.get("q")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .map(|node| CensusRow::from_node(family, node))
-            .collect()
+        self.all_nodes(
+            &format!("eq({p}.account, {})", dql_string(account)),
+            &format!("@filter(eq({p}.digest, {}))", dql_string(value)),
+            &fields,
+            HOLDS_PAGE,
+            MAX_GC_ROWS_READ,
+        )
+        .await?
+        .iter()
+        .map(|node| CensusRow::from_node(family, node))
+        .collect::<Result<Vec<_>, _>>()
     }
 
     /// Something remains strictly after this digests in the family.
@@ -1314,17 +1305,19 @@ impl DgraphCatalogStore {
             Family::Reference,
             Family::AptSnapshot,
         ] {
-            let query = format!(
-                "{{ q(func: eq({}.digest, {})) {{ uid }} }}",
-                family.prefix(),
-                dql_string(&digest.value),
-            );
-            let json = self.execute_dql_row(&query).await?;
-            total += json
-                .get("q")
-                .and_then(serde_json::Value::as_array)
-                .cloned()
-                .unwrap_or_default()
+            total += self
+                .all_nodes(
+                    &format!(
+                        "eq({}.digest, {})",
+                        family.prefix(),
+                        dql_string(&digest.value)
+                    ),
+                    "",
+                    "",
+                    HOLDS_PAGE,
+                    MAX_GC_ROWS_READ,
+                )
+                .await?
                 .len() as u64;
         }
         Ok(total)
@@ -1339,9 +1332,7 @@ impl DgraphCatalogStore {
             "{{ q(func: eq(hodei.gc.run.run_id, {})) {{ \
              hodei.gc.run.scope hodei.gc.run.generation hodei.gc.run.state \
              hodei.gc.run.actor hodei.gc.run.grace_secs hodei.gc.run.deleted \
-             hodei.gc.run.bytes_freed hodei.gc.run.marked_at hodei.gc.run.swept_at \
-             hodei.gc.run.candidate @filter(has(hodei.gc.candidate.key)) {{ \
-             hodei.gc.candidate.digest_of hodei.gc.candidate.length }} }} }}",
+             hodei.gc.run.bytes_freed hodei.gc.run.marked_at hodei.gc.run.swept_at }} }}",
             dql_string(run_id),
         );
         let json = self.execute_dql_row(&query).await?;
@@ -1360,13 +1351,19 @@ impl DgraphCatalogStore {
                 ));
             }
         };
+        // The candidates are read by their `run_id` page by page: the nested
+        // edge has no row bound of its own and could be capped silently.
+        let items = self
+            .all_nodes(
+                &format!("eq(hodei.gc.candidate.run_id, {})", dql_string(run_id)),
+                "@filter(has(hodei.gc.candidate.key))",
+                "hodei.gc.candidate.digest_of hodei.gc.candidate.length",
+                HOLDS_PAGE,
+                MAX_GC_ROWS_READ,
+            )
+            .await?;
         let mut candidates = Vec::new();
-        for item in node
-            .get("hodei.gc.run.candidate")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-        {
+        for item in items {
             let digest_of = node_text(&item, "hodei.gc.candidate.digest_of")?;
             let digest = split_digest_key(&digest_of).ok_or_else(|| {
                 CatalogError::corrupt("gc candidate", digest_of, "the digest key is corrupt")
@@ -1600,6 +1597,92 @@ fn hold_of_node(node: &serde_json::Value) -> Result<ContentHold, CatalogError> {
     })
 }
 
+/// Rows requested per page of the hold read.
+const HOLDS_PAGE: usize = 500;
+
+/// Defensive ceiling of the hold read. Past it the read fails closed: a
+/// truncated list would hide holds from the GC plan and from the per-account
+/// limit, which is silent data loss.
+const MAX_HOLDS_READ: usize = 200_000;
+
+/// Largest census window of one `root_page` read; a bigger requested limit is
+/// served as several pages (the caller sees `has_more`), never as one query
+/// whose rows the server could cap silently.
+const ROOT_PAGE_MAX: usize = 500;
+
+/// Defensive ceiling of the rows of one unbounded-by-nature GC read.
+const MAX_GC_ROWS_READ: usize = 200_000;
+
+impl DgraphCatalogStore {
+    /// Reads ALL the nodes of a root function in `page_size` pages keyed by uid
+    /// (`first` + `after`), `fields` being the selection (a `uid` is added).
+    ///
+    /// The walk ends only on an EMPTY page, never on a short one, so a server
+    /// side row cap lower than `page_size` cannot end it early. More than
+    /// `max_rows` rows is an `Unavailable` error, never a partial result.
+    #[doc(hidden)]
+    pub async fn all_nodes(
+        &self,
+        func: &str,
+        filter: &str,
+        fields: &str,
+        page_size: usize,
+        max_rows: usize,
+    ) -> Result<Vec<serde_json::Value>, CatalogError> {
+        let page_size = page_size.max(1);
+        let mut rows: Vec<serde_json::Value> = Vec::new();
+        let mut after = "0x0".to_owned();
+        loop {
+            let query = format!(
+                "{{ q(func: {func}, first: {page_size}, after: {after}) {filter} \
+                 {{ uid {fields} }} }}"
+            );
+            let json = self.execute_dql_row(&query).await?;
+            let nodes = json
+                .get("q")
+                .and_then(serde_json::Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let Some(last) = nodes.last() else {
+                return Ok(rows);
+            };
+            after = node_text(last, "uid")?;
+            if rows.len().saturating_add(nodes.len()) > max_rows {
+                return Err(CatalogError::unavailable(format!(
+                    "more than {max_rows} rows for {func}: refusing to return a partial list"
+                )));
+            }
+            rows.extend(nodes.iter().cloned());
+        }
+    }
+
+    /// Reads ALL holds in `page_size` pages. More than `max_holds` is an
+    /// `Unavailable` error, never a partial list.
+    pub async fn holds_bounded(
+        &self,
+        page_size: usize,
+        max_holds: usize,
+    ) -> Result<Vec<ContentHold>, CatalogError> {
+        let nodes = self
+            .all_nodes(
+                "has(hodei.gc.hold.hold_id)",
+                "",
+                HOLD_FIELDS,
+                page_size,
+                max_holds,
+            )
+            .await?;
+        // Keyed by id: a row seen on two pages (a concurrent rewrite) is one
+        // hold, and the result stays ordered by id.
+        let mut by_id = std::collections::BTreeMap::new();
+        for node in &nodes {
+            let hold = hold_of_node(node)?;
+            by_id.insert(hold.id.clone(), hold);
+        }
+        Ok(by_id.into_values().collect())
+    }
+}
+
 #[async_trait]
 impl ContentLedger for DgraphCatalogStore {
     fn supports_fenced_pass(&self) -> bool {
@@ -1615,15 +1698,13 @@ impl ContentLedger for DgraphCatalogStore {
         ))
     }
 
+    /// Every hold, read page by page until the authority has no more.
+    ///
+    /// A hold is a deletion guard and a per-account limit input, so this read
+    /// must never be partial: it is bounded defensively by
+    /// `MAX_HOLDS_READ` and fails closed past that bound.
     async fn holds(&self) -> Result<Vec<ContentHold>, CatalogError> {
-        let query = format!(
-            "{{ q(func: has(hodei.gc.hold.hold_id), orderasc: hodei.gc.hold.hold_id) {{ {HOLD_FIELDS} }} }}"
-        );
-        let json = self.execute_dql_row(&query).await?;
-        json.get("q")
-            .and_then(serde_json::Value::as_array)
-            .map(|nodes| nodes.iter().map(hold_of_node).collect())
-            .unwrap_or_else(|| Ok(Vec::new()))
+        self.holds_bounded(HOLDS_PAGE, MAX_HOLDS_READ).await
     }
 
     /// A point read by the exact key: it never walks the other holds.
@@ -1763,14 +1844,15 @@ impl ContentLedger for DgraphCatalogStore {
     }
 
     async fn last_swept_run(&self) -> Result<Option<GcRun>, CatalogError> {
-        let query = "{ q(func: eq(hodei.gc.run.state, \"swept\"), orderasc: hodei.gc.run.swept_at) { \
-             hodei.gc.run.run_id } }";
-        let json = self.execute_dql_row(query).await?;
-        let nodes = json
-            .get("q")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let nodes = self
+            .all_nodes(
+                "eq(hodei.gc.run.state, \"swept\")",
+                "",
+                "hodei.gc.run.run_id",
+                HOLDS_PAGE,
+                MAX_GC_ROWS_READ,
+            )
+            .await?;
         let run_id = nodes
             .iter()
             .filter_map(|node| node.get("hodei.gc.run.run_id").and_then(|v| v.as_str()))
