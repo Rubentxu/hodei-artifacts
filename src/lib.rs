@@ -27,6 +27,7 @@ pub mod composition_root;
 pub mod config;
 pub mod evidence;
 pub mod evidence_dgraph;
+pub mod freeze;
 pub mod gc;
 pub mod handlers;
 pub mod investigation;

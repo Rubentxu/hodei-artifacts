@@ -148,6 +148,16 @@
           ]
         }
       },
+      "ManageDependencyFreeze": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
       "ManageTrustedPublishers": {
         "appliesTo": {
           "principalTypes": [

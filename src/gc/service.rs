@@ -592,6 +592,47 @@ impl GcService {
         Ok(hold)
     }
 
+    /// Places retentions with caller-chosen, deterministic identifiers.
+    ///
+    /// Used by the dependency freeze (HSP-161): the identifier names the
+    /// freeze that owns the retention, and placing the same one again replaces
+    /// it, so a repeated freeze is idempotent. The plan cache is dropped: what
+    /// the plan would say has changed.
+    pub async fn place_holds(&self, holds: &[ContentHold]) -> Result<(), GcError> {
+        let mut failure = None;
+        for hold in holds {
+            if let Err(error) = self.ledger.place_hold(hold).await {
+                failure = Some(error);
+                break;
+            }
+        }
+        self.invalidate_plan_cache();
+        failure.map_or(Ok(()), |error| Err(error.into()))
+    }
+
+    /// Releases every retention whose identifier starts with `prefix` and
+    /// returns how many existed. Only what the prefix names is touched: the
+    /// retentions of other owners are left exactly as they are.
+    pub async fn release_holds_with_prefix(&self, prefix: &str) -> Result<usize, GcError> {
+        let mut released = 0;
+        let mut failure = None;
+        for hold in self.ledger.holds().await? {
+            if !hold.id.starts_with(prefix) {
+                continue;
+            }
+            match self.ledger.release_hold(&hold.id).await {
+                Ok(true) => released += 1,
+                Ok(false) => {}
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        self.invalidate_plan_cache();
+        failure.map_or(Ok(released), |error| Err(error.into()))
+    }
+
     /// Releases a retention. Returns whether it existed.
     pub async fn release_hold(&self, id: &str) -> Result<bool, GcError> {
         let released = self.ledger.release_hold(id).await?;

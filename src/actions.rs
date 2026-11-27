@@ -48,6 +48,16 @@ pub fn manage_repository_admission() -> ActionId {
     ActionId::new("artifacts", "ManageRepositoryAdmission").expect("a valid action")
 }
 
+/// Creating and releasing a dependency freeze of a repository (HSP-161).
+///
+/// A freeze pins a set of digests against the garbage collection and names
+/// them as an immutable, reproducible view. It is its own action: reading a
+/// repository, uploading to it or administering its tags never implies it,
+/// because whoever holds it decides which bytes the platform must keep.
+pub fn manage_dependency_freeze() -> ActionId {
+    ActionId::new("artifacts", "ManageDependencyFreeze").expect("a valid action")
+}
+
 /// Managing the trusted publishers of a repository (HSP-152).
 ///
 /// A trusted publisher binds an OIDC identity to the publication into the
@@ -122,6 +132,7 @@ pub fn all() -> Vec<ActionId> {
         create_repository(),
         manage_repository_tags(),
         manage_repository_admission(),
+        manage_dependency_freeze(),
         manage_trusted_publishers(),
         read_capsule(),
         access_admin_api(),
@@ -302,6 +313,8 @@ mod scope_tests {
             check_declared(&schema, &manage_repository_tags()).expect("tag action declared");
             check_declared(&schema, &manage_repository_admission())
                 .expect("admission action declared");
+            check_declared(&schema, &manage_dependency_freeze())
+                .expect("dependency freeze action declared");
         }
     }
 
