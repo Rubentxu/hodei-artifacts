@@ -78,6 +78,16 @@
           ]
         }
       },
+      "IngestExecutionReceipt": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
       "PromoteAsset": {
         "appliesTo": {
           "principalTypes": [

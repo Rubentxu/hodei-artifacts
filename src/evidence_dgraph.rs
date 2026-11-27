@@ -57,5 +57,14 @@ pub async fn wire_graph_evidence_reader(
     let store = DgraphEvidenceStore::open(graph.client.clone())
         .await
         .map_err(|error| format!("the evidence reader could not open: {error}"))?;
-    Ok(state.with_evidence_store(reader_over(Arc::new(store))))
+    let store = Arc::new(store);
+    // The same store admits execution receipts (HSP-37): one authority for
+    // what is read and what is written.
+    let ingestor = Arc::new(crate::execution_receipt::ReceiptIngestor::new(
+        store.clone(),
+        graph.client.clone(),
+    ));
+    Ok(state
+        .with_evidence_store(reader_over(store))
+        .with_receipt_ingestor(ingestor))
 }

@@ -162,6 +162,16 @@ pub fn delete_asset() -> ActionId {
     ActionId::new("artifacts", "DeleteAsset").expect("a valid action")
 }
 
+/// Linking an execution receipt to an artifact of a repository (HSP-37).
+///
+/// A receipt is a claim about which run produced an artifact, and what the
+/// capsule shows about the builder is read from it. It is its own action:
+/// uploading, downloading or promoting never implies it, and a policy has to
+/// grant it explicitly to whoever may vouch for the origin of an artifact.
+pub fn ingest_execution_receipt() -> ActionId {
+    ActionId::new("artifacts", "IngestExecutionReceipt").expect("a valid action")
+}
+
 /// Promoting a digest of a repository to its trusted channel.
 ///
 /// It is the permission of **who** may promote. Whether the software
@@ -208,6 +218,7 @@ pub fn all() -> Vec<ActionId> {
         upload_asset(),
         download_asset(),
         delete_asset(),
+        ingest_execution_receipt(),
         promote_asset(),
         revoke_promotion(),
         investigate(),
@@ -315,6 +326,9 @@ pub fn check_service_declared(
         // would leave every deletion without a verdict (a 500), so the
         // deployment refuses to start instead.
         check_declared(schema, &delete_asset())?;
+        // The receipts of execution (HSP-37) are ingested over the same raw
+        // surface; the same reasoning applies.
+        check_declared(schema, &ingest_execution_receipt())?;
     }
     if investigation_enabled {
         // The investigation surface asks for its own action: a bundle that
