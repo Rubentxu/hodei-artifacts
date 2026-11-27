@@ -40,6 +40,7 @@ pub mod profile;
 pub mod proxy;
 pub mod public_url;
 pub mod public_url_wiring;
+pub mod publish_freeze;
 pub mod publishers;
 pub mod quota;
 pub mod quota_dgraph;

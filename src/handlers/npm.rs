@@ -507,6 +507,34 @@ fn the_write_gate(
     Ok(())
 }
 
+/// The freeze gate of the repository (HSP-322), run after Cedar and before any
+/// byte is written. `existing` is whether the write changes a package that is
+/// already published.
+fn the_freeze_gate(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    name: &PackageName,
+    existing: bool,
+    correlation: &str,
+) -> Result<(), Failure> {
+    match crate::publish_freeze::gate(
+        state,
+        context,
+        repository,
+        name.full(),
+        existing,
+        correlation,
+    ) {
+        Ok(()) => Ok(()),
+        Err(crate::publish_freeze::Refusal::Frozen) => Err(Failure::plain(
+            StatusCode::CONFLICT,
+            crate::publish_freeze::REFUSED_REASON,
+        )),
+        Err(crate::publish_freeze::Refusal::Unavailable) => Err(RawApiError::Unavailable.into()),
+    }
+}
+
 /// Applies a change to the packument and publishes it as a new snapshot.
 ///
 /// The change is **re-evaluated** against what is there on each attempt: if another
@@ -670,6 +698,7 @@ async fn put_packument(
             publish_version(state, context, repository, &name, &new, correlation).await
         }
         npm::Update::Metadata(document) => {
+            the_freeze_gate(state, context, repository, &name, true, correlation)?;
             let outcome = update_packument(
                 state,
                 context,
@@ -719,6 +748,15 @@ async fn publish_version(
 
     // A published version is not rewritten: this is said before writing bytes.
     let existing = the_current_asset(state, context, &repository.repo_key, name.full()).await?;
+    // A frozen repository refuses before any byte is written (HSP-322).
+    the_freeze_gate(
+        state,
+        context,
+        repository,
+        name,
+        existing.is_some(),
+        correlation,
+    )?;
     // A NEW name is judged against the look-alike policy the repository
     // declares (HSP-322), before any byte is written. A new version of an
     // existing package is the package itself and is not judged.
@@ -817,6 +855,7 @@ async fn put_dist_tag(
 ) -> Result<Response, Failure> {
     the_write_gate(state, context, repository)?;
     the_scope_gate(repository, name)?;
+    the_freeze_gate(state, context, repository, name, true, correlation)?;
     let body = read_body(state, request).await?;
     // npm sends the version as a JSON string.
     let version: String = serde_json::from_slice(&body).map_err(|_| {
@@ -849,6 +888,7 @@ async fn delete_dist_tag(
 ) -> Result<Response, Failure> {
     the_write_gate(state, context, repository)?;
     the_scope_gate(repository, name)?;
+    the_freeze_gate(state, context, repository, name, true, correlation)?;
     let written = update_packument(
         state,
         context,

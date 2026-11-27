@@ -278,6 +278,8 @@ pub async fn create_repository(
     require_tag_management(&state, &context, &hrn, &config, &correlation)?;
     // Admission names an external provider: its own action and the egress check (HSP-153).
     require_admission_management(&state, &context, &hrn, &config, &correlation)?;
+    // A freeze blocks every publication: its own action too (HSP-322).
+    require_freeze_management(&state, &context, &hrn, &config, &correlation)?;
 
     let writer = state
         .catalog_writer
@@ -321,6 +323,214 @@ pub async fn create_repository(
         &correlation,
     );
     Ok((StatusCode::CREATED, Json(summary_of(&created))))
+}
+
+/// The freeze of a repository as the client reads it back.
+#[derive(Debug, serde::Serialize)]
+pub struct FreezeView {
+    /// The repository.
+    pub repository: String,
+    /// Whether a freeze is declared after the request.
+    pub frozen: bool,
+    /// Whether the request changed anything (a release of nothing is `false`).
+    pub changed: bool,
+}
+
+/// Resolve the repository of the verified account that a freeze change targets.
+///
+/// Another account's repository is the same 404 as one that never existed. The
+/// freeze exists on hosted raw and npm repositories only. Cedar's
+/// `ManageRepositoryFreeze` decides next (403, audited), and an undecidable
+/// outcome is a 403 as well (fail closed).
+async fn the_freeze_target(
+    state: &AppState,
+    context: &VerifiedContext,
+    name: &str,
+    correlation: &str,
+) -> Result<RepositoryDescriptor, CatalogRepositoryError> {
+    let reader = state
+        .catalog_reader
+        .as_ref()
+        .ok_or(CatalogRepositoryError::Unavailable)?;
+    let repository = match reader.repository(context.account().as_str(), name).await {
+        Ok(repository) => repository,
+        Err(CatalogError::Missing { .. } | CatalogError::Denied { .. }) => {
+            return Err(CatalogRepositoryError::NotFound);
+        }
+        Err(error) => return Err(the_catalog_error(error)),
+    };
+    let action = crate::actions::manage_repository_freeze();
+    let outcome = state
+        .authorize_resource
+        .execute_repository(context.clone(), action.clone(), &repository)
+        .map_err(|_| CatalogRepositoryError::Internal)?;
+    if !outcome.allows_access() {
+        record_audit(
+            state,
+            context.principal().subject().as_str(),
+            context.account().as_str(),
+            &action.to_string(),
+            &repository.hrn.to_string(),
+            match outcome {
+                AuthorizationOutcome::Indeterminate(_) => AuditResult::Failed,
+                _ => AuditResult::Denied,
+            },
+            correlation,
+        );
+        return Err(CatalogRepositoryError::Forbidden);
+    }
+    if repository.mode != RepositoryMode::Hosted
+        || !matches!(
+            repository.format,
+            RepositoryFormat::Raw | RepositoryFormat::Npm
+        )
+    {
+        return Err(CatalogRepositoryError::BadRequest(
+            "freeze is only supported on hosted raw and npm repositories".to_string(),
+        ));
+    }
+    Ok(repository)
+}
+
+/// Write the new settings of a repository and audit what happened.
+async fn the_freeze_write(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &RepositoryDescriptor,
+    settings: Value,
+    outcome: &str,
+    correlation: &str,
+) -> Result<(), CatalogRepositoryError> {
+    let writer = state
+        .catalog_writer
+        .as_ref()
+        .ok_or(CatalogRepositoryError::Unavailable)?;
+    let mut config = repository.config.clone();
+    config.config_settings = settings;
+    let action = crate::actions::manage_repository_freeze().to_string();
+    let result = writer
+        .update_config(context.account().as_str(), &repository.repo_key, config)
+        .await;
+    let resource = format!("{} {outcome}", repository.hrn);
+    match result {
+        Ok(_) => {
+            record_audit(
+                state,
+                context.principal().subject().as_str(),
+                context.account().as_str(),
+                &action,
+                &resource,
+                AuditResult::Allowed,
+                correlation,
+            );
+            Ok(())
+        }
+        Err(error) => {
+            record_audit(
+                state,
+                context.principal().subject().as_str(),
+                context.account().as_str(),
+                &action,
+                &resource,
+                AuditResult::Failed,
+                correlation,
+            );
+            Err(the_catalog_error(error))
+        }
+    }
+}
+
+/// `PUT /api/v1/catalog/repositories/{name}/freeze`
+///
+/// Declares (or replaces) the publication freeze of a hosted raw or npm
+/// repository. The body is the declaration (`scope`, `reason`, optional
+/// `until`); it is validated with the same rules that serve it, and nothing is
+/// written when it is unreadable.
+pub async fn put_freeze(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    headers: HeaderMap,
+    request: axum::extract::Request<Body>,
+) -> Result<Json<FreezeView>, CatalogRepositoryError> {
+    let context = the_context(&state, &headers)
+        .await
+        .map_err(|failure| match failure {
+            Authentication::Unauthorized => CatalogRepositoryError::Unauthorized,
+            Authentication::Unavailable => CatalogRepositoryError::Unavailable,
+        })?;
+    let correlation = correlation_id(&headers, &state.identity);
+    let repository = the_freeze_target(&state, &context, &name, &correlation).await?;
+    let body = to_bytes(request.into_body(), 64 * 1024)
+        .await
+        .map_err(|_| CatalogRepositoryError::BadRequest("the body is not readable".to_string()))?;
+    let declaration: Value = serde_json::from_slice(&body).map_err(|error| {
+        CatalogRepositoryError::BadRequest(format!("the body is not a freeze: {error}"))
+    })?;
+    let mut settings = repository.config.config_settings.clone();
+    let object = settings
+        .as_object_mut()
+        .ok_or(CatalogRepositoryError::Corrupt)?;
+    object.insert(
+        crate::publish_freeze::FREEZE_SETTING.to_string(),
+        declaration,
+    );
+    crate::publish_freeze::FreezeConfig::from_settings(&settings)
+        .map_err(CatalogRepositoryError::BadRequest)?;
+    the_freeze_write(
+        &state,
+        &context,
+        &repository,
+        settings,
+        "freeze=set",
+        &correlation,
+    )
+    .await?;
+    Ok(Json(FreezeView {
+        repository: repository.repo_key,
+        frozen: true,
+        changed: true,
+    }))
+}
+
+/// `DELETE /api/v1/catalog/repositories/{name}/freeze`
+///
+/// Releases the freeze. Releasing a repository that declares none answers `200`
+/// with `changed: false` and writes nothing (idempotent).
+pub async fn delete_freeze(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<FreezeView>, CatalogRepositoryError> {
+    let context = the_context(&state, &headers)
+        .await
+        .map_err(|failure| match failure {
+            Authentication::Unauthorized => CatalogRepositoryError::Unauthorized,
+            Authentication::Unavailable => CatalogRepositoryError::Unavailable,
+        })?;
+    let correlation = correlation_id(&headers, &state.identity);
+    let repository = the_freeze_target(&state, &context, &name, &correlation).await?;
+    let mut settings = repository.config.config_settings.clone();
+    let removed = settings
+        .as_object_mut()
+        .ok_or(CatalogRepositoryError::Corrupt)?
+        .remove(crate::publish_freeze::FREEZE_SETTING)
+        .is_some();
+    if removed {
+        the_freeze_write(
+            &state,
+            &context,
+            &repository,
+            settings,
+            "freeze=released",
+            &correlation,
+        )
+        .await?;
+    }
+    Ok(Json(FreezeView {
+        repository: repository.repo_key,
+        frozen: false,
+        changed: removed,
+    }))
 }
 
 /// Gate every write of repository tags behind `ManageRepositoryTags`.
@@ -397,6 +607,38 @@ pub(crate) fn require_admission_management(
             ));
         }
     }
+    Ok(())
+}
+
+/// Gate the declaration of a publication freeze behind `ManageRepositoryFreeze`
+/// (HSP-322). `CreateRepository` and `UploadAsset` never imply it.
+///
+/// The Cedar decision comes first (403); an unreadable declaration is a 400 and
+/// nothing is created.
+pub(crate) fn require_freeze_management(
+    state: &AppState,
+    context: &VerifiedContext,
+    hrn: &Hrn,
+    config: &RepositoryConfig,
+    correlation: &str,
+) -> Result<(), CatalogRepositoryError> {
+    if config
+        .config_settings
+        .get(crate::publish_freeze::FREEZE_SETTING)
+        .is_none()
+    {
+        return Ok(());
+    }
+    require_scoped_action(
+        state,
+        context,
+        hrn,
+        config,
+        correlation,
+        crate::actions::manage_repository_freeze(),
+    )?;
+    crate::publish_freeze::FreezeConfig::from_settings(&config.config_settings)
+        .map_err(CatalogRepositoryError::BadRequest)?;
     Ok(())
 }
 
@@ -511,6 +753,18 @@ fn the_config(body: &CreateRepositoryBody) -> Result<RepositoryConfig, CatalogRe
     {
         return Err(CatalogRepositoryError::BadRequest(
             "typosquat is only supported on hosted npm repositories".to_string(),
+        ));
+    }
+    // A freeze gates the hosted raw and npm publication only (HSP-322); on any
+    // other surface it would look active and not be. Unreadable is refused.
+    if crate::publish_freeze::FreezeConfig::from_settings(&config.config_settings)
+        .map_err(CatalogRepositoryError::BadRequest)?
+        .is_some()
+        && (body.mode != RepositoryMode::Hosted
+            || !matches!(body.format, RepositoryFormat::Raw | RepositoryFormat::Npm))
+    {
+        return Err(CatalogRepositoryError::BadRequest(
+            "freeze is only supported on hosted raw and npm repositories".to_string(),
         ));
     }
     match body.mode {
