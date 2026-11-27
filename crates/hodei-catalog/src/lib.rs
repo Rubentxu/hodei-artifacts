@@ -57,6 +57,7 @@ pub mod hf;
 pub mod maven;
 pub mod model;
 pub mod namespaces;
+pub mod location;
 pub mod npm;
 pub mod nuget;
 pub mod ports;
@@ -78,6 +79,7 @@ pub use gc::{
     ContentHold, ContentLedger, ContentRoot, DeletionState, GcDeletion, GcLease, GcRun, HoldScope,
     Quarantined, RootKind, RootPage, RunCandidate, RunState,
 };
+pub use location::{LocationEntry, LocationJournal, LocationLease, Phase};
 pub use group::{
     GroupConfig, GroupConfigError, GroupError, Lookup, Node, Walk, walk as walk_group,
 };

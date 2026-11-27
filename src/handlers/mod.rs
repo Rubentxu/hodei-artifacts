@@ -48,6 +48,7 @@ pub mod schemas;
 pub mod scrub;
 pub mod search;
 pub mod storage_migration;
+pub mod storage_relocation;
 pub mod terraform;
 pub mod terraform_modules;
 pub mod time_machine;

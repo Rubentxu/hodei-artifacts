@@ -168,6 +168,9 @@ pub struct AppState {
     pub(crate) repairer: Option<Arc<crate::recovery::Repairer>>,
     /// The verified migration of blobs to the configured destination (HSP-163).
     pub(crate) migrator: Option<Arc<crate::recovery::Migrator>>,
+    /// The relocation of reads and the verified retirement of the origin copy,
+    /// through the location journal (HSP-325).
+    pub(crate) relocator: Option<Arc<crate::recovery::Relocator>>,
     /// The verifier of trust passports, with the roots the operator pinned
     /// (HSP-321). Without it `POST /api/v1/passports/verify` answers 501.
     pub(crate) passport_verifier: Option<Arc<crate::passport_verify::PassportVerifier>>,
@@ -380,6 +383,7 @@ impl AppState {
             scrub: None,
             repairer: None,
             migrator: None,
+            relocator: None,
             passport_verifier: None,
             mirror_metadata: None,
             trust_ledger: None,
@@ -465,6 +469,7 @@ impl AppState {
             scrub: None,
             repairer: None,
             migrator: None,
+            relocator: None,
             passport_verifier: None,
             mirror_metadata: None,
             trust_ledger: None,
@@ -732,6 +737,12 @@ impl AppState {
     /// Inject the verified migration of blobs (HSP-163).
     pub fn with_migrator(mut self, migrator: Arc<crate::recovery::Migrator>) -> Self {
         self.migrator = Some(migrator);
+        self
+    }
+
+    /// Inject the relocation of reads between stores (HSP-325).
+    pub fn with_relocator(mut self, relocator: Arc<crate::recovery::Relocator>) -> Self {
+        self.relocator = Some(relocator);
         self
     }
 

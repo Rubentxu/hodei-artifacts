@@ -188,6 +188,41 @@ pub async fn assemble_graph_profile(
             std::time::Duration::from_secs(config.trust.revocation_verify_secs),
         ));
 
+    // 2b. The store the reads go through. With a migration destination the reads
+    //    follow the location journal (HSP-325); the journal lives in the catalog
+    //    that is opened next, so it is plugged in afterwards. A digest without a
+    //    row is read from the content store exactly as before. The destination
+    //    must exist (a typo never creates a store).
+    let relocation = match config.content.migration_destination_path.as_deref() {
+        Some(path) => {
+            let directory = std::path::Path::new(path);
+            if !directory.is_dir() {
+                return Err(BootstrapError::Initialization(format!(
+                    "content.migration_destination_path '{path}' is not an existing directory: \
+                     the migration destination is never created by the service"
+                )));
+            }
+            let destination = hodei_hub::blob::FileBlobStore::new(directory).map_err(|error| {
+                BootstrapError::Initialization(format!(
+                    "the migration destination '{path}' cannot be opened: {error}"
+                ))
+            })?;
+            let destination: Arc<dyn hodei_hub::BlobStore> = Arc::new(destination);
+            let journal = Arc::new(crate::recovery::located::DeferredJournal::default());
+            let served: Arc<dyn hodei_hub::BlobStore> =
+                Arc::new(crate::recovery::LocatedStore::new(
+                    content.clone(),
+                    destination.clone(),
+                    journal.clone(),
+                ));
+            Some((destination, journal, served))
+        }
+        None => None,
+    };
+    let served: Arc<dyn hodei_hub::BlobStore> = relocation
+        .as_ref()
+        .map_or_else(|| content.clone(), |(_, _, served)| served.clone());
+
     // 3. The catalog over the graph. The authorizer is the pass-through one: the
     //    real decision is taken at the edge with Cedar, as in the embedded
     //    profile; the integrity probe comes from the CAS opened earlier.
@@ -202,11 +237,14 @@ pub async fn assemble_graph_profile(
                 "the catalog cannot open on the graph at {endpoint}: {error}"
             ))
         })?
-        .with_probe(Arc::new(BlobStoreProbe::new(content.clone())))
+        .with_probe(Arc::new(BlobStoreProbe::new(served.clone())))
         // The search serves the trusted channel and the trust state of every
         // result from the same ledger the download path reads.
         .with_trust_ledger(trust_ledger.clone()),
     );
+    if let Some((_, journal, _)) = &relocation {
+        journal.plug(catalog.clone());
+    }
     let reader: Arc<dyn hodei_catalog::CatalogReader> = catalog.clone();
     let writer: Arc<dyn hodei_catalog::CatalogWriter> = catalog.clone();
     let searcher: Arc<dyn hodei_catalog::CatalogSearch> = catalog.clone();
@@ -311,7 +349,7 @@ pub async fn assemble_graph_profile(
         std::time::Duration::from_secs(config.content.gc_grace_secs),
     );
     let gc = crate::gc::GcService::new(
-        ledger,
+        ledger.clone(),
         content.clone(),
         std::time::Duration::from_secs(config.content.gc_grace_secs),
     );
@@ -353,7 +391,7 @@ pub async fn assemble_graph_profile(
         .with_mirror_metadata(mirror_metadata)
         .with_trust_plane(plane)
         .with_policy_studio(lifecycle, config.trust.policy_id.clone())
-        .with_content_store(content.clone())
+        .with_content_store(served.clone())
         .with_uploads(Arc::new(uploads));
     // GC and scrub open or warn, as in the embedded profile: a
     // deletion surface that cannot check what is alive is a
@@ -389,30 +427,23 @@ pub async fn assemble_graph_profile(
         }
         None => state,
     };
-    // Migration opens only when the deployment names a destination: where the
-    // copies go is never decided by a request. The destination must exist (a
-    // typo never creates a store) and the content store is only read.
-    let state = match config.content.migration_destination_path.as_deref() {
-        Some(path) => {
-            let directory = std::path::Path::new(path);
-            if !directory.is_dir() {
-                return Err(BootstrapError::Initialization(format!(
-                    "content.migration_destination_path '{path}' is not an existing directory: \
-                     the migration destination is never created by the service"
-                )));
-            }
-            let destination = hodei_hub::blob::FileBlobStore::new(directory).map_err(|error| {
-                BootstrapError::Initialization(format!(
-                    "the migration destination '{path}' cannot be opened: {error}"
-                ))
-            })?;
-            state.with_migrator(Arc::new(crate::recovery::Migrator::new(
+    // Migration and relocation open only when the deployment names a
+    // destination: where the copies go is never decided by a request.
+    let state = match relocation {
+        Some((destination, journal, _)) => state
+            .with_migrator(Arc::new(crate::recovery::Migrator::new(
                 content.clone(),
-                Arc::new(destination),
+                destination.clone(),
                 config.content.migration_max_blob_bytes,
                 config.content.migration_max_request_bytes,
             )))
-        }
+            .with_relocator(Arc::new(crate::recovery::Relocator::new(
+                content.clone(),
+                destination,
+                journal,
+                ledger.clone(),
+                config.content.migration_max_blob_bytes,
+            ))),
         None => state,
     };
     // The roots of the passport verification are the operator's file or

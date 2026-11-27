@@ -198,6 +198,16 @@
           ]
         }
       },
+      "ManageStorageRelocation": {
+        "appliesTo": {
+          "principalTypes": [
+            "Iam::User"
+          ],
+          "resourceTypes": [
+            "Artifacts::Repository"
+          ]
+        }
+      },
       "ManageMirrorMetadata": {
         "appliesTo": {
           "principalTypes": [
