@@ -158,6 +158,10 @@ pub struct AppState {
     ///
     /// Optional for the same reason as the garbage collection.
     pub(crate) scrub: Option<Arc<crate::recovery::Scrubber>>,
+    /// The self-healing of one blob from the configured repair source
+    /// (HSP-164). Optional and fail-closed: without a source the surface
+    /// answers 501 and nothing is written.
+    pub(crate) repairer: Option<Arc<crate::recovery::Repairer>>,
     /// The ledger of trust grants: which digest the trusted channel of a
     /// repository may serve.
     ///
@@ -359,6 +363,7 @@ impl AppState {
             readiness: Arc::new(crate::readiness::NothingRequired),
             gc: None,
             scrub: None,
+            repairer: None,
             trust_ledger: None,
             proxy_plane: None,
             publishers: None,
@@ -438,6 +443,7 @@ impl AppState {
             readiness: Arc::new(crate::readiness::NothingRequired),
             gc: None,
             scrub: None,
+            repairer: None,
             trust_ledger: None,
             proxy_plane: None,
             publishers: None,
@@ -667,6 +673,12 @@ impl AppState {
     /// Inject the integrity scrub of the registry.
     pub fn with_scrub(mut self, scrub: Arc<crate::recovery::Scrubber>) -> Self {
         self.scrub = Some(scrub);
+        self
+    }
+
+    /// Inject the self-healing of one blob (HSP-164).
+    pub fn with_repairer(mut self, repairer: Arc<crate::recovery::Repairer>) -> Self {
+        self.repairer = Some(repairer);
         self
     }
 

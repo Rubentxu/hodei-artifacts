@@ -341,7 +341,7 @@ pub async fn assemble_graph_profile(
         .with_proxy_plane(proxy_plane)
         .with_trust_plane(plane)
         .with_policy_studio(lifecycle, config.trust.policy_id.clone())
-        .with_content_store(content)
+        .with_content_store(content.clone())
         .with_uploads(Arc::new(uploads));
     // GC and scrub open or warn, as in the embedded profile: a
     // deletion surface that cannot check what is alive is a
@@ -352,6 +352,30 @@ pub async fn assemble_graph_profile(
             tracing::warn!(%error, "the integrity scrub is not available");
             state
         }
+    };
+    // Self-healing opens only when the deployment names a repair source: the
+    // bytes never come from anywhere the operator did not choose.
+    let state = match config.content.repair_source_path.as_deref() {
+        Some(path) => {
+            let directory = std::path::Path::new(path);
+            if !directory.is_dir() {
+                return Err(BootstrapError::Initialization(format!(
+                    "content.repair_source_path '{path}' is not an existing directory: \
+                     the repair source is never created by the service"
+                )));
+            }
+            let source = hodei_hub::blob::FileBlobStore::new(directory).map_err(|error| {
+                BootstrapError::Initialization(format!(
+                    "the repair source '{path}' cannot be opened: {error}"
+                ))
+            })?;
+            state.with_repairer(Arc::new(crate::recovery::Repairer::new(
+                content.clone(),
+                Arc::new(source),
+                config.content.repair_max_bytes,
+            )))
+        }
+        None => state,
     };
     let state = match gc {
         Ok(gc) => state.with_gc(Arc::new(gc)),
