@@ -39,6 +39,7 @@ pub mod cutover;
 pub mod export;
 pub mod import;
 pub mod manifest;
+pub mod migrate;
 pub mod reconcile;
 pub mod repair;
 pub mod scrub;
@@ -55,6 +56,7 @@ pub use import::{
     read_batch, read_import_manifest,
 };
 pub use manifest::{BackupManifest, BlobEntry, Excluded, FORMAT, MetadataEntry};
+pub use migrate::{MigrateError, MigrationReport, Migrator, Moved};
 pub use reconcile::{
     ACCOUNT_TABLES, CutoverDecision, CutoverToken, Divergence, GRANT_TABLE, HEAD_TABLE,
     LEDGER_TABLE, PATH_TABLES, ReconcileError, ReconcileSubject, SemanticProjection, TAG_TABLE,

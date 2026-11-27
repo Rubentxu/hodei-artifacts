@@ -226,6 +226,30 @@ pub struct ContentConfig {
     /// Default: 268435456 (256 MiB).
     #[serde(default = "the_default_repair_max_bytes")]
     pub repair_max_bytes: u64,
+    /// A directory that receives verified copies of the blobs when a migration
+    /// is asked for (HSP-163). It uses the same `<ab>/<cd>/<digest>` layout as
+    /// `cas_path` and must already exist.
+    ///
+    /// The destination is a decision of the deployment, never of a request.
+    /// When it is absent `POST /api/v1/storage/migrate` answers 501. A
+    /// migration only reads the content store: it never writes or deletes it.
+    ///
+    /// Default: absent.
+    #[serde(default)]
+    pub migration_destination_path: Option<String>,
+    /// The largest blob one migration will move, in bytes. Must be greater
+    /// than zero.
+    ///
+    /// Default: 268435456 (256 MiB).
+    #[serde(default = "the_default_repair_max_bytes")]
+    pub migration_max_blob_bytes: u64,
+    /// The most bytes one migration request will copy; what does not fit is
+    /// reported `deferred` so it can be asked for again. Must be at least
+    /// `migration_max_blob_bytes`.
+    ///
+    /// Default: 1073741824 (1 GiB).
+    #[serde(default = "the_default_migration_max_request_bytes")]
+    pub migration_max_request_bytes: u64,
 }
 
 /// Which store of content the deployment uses.
@@ -323,6 +347,43 @@ impl ContentConfig {
                 }
             }
         }
+        if self.migration_max_blob_bytes == 0
+            || self.migration_max_request_bytes < self.migration_max_blob_bytes
+        {
+            return Err(ConfigError::Message(
+                "Invalid content configuration: migration_max_blob_bytes must be greater than zero and not above migration_max_request_bytes"
+                    .to_string(),
+            ));
+        }
+        if let Some(destination) = self.migration_destination_path.as_deref() {
+            if destination.trim().is_empty() {
+                return Err(ConfigError::Message(
+                    "Invalid content configuration: migration_destination_path is set but empty"
+                        .to_string(),
+                ));
+            }
+            // A destination that is the origin (or the repair source, or lives
+            // inside either) would "migrate" a blob onto itself.
+            let canonical = |path: &str| {
+                std::fs::canonicalize(path)
+                    .unwrap_or_else(|_| std::path::PathBuf::from(path.trim_end_matches('/')))
+            };
+            let destination = canonical(destination);
+            let mut others: Vec<&str> = self.repair_source_path.as_deref().into_iter().collect();
+            if self.backend == ContentBackend::Filesystem {
+                others.push(&self.cas_path);
+            }
+            for other in others {
+                let other = canonical(other);
+                if destination.starts_with(&other) || other.starts_with(&destination) {
+                    return Err(ConfigError::Message(format!(
+                        "Invalid content configuration: migration_destination_path '{}' must be a different directory from '{}' (neither may contain the other)",
+                        destination.display(),
+                        other.display()
+                    )));
+                }
+            }
+        }
         // A backend chosen is a backend that has to be configured. The
         // service does not fall back to the directory when the table is
         // missing: content split across two stores is content lost, and
@@ -385,6 +446,9 @@ impl Default for ContentConfig {
             s3: None,
             repair_source_path: None,
             repair_max_bytes: the_default_repair_max_bytes(),
+            migration_destination_path: None,
+            migration_max_blob_bytes: the_default_repair_max_bytes(),
+            migration_max_request_bytes: the_default_migration_max_request_bytes(),
         }
     }
 }
@@ -910,6 +974,11 @@ fn the_default_cas_path() -> String {
 /// The default ceiling of the bytes one repair may move.
 fn the_default_repair_max_bytes() -> u64 {
     256 * 1024 * 1024
+}
+
+/// The default ceiling of the bytes one migration request may copy.
+fn the_default_migration_max_request_bytes() -> u64 {
+    1024 * 1024 * 1024
 }
 
 /// The default age of an interrupted write that the store cleans up.
@@ -2655,5 +2724,43 @@ mod repair_config_tests {
         content
             .validate()
             .expect("a separate directory is a valid source");
+    }
+
+    #[test]
+    fn the_migration_destination_is_a_separate_directory_with_sane_ceilings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cas = tmp.path().join("cas");
+        let replica = tmp.path().join("replica");
+        let dest = tmp.path().join("dest");
+        for dir in [&cas, &replica, &dest, &cas.join("inner")] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let with = |destination: &std::path::Path| ContentConfig {
+            cas_path: cas.to_string_lossy().into_owned(),
+            repair_source_path: Some(replica.to_string_lossy().into_owned()),
+            migration_destination_path: Some(destination.to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        for overlapping in [cas.clone(), cas.join("inner"), replica.clone()] {
+            let error = with(&overlapping)
+                .validate()
+                .expect_err("the destination cannot be the origin or the repair source");
+            assert!(
+                error.to_string().contains("migration_destination_path"),
+                "{error}"
+            );
+        }
+        with(&dest)
+            .validate()
+            .expect("a separate directory is valid");
+        let mut inverted = with(&dest);
+        inverted.migration_max_request_bytes = inverted.migration_max_blob_bytes - 1;
+        assert!(
+            inverted.validate().is_err(),
+            "request ceiling below blob ceiling"
+        );
+        let mut zero = with(&dest);
+        zero.migration_max_blob_bytes = 0;
+        assert!(zero.validate().is_err());
     }
 }

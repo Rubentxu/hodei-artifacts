@@ -228,6 +228,8 @@ pipeline {
                         "--test hsp322e_holds_paged_dgraph_it",
                         // HSP-322 tramo f (HSP-164): self-healing of one CAS blob from a configured, digest-verified source, by the real router, Cedar and Dgraph.
                         "--test hsp322f_self_healing_dgraph_it",
+                        // HSP-322 tramo h (HSP-163): verified migration of blobs between two content backends (copy, re-hash, never delete the origin), by the real router, Cedar, GC and Dgraph.
+                        "--test hsp322h_storage_migration_dgraph_it",
                         // HSP-322 tramo g (HSP-167): rollback/freeze protection of the signed apt proxy index (persisted mark, fail-closed ledger, Cedar-gated reset), by the real router, OpenPGP and Dgraph.
                         "--test hsp322g_mirror_metadata_dgraph_it",
                         // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.

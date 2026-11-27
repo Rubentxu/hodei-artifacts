@@ -389,6 +389,32 @@ pub async fn assemble_graph_profile(
         }
         None => state,
     };
+    // Migration opens only when the deployment names a destination: where the
+    // copies go is never decided by a request. The destination must exist (a
+    // typo never creates a store) and the content store is only read.
+    let state = match config.content.migration_destination_path.as_deref() {
+        Some(path) => {
+            let directory = std::path::Path::new(path);
+            if !directory.is_dir() {
+                return Err(BootstrapError::Initialization(format!(
+                    "content.migration_destination_path '{path}' is not an existing directory: \
+                     the migration destination is never created by the service"
+                )));
+            }
+            let destination = hodei_hub::blob::FileBlobStore::new(directory).map_err(|error| {
+                BootstrapError::Initialization(format!(
+                    "the migration destination '{path}' cannot be opened: {error}"
+                ))
+            })?;
+            state.with_migrator(Arc::new(crate::recovery::Migrator::new(
+                content.clone(),
+                Arc::new(destination),
+                config.content.migration_max_blob_bytes,
+                config.content.migration_max_request_bytes,
+            )))
+        }
+        None => state,
+    };
     let state = match gc {
         Ok(gc) => state.with_gc(Arc::new(gc)),
         Err(error) => {

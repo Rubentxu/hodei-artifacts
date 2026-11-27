@@ -192,6 +192,9 @@ vacío. Si no, el arranque falla.
 | `content.gc_grace_secs` | `86400` | Gracia antes de que un blob sin referencias sea reclamable por la recolección. Mínimo 1; en producción, horas. |
 | `content.repair_source_path` | ausente | Directorio con una copia verificable de los blobs (réplica o directorio de blobs de un backup, mismo formato `<ab>/<cd>/<digest>`) desde el que `POST /api/v1/repair` puede reparar. Debe existir; el servicio solo lo lee. Debe ser distinto de `cas_path` y no estar dentro de él. Sin él, o en un arranque sin perfil de grafo, la reparación responde 501. |
 | `content.repair_max_bytes` | `268435456` | Máximo de bytes que una reparación puede mover; también acota lo que lee/verifica del blob propio (por encima, 413). Debe ser > 0. |
+| `content.migration_destination_path` | ausente | Directorio **existente** con formato del CAS que recibe las copias verificadas de `POST /api/v1/storage/migrate`. Distinto de `cas_path` y de `repair_source_path`, sin contención mutua. Sin él (o sin perfil de grafo) la migración responde 501. El origen nunca se escribe ni se borra. |
+| `content.migration_max_blob_bytes` | `268435456` | Mayor blob que una migración mueve; por encima, `too_large` sin leerlo. Debe ser > 0. |
+| `content.migration_max_request_bytes` | `1073741824` | Máximo de bytes copiados por petición (lo que no cabe queda `deferred`). Debe ser >= `migration_max_blob_bytes`. |
 | `schema.version` | ninguna | Versión concreta del esquema (opcional). |
 
 ### 5.3 `[investigation]`

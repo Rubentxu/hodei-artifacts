@@ -162,6 +162,8 @@ pub struct AppState {
     /// (HSP-164). Optional and fail-closed: without a source the surface
     /// answers 501 and nothing is written.
     pub(crate) repairer: Option<Arc<crate::recovery::Repairer>>,
+    /// The verified migration of blobs to the configured destination (HSP-163).
+    pub(crate) migrator: Option<Arc<crate::recovery::Migrator>>,
     /// The durable ledger of accepted mirror metadata (HSP-167): the highest
     /// signed `Release` date per proxy lineage. A proxy that pins a signing
     /// key and has no ledger refuses to serve its index (fail closed).
@@ -368,6 +370,7 @@ impl AppState {
             gc: None,
             scrub: None,
             repairer: None,
+            migrator: None,
             mirror_metadata: None,
             trust_ledger: None,
             proxy_plane: None,
@@ -449,6 +452,7 @@ impl AppState {
             gc: None,
             scrub: None,
             repairer: None,
+            migrator: None,
             mirror_metadata: None,
             trust_ledger: None,
             proxy_plane: None,
@@ -685,6 +689,12 @@ impl AppState {
     /// Inject the self-healing of one blob (HSP-164).
     pub fn with_repairer(mut self, repairer: Arc<crate::recovery::Repairer>) -> Self {
         self.repairer = Some(repairer);
+        self
+    }
+
+    /// Inject the verified migration of blobs (HSP-163).
+    pub fn with_migrator(mut self, migrator: Arc<crate::recovery::Migrator>) -> Self {
+        self.migrator = Some(migrator);
         self
     }
 

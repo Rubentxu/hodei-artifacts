@@ -45,7 +45,7 @@ pub struct RepairBody {
 }
 
 /// Every format of the catalog: a blob is repaired whatever served it.
-const ANY_FORMAT: [RepositoryFormat; 14] = [
+pub(crate) const ANY_FORMAT: [RepositoryFormat; 14] = [
     RepositoryFormat::Raw,
     RepositoryFormat::Oci,
     RepositoryFormat::Maven2,
