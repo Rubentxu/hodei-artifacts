@@ -27,6 +27,28 @@ lockfile ni una copia: los bytes siguen en el CAS bajo su digest.
 - Un blob subido por un usuario con forma de manifiesto no es un freeze: solo lo es si existe el
   hold registro, que solo escribe este módulo.
 
+## Reglas operativas
+
+- **Creación sin garantía de idempotencia**: el id incluye `created_at`, quién lo creó y el `ttl`;
+  cada `POST /api/v1/freezes` es un freeze distinto, aunque el contenido sea el mismo.
+- **Atomicidad del pin**: se colocan primero los holds de contenido, se verifica que los blobs
+  existen y solo al final se coloca el hold registro; un freeze "existe" cuando todos sus pines
+  están. Cualquier fallo intermedio revierte todos los holds del freeze (el registro, el último);
+  si la reversión también falla se registra en el log con el prefijo `freeze-<id>-`.
+- **Topes**: como máximo 10 000 rutas por manifiesto (`413`; congele un `prefix` más estrecho) y
+  100 freezes activos por cuenta (`409 E_FREEZE_LIMIT`). Los digests que no son sha256 se rechazan
+  de forma explícita (`422`).
+- **Liberar sin origen**: `unpin` exige que la cuenta del principal sea la dueña (si no, `404`).
+  Si el repositorio origen existe, decide Cedar con `ManageDependencyFreeze`. Si el repositorio ya
+  no existe o el manifiesto no se puede leer, solo puede liberarlo quien lo creó; cualquier otro
+  necesita la liberación administrativa de holds (`/api/v1/gc/holds/release`). El hold registro
+  se borra el último, así que una liberación interrumpida se puede repetir.
+- **Crear no exige `DownloadAsset`**: basta `ManageDependencyFreeze` sobre el repositorio; quien lo
+  tiene puede fijar contenido que quizá no pueda descargar, pero leerlo después sí exige
+  `DownloadAsset`. Es una decisión explícita: la acción dedicada es la autoridad sobre el pin.
+- **Coste**: leer un freeze hace una consulta puntual del hold registro (`ContentLedger::hold`);
+  solo crear recorre los holds para contar los de la cuenta.
+
 ## Contrato de despliegue
 
 El bundle de Cedar debe declarar la acción `ManageDependencyFreeze` (appliesTo `Iam::User` sobre

@@ -42,9 +42,9 @@ use hodei_authz::{
     PrincipalId,
 };
 use hodei_catalog::{
-    AllowAllAuthorizer, CatalogReader, CatalogWriter, ContentLedger, DigestScope, RepositoryConfig,
-    RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustGrant, TrustLedger,
-    repository_hrn,
+    AllowAllAuthorizer, CatalogReader, CatalogWriter, ContentHold, ContentLedger, DigestScope,
+    RepositoryConfig, RepositoryDescriptor, RepositoryFormat, RepositoryMode, TrustGrant,
+    TrustLedger, repository_hrn,
 };
 use hodei_catalog_storage::DgraphCatalogStore;
 use hodei_evidence::ContentDigest;
@@ -143,12 +143,94 @@ struct Vertical {
     app: Router,
     store: Arc<DgraphCatalogStore>,
     cas: Arc<FileBlobStore>,
+    gc: Arc<GcService>,
     trust: Arc<DgraphTrustStore>,
     #[allow(dead_code)]
     tmp: TempDir,
 }
 
+/// A ledger that delegates to the real one but fails the `n`-th placement of a
+/// hold (counting from 0), as a ledger that goes away half way would.
+struct FailingLedger {
+    inner: Arc<DgraphCatalogStore>,
+    placed: std::sync::atomic::AtomicUsize,
+    fail_at: Option<usize>,
+}
+
+#[async_trait]
+impl ContentLedger for FailingLedger {
+    async fn content_roots(
+        &self,
+    ) -> Result<Vec<hodei_catalog::ContentRoot>, hodei_catalog::CatalogError> {
+        self.inner.content_roots().await
+    }
+    async fn holds(&self) -> Result<Vec<ContentHold>, hodei_catalog::CatalogError> {
+        self.inner.holds().await
+    }
+    async fn hold(&self, id: &str) -> Result<Option<ContentHold>, hodei_catalog::CatalogError> {
+        self.inner.hold(id).await
+    }
+    async fn place_hold(&self, hold: &ContentHold) -> Result<(), hodei_catalog::CatalogError> {
+        let n = self
+            .placed
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.fail_at == Some(n) {
+            return Err(hodei_catalog::CatalogError::unavailable(
+                "the ledger went away",
+            ));
+        }
+        self.inner.place_hold(hold).await
+    }
+    async fn release_hold(&self, id: &str) -> Result<bool, hodei_catalog::CatalogError> {
+        self.inner.release_hold(id).await
+    }
+    async fn pending_run(
+        &self,
+    ) -> Result<Option<hodei_catalog::GcRun>, hodei_catalog::CatalogError> {
+        self.inner.pending_run().await
+    }
+    async fn last_swept_run(
+        &self,
+    ) -> Result<Option<hodei_catalog::GcRun>, hodei_catalog::CatalogError> {
+        self.inner.last_swept_run().await
+    }
+    async fn open_run(
+        &self,
+        run: &hodei_catalog::GcRun,
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        self.inner.open_run(run).await
+    }
+    async fn complete_run(
+        &self,
+        run_id: &str,
+        deleted: u64,
+        bytes_freed: u64,
+        at: chrono::DateTime<Utc>,
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        self.inner
+            .complete_run(run_id, deleted, bytes_freed, at)
+            .await
+    }
+    async fn record_deletion(
+        &self,
+        deletion: &hodei_catalog::GcDeletion,
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        self.inner.record_deletion(deletion).await
+    }
+    async fn deletion_of(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<hodei_catalog::GcDeletion>, hodei_catalog::CatalogError> {
+        self.inner.deletion_of(digest).await
+    }
+}
+
 async fn mount(account: &str) -> Option<Vertical> {
+    mount_failing(account, None).await
+}
+
+/// `fail_at`: the `n`-th hold placement of the GC service's ledger fails.
+async fn mount_failing(account: &str, fail_at: Option<usize>) -> Option<Vertical> {
     let Some(graph) = config_from_env() else {
         skip_or_fail();
         return None;
@@ -193,15 +275,25 @@ async fn mount(account: &str) -> Option<Vertical> {
     let writer: Arc<dyn CatalogWriter> = store.clone();
     let cas = Arc::new(FileBlobStore::new(tmp.path().join("cas")).expect("the CAS"));
     let content: Arc<dyn BlobStore> = cas.clone();
-    let ledger: Arc<dyn ContentLedger> = store.clone();
     // Zero grace: what the pin does not protect is reclaimable at once, so a
     // retained blob is retained BECAUSE of the freeze and not of the grace.
-    let gc = GcService::new(ledger, content.clone(), Duration::ZERO).expect("the GC service");
+    // Only the failure test wraps the ledger: the wrapper does not carry the
+    // fenced sweep, so every other test talks to the real ledger directly.
+    let ledger: Arc<dyn ContentLedger> = match fail_at {
+        None => store.clone(),
+        Some(_) => Arc::new(FailingLedger {
+            inner: store.clone(),
+            placed: std::sync::atomic::AtomicUsize::new(0),
+            fail_at,
+        }),
+    };
+    let gc =
+        Arc::new(GcService::new(ledger, content.clone(), Duration::ZERO).expect("the GC service"));
     let ledger: Arc<dyn TrustLedger> = trust.clone();
     let state = state
         .with_catalog(reader, writer)
         .with_content_store(content)
-        .with_gc(Arc::new(gc))
+        .with_gc(gc.clone())
         .with_trust_ledger(ledger)
         .with_authenticator(Arc::new(TokenAuthenticator))
         .with_authorization(cedar(&policy(account)));
@@ -209,6 +301,7 @@ async fn mount(account: &str) -> Option<Vertical> {
         app: build_router(state, &config),
         store,
         cas,
+        gc,
         trust,
         tmp,
     })
@@ -480,6 +573,12 @@ async fn the_freeze_answers_the_same_collection_after_the_origin_moves() {
         frozen(&v, &other, &id, TARBALL_1).await.0,
         StatusCode::NOT_FOUND
     );
+    // Nor can that account create from this repository, nor release the freeze.
+    assert_eq!(
+        freeze(&v, &other, json!({"repository": "reg"})).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(unpin(&v, &other, &id).await, StatusCode::NOT_FOUND);
     // Nor for a malformed id.
     assert_eq!(
         frozen(&v, &alice, "not-an-id", TARBALL_1).await.0,
@@ -652,9 +751,12 @@ async fn a_blob_only_the_freezes_reference_is_reclaimed_after_the_last_one_relea
 
     // Releasing one freeze leaves the other's pin: the other reference holds.
     assert_eq!(
-        gc.release_holds_with_prefix(&hodei_artifacts_api::freeze::hold_prefix(&first.id()))
-            .await
-            .unwrap(),
+        gc.release_holds_with_prefix(
+            &hodei_artifacts_api::freeze::hold_prefix(&first.id()),
+            &hodei_artifacts_api::freeze::manifest_hold_id(&first.id()),
+        )
+        .await
+        .unwrap(),
         2,
         "manifest hold + content hold, and nothing of the other freeze"
     );
@@ -666,9 +768,12 @@ async fn a_blob_only_the_freezes_reference_is_reclaimed_after_the_last_one_relea
     );
 
     // The last release hands the blob back to the general rule: reclaimed.
-    gc.release_holds_with_prefix(&hodei_artifacts_api::freeze::hold_prefix(&second.id()))
-        .await
-        .unwrap();
+    gc.release_holds_with_prefix(
+        &hodei_artifacts_api::freeze::hold_prefix(&second.id()),
+        &hodei_artifacts_api::freeze::manifest_hold_id(&second.id()),
+    )
+    .await
+    .unwrap();
     assert!(verdict(&gc.dry_run().await.unwrap()).contains("Reclaimable"));
     let report = gc.sweep_platform("alice", &account).await.unwrap();
     assert!(report.deleted >= 1, "{report:?}");
@@ -840,4 +945,143 @@ async fn a_revoked_digest_is_not_served_in_trusted_and_an_ungranted_one_is_not_f
     )
     .await;
     assert_eq!(json_of(&manifest)["entries"].as_array().unwrap().len(), 2);
+}
+
+/// The freeze-prefixed holds of the whole ledger: what a failed or released
+/// freeze must not leave behind.
+async fn freeze_holds(v: &Vertical) -> Vec<String> {
+    v.gc.holds()
+        .await
+        .expect("the holds")
+        .into_iter()
+        .filter(|hold| hold.id.starts_with("freeze-"))
+        .map(|hold| hold.id)
+        .collect()
+}
+
+/// A freeze with the shape the service writes, for a repository that does not
+/// exist (or whose manifest blob is not stored): what an origin that was
+/// deleted, or a manifest that cannot be read, leaves behind.
+async fn ghost_freeze(v: &Vertical, account: &str, by: &str, tag: &str) -> FreezeManifest {
+    let bytes = format!("ghost {tag} {}", nonce()).into_bytes();
+    let digest = v.cas.put(&bytes).await.expect("a blob");
+    let record = hodei_catalog::AssetRecord {
+        account: account.to_string(),
+        repository: "gone".to_string(),
+        asset_path: "x".to_string(),
+        coordinates: hodei_catalog::PackageCoordinates {
+            package_name: "x".to_string(),
+            package_version: "1".to_string(),
+        },
+        digest,
+        size_bytes: bytes.len() as u64,
+        subject: None,
+        updated_at: Utc::now(),
+    };
+    let manifest = FreezeManifest::build(account, "gone", tag, by, Utc::now(), None, &[record])
+        .expect("a manifest");
+    v.gc.place_holds(&manifest.holds())
+        .await
+        .expect("the holds");
+    manifest
+}
+
+#[tokio::test]
+async fn a_creation_that_fails_half_way_leaves_no_holds_behind() {
+    // Two distinct digests (packument + tarball) + the registry hold = 3
+    // placements. Failing the 2nd leaves a pin to roll back; failing the 3rd
+    // (the registry) leaves both pins to roll back.
+    for fail_at in [0, 1, 2] {
+        let account = format!("f{}a", &nonce()[8..]);
+        let Some(v) = mount_failing(&account, Some(fail_at)).await else {
+            return;
+        };
+        seed(&v, &account, "reg", RepositoryFormat::Npm, json!({})).await;
+        let alice = format!("alice@{account}");
+        publish(&v, "reg", &alice, "left-pad", "1.0.0").await;
+        let before = freeze_holds(&v).await;
+        let (status, body) = freeze(&v, &alice, json!({"repository": "reg"})).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "fail_at {fail_at}: {body}"
+        );
+        assert_eq!(
+            freeze_holds(&v).await,
+            before,
+            "fail_at {fail_at}: no pin and no registry hold survive a failed creation"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_freeze_can_be_released_after_its_origin_or_manifest_is_gone() {
+    let account = format!("f{}a", &nonce()[8..]);
+    let Some(v) = mount(&account).await else {
+        return;
+    };
+    let alice = format!("alice@{account}");
+    let bob = format!("bob@{account}");
+    let by_alice = format!("hrn:hodei:iam::{account}:User/alice");
+    let ghost = ghost_freeze(&v, &account, &by_alice, "g1").await;
+    let id = ghost.id();
+    assert_eq!(
+        freeze_holds(&v)
+            .await
+            .iter()
+            .filter(|h| h.contains(&id))
+            .count(),
+        2
+    );
+
+    // The manifest blob was never stored and the repository does not exist: the
+    // pin can still be released, by its creator only.
+    assert_eq!(
+        unpin(&v, &bob, &id).await,
+        StatusCode::FORBIDDEN,
+        "not its creator"
+    );
+    assert_eq!(
+        unpin(&v, &format!("alice@x{account}"), &id).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(unpin(&v, &alice, &id).await, StatusCode::OK);
+    assert!(
+        freeze_holds(&v).await.iter().all(|h| !h.contains(&id)),
+        "registry and pins are gone"
+    );
+    assert_eq!(unpin(&v, &alice, &id).await, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn the_number_of_active_freezes_per_account_is_bounded() {
+    let account = format!("f{}a", &nonce()[8..]);
+    let Some(v) = mount(&account).await else {
+        return;
+    };
+    seed(&v, &account, "reg", RepositoryFormat::Npm, json!({})).await;
+    let alice = format!("alice@{account}");
+    publish(&v, "reg", &alice, "left-pad", "1.0.0").await;
+    let by_alice = format!("hrn:hodei:iam::{account}:User/alice");
+    let mut ids = Vec::new();
+    for n in 0..hodei_artifacts_api::freeze::MAX_FREEZES_PER_ACCOUNT {
+        ids.push(
+            ghost_freeze(&v, &account, &by_alice, &format!("cap{n}"))
+                .await
+                .id(),
+        );
+    }
+    let (status, body) = freeze(&v, &alice, json!({"repository": "reg"})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"], "E_FREEZE_LIMIT");
+    // Releasing one makes room (the control: the same request now succeeds).
+    assert_eq!(unpin(&v, &alice, &ids[0]).await, StatusCode::OK);
+    assert_eq!(
+        freeze(&v, &alice, json!({"repository": "reg"})).await.0,
+        StatusCode::CREATED
+    );
+    // Clean up the rest.
+    for id in &ids[1..] {
+        let _ = unpin(&v, &alice, id).await;
+    }
 }

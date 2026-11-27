@@ -33,8 +33,8 @@ use serde::{Deserialize, Serialize};
 use crate::app_state::AppState;
 use crate::audit::AuditResult;
 use crate::freeze::{
-    CODE_MISSING_DEPENDENCY, FreezeError, FreezeManifest, hold_prefix, is_well_formed_id,
-    manifest_hold_id,
+    CODE_MISSING_DEPENDENCY, FreezeError, FreezeManifest, MAX_FREEZES_PER_ACCOUNT, hold_prefix,
+    is_registry_hold, is_well_formed_id, manifest_hold_id, registry_account,
 };
 use crate::handlers::{correlation_id, record_audit};
 use crate::resolution::{
@@ -56,6 +56,8 @@ pub enum FreezeFailure {
     Withheld(String),
     /// The freeze existed and its lifetime is over.
     Expired,
+    /// A bound of the feature was reached (`E_FREEZE_LIMIT`).
+    Limit(String),
     /// A status and a reason.
     Plain(StatusCode, &'static str),
 }
@@ -84,6 +86,7 @@ impl IntoResponse for FreezeFailure {
                 "the freeze is past its lifetime and no longer protects or serves its content"
                     .to_string(),
             ),
+            Self::Limit(message) => (StatusCode::CONFLICT, "E_FREEZE_LIMIT", message),
             Self::Plain(status, message) => (status, "E_FREEZE", message.to_string()),
         };
         let body = serde_json::json!({ "error": code, "message": message });
@@ -202,6 +205,30 @@ struct Loaded {
     active: bool,
 }
 
+/// The registry hold of a freeze of the caller's account, by a point read.
+///
+/// The account is checked **first**, from the registry hold alone: nothing
+/// about a freeze of another account (expired, malformed, unreadable) is
+/// distinguishable from its absence.
+async fn registered(
+    state: &AppState,
+    context: &VerifiedContext,
+    id: &str,
+) -> Result<hodei_catalog::ContentHold, FreezeFailure> {
+    if !is_well_formed_id(id) {
+        return Err(ResolutionError::NotFound.into());
+    }
+    let hold = gc_of(state)?
+        .hold(&manifest_hold_id(id))
+        .await
+        .map_err(|_| ResolutionError::Unavailable)?
+        .ok_or(ResolutionError::NotFound)?;
+    if registry_account(&hold.reason) != Some(context.account().as_str()) {
+        return Err(ResolutionError::NotFound.into());
+    }
+    Ok(hold)
+}
+
 /// Loads a freeze of the caller's account. It exists only if its registry
 /// hold does, the manifest bytes digest to the id, and the account matches.
 async fn load(
@@ -209,15 +236,7 @@ async fn load(
     context: &VerifiedContext,
     id: &str,
 ) -> Result<Loaded, FreezeFailure> {
-    if !is_well_formed_id(id) {
-        return Err(ResolutionError::NotFound.into());
-    }
-    let gc = gc_of(state)?;
-    let registry = manifest_hold_id(id);
-    let holds = gc.holds().await.map_err(|_| ResolutionError::Unavailable)?;
-    let Some(hold) = holds.iter().find(|hold| hold.id == registry) else {
-        return Err(ResolutionError::NotFound.into());
-    };
+    let hold = registered(state, context, id).await?;
     let store = the_content_store(state)?;
     let bytes = match store.get(&ContentDigest::sha256(id)).await {
         Ok(bytes) => bytes,
@@ -235,10 +254,6 @@ async fn load(
         );
         ResolutionError::Internal
     })?;
-    if manifest.account != context.account().as_str() {
-        // A freeze of another account does not exist for this caller.
-        return Err(ResolutionError::NotFound.into());
-    }
     Ok(Loaded {
         active: hold.is_active(Utc::now()) && manifest.is_active(Utc::now()),
         manifest,
@@ -280,6 +295,24 @@ pub async fn create(
 
     let account = context.account().as_str().to_string();
     let actor = context.principal().subject().as_str().to_string();
+    // The bound is read once per creation (a rare, Cedar-gated operation);
+    // reads of a freeze never scan the holds.
+    let active = gc
+        .holds()
+        .await
+        .map_err(|_| ResolutionError::Unavailable)?
+        .iter()
+        .filter(|hold| {
+            is_registry_hold(&hold.id)
+                && hold.is_active(Utc::now())
+                && registry_account(&hold.reason) == Some(account.as_str())
+        })
+        .count();
+    if active >= MAX_FREEZES_PER_ACCOUNT {
+        return Err(FreezeFailure::Limit(format!(
+            "the account already holds {MAX_FREEZES_PER_ACCOUNT} active freezes: release one first"
+        )));
+    }
     let (reader, _) = the_catalog(&state)?;
     let records = reader
         .assets_under(&account, &body.repository, &body.prefix)
@@ -289,15 +322,18 @@ pub async fn create(
             _ => ResolutionError::Unavailable,
         })?;
     // A freeze names only what the origin channel serves now: a digest the
-    // trusted channel does not admit is not frozen into a "trusted" view.
-    let mut admitted = Vec::with_capacity(records.len());
-    for record in records {
-        match crate::trust::admit(&state, &account, &origin, &record.digest).await {
-            Ok(()) => admitted.push(record),
-            Err(crate::trust::Admission::Hidden) => {}
-            Err(other) => return Err(crate::resolution::the_admission_error(other).into()),
-        }
-    }
+    // trusted channel does not admit is not frozen into a "trusted" view. One
+    // block query to the ledger, not one per record.
+    let admitted = match crate::trust::servable(&state, &account, &origin)
+        .await
+        .map_err(crate::resolution::the_admission_error)?
+    {
+        None => records,
+        Some(granted) => records
+            .into_iter()
+            .filter(|record| granted.contains(&record.digest.value))
+            .collect(),
+    };
     let manifest = FreezeManifest::build(
         &account,
         &body.repository,
@@ -315,6 +351,14 @@ pub async fn create(
         FreezeError::BadTtl => {
             ResolutionError::BadRequest("ttl_secs is not a usable lifetime").into()
         }
+        FreezeError::TooManyEntries => FreezeFailure::Plain(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "the freeze would name too many paths: freeze a narrower prefix",
+        ),
+        FreezeError::UnsupportedDigest { .. } => FreezeFailure::Plain(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "the repository holds content that is not sha256 and cannot be frozen",
+        ),
         FreezeError::Malformed => FreezeFailure::from(ResolutionError::Internal),
     })?;
 
@@ -356,31 +400,68 @@ pub async fn create(
     Ok((StatusCode::CREATED, Json(response)).into_response())
 }
 
+/// Places the pins, verifies the bytes are there, and only then places the
+/// registry hold: a freeze exists only when every pin does. Any failure after
+/// the first hold rolls everything of this freeze back (the registry last).
 async fn pin_and_verify(
     gc: &crate::gc::GcService,
     store: &dyn hodei_hub::BlobStore,
     manifest: &FreezeManifest,
     id: &str,
 ) -> Result<(), FreezeFailure> {
-    let unavailable = |_| FreezeFailure::from(ResolutionError::Unavailable);
-    gc.place_holds(&manifest.holds())
-        .await
-        .map_err(unavailable)?;
+    let outcome = place_and_check(gc, store, manifest).await;
+    if outcome.is_err() {
+        // A rollback that fails is logged, not swallowed: the leftover holds
+        // carry the freeze prefix and an administrator can release them.
+        if let Err(error) = gc
+            .release_holds_with_prefix(&hold_prefix(id), &manifest_hold_id(id))
+            .await
+        {
+            tracing::error!(freeze = id, %error, "the rollback of a failed freeze did not complete");
+        }
+    }
+    outcome
+}
+
+async fn place_and_check(
+    gc: &crate::gc::GcService,
+    store: &dyn hodei_hub::BlobStore,
+    manifest: &FreezeManifest,
+) -> Result<(), FreezeFailure> {
+    let unavailable = |_: crate::gc::GcError| FreezeFailure::from(ResolutionError::Unavailable);
+    let holds = manifest.holds();
+    let (registry, pins) = holds
+        .split_last()
+        .ok_or(FreezeFailure::from(ResolutionError::Internal))?;
+    gc.place_holds(pins).await.map_err(unavailable)?;
+    // Pin first, then verify: a blob the collector reclaimed before the pin
+    // landed is found missing here, and the freeze is refused instead of
+    // promising bytes it no longer has.
     for digest in manifest.digests() {
-        let Some(hex) = digest.strip_prefix("sha256:") else {
-            continue;
-        };
+        let hex = digest
+            .strip_prefix("sha256:")
+            .ok_or(FreezeFailure::from(ResolutionError::Internal))?;
         let present = store
             .exists(&ContentDigest::sha256(hex))
             .await
             .map_err(|_| FreezeFailure::from(ResolutionError::Unavailable))?;
         if !present {
-            // Do not leave a half-made pin behind.
-            let _ = gc.release_holds_with_prefix(&hold_prefix(id)).await;
             return Err(FreezeFailure::Missing(format!(
                 "{digest} is named by the repository but is not in the content store"
             )));
         }
+    }
+    gc.place_holds(std::slice::from_ref(registry))
+        .await
+        .map_err(unavailable)?;
+    let manifest_present = store
+        .exists(&ContentDigest::sha256(manifest.id()))
+        .await
+        .map_err(|_| FreezeFailure::from(ResolutionError::Unavailable))?;
+    if !manifest_present {
+        return Err(FreezeFailure::Missing(
+            "the manifest blob was reclaimed while the freeze was being made".to_string(),
+        ));
     }
     Ok(())
 }
@@ -483,6 +564,16 @@ async fn reader_gate(
 }
 
 /// `POST /api/v1/freezes/unpin`
+///
+/// The release does not depend on the origin still being there. The caller's
+/// account must own the freeze (404 otherwise). Then:
+///
+/// - if the manifest is readable and its repository still exists, Cedar
+///   decides `ManageDependencyFreeze` on that repository;
+/// - if the repository is gone or the manifest cannot be read, the most
+///   conservative rule applies: only the principal who created the freeze may
+///   release it here. Anyone else needs the administrative hold release
+///   (`/api/v1/gc/holds/release`), which is its own gated resource.
 pub async fn unpin(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -495,13 +586,32 @@ pub async fn unpin(
         .map_err(|_| ResolutionError::BadRequest("the body is too large"))?;
     let body: UnpinBody = serde_json::from_slice(&bytes)
         .map_err(|_| ResolutionError::BadRequest("the body is not a valid unpin request"))?;
-    // An expired freeze can still be released; only a missing one is 404.
-    let loaded = load(&state, &context, &body.id).await?;
-    let origin = the_origin(&state, &context, &loaded.manifest.repository).await?;
+    let hold = registered(&state, &context, &body.id).await?;
     let action = crate::actions::manage_dependency_freeze();
-    gate(&state, &context, &origin, action.clone(), &correlation)?;
+
+    let origin = match load(&state, &context, &body.id).await {
+        Ok(loaded) => the_origin_if_any(&state, &context, &loaded.manifest.repository).await,
+        Err(_) => None,
+    };
+    match origin {
+        Some(origin) => gate(&state, &context, &origin, action.clone(), &correlation)?,
+        None => {
+            if hold.actor != context.principal().subject().as_str() {
+                audit(
+                    &state,
+                    &context,
+                    &action.to_string(),
+                    &body.id,
+                    AuditResult::Denied,
+                    &correlation,
+                );
+                return Err(ResolutionError::Forbidden.into());
+            }
+        }
+    }
+    let id = body.id.clone();
     let released = gc_of(&state)?
-        .release_holds_with_prefix(&hold_prefix(&body.id))
+        .release_holds_with_prefix(&hold_prefix(&id), &manifest_hold_id(&id))
         .await
         .map_err(|_| ResolutionError::Unavailable)?;
     audit(
@@ -520,4 +630,18 @@ pub async fn unpin(
         }),
     )
         .into_response())
+}
+
+/// The origin repository if it still exists (any format or mode: releasing
+/// does not care what it has become), `None` if it is gone or unreadable.
+async fn the_origin_if_any(
+    state: &AppState,
+    context: &VerifiedContext,
+    repository: &str,
+) -> Option<RepositoryDescriptor> {
+    let (reader, _) = the_catalog(state).ok()?;
+    reader
+        .repository(context.account().as_str(), repository)
+        .await
+        .ok()
 }

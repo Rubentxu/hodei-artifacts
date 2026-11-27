@@ -299,6 +299,14 @@ pub trait ContentLedger: Send + Sync {
     /// The registered holds, in force or not.
     async fn holds(&self) -> Result<Vec<ContentHold>, CatalogError>;
 
+    /// One hold by its identifier, in force or not.
+    ///
+    /// The default scans [`Self::holds`]; a ledger with an index answers a
+    /// point read and never walks the holds of other owners.
+    async fn hold(&self, id: &str) -> Result<Option<ContentHold>, CatalogError> {
+        Ok(self.holds().await?.into_iter().find(|hold| hold.id == id))
+    }
+
     /// Registers a hold. Repeating the same `id` replaces it.
     async fn place_hold(&self, hold: &ContentHold) -> Result<(), CatalogError>;
 

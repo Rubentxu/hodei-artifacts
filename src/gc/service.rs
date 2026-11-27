@@ -610,14 +610,33 @@ impl GcService {
         failure.map_or(Ok(()), |error| Err(error.into()))
     }
 
+    /// One retention by identifier (a point read, in force or not).
+    pub async fn hold(&self, id: &str) -> Result<Option<ContentHold>, GcError> {
+        Ok(self.ledger.hold(id).await?)
+    }
+
     /// Releases every retention whose identifier starts with `prefix` and
     /// returns how many existed. Only what the prefix names is touched: the
     /// retentions of other owners are left exactly as they are.
-    pub async fn release_holds_with_prefix(&self, prefix: &str) -> Result<usize, GcError> {
+    ///
+    /// The retention named `last` is released **after** all the others, and
+    /// only if all the others were released: it is the registry of its owner,
+    /// so a release that fails half way leaves the owner findable and the
+    /// release can be repeated.
+    pub async fn release_holds_with_prefix(
+        &self,
+        prefix: &str,
+        last: &str,
+    ) -> Result<usize, GcError> {
         let mut released = 0;
         let mut failure = None;
+        let mut last_exists = false;
         for hold in self.ledger.holds().await? {
             if !hold.id.starts_with(prefix) {
+                continue;
+            }
+            if hold.id == last {
+                last_exists = true;
                 continue;
             }
             match self.ledger.release_hold(&hold.id).await {
@@ -627,6 +646,13 @@ impl GcService {
                     failure = Some(error);
                     break;
                 }
+            }
+        }
+        if failure.is_none() && last_exists {
+            match self.ledger.release_hold(last).await {
+                Ok(true) => released += 1,
+                Ok(false) => {}
+                Err(error) => failure = Some(error),
             }
         }
         self.invalidate_plan_cache();

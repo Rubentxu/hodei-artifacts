@@ -22,7 +22,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use hodei_catalog::{AssetRecord, ContentHold, HoldScope};
-use hodei_evidence::ContentDigest;
+use hodei_evidence::{ContentDigest, DigestAlgorithm};
 use serde::{Deserialize, Serialize};
 
 /// The version of the manifest format.
@@ -31,6 +31,14 @@ pub const FREEZE_VERSION: u32 = 1;
 /// Longest time a freeze may pin on its own. Beyond it, a freeze has to be
 /// created without expiry (held until released) so the choice is explicit.
 pub const MAX_TTL_SECS: i64 = 10 * 365 * 24 * 3600;
+
+/// Most paths one manifest may name. A freeze is read whole and pins one hold
+/// per distinct digest, so its size is bounded: freeze a narrower `prefix`.
+pub const MAX_ENTRIES: usize = 10_000;
+
+/// Most active freezes one account may hold at once. Each one pins storage
+/// the account does not otherwise keep; release one to create another.
+pub const MAX_FREEZES_PER_ACCOUNT: usize = 100;
 
 /// The stable code a client gets when the freeze does not contain what it asked
 /// for. Absence is a verdict, never a prompt to resolve again.
@@ -86,6 +94,15 @@ pub enum FreezeError {
     /// The requested lifetime is not usable.
     #[error("the lifetime of a freeze must be positive and at most {MAX_TTL_SECS} seconds")]
     BadTtl,
+    /// The repository names more paths than a freeze may hold.
+    #[error("the freeze would name more than {MAX_ENTRIES} paths: freeze a narrower prefix")]
+    TooManyEntries,
+    /// A path is content-addressed with an algorithm a freeze does not pin.
+    #[error("only sha256 contents can be frozen; {path} is not")]
+    UnsupportedDigest {
+        /// The offending path.
+        path: String,
+    },
     /// A stored manifest cannot be trusted.
     #[error("the manifest is not well formed")]
     Malformed,
@@ -108,13 +125,25 @@ impl FreezeManifest {
         {
             return Err(FreezeError::BadTtl);
         }
+        if records.len() > MAX_ENTRIES {
+            return Err(FreezeError::TooManyEntries);
+        }
+        // An explicit error beats silently pinning less than the manifest says.
+        if let Some(record) = records
+            .iter()
+            .find(|record| record.digest.algorithm != DigestAlgorithm::Sha256)
+        {
+            return Err(FreezeError::UnsupportedDigest {
+                path: record.asset_path.clone(),
+            });
+        }
         let mut entries: Vec<FreezeEntry> = records
             .iter()
             .map(|record| FreezeEntry {
                 path: record.asset_path.clone(),
                 package: record.coordinates.package_name.clone(),
                 version: record.coordinates.package_version.clone(),
-                digest: format!("{}:{}", record.digest.algorithm, record.digest.value),
+                digest: format!("sha256:{}", record.digest.value),
                 size_bytes: record.size_bytes,
             })
             .collect();
@@ -156,7 +185,16 @@ impl FreezeManifest {
             return Err(FreezeError::Malformed);
         }
         let manifest: Self = serde_json::from_slice(bytes).map_err(|_| FreezeError::Malformed)?;
-        if manifest.version != FREEZE_VERSION || manifest.bytes() != bytes {
+        if manifest.version != FREEZE_VERSION
+            || manifest.bytes() != bytes
+            || manifest.entries.len() > MAX_ENTRIES
+            || manifest.entries.iter().any(|entry| {
+                entry
+                    .digest
+                    .strip_prefix("sha256:")
+                    .is_none_or(|hex| !is_well_formed_id(hex))
+            })
+        {
             return Err(FreezeError::Malformed);
         }
         Ok(manifest)
@@ -184,28 +222,63 @@ impl FreezeManifest {
         digests
     }
 
-    /// The holds that make the freeze real: one per digest, plus the registry
-    /// hold of the manifest blob. All of them expire with the freeze.
+    /// The holds that make the freeze real: one per digest, **then** the
+    /// registry hold of the manifest blob. The order is the contract: the
+    /// registry hold is what makes the freeze exist, so it is placed only once
+    /// every pin is. All of them expire with the freeze.
     pub fn holds(&self) -> Vec<ContentHold> {
         let id = self.id();
-        let hold = |hold_id: String, hex: &str, what: &str| ContentHold {
+        let hold = |hold_id: String, hex: &str, reason: String| ContentHold {
             id: hold_id,
             scope: HoldScope::Digest {
                 digest: ContentDigest::sha256(hex),
             },
-            reason: format!("dependency freeze {id}: {what}"),
+            reason,
             actor: self.created_by.clone(),
             created_at: self.created_at,
             expires_at: self.expires_at,
         };
-        let mut holds = vec![hold(manifest_hold_id(&id), &id, "manifest")];
-        for digest in self.digests() {
-            if let Some(hex) = digest.strip_prefix("sha256:") {
-                holds.push(hold(entry_hold_id(&id, hex), hex, "pinned content"));
-            }
-        }
+        let mut holds: Vec<ContentHold> = self
+            .digests()
+            .into_iter()
+            .filter_map(|digest| digest.strip_prefix("sha256:"))
+            .map(|hex| {
+                hold(
+                    entry_hold_id(&id, hex),
+                    hex,
+                    format!("dependency freeze {id}: pinned content"),
+                )
+            })
+            .collect();
+        holds.push(hold(
+            manifest_hold_id(&id),
+            &id,
+            format!(
+                "dependency freeze {id}: manifest{ACCOUNT_MARK}{}",
+                self.account
+            ),
+        ));
         holds
     }
+}
+
+/// Marks the account in the reason of a registry hold, so that the freezes of
+/// an account can be counted from the holds alone.
+const ACCOUNT_MARK: &str = " of account ";
+
+/// The account a registry hold belongs to, from its reason.
+pub fn registry_account(reason: &str) -> Option<&str> {
+    reason
+        .split_once(": manifest")?
+        .1
+        .strip_prefix(ACCOUNT_MARK)
+}
+
+/// Whether a hold is the registry hold of some freeze.
+pub fn is_registry_hold(id: &str) -> bool {
+    id.strip_prefix(HOLD_PREFIX)
+        .and_then(|rest| rest.strip_suffix("-manifest"))
+        .is_some_and(is_well_formed_id)
 }
 
 /// The registry hold of a freeze: its existence is what makes a manifest blob a
@@ -308,8 +381,43 @@ mod tests {
         let holds = m.holds();
         assert_eq!(holds.len(), 3, "manifest + two distinct digests");
         assert!(holds.iter().all(|h| h.id.starts_with(&hold_prefix(&id))));
-        assert!(holds.iter().any(|h| h.id == manifest_hold_id(&id)));
-        assert!(!"freeze-other-aa".starts_with(&hold_prefix(&id)));
+        assert_eq!(
+            holds.last().map(|h| h.id.clone()),
+            Some(manifest_hold_id(&id)),
+            "the registry hold is placed last"
+        );
+        assert!(is_registry_hold(&manifest_hold_id(&id)));
+        assert!(!is_registry_hold(&entry_hold_id(&id, &"a".repeat(64))));
+        assert_eq!(
+            registry_account(&holds.last().unwrap().reason),
+            Some("acme")
+        );
+        let other = manifest(&[record("a", b"other")], None).unwrap();
+        assert!(
+            !holds
+                .iter()
+                .any(|h| h.id.starts_with(&hold_prefix(&other.id()))),
+            "no hold of this freeze falls under another freeze's prefix"
+        );
+    }
+
+    #[test]
+    fn a_non_sha256_content_and_an_oversized_freeze_are_refused_explicitly() {
+        let mut odd = record("a", b"1");
+        odd.digest = ContentDigest {
+            algorithm: DigestAlgorithm::Sha512,
+            value: "ab".repeat(64),
+        };
+        assert_eq!(
+            manifest(&[odd], None),
+            Err(FreezeError::UnsupportedDigest {
+                path: "a".to_string()
+            })
+        );
+        let many: Vec<AssetRecord> = (0..=MAX_ENTRIES)
+            .map(|n| record(&format!("p{n}"), b"1"))
+            .collect();
+        assert_eq!(manifest(&many, None), Err(FreezeError::TooManyEntries));
     }
 
     #[test]
