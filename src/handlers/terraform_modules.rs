@@ -286,16 +286,20 @@ async fn the_registry(
     rest: String,
 ) -> Result<Response, Failure> {
     let correlation = correlation_id(&headers, &state.identity);
+    // Who is asking is settled before the path is judged: a malformed
+    // name or route must not be told apart from a missing one by a caller
+    // that has not authenticated. The artifact read is the request
+    // go-getter makes: its credential is the netrc one, not the registry
+    // one, and it decides who is asking.
+    let context = if rest.starts_with("artifacts/") {
+        the_artifact_context(&state, &headers).await?
+    } else {
+        the_registry_context(&state, &headers).await?
+    };
+    crate::handlers::terraform::valid_name(&repository_key, &rest)?;
     let route = Route::parse(&rest)?;
     let subject = the_audit_subject(&route);
     let action = the_audit_action(&route);
-
-    // The artifact read is the request go-getter makes: its credential is
-    // the netrc one, not the registry one, and it decides who is asking.
-    let context = match &route {
-        Route::Artifact { .. } => the_artifact_context(&state, &headers).await?,
-        _ => the_registry_context(&state, &headers).await?,
-    };
     let repository = the_repository_in(
         &state,
         &context,
