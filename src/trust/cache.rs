@@ -29,6 +29,25 @@
 //!   started is served with the grant that admitted its request --the
 //!   revocation cuts new requests, not those already in flight--,
 //!   exactly as without a cache.
+//! - **Invalidation watermark (HSP-146 / HSP-320)**: this cache is the
+//!   only per-process state that can serve a revoked trust, and nodes
+//!   that share one Dgraph do not share it. Waiting for the `ttl` would
+//!   leave a revoked trust honored for up to 60 s by every other node.
+//!   Instead, before serving from an entry the cache reads the
+//!   authority's revocation watermark (the count of durable `revoked`
+//!   events, which only moves forward) and compares it with the one
+//!   stamped on the entry when its authoritative read began; if the
+//!   world moved, the entry falls and the ledger is read live. The
+//!   watermark read is itself leased for `verify`, so the **bound** on
+//!   how long a node may keep honoring a trust revoked by another node
+//!   is `verify` plus one probe round trip (`verify = 0` is the strict
+//!   profile: every request probes, the cache only shortens the read,
+//!   never the exposure). The hard rule: **losing the signal never
+//!   renews an ALLOW** --if the watermark cannot be read the whole
+//!   cache is dropped, the lease is discarded and the request answers
+//!   from the live ledger, which if also down is `Unavailable`--. A
+//!   ledger that declares no watermark (`Ok(None)`) keeps the plain
+//!   `ttl` semantics.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -44,6 +63,12 @@ use hodei_evidence::ContentDigest;
 /// another instance can take to be noticed.
 pub const DEFAULT_TTL: Duration = Duration::from_secs(60);
 
+/// The default lease of the watermark check: how often the cache asks the
+/// shared authority whether the world of invalidations moved. It is the
+/// staleness bound between nodes (the `ttl` stays the bound of the path
+/// without signal); `0` is the strict profile.
+pub const DEFAULT_VERIFY: Duration = Duration::from_secs(5);
+
 /// The key of a cached decision: the identity under which the ledger
 /// grants --account, repository and digest--, not the name the
 /// client asked by.
@@ -53,6 +78,33 @@ type Key = (String, String, String);
 struct Entry {
     grant: TrustGrant,
     expires_at: Instant,
+    /// The watermark observed right before the authoritative read that
+    /// produced this entry. `None` is a ledger without signal: the `ttl`
+    /// rules.
+    stamp: Option<u64>,
+}
+
+/// What the shared authority said about the watermark.
+#[derive(Clone)]
+enum Signal {
+    /// The confirmed watermark. An entry stamped with another value was
+    /// born before the world moved and falls.
+    Current(u64),
+    /// The ledger declares no watermark (`Ok(None)`): plain `ttl`.
+    Silent,
+    /// The probe failed. Nothing cached is renewed.
+    Lost,
+}
+
+/// The local state of the signal: the last watermark the authority
+/// confirmed and when. `checked == None` means "never": the next request
+/// probes.
+struct SignalState {
+    checked: Option<Instant>,
+    mark: Signal,
+    /// Bumped by every settlement and every local write; a probe is only
+    /// applied if the epoch it began under is still the current one.
+    epoch: u64,
 }
 
 /// The ledger wrapped in a positives-only cache.
@@ -63,7 +115,13 @@ struct Entry {
 pub struct CachedTrustLedger {
     inner: std::sync::Arc<dyn TrustLedger>,
     ttl: Duration,
+    /// How often the shared authority's watermark is probed.
+    verify: Duration,
     admitted: Mutex<HashMap<Key, Entry>>,
+    /// The last confirmed watermark and its confirmation time. A separate
+    /// lock from the map: the probe is a cheap read, the map is the
+    /// cached permit.
+    signal: Mutex<SignalState>,
     /// The counter that every write bumps before touching the ledger. An
     /// in-flight read that saw a generation different from the current one
     /// when the ledger answered it does not insert its snapshot: it may be
@@ -77,7 +135,13 @@ impl CachedTrustLedger {
         Self {
             inner,
             ttl,
+            verify: DEFAULT_VERIFY,
             admitted: Mutex::new(HashMap::new()),
+            signal: Mutex::new(SignalState {
+                checked: None,
+                mark: Signal::Silent,
+                epoch: 0,
+            }),
             generation: AtomicU64::new(0),
         }
     }
@@ -87,12 +151,114 @@ impl CachedTrustLedger {
         Self::new(inner, DEFAULT_TTL)
     }
 
+    /// Sets the lease of the watermark check. Called at startup from the
+    /// configuration: `Duration::ZERO` is the strict profile (every request
+    /// asks the authority).
+    pub fn with_verify(mut self, verify_for: Duration) -> Self {
+        self.verify = verify_for;
+        self
+    }
+
     fn key(account: &str, repository: &str, digest: &ContentDigest) -> Key {
         (
             account.to_string(),
             repository.to_string(),
             digest.to_string(),
         )
+    }
+
+    /// The watermark to stamp the next authoritative read with.
+    ///
+    /// With the lease standing the confirmed mark is reused; with the lease
+    /// expired --or `verify` zero-- the authority is asked. A failed probe
+    /// is the lost signal: the whole cache is dropped (no old permit is
+    /// left to renew), the lease is discarded, and the request is answered
+    /// live from the ledger.
+    ///
+    /// Concurrent probes can finish out of order, so a settlement is only
+    /// applied if no other settlement (or write of this node) happened
+    /// since the probe began: a probe that read the watermark before a
+    /// revocation and finishes after a later probe already settled the
+    /// moved mark must NOT roll the mark back, or an entry stamped with the
+    /// old mark would match again and be served for another lease. A probe
+    /// that lost that race is discarded and the newer state is used (or, if
+    /// that state has no standing lease, the probe is simply repeated).
+    async fn consult(&self) -> Signal {
+        loop {
+            let started_at_epoch = {
+                let state = self
+                    .signal
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                if let Some(checked) = state.checked
+                    && Instant::now().duration_since(checked) < self.verify
+                {
+                    return state.mark.clone();
+                }
+                state.epoch
+            };
+            let probed = self.inner.revocation_watermark().await;
+            if probed.is_err() {
+                // The lost signal drops the whole cache, whatever the
+                // order of arrival: the closed side never loses to a race.
+                self.fresh().clear();
+            }
+            let mut state = self
+                .signal
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let lost = probed.is_err();
+            if state.epoch != started_at_epoch && !lost {
+                // Another settlement or a local write happened while this
+                // probe was in flight: its reading may predate them.
+                if state.checked.is_some() {
+                    return state.mark.clone();
+                }
+                continue;
+            }
+            state.epoch += 1;
+            let (mark, checked) = match probed {
+                Ok(Some(mark)) => (Signal::Current(mark), Some(Instant::now())),
+                // A ledger without watermark never will have one: renew
+                // the lease so as not to probe on every request.
+                Ok(None) => (Signal::Silent, Some(Instant::now())),
+                // Lost: the lease is discarded; every request probes again
+                // until the signal returns.
+                Err(_) => (Signal::Lost, None),
+            };
+            state.checked = checked;
+            state.mark = mark.clone();
+            return mark;
+        }
+    }
+
+    /// Forgets the lease after a write of this node: the write moved the
+    /// world the authority describes, so the next request looks again. It
+    /// also bumps the epoch so a probe already in flight, which may have
+    /// read the watermark before the write, cannot renew the lease.
+    fn forget_signal(&self) {
+        let mut state = self
+            .signal
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.checked = None;
+        state.epoch += 1;
+    }
+
+    /// Whether the confirmed mark is still the one the snapshot was stamped
+    /// with: if a concurrent request re-probed while the ledger answered
+    /// and the world moved, the snapshot predates a foreign revocation and
+    /// is not inserted.
+    fn mark_holds(&self, expected: &Signal) -> bool {
+        let state = self
+            .signal
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match (&state.mark, expected) {
+            (Signal::Current(now), Signal::Current(then)) => now == then,
+            (Signal::Silent, Signal::Silent) => true,
+            _ => false,
+        }
     }
 
     /// The live entry for the key, if it exists and has not expired.
@@ -126,6 +292,8 @@ impl TrustLedger for CachedTrustLedger {
         for grant in grants {
             map.remove(&Self::key(&grant.account, &grant.repository, &grant.digest));
         }
+        drop(map);
+        self.forget_signal();
         Ok(())
     }
 
@@ -149,6 +317,7 @@ impl TrustLedger for CachedTrustLedger {
                     && entry_repository == repository
                     && entry.grant.decision_id == decision_id)
             });
+        self.forget_signal();
         Ok(revoked)
     }
 
@@ -168,6 +337,7 @@ impl TrustLedger for CachedTrustLedger {
         self.fresh().retain(|(entry_account, _, _), entry| {
             !(entry_account == account && entry.grant.decision_id == decision_id)
         });
+        self.forget_signal();
         Ok(revoked)
     }
 
@@ -186,6 +356,7 @@ impl TrustLedger for CachedTrustLedger {
             .revoke_digest(account, repository, digest, actor, reason, at)
             .await?;
         self.fresh().remove(&Self::key(account, repository, digest));
+        self.forget_signal();
         Ok(revoked)
     }
 
@@ -197,44 +368,56 @@ impl TrustLedger for CachedTrustLedger {
         at: DateTime<Utc>,
     ) -> Result<Option<TrustGrant>, CatalogError> {
         let key = Self::key(account, repository, digest);
-        // The cache shortens the trip, not the life of the grant: an
-        // entry only serves if the validity of the grant it holds is still
-        // standing **at the time asked**. The ttl says how often
-        // the ledger is revisited; `valid_until` says until when what
-        // the ledger said holds. They are two different clocks, and the
-        // validity one governs.
-        if let Some(grant) = self
-            .fresh()
-            .get(&key)
-            .filter(|entry| entry.grant.is_active_at(at))
-            .map(|entry| entry.grant.clone())
-        {
-            return Ok(Some(grant));
+        // First the shared authority's signal (HSP-320): free while the
+        // lease stands, one cheap read once it expired. A lost signal
+        // already dropped the map in `consult`; here it closes the cached
+        // path: no cached permit serves while the world cannot be checked.
+        let signal = self.consult().await;
+        // The cache shortens the trip, not the life of the grant: an entry
+        // only serves if the validity of the grant it holds is still
+        // standing **at the time asked** and the watermark that stamped it
+        // is still the world's. Three clocks --validity, ttl, watermark--;
+        // if one lies, the most closed wins.
+        if !matches!(signal, Signal::Lost) {
+            let map = self.fresh();
+            if let Some(entry) = map.get(&key).filter(|entry| {
+                entry.grant.is_active_at(at)
+                    && match (&entry.stamp, &signal) {
+                        (Some(seen), Signal::Current(mark)) => seen == mark,
+                        (None, Signal::Silent) => true,
+                        // A mismatch of signal kinds: the closed side is
+                        // to read again.
+                        _ => false,
+                    }
+            }) {
+                return Ok(Some(entry.grant.clone()));
+            }
         }
         let gen_before = self.generation.load(Ordering::SeqCst);
+        let stamp = match &signal {
+            Signal::Current(mark) => Some(*mark),
+            _ => None,
+        };
         let grant = self
             .inner
             .active_grant(account, repository, digest, at)
             .await?;
-        // Only the **current** affirmation is cached: absence, ledger failure
-        // and expired entries are always asked again, because
-        // a revocation made on another instance or a ledger that comes back to
-        // life must be able to deny --and grant-- on the next request.
+        // Only the **current** affirmation is cached: absence, ledger
+        // failure and expired entries are always asked again.
         if let Some(active) = grant.as_ref().filter(|grant| grant.is_active_at(at)) {
-            // While holding the map the generation is compared: if the ledger
-            // answered after some write bumped the
-            // counter, its snapshot may be stale and is not inserted.
-            // Either the revoker sweeps after our insertion, or
-            // we never get to make it; in no case is an old
-            // permit left in the cache. It costs at most one extra
-            // read of the ledger, never a false admissible.
+            // While holding the map: if a write of this node bumped the
+            // generation, or the authority moved the watermark while the
+            // ledger answered, the snapshot may predate a revocation and is
+            // not inserted. It costs at most one extra read of the ledger,
+            // never a stale permit.
             let mut map = self.fresh();
-            if gen_before == self.generation.load(Ordering::SeqCst) {
+            if gen_before == self.generation.load(Ordering::SeqCst) && self.mark_holds(&signal) {
                 map.insert(
                     key,
                     Entry {
                         grant: active.clone(),
                         expires_at: Instant::now() + self.ttl,
+                        stamp,
                     },
                 );
             }
@@ -248,6 +431,12 @@ impl TrustLedger for CachedTrustLedger {
         repository: &str,
     ) -> Result<Vec<TrustGrant>, CatalogError> {
         self.inner.grants_of(account, repository).await
+    }
+
+    /// The book's own mark, unchanged: the wrapper adds no invalidations of
+    /// its own that the authority would not know.
+    async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
+        self.inner.revocation_watermark().await
     }
 
     async fn active_digests(
@@ -268,6 +457,7 @@ impl TrustLedger for CachedTrustLedger {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
@@ -277,14 +467,30 @@ mod tests {
     struct FakeLedger {
         grants: tokio::sync::Mutex<Vec<TrustGrant>>,
         reads: AtomicUsize,
+        /// The watermark the ledger answers: `SILENT` (no signal), `LOST`
+        /// (the probe fails) or a confirmed mark.
+        mark: std::sync::atomic::AtomicI64,
+        /// When armed, the next watermark probe reads its value, announces
+        /// it entered (`.0`) and then waits to be released (`.1`) before
+        /// answering: a probe that finishes late.
+        gate: std::sync::Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
     }
+
+    const SILENT: i64 = -1;
+    const LOST: i64 = -2;
 
     impl FakeLedger {
         fn new(grants: Vec<TrustGrant>) -> Self {
             Self {
                 grants: tokio::sync::Mutex::new(grants),
                 reads: AtomicUsize::new(0),
+                mark: std::sync::atomic::AtomicI64::new(SILENT),
+                gate: std::sync::Mutex::new(None),
             }
+        }
+
+        fn set_mark(&self, mark: i64) {
+            self.mark.store(mark, Ordering::SeqCst);
         }
 
         fn the_reads(&self) -> usize {
@@ -403,6 +609,20 @@ mod tests {
             _repository: &str,
         ) -> Result<Vec<TrustGrant>, CatalogError> {
             Ok(self.grants.lock().await.clone())
+        }
+
+        async fn revocation_watermark(&self) -> Result<Option<u64>, CatalogError> {
+            let value = self.mark.load(Ordering::SeqCst);
+            let gate = self.gate.lock().unwrap().take();
+            if let Some((entered, release)) = gate {
+                entered.notify_one();
+                release.notified().await;
+            }
+            match value {
+                SILENT => Ok(None),
+                LOST => Err(CatalogError::unavailable("the signal is lost")),
+                mark => Ok(Some(mark as u64)),
+            }
         }
     }
 
@@ -890,5 +1110,213 @@ mod tests {
             "la cache no presta vida a un grant caducado"
         );
         assert_eq!(fake.the_reads(), 2, "y la caducidad se comprueba de nuevo");
+    }
+
+    /// HSP-320: a revocation confirmed behind this cache's back (another
+    /// node) moves the watermark; the stamped entry falls on the next
+    /// request instead of waiting for the ttl.
+    #[tokio::test]
+    async fn a_foreign_revocation_drops_the_entry_when_the_watermark_moves() {
+        let digest = the_digest_of("foreign revocation");
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![a_grant(&digest)]));
+        fake.set_mark(7);
+        let cached = CachedTrustLedger::new(fake.clone(), Duration::from_secs(60))
+            .with_verify(Duration::ZERO);
+
+        for _ in 0..2 {
+            assert!(
+                cached
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                    .await
+                    .expect("served")
+                    .is_some()
+            );
+        }
+        assert_eq!(fake.the_reads(), 1, "the second request was a cache hit");
+
+        // Another node revokes: the ledger changes and the mark moves.
+        fake.revoke_digest("acme", "trusted-repo", &digest, "other", "cve", Utc::now())
+            .await
+            .expect("foreign revocation");
+        fake.set_mark(8);
+
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("answers")
+                .is_none(),
+            "the revoked trust is not honored after the watermark moved"
+        );
+    }
+
+    /// HSP-320: within the lease the cache does not probe; past it, it does.
+    /// The lease is the bound of the exposure.
+    #[tokio::test]
+    async fn the_lease_bounds_the_exposure_to_a_foreign_revocation() {
+        let digest = the_digest_of("lease");
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![a_grant(&digest)]));
+        fake.set_mark(1);
+        let lease = Duration::from_millis(200);
+        let cached =
+            CachedTrustLedger::new(fake.clone(), Duration::from_secs(60)).with_verify(lease);
+
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("served")
+                .is_some()
+        );
+        fake.revoke_digest("acme", "trusted-repo", &digest, "other", "cve", Utc::now())
+            .await
+            .expect("foreign revocation");
+        fake.set_mark(2);
+
+        tokio::time::sleep(lease + Duration::from_millis(50)).await;
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("answers")
+                .is_none(),
+            "past the lease the foreign revocation is honored"
+        );
+    }
+
+    /// HSP-320 hard rule: a lost signal never renews a cached ALLOW. The
+    /// cache is dropped and the request goes to the ledger; if the ledger
+    /// also fails, the answer is an error, never a permit.
+    #[tokio::test]
+    async fn a_lost_signal_never_renews_a_cached_allow() {
+        let digest = the_digest_of("lost signal");
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![a_grant(&digest)]));
+        fake.set_mark(1);
+        let cached = CachedTrustLedger::new(fake.clone(), Duration::from_secs(60))
+            .with_verify(Duration::ZERO);
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("served")
+                .is_some()
+        );
+        assert_eq!(fake.the_reads(), 1);
+
+        fake.set_mark(LOST);
+        // The signal is lost: the entry is NOT served from the cache; the
+        // request reads the live ledger (a second read), which still holds.
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("the live ledger answers")
+                .is_some()
+        );
+        assert_eq!(
+            fake.the_reads(),
+            2,
+            "no cached permit served on a lost signal"
+        );
+
+        // And the snapshot of the lost-signal read was not inserted: once
+        // the signal returns, with a moved world, nothing stale survives.
+        fake.revoke_digest("acme", "trusted-repo", &digest, "other", "cve", Utc::now())
+            .await
+            .expect("foreign revocation");
+        fake.set_mark(2);
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("answers")
+                .is_none()
+        );
+    }
+
+    /// A ledger without signal keeps the plain ttl semantics.
+    #[tokio::test]
+    async fn a_silent_ledger_keeps_the_plain_ttl_semantics() {
+        let digest = the_digest_of("silent");
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![a_grant(&digest)]));
+        let cached = CachedTrustLedger::new(fake.clone(), Duration::from_secs(60))
+            .with_verify(Duration::ZERO);
+        for _ in 0..3 {
+            assert!(
+                cached
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                    .await
+                    .expect("served")
+                    .is_some()
+            );
+        }
+        assert_eq!(fake.the_reads(), 1, "the ttl rules without a signal");
+    }
+
+    /// HSP-320 review: probes that finish out of order must not roll the
+    /// mark back. P1 reads mark 1 before the revocation and answers late;
+    /// P2 (later) settles mark 2. If P1's stale settlement were applied,
+    /// the entry stamped 1 would match again and the revoked trust would be
+    /// served for another lease.
+    #[tokio::test]
+    async fn a_late_probe_does_not_roll_the_mark_back() {
+        use tokio::sync::Notify;
+        let digest = the_digest_of("late probe");
+        let fake = std::sync::Arc::new(FakeLedger::new(vec![a_grant(&digest)]));
+        fake.set_mark(1);
+        let lease = Duration::from_millis(200);
+        let cached = std::sync::Arc::new(
+            CachedTrustLedger::new(fake.clone(), Duration::from_secs(60)).with_verify(lease),
+        );
+        // The entry, stamped with mark 1.
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("served")
+                .is_some()
+        );
+        tokio::time::sleep(lease + Duration::from_millis(50)).await;
+
+        // P1: the lease expired, so it probes; it reads mark 1 and stalls.
+        let entered = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        *fake.gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+        let p1 = {
+            let (cached, digest) = (cached.clone(), digest.clone());
+            tokio::spawn(async move {
+                cached
+                    .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                    .await
+            })
+        };
+        entered.notified().await;
+
+        // The foreign revocation is confirmed; a later probe P2 settles 2.
+        fake.revoke_digest("acme", "trusted-repo", &digest, "other", "cve", Utc::now())
+            .await
+            .expect("foreign revocation");
+        fake.set_mark(2);
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("P2 answers")
+                .is_none()
+        );
+
+        // P1 finally answers with its stale reading.
+        release.notify_one();
+        let _ = p1.await.expect("P1 finishes");
+
+        // Lease standing: the stale mark 1 must not have been restored.
+        assert!(
+            cached
+                .active_grant("acme", "trusted-repo", &digest, Utc::now())
+                .await
+                .expect("answers")
+                .is_none(),
+            "the revoked trust was served after a late probe rolled the mark back"
+        );
     }
 }
