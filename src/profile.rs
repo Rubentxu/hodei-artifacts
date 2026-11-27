@@ -415,6 +415,15 @@ pub async fn assemble_graph_profile(
         }
         None => state,
     };
+    // The roots of the passport verification are the operator's file or
+    // nothing: a declared file that cannot be used stops the boot.
+    let state = match config.trust.passport_verification_file.as_deref() {
+        Some(path) => state.with_passport_verifier(Arc::new(
+            crate::passport_verify::PassportVerifier::from_file(path)
+                .map_err(|error| BootstrapError::Initialization(error.to_string()))?,
+        )),
+        None => state,
+    };
     let state = match gc {
         Ok(gc) => state.with_gc(Arc::new(gc)),
         Err(error) => {

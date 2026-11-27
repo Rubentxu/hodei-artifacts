@@ -1113,6 +1113,99 @@ pub fn verify_passport_offline(
     reader: &ReaderExpectations<'_>,
     now: DateTime<Utc>,
 ) -> Result<PassportReading, BundleError> {
+    let key_asc = signer.key_asc().map_err(|error| {
+        PassportProblem::new(
+            PassportProblemCode::SignatureInvalid,
+            format!("the signer has no public key: {error}"),
+        )
+    })?;
+    let pinned = [PinnedSigner {
+        fingerprint: signer.fingerprint_hex(),
+        key_asc,
+    }];
+    verify_passport_pinned(layout, &pinned, reader, now)
+}
+
+/// An OpenPGP certificate the reader pins to verify the signature over the
+/// passport manifest: public material only.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedSigner {
+    /// The fingerprint, uppercase hexadecimal. The signature document names
+    /// the key it was made with; only a pinned fingerprint is accepted.
+    pub fingerprint: String,
+    /// The armored public certificate.
+    pub key_asc: String,
+}
+
+/// The origin (account and repository) a passport's release layer names,
+/// read **without judging anything**: the digests are not checked here and
+/// nothing read is trusted. A caller uses it only to *refuse* a passport that
+/// is not addressed to it before any verdict about the document exists: a
+/// verdict on somebody else's passport (even "tampered") would be an oracle.
+/// The full reading re-reads the same layer under its digest and the caller
+/// compares again, so a lie here can only cause a refusal.
+pub fn read_passport_origin(layout: &Path) -> Result<super::manifest::Origin, BundleError> {
+    let malformed = |what: &str| -> BundleError {
+        PassportProblem::new(PassportProblemCode::Malformed, what.to_string()).into()
+    };
+    let raw_blob = |desc: &Descriptor| std::fs::read(layout.join(layout_blob_path(&desc.digest)));
+    let index: LayoutIndex = read_json(&layout.join(INDEX_FILE))?;
+    for entry in &index.manifests {
+        let Ok(bytes) = raw_blob(entry) else { continue };
+        let Ok(image) = serde_json::from_slice::<ImageManifest>(&bytes) else {
+            continue;
+        };
+        if image.artifact_type != PASSPORT_ARTIFACT_TYPE {
+            continue;
+        }
+        let release = image
+            .layers
+            .iter()
+            .find(|layer| layer.media_type == RELEASE_MEDIA_TYPE)
+            .ok_or_else(|| malformed("the passport carries no release layer"))?;
+        let release_bytes =
+            raw_blob(release).map_err(|_| malformed("the release layer is not in the layout"))?;
+        let manifest: BundleManifest = serde_json::from_slice(&release_bytes)
+            .map_err(|_| malformed("the bundle manifest cannot be read"))?;
+        return Ok(manifest.origin);
+    }
+    Err(malformed("the layout holds no passport"))
+}
+
+/// The refusal code a failed reading carries, when it carries one.
+pub fn problem_code_of(error: &BundleError) -> Option<PassportProblemCode> {
+    let text = error.to_string();
+    [
+        PassportProblemCode::MissingEvidence,
+        PassportProblemCode::TamperedBlob,
+        PassportProblemCode::PolicyMismatch,
+        PassportProblemCode::VerdictMismatch,
+        PassportProblemCode::SignerRevoked,
+        PassportProblemCode::SubjectMismatch,
+        PassportProblemCode::Malformed,
+        PassportProblemCode::SignatureInvalid,
+    ]
+    .into_iter()
+    .find(|code| {
+        let kebab = serde_json::to_value(code)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
+        text.contains(&format!("[{code:?}]")) || text.contains(&format!("[{kebab}]"))
+    })
+}
+
+/// [`verify_passport_offline`] against a **set of pinned certificates**: the
+/// signature document names a key, and the reading holds only when that key
+/// is one of `signers`. Which pinned certificate was used is reported in
+/// [`PassportReading::signer_fingerprint`], so the caller can apply its own
+/// validity window to it.
+pub fn verify_passport_pinned(
+    layout: &Path,
+    signers: &[PinnedSigner],
+    reader: &ReaderExpectations<'_>,
+    now: DateTime<Utc>,
+) -> Result<PassportReading, BundleError> {
     let header: LayoutHeader = read_json(&layout.join(LAYOUT_FILE))?;
     if header.image_layout_version != LAYOUT_VERSION {
         return Err(unsound(format!(
@@ -1478,6 +1571,17 @@ pub fn verify_passport_offline(
         )
     })?;
     let signed_bytes = read_layout_blob(layout, subject).map_err(tag_missing_and_tampered)?;
+    // The signature is over canonical bytes only: the manifest must be
+    // exactly what the writer's serializer produces from its own content.
+    // Extra members, duplicate keys, other whitespace or key order would
+    // all parse to the same value while being different signed bytes.
+    if serde_json::to_vec_pretty(&image)? != signed_bytes {
+        return Err(PassportProblem::new(
+            PassportProblemCode::Malformed,
+            "the passport manifest is not in canonical form",
+        )
+        .into());
+    }
     if serde_json::from_slice::<ImageManifest>(&signed_bytes)? != image {
         return Err(PassportProblem::new(
             PassportProblemCode::SignatureInvalid,
@@ -1507,29 +1611,27 @@ pub fn verify_passport_offline(
         .and_then(|value| value.as_str())
         .unwrap_or_default()
         .to_string();
-    if declared_signer != signer.fingerprint_hex() {
+    let Some(pinned) = signers
+        .iter()
+        .find(|pinned| pinned.fingerprint.eq_ignore_ascii_case(&declared_signer))
+    else {
         return Err(PassportProblem::new(
             PassportProblemCode::SignatureInvalid,
-            format!(
-                "the signature names key {declared_signer}, not the key the reader verifies with"
-            ),
+            "the signature names a key the reader does not pin",
         )
         .into());
-    }
-    let public_key_asc = signer.key_asc().map_err(|error| {
+    };
+    MetadataSigner::verify_detached_allowlisted(
+        &signed_bytes,
+        signature.as_bytes(),
+        &pinned.key_asc,
+    )
+    .map_err(|error| {
         PassportProblem::new(
             PassportProblemCode::SignatureInvalid,
-            format!("the signer has no public key: {error}"),
+            format!("the signature does not hold: {error}"),
         )
     })?;
-    MetadataSigner::verify_detached(&signed_bytes, signature.as_bytes(), &public_key_asc).map_err(
-        |error| {
-            PassportProblem::new(
-                PassportProblemCode::SignatureInvalid,
-                format!("the signature does not hold: {error}"),
-            )
-        },
-    )?;
 
     // Freshness, the honest way. Offline by default: the reading knows
     // nothing about revocations newer than what its own roots carry,
@@ -1566,7 +1668,7 @@ pub fn verify_passport_offline(
         cryptographic_holds: chain.cryptographic_holds,
         root,
         freshness,
-        signer_fingerprint: declared_signer,
+        signer_fingerprint: pinned.fingerprint.to_uppercase(),
         verified_at,
     })
 }

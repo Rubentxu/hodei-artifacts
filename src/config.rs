@@ -486,6 +486,18 @@ pub struct TrustConfig {
     /// Default: none.
     #[serde(default)]
     pub risk_catalog_file: Option<String>,
+    /// A JSON file with the roots of trust of the passport verification
+    /// (`POST /api/v1/passports/verify`, HSP-321): the provenance roots with
+    /// their validity windows, the OpenPGP certificates that may sign a
+    /// passport, the policy a passport must have been written under, the
+    /// maximum age and the clock skew. It is the **only** source of trust of
+    /// that route: nothing the request or the passport carries is ever a
+    /// root. A declared file that is unreadable or invalid stops the boot;
+    /// without it the route answers 501.
+    ///
+    /// Default: none.
+    #[serde(default)]
+    pub passport_verification_file: Option<String>,
     /// The identifier under which the policy is activated and requested.
     ///
     /// Default: `default`.
@@ -532,6 +544,7 @@ impl Default for TrustConfig {
         Self {
             policy_file: None,
             risk_catalog_file: None,
+            passport_verification_file: None,
             policy_id: the_default_trust_policy_id(),
             grant_max_validity_secs: the_default_grant_max_validity_secs(),
             sweep_interval_secs: the_default_trust_sweep_interval_secs(),

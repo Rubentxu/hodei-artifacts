@@ -111,6 +111,17 @@ pub fn manage_trusted_publishers() -> ActionId {
     ActionId::new("artifacts", "ManageTrustedPublishers").expect("a valid action")
 }
 
+/// Verifying a trust passport against the roots the deployment pinned
+/// (HSP-321 / HSP-160).
+///
+/// The verification returns a verdict and grants nothing, but it spends CPU
+/// and reads the revocation ledger, and it tells the caller whether a
+/// record about their repository is sound: it is its own action, and
+/// reading, downloading or managing a repository never implies it.
+pub fn verify_trust_passport() -> ActionId {
+    ActionId::new("artifacts", "VerifyTrustPassport").expect("a valid action")
+}
+
 /// Reading the trust capsule of a release.
 ///
 /// The capsule is a read: it is a view of the evidence that is there, and
@@ -192,6 +203,7 @@ pub fn all() -> Vec<ActionId> {
         manage_storage_migration(),
         manage_mirror_metadata(),
         manage_trusted_publishers(),
+        verify_trust_passport(),
         read_capsule(),
         access_admin_api(),
         upload_asset(),
@@ -201,6 +213,13 @@ pub fn all() -> Vec<ActionId> {
         revoke_promotion(),
         investigate(),
     ]
+}
+
+/// Check that the bundle declares the action of the passport verification.
+///
+/// Only an instance that pins passport roots has to declare it.
+pub fn check_passport_declared(schema: &Schema) -> Result<(), String> {
+    check_declared(schema, &verify_trust_passport())
 }
 
 /// Check that the bundle declares the action of the trusted publishers.
@@ -388,6 +407,8 @@ mod scope_tests {
                 .expect("storage migration action declared");
             check_declared(&schema, &manage_mirror_metadata())
                 .expect("mirror metadata action declared");
+            check_declared(&schema, &verify_trust_passport())
+                .expect("passport verification action declared");
         }
     }
 

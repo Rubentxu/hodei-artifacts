@@ -617,6 +617,13 @@ fn configure_production_security(
             BootstrapError::Security(format!("invalid authorization bundle: {error}"))
         })?;
     }
+    // An instance that pins passport roots has to be able to decide who may
+    // verify a passport.
+    if state.passport_verifier.is_some() {
+        crate::actions::check_passport_declared(&schema).map_err(|error| {
+            BootstrapError::Security(format!("invalid authorization bundle: {error}"))
+        })?;
+    }
     // An instance that can promote has to be able to decide who may.
     if state.trust_plane.is_some() {
         crate::actions::check_promotion_declared(&schema).map_err(|error| {

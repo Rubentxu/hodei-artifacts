@@ -151,11 +151,22 @@ pub(super) fn annotation(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 }
 
 /// The path of a blob within the layout, according to the standard.
+///
+/// A digest that is not `sha256:` plus 64 lowercase hex digits never names a
+/// file: it maps to a fixed name that no blob can have, so a layout written by
+/// somebody else cannot steer a read out of `blobs/sha256` (`..`, separators)
+/// and cannot make this function panic.
 pub fn layout_blob_path(digest: &str) -> PathBuf {
-    let hex = digest
-        .strip_prefix("sha256:")
-        .expect("a layout digest is always sha256-prefixed");
-    PathBuf::from(LAYOUT_BLOBS).join(hex)
+    let well_formed = digest.strip_prefix("sha256:").filter(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    });
+    match well_formed {
+        Some(hex) => PathBuf::from(LAYOUT_BLOBS).join(hex),
+        None => PathBuf::from(LAYOUT_BLOBS).join("malformed-digest"),
+    }
 }
 
 pub(super) fn write_layout_blob(

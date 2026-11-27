@@ -208,6 +208,72 @@ impl MetadataSigner {
         }
     }
 
+    /// Like [`Self::verify_detached`], but only under an **allow-list of
+    /// algorithms**: the signature hash must be SHA-256 or stronger (no MD5,
+    /// SHA-1, RIPEMD or "none") and the key that verifies must be an Ed25519
+    /// key. A certificate or a signature outside the list is refused even
+    /// when the mathematics would hold, so a reader never accepts an
+    /// algorithm it did not choose.
+    pub fn verify_detached_allowlisted(
+        data: &[u8],
+        signature_armor: &[u8],
+        public_key_asc: &str,
+    ) -> Result<(), OpenPgpError> {
+        let (signature, _) =
+            DetachedSignature::from_armor_single(std::io::Cursor::new(signature_armor.to_vec()))
+                .map_err(|_| OpenPgpError::NotASignature)?;
+        let (key, _) = SignedPublicKey::from_armor_single(std::io::Cursor::new(public_key_asc))
+            .map_err(|_| OpenPgpError::NotAPublicKey)?;
+        key.verify()
+            .map_err(|error| OpenPgpError::Verification(error.to_string()))?;
+        let hash = signature.signature.hash_alg();
+        if !matches!(
+            hash,
+            Some(
+                HashAlgorithm::Sha256
+                    | HashAlgorithm::Sha384
+                    | HashAlgorithm::Sha512
+                    | HashAlgorithm::Sha3_256
+                    | HashAlgorithm::Sha3_512
+            )
+        ) {
+            return Err(OpenPgpError::Verification(
+                "the signature hash algorithm is not allowed".to_owned(),
+            ));
+        }
+        if allowed_algorithm(key.primary_key.algorithm())
+            && signature.verify(&key.primary_key, data).is_ok()
+        {
+            return Ok(());
+        }
+        if key.public_subkeys.iter().any(|subkey| {
+            allowed_algorithm(subkey.key.algorithm()) && signature.verify(&subkey.key, data).is_ok()
+        }) {
+            return Ok(());
+        }
+        Err(OpenPgpError::Verification(
+            "no allowed key in the trusted certificate verifies the detached signature".to_owned(),
+        ))
+    }
+
+    /// The fingerprint (uppercase hexadecimal) of an armored public
+    /// certificate, once it is proven to be a well-formed certificate whose
+    /// primary key is on the algorithm allow-list. An operator pinning a key
+    /// goes through this: a key that could never verify under the allow-list
+    /// is refused when it is configured, not when it is used.
+    pub fn pinned_fingerprint(public_key_asc: &str) -> Result<String, OpenPgpError> {
+        let (key, _) = SignedPublicKey::from_armor_single(std::io::Cursor::new(public_key_asc))
+            .map_err(|_| OpenPgpError::NotAPublicKey)?;
+        key.verify()
+            .map_err(|error| OpenPgpError::Verification(error.to_string()))?;
+        if !allowed_algorithm(key.primary_key.algorithm()) {
+            return Err(OpenPgpError::Verification(
+                "the certificate key algorithm is not allowed".to_owned(),
+            ));
+        }
+        Ok(key.fingerprint().to_string().to_uppercase())
+    }
+
     /// Verifies an OpenPGP cleartext-signed message against an operator-pinned certificate.
     pub fn verify_cleartext(data: &[u8], public_key_asc: &str) -> Result<(), OpenPgpError> {
         Self::verify_cleartext_text(data, public_key_asc).map(|_| ())
@@ -240,6 +306,12 @@ impl MetadataSigner {
             ))
         }
     }
+}
+
+/// The key algorithms a pinned passport signer may use.
+fn allowed_algorithm(algorithm: pgp::crypto::public_key::PublicKeyAlgorithm) -> bool {
+    use pgp::crypto::public_key::PublicKeyAlgorithm as Algorithm;
+    matches!(algorithm, Algorithm::EdDSALegacy | Algorithm::Ed25519)
 }
 
 /// The signer the process starts with. If the operator leaves the

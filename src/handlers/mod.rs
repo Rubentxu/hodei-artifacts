@@ -30,6 +30,7 @@ pub mod npm;
 pub mod nuget;
 pub mod oci;
 pub mod packages;
+pub mod passports;
 pub mod playground;
 pub mod policies;
 pub mod policy_studio;

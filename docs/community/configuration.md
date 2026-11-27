@@ -216,6 +216,7 @@ vacío. Si no, el arranque falla.
 | `policy_id` | `default` | Identificador bajo el que se activa la política. |
 | `grant_max_validity_secs` | `86400` | Techo de vigencia de una concesión nueva. Mínimo 1. |
 | `sweep_interval_secs` | `60` | Intervalo del barrido que reevalúa concesiones; `0` desactiva el bucle. |
+| `passport_verification_file` | ninguna | JSON con las raíces de confianza del pasaporte (ver [`passport-verify.md`](../security/passport-verify.md)). Sin él, `POST /api/v1/passports/verify` responde 501. Un fichero inválido detiene el arranque. |
 
 ### 5.5 `[proxy]`
 

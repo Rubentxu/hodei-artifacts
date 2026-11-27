@@ -234,6 +234,8 @@ pipeline {
                         "--test hsp323h_asset_delete_dgraph_it",
                         // HSP-322 tramo g (HSP-167): rollback/freeze protection of the signed apt proxy index (persisted mark, fail-closed ledger, Cedar-gated reset), by the real router, OpenPGP and Dgraph.
                         "--test hsp322g_mirror_metadata_dgraph_it",
+                        // HSP-321 tramo k (HSP-160): POST /passports/verify with roots pinned by the operator (windows, algorithms, canonical bytes, audience, revocation, bounded cost), by the real router, Cedar and Dgraph.
+                        "--test hsp321k_passport_verify_dgraph_it",
                         // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.
                         "--test hsp321j_publishers_dgraph_it",
                         // HSP-320 tramo 1: two independent nodes over one Dgraph; a revocation by A stops B within the watermark lease, fail-closed on partition.
