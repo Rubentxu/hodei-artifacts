@@ -1332,9 +1332,7 @@ impl DgraphCatalogStore {
             "{{ q(func: eq(hodei.gc.run.run_id, {})) {{ \
              hodei.gc.run.scope hodei.gc.run.generation hodei.gc.run.state \
              hodei.gc.run.actor hodei.gc.run.grace_secs hodei.gc.run.deleted \
-             hodei.gc.run.bytes_freed hodei.gc.run.marked_at hodei.gc.run.swept_at \
-             hodei.gc.run.candidate @filter(has(hodei.gc.candidate.key)) {{ \
-             hodei.gc.candidate.digest_of hodei.gc.candidate.length }} }} }}",
+             hodei.gc.run.bytes_freed hodei.gc.run.marked_at hodei.gc.run.swept_at }} }}",
             dql_string(run_id),
         );
         let json = self.execute_dql_row(&query).await?;
@@ -1353,13 +1351,19 @@ impl DgraphCatalogStore {
                 ));
             }
         };
+        // The candidates are read by their `run_id` page by page: the nested
+        // edge has no row bound of its own and could be capped silently.
+        let items = self
+            .all_nodes(
+                &format!("eq(hodei.gc.candidate.run_id, {})", dql_string(run_id)),
+                "@filter(has(hodei.gc.candidate.key))",
+                "hodei.gc.candidate.digest_of hodei.gc.candidate.length",
+                HOLDS_PAGE,
+                MAX_GC_ROWS_READ,
+            )
+            .await?;
         let mut candidates = Vec::new();
-        for item in node
-            .get("hodei.gc.run.candidate")
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-        {
+        for item in items {
             let digest_of = node_text(&item, "hodei.gc.candidate.digest_of")?;
             let digest = split_digest_key(&digest_of).ok_or_else(|| {
                 CatalogError::corrupt("gc candidate", digest_of, "the digest key is corrupt")
@@ -1616,7 +1620,8 @@ impl DgraphCatalogStore {
     /// The walk ends only on an EMPTY page, never on a short one, so a server
     /// side row cap lower than `page_size` cannot end it early. More than
     /// `max_rows` rows is an `Unavailable` error, never a partial result.
-    async fn all_nodes(
+    #[doc(hidden)]
+    pub async fn all_nodes(
         &self,
         func: &str,
         filter: &str,
@@ -1667,12 +1672,14 @@ impl DgraphCatalogStore {
                 max_holds,
             )
             .await?;
-        let mut holds = nodes
-            .iter()
-            .map(hold_of_node)
-            .collect::<Result<Vec<_>, _>>()?;
-        holds.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(holds)
+        // Keyed by id: a row seen on two pages (a concurrent rewrite) is one
+        // hold, and the result stays ordered by id.
+        let mut by_id = std::collections::BTreeMap::new();
+        for node in &nodes {
+            let hold = hold_of_node(node)?;
+            by_id.insert(hold.id.clone(), hold);
+        }
+        Ok(by_id.into_values().collect())
     }
 }
 
