@@ -210,6 +210,16 @@ impl MetadataSigner {
 
     /// Verifies an OpenPGP cleartext-signed message against an operator-pinned certificate.
     pub fn verify_cleartext(data: &[u8], public_key_asc: &str) -> Result<(), OpenPgpError> {
+        Self::verify_cleartext_text(data, public_key_asc).map(|_| ())
+    }
+
+    /// Like [`Self::verify_cleartext`], and returns the text the signature
+    /// covers (line endings normalized to `\n`): what a caller must parse so
+    /// that it reads exactly what was verified and nothing else.
+    pub fn verify_cleartext_text(
+        data: &[u8],
+        public_key_asc: &str,
+    ) -> Result<String, OpenPgpError> {
         let message = CleartextSignedMessage::from_armor(std::io::Cursor::new(data))
             .map(|(message, _)| message)
             .map_err(|_| OpenPgpError::NotACleartextMessage)?;
@@ -223,7 +233,7 @@ impl MetadataSigner {
                 .iter()
                 .any(|subkey| message.verify(&subkey.key).is_ok())
         {
-            Ok(())
+            Ok(message.signed_text().replace("\r\n", "\n"))
         } else {
             Err(OpenPgpError::Verification(
                 "no key in the trusted certificate verifies the cleartext signature".to_owned(),

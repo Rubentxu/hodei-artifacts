@@ -48,8 +48,17 @@ pub struct MetadataKey {
 
 impl MetadataKey {
     /// The scoped subject the ledger indexes by.
+    ///
+    /// Each part is escaped (`%` and `/`), so no two different triples can
+    /// ever share a subject.
     pub fn subject(&self) -> String {
-        format!("{}/{}/{}", self.account, self.repository, self.distribution)
+        let escape = |part: &str| part.replace('%', "%25").replace('/', "%2F");
+        format!(
+            "{}/{}/{}",
+            escape(&self.account),
+            escape(&self.repository),
+            escape(&self.distribution)
+        )
     }
 }
 
@@ -156,6 +165,39 @@ pub enum Refusal {
     /// The ledger could not decide.
     #[error("the metadata ledger could not decide")]
     Unavailable,
+}
+
+impl Policy {
+    /// A policy bounded to `max_age_secs` (`None` for no bound). The bound is
+    /// clamped to [`MAX_AGE_CAP_SECS`], so an absurd configured value can
+    /// neither overflow nor panic: it just means "very old is still fine".
+    pub fn bounded(max_age_secs: Option<u64>) -> Self {
+        Self {
+            max_age: max_age_secs.map(|secs| {
+                Duration::seconds(i64::try_from(secs.min(MAX_AGE_CAP_SECS)).unwrap_or(0))
+            }),
+        }
+    }
+}
+
+/// The largest age bound honoured: about 100 years.
+pub const MAX_AGE_CAP_SECS: u64 = 100 * 365 * 86_400;
+
+/// The digest of the verified body, normalized (trailing blanks and trailing
+/// empty lines removed) so the clearsigned and the detached form of the same
+/// `Release` yield the same digest and one never looks like a fork of the other.
+pub fn body_digest(body: &str) -> String {
+    use sha2::Digest as _;
+    let mut text = String::new();
+    for line in body.trim_end().lines() {
+        text.push_str(line.trim_end());
+        text.push('\n');
+    }
+    let hash = sha2::Sha256::digest(text.as_bytes());
+    format!(
+        "sha256:{}",
+        hash.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 impl Refusal {
@@ -348,6 +390,39 @@ mod tests {
             judge(&Head::default(), &facts(10, "a"), &policy, at(11)),
             Ok(true)
         );
+    }
+
+    #[test]
+    fn an_absurd_age_bound_neither_overflows_nor_panics() {
+        let policy = Policy::bounded(Some(u64::MAX));
+        assert_eq!(
+            judge(&Head::default(), &facts(10, "a"), &policy, at(11)),
+            Ok(true)
+        );
+        assert_eq!(Policy::bounded(None).max_age, None);
+    }
+
+    #[test]
+    fn subjects_of_different_triples_never_collide() {
+        let key = |a: &str, r: &str, d: &str| MetadataKey {
+            account: a.into(),
+            repository: r.into(),
+            distribution: d.into(),
+        };
+        assert_ne!(
+            key("a/b", "c", "d").subject(),
+            key("a", "b/c", "d").subject()
+        );
+        assert_ne!(
+            key("a%2Fb", "c", "d").subject(),
+            key("a/b", "c", "d").subject()
+        );
+    }
+
+    #[test]
+    fn the_digest_ignores_trailing_blanks() {
+        assert_eq!(body_digest("A: 1\nB: 2 \n\n"), body_digest("A: 1\nB: 2\n"));
+        assert_ne!(body_digest("A: 1\n"), body_digest("A: 2\n"));
     }
 
     #[test]

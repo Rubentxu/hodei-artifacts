@@ -18,6 +18,20 @@ ese índice pasa por:
    (cuenta, repositorio, distribución). Una `Date` menor es `E_METADATA_ROLLBACK`; la misma `Date` con
    contenido distinto es `E_METADATA_FORK`; el mismo `Release` otra vez es idempotente.
 
+Una sola resolución: lo que se sirve es exactamente el activo (direccionado por digest) que se verificó y
+juzgó. `InRelease` se sirve del `InRelease` verificado; `Release` y `Release.gpg` pasan por la misma
+verificación (par desprendido) y la misma guarda, así que un upstream con `InRelease` nuevo y `Release`
+viejo nunca sirve el viejo. La `Date` se lee del texto que la firma cubre (`InRelease`) o de los bytes
+verificados (`Release`), no del texto que rodea la armadura. Si una resolución se rechaza (502), se
+reintenta una vez con refetch forzado de los metadatos, de modo que un replay servido una sola vez o una
+carrera de refresco de caché no envenenan la respuesta siguiente; un 503 del ledger no se reintenta.
+El digest que compara la marca es el del cuerpo verificado normalizado, común a `InRelease` y `Release`,
+así que las dos formas del mismo `Release` no se ven como un fork entre sí. Un `Release` rechazado puede
+quedar almacenado en el CAS, pero nunca se sirve.
+
+En el grupo apt y en `pool/`, una distribución cuyo índice no es confiable (rollback, congelada, caída o
+ausente) se omite: no sirve nada, pero no impide servir el paquete de otra distribución.
+
 Todas las negativas son `502` con código estable (`E_METADATA_ROLLBACK|FORK|FROZEN|FUTURE|NO_DATE`) y se
 auditan como `artifacts:VerifyMirrorMetadata` (`Denied`). Si el ledger no responde: `503
 E_METADATA_LEDGER` (falla cerrado, no se sirve el índice). Una firma inválida nunca llega al ledger, así
@@ -51,6 +65,16 @@ cadena de raíces TUF ni delegación: ver limitaciones.
 - Sin `trusted_key_asc` el proxy sigue sin autenticar su índice y **no** tiene esta protección.
 
 ## Límites (no demostrados / fuera de alcance)
+
+- **TOFU tras `reset`:** el siguiente `Release` con firma válida pasa a ser la marca, sea cual sea su
+  `Date`; un upstream comprometido con la clave anclada puede fijar entonces una marca antigua. El reset
+  es un acto del operador, auditado.
+- **`Date` futura:** se tolera hasta 300 s sobre el reloj del servicio; una `Date` apenas futura fija una
+  marca que rechaza sucesores legítimos hasta alcanzarla (como mucho 5 minutos).
+- Dos `Release` legítimos con la misma `Date` (resolución de un segundo) y contenido distinto se rechazan
+  como fork.
+- `max_metadata_age_secs` se acota a unos 100 años: un valor absurdo equivale a "sin límite práctico".
+- El subject del ledger escapa `%` y `/` de cuenta, repositorio y distribución.
 
 - Solo apt proxy con clave anclada. Yum/RPM, cargo sparse, npm, OCI y demás no tienen esta capa.
 - La monotonía es la `Date` del `Release` (resolución de segundo), no una versión TUF; no hay roles

@@ -169,11 +169,15 @@ async fn serve_file(
     axum::extract::State(files): axum::extract::State<Files>,
     uri: OriginalUri,
 ) -> Response {
-    let found = files
-        .lock()
-        .unwrap()
-        .get(uri.path().trim_start_matches('/'))
-        .cloned();
+    let path = uri.path().trim_start_matches('/').to_string();
+    let found = {
+        let mut files = files.lock().unwrap();
+        // A `once:` entry is served a single time, then the normal file again:
+        // a replay that upstream (or a cache in front of it) serves only once.
+        files
+            .remove(&format!("once:{path}"))
+            .or_else(|| files.get(&path).cloned())
+    };
     match found {
         Some(bytes) => Response::builder()
             .status(StatusCode::OK)
@@ -203,6 +207,71 @@ impl Upstream {
 
     /// Publishes a `Release` (and its detached signature and clearsigned form)
     /// signed by `signer`.
+    /// Publishes a signed index for `dist`, listing `deb` (pool path and bytes).
+    fn publish_dist(
+        &self,
+        dist: &str,
+        signer: &MetadataSigner,
+        date: DateTime<Utc>,
+        deb: Option<(&str, &[u8])>,
+    ) {
+        let mut packages = String::from("Package: other\nVersion: 1.0\nArchitecture: amd64\n\n");
+        if let Some((pool, bytes)) = deb {
+            packages.push_str(&format!(
+                "Package: hello\nVersion: 1.0\nArchitecture: amd64\nFilename: {pool}\nSize: {}\nSHA256: {}\n\n",
+                bytes.len(),
+                sha256_hex(bytes)
+            ));
+            self.files
+                .lock()
+                .unwrap()
+                .insert(pool.to_string(), bytes.to_vec());
+        }
+        let release = format!(
+            "Origin: Hodei fixture\nSuite: {dist}\nCodename: {dist}\nDate: {}\nArchitectures: amd64\nComponents: main\nSHA256:\n {} {} main/binary-amd64/Packages\n",
+            apt_time(date),
+            sha256_hex(packages.as_bytes()),
+            packages.len()
+        );
+        let mut files = self.files.lock().unwrap();
+        files.insert(
+            format!("dists/{dist}/Release.gpg"),
+            signer.sign_detached(release.as_bytes()).unwrap(),
+        );
+        files.insert(
+            format!("dists/{dist}/InRelease"),
+            signer.sign_cleartext(&release).unwrap(),
+        );
+        files.insert(format!("dists/{dist}/Release"), release.into_bytes());
+        files.insert(
+            format!("dists/{dist}/main/binary-amd64/Packages"),
+            packages.into_bytes(),
+        );
+    }
+
+    /// An `InRelease` of `new` next to a `Release` + `Release.gpg` of `old`:
+    /// the inconsistent upstream (or stale mirror in front of it) of HSP-167.
+    fn publish_split(&self, signer: &MetadataSigner, new: DateTime<Utc>, old: DateTime<Utc>) {
+        self.publish(signer, Some(old), "old");
+        let stale: Vec<(String, Vec<u8>)> = {
+            let files = self.files.lock().unwrap();
+            ["Release", "Release.gpg"]
+                .iter()
+                .map(|f| {
+                    (
+                        format!("dists/bookworm/{f}"),
+                        files[&format!("dists/bookworm/{f}")].clone(),
+                    )
+                })
+                .collect()
+        };
+        self.publish(signer, Some(new), "new");
+        let mut files = self.files.lock().unwrap();
+        for (path, bytes) in stale {
+            files.insert(path, bytes);
+        }
+    }
+
     fn publish(&self, signer: &MetadataSigner, date: Option<DateTime<Utc>>, extra: &str) {
         self.publish_with(signer, date, None, extra);
     }
@@ -946,4 +1015,266 @@ async fn control_without_a_pinned_key_the_rollback_is_served() {
         StatusCode::OK,
         "an unauthenticated mirror has no protection: {body}"
     );
+}
+
+/// H1: the Release and Release.gpg routes are judged like InRelease, and what is
+/// served is what was judged: an upstream with a new InRelease next to an old
+/// Release never gets the old one served.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn release_and_signature_routes_are_judged_and_never_serve_an_unjudged_copy() {
+    let (account, other) = (unique_account("q"), unique_account("r"));
+    let upstream = Upstream::start().await;
+    let key = signer("Upstream fixture");
+    let Some(v) = mount(&account, &other, &upstream).await else {
+        return;
+    };
+    seed_proxy(
+        &v,
+        &account,
+        REPO,
+        &upstream,
+        Some(&key.key_asc().unwrap()),
+        None,
+    )
+    .await;
+    let alice = format!("alice@{account}");
+
+    // A consistent index: all three forms are served and none is a fork of
+    // another (the digest is that of the verified body, not of the armor).
+    upstream.publish(&key, Some(days_ago(2)), "v1");
+    for file in [
+        "InRelease",
+        "Release",
+        "Release.gpg",
+        "InRelease",
+        "Release",
+    ] {
+        let (status, body) = get_index(&v, REPO, &alice, file).await;
+        assert_eq!(status, StatusCode::OK, "{file}: {body}");
+    }
+    assert_eq!(mark(&v, REPO, &alice).await.1["sequence"], 1);
+
+    // New InRelease, old Release: the clearsigned form advances the mark ...
+    upstream.publish_split(&key, days_ago(0), days_ago(2));
+    assert_eq!(
+        get_index(&v, REPO, &alice, "InRelease").await.0,
+        StatusCode::OK
+    );
+    assert_eq!(mark(&v, REPO, &alice).await.1["sequence"], 2);
+    // ... and the old Release (validly signed, older) is a rollback on both of
+    // its routes: it is not served unjudged.
+    for file in ["Release", "Release.gpg"] {
+        let (status, body) = get_index(&v, REPO, &alice, file).await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{file}: {body}");
+        assert!(body.contains("E_METADATA_ROLLBACK"), "{file}: {body}");
+    }
+    assert_eq!(mark(&v, REPO, &alice).await.1["sequence"], 2);
+}
+
+/// H2 and the race: a replay served once (a stale cache or a mirror that lags
+/// for one request) is not served, is not final, and does not poison the next
+/// answer: the refused metadata is refetched once and the verdict is about what
+/// upstream serves now.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_one_shot_replay_is_never_served_and_does_not_poison_the_answer() {
+    let (account, other) = (unique_account("s"), unique_account("t"));
+    let upstream = Upstream::start().await;
+    let key = signer("Upstream fixture");
+    let Some(v) = mount(&account, &other, &upstream).await else {
+        return;
+    };
+    seed_proxy(
+        &v,
+        &account,
+        REPO,
+        &upstream,
+        Some(&key.key_asc().unwrap()),
+        None,
+    )
+    .await;
+    let alice = format!("alice@{account}");
+    upstream.publish(&key, Some(days_ago(1)), "v2");
+    let current = {
+        let files = upstream.files.lock().unwrap();
+        files["dists/bookworm/InRelease"].clone()
+    };
+    assert_eq!(
+        get_index(&v, REPO, &alice, "InRelease").await.0,
+        StatusCode::OK
+    );
+
+    // The next fetch of InRelease returns an old, validly signed copy, once.
+    upstream.publish(&key, Some(days_ago(5)), "v1");
+    let replay = upstream.files.lock().unwrap()["dists/bookworm/InRelease"].clone();
+    {
+        let mut files = upstream.files.lock().unwrap();
+        files.insert("once:dists/bookworm/InRelease".into(), replay.clone());
+        files.insert("dists/bookworm/InRelease".into(), current.clone());
+    }
+    let (status, body) = get_index(&v, REPO, &alice, "InRelease").await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the forced refetch heals it: {body}"
+    );
+    assert_ne!(
+        body.as_bytes(),
+        replay.as_slice(),
+        "the replayed copy is not what is served"
+    );
+    assert_eq!(body.as_bytes(), current.as_slice());
+    assert_eq!(mark(&v, REPO, &alice).await.1["sequence"], 1);
+}
+
+/// H3: a distribution whose index cannot be trusted does not abort the request
+/// for a package of another distribution, and nothing is ever served from it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rolled_back_distribution_does_not_block_the_package_of_another() {
+    let (account, other) = (unique_account("u"), unique_account("v"));
+    let upstream = Upstream::start().await;
+    let key = signer("Upstream fixture");
+    let Some(v) = mount(&account, &other, &upstream).await else {
+        return;
+    };
+    // "alpha" sorts before "beta": it is visited first.
+    let mut config = RepositoryConfig::new(DigestScope::Global);
+    config.config_settings = json!({
+        "proxy": {"upstream": {"id": "apt-it", "url": format!("http://127.0.0.1:{}/", upstream.port),
+                  "scopes": ["dists/", "pool/"]}, "cache": {"ttl": {"metadata_secs": 0}}},
+        "apt": {"distributions": ["alpha", "beta"], "components": ["main"],
+                "architectures": ["amd64"], "trusted_key_asc": key.key_asc().unwrap()}
+    });
+    v.store
+        .create_repository(
+            &account,
+            RepositoryDescriptor {
+                hrn: repository_hrn("hodei", "artifacts", "eu", &account, REPO),
+                account: account.clone(),
+                repo_key: REPO.to_string(),
+                format: RepositoryFormat::Apt,
+                mode: RepositoryMode::Proxy,
+                config,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+    let alice = format!("alice@{account}");
+    let (good_pool, rolled_pool) = (
+        "pool/main/h/hello/hello_1.0_amd64.deb",
+        "pool/main/o/old/old_1.0_amd64.deb",
+    );
+    let (good_deb, rolled_deb) = (
+        b"the good deb".to_vec(),
+        b"the deb of the rolled back dist".to_vec(),
+    );
+    upstream.publish_dist("alpha", &key, days_ago(1), Some((rolled_pool, &rolled_deb)));
+    upstream.publish_dist("beta", &key, days_ago(1), Some((good_pool, &good_deb)));
+    for dist in ["alpha", "beta"] {
+        let (status, body) = send(
+            &v.app,
+            Method::GET,
+            &format!("/apt/{REPO}/dists/{dist}/main/binary-amd64/Packages"),
+            &alice,
+            Value::Null,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{dist}: {body}");
+    }
+    let pool = |path: &str| {
+        let app = v.app.clone();
+        let alice = alice.clone();
+        let uri = format!("/apt/{REPO}/{path}");
+        async move { send(&app, Method::GET, &uri, &alice, Value::Null).await }
+    };
+    assert_eq!(
+        pool(good_pool).await.0,
+        StatusCode::OK,
+        "control: both dists are trusted"
+    );
+    assert_eq!(pool(rolled_pool).await.0, StatusCode::OK, "control");
+
+    // alpha goes back in time: replayed with an older date.
+    upstream.publish_dist("alpha", &key, days_ago(6), Some((rolled_pool, &rolled_deb)));
+    let (status, body) = pool(good_pool).await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "beta's package is still served: {body}"
+    );
+    assert_eq!(body.as_bytes(), good_deb.as_slice());
+    // Nothing is served on the authority of the rolled back distribution.
+    let (status, _) = pool(rolled_pool).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// H7-adjacent and the operator surface: the reset validates the distribution,
+/// and Cedar decides before the mode of the repository is revealed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn reset_validates_the_distribution_and_cedar_decides_before_the_mode() {
+    let (account, other) = (unique_account("w"), unique_account("x"));
+    let upstream = Upstream::start().await;
+    let key = signer("Upstream fixture");
+    let Some(v) = mount(&account, &other, &upstream).await else {
+        return;
+    };
+    seed_proxy(
+        &v,
+        &account,
+        REPO,
+        &upstream,
+        Some(&key.key_asc().unwrap()),
+        None,
+    )
+    .await;
+    v.store
+        .create_repository(
+            &account,
+            RepositoryDescriptor {
+                hrn: repository_hrn("hodei", "artifacts", "eu", &account, "apt-hosted"),
+                account: account.clone(),
+                repo_key: "apt-hosted".to_string(),
+                format: RepositoryFormat::Apt,
+                mode: RepositoryMode::Hosted,
+                config: RepositoryConfig::new(DigestScope::Global),
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+            },
+        )
+        .await
+        .unwrap();
+    let (alice, bob) = (format!("alice@{account}"), format!("bob@{account}"));
+    let reset = |repo: &str, dist: &str, token: &str| {
+        let app = v.app.clone();
+        let (token, body) = (
+            token.to_string(),
+            json!({"repository": repo, "distribution": dist}),
+        );
+        async move {
+            send(
+                &app,
+                Method::POST,
+                "/api/v1/mirror-metadata/reset",
+                &token,
+                body,
+            )
+            .await
+            .0
+        }
+    };
+    // A distribution the repository does not serve cannot be reset.
+    assert_eq!(reset(REPO, "trixie", &alice).await, StatusCode::BAD_REQUEST);
+    assert_eq!(reset(REPO, "../x", &alice).await, StatusCode::BAD_REQUEST);
+    // bob does not hold the action: 403 for a hosted repository too, so the
+    // mode is not revealed to him; alice, who holds it, learns it is not a proxy.
+    assert_eq!(
+        reset("apt-hosted", "bookworm", &bob).await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        reset("apt-hosted", "bookworm", &alice).await,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(reset(REPO, "bookworm", &alice).await, StatusCode::OK);
 }

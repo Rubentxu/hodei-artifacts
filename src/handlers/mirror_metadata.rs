@@ -86,9 +86,8 @@ async fn resolve(
             "mirror metadata protection needs the durable ledger of the graph profile",
         ))?;
     let origin = the_repository_in(state, &context, repository, &[RepositoryFormat::Apt]).await?;
-    if origin.mode != RepositoryMode::Proxy {
-        return Err(ResolutionError::NotFound.into());
-    }
+    // Cedar decides first: whether a repository is a proxy, or serves a
+    // distribution, is only revealed to whoever may manage it.
     gate(
         state,
         &context,
@@ -96,6 +95,17 @@ async fn resolve(
         crate::actions::manage_mirror_metadata(),
         &correlation,
     )?;
+    if origin.mode != RepositoryMode::Proxy {
+        return Err(ResolutionError::NotFound.into());
+    }
+    let served = hodei_catalog::apt::AptProxyConfig::of(&origin.config)
+        .map_err(|_| ResolutionError::BadRequest("the apt proxy configuration is invalid"))?;
+    if !served.allows_dist(distribution) {
+        return Err(ResolutionError::BadRequest(
+            "the distribution is not served by this repository",
+        )
+        .into());
+    }
     let key = MetadataKey {
         account: context.account().as_str().to_string(),
         repository: repository.to_string(),
