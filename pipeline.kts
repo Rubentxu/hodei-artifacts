@@ -218,6 +218,8 @@ pipeline {
                         "--test hsp321h_abac_wired_dgraph_it",
                         // HSP-321 tramo i: admision de evidencias en la publicacion (HSP-153) por el router real.
                         "--test hsp321i_admission_dgraph_it",
+                        // HSP-322 tramo 1 (HSP-166): look-alike (typosquat) gate on hosted npm publication, by the real router.
+                        "--test hsp322a_typosquat_dgraph_it",
                         // HSP-321 tramo j: trusted publishers (HSP-152) de extremo a extremo por el router real y Dgraph.
                         "--test hsp321j_publishers_dgraph_it",
                         // HSP-320 tramo 1: two independent nodes over one Dgraph; a revocation by A stops B within the watermark lease, fail-closed on partition.

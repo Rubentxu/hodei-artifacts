@@ -642,6 +642,10 @@ fn the_scope_gate(repository: &RepositoryDescriptor, name: &PackageName) -> Resu
     }
 }
 
+/// What the client reads when the look-alike policy refuses a new name: the
+/// matched name and the rule stay in the operator's log.
+const TYPOSQUAT_REFUSED: &str = "this repository does not accept that package name";
+
 /// `PUT /npm/{repository}/{name}`: publish a version or deprecate.
 async fn put_packument(
     state: &AppState,
@@ -714,9 +718,22 @@ async fn publish_version(
     npm::check_declared_dist(&new.manifest, &facts)?;
 
     // A published version is not rewritten: this is said before writing bytes.
-    if let Some(current) =
-        the_current_asset(state, context, &repository.repo_key, name.full()).await?
-    {
+    let existing = the_current_asset(state, context, &repository.repo_key, name.full()).await?;
+    // A NEW name is judged against the look-alike policy the repository
+    // declares (HSP-322), before any byte is written. A new version of an
+    // existing package is the package itself and is not judged.
+    if existing.is_none() {
+        match crate::typosquat::gate(state, context, repository, name.full(), correlation).await {
+            Ok(()) => {}
+            Err(crate::typosquat::Refusal::Rejected) => {
+                return Err(Failure::plain(StatusCode::FORBIDDEN, TYPOSQUAT_REFUSED));
+            }
+            Err(crate::typosquat::Refusal::Unavailable) => {
+                return Err(RawApiError::Unavailable.into());
+            }
+        }
+    }
+    if let Some(current) = existing {
         let stored = the_content_store(state)?
             .get(&current.digest)
             .await

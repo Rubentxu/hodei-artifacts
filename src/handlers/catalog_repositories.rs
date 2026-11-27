@@ -501,6 +501,18 @@ fn the_config(body: &CreateRepositoryBody) -> Result<RepositoryConfig, CatalogRe
         crate::admission::AdmissionConfig::from_settings(&config.config_settings)
             .map_err(CatalogRepositoryError::BadRequest)?;
     }
+    // The look-alike policy (HSP-322) gates the hosted npm publication only;
+    // anywhere else it would look active and not be. An unreadable declaration
+    // is refused, never interpreted generously.
+    if crate::typosquat::TyposquatConfig::from_settings(&config.config_settings)
+        .map_err(CatalogRepositoryError::BadRequest)?
+        .is_some()
+        && (body.mode != RepositoryMode::Hosted || body.format != RepositoryFormat::Npm)
+    {
+        return Err(CatalogRepositoryError::BadRequest(
+            "typosquat is only supported on hosted npm repositories".to_string(),
+        ));
+    }
     match body.mode {
         RepositoryMode::Hosted => Ok(config),
         RepositoryMode::Proxy => match UpstreamConfig::of(&config) {
