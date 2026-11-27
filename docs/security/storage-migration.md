@@ -119,7 +119,15 @@ hueco en la reclamación (fence distinto) detiene la operación. Cada operación
    cuenta se resuelven contra los propietarios del blob, leídos frescos de las filas raíz (activo,
    versión, referencia, snapshot apt); los holds se leen paginados completos (falla cerrado si no se
    pueden leer: `holds_unreadable`). Los holds se leen **antes** y **otra vez después** de apartar el
-   origen: si apareció uno, el origen se repone y la fase sigue en `switched` (`held`).
+   origen: si apareció uno, el origen se repone y la fase sigue en `switched` (`held`). Si además la
+   reposición **falla** (el almacén no acepta escrituras en ese instante), el resultado es
+   `held_origin_aside` (503, auditado `Failed`): hay un hold vigente **y** la copia del origen sigue
+   apartada (bytes intactos en cuarentena, destino sirviendo, fase `switched`); nunca se presenta como
+   un `held` limpio. Si ni siquiera se pudo leer el hold, `origin_aside`. La salida es `rollback`, que
+   repone el origen desde el destino verificado.
+   El identificador del hold se devuelve **solo si pertenece a la cuenta que llama** (holds de su
+   repositorio o de su cuenta); el de otra cuenta o uno de digest (sin cuenta) bloquea igual pero no
+   se nombra (`hold` ausente), para no filtrar su existencia ni su id entre cuentas.
 4. El destino se **relee y se hashea aquí** (no se confía en su palabra): ausente → `destination_absent`,
    corrupto/mentiroso → `destination_corrupt`, caído → `destination_failed`.
 5. El almacén de origen sabe apartar condicionalmente (`unsupported` si no); la versión no cambió
@@ -165,7 +173,7 @@ el recuento por estado y `set=<16 hex>`.
 | Destino corrupto o mentiroso | hash local sobre bytes releídos; un destino corrupto tras el switch no tapa un origen bueno (cae al origen) | si el destino se corrompe **después** de retirar el origen, la lectura falla; el destino no tiene reparación en este tramo (el rollback solo repone el origen desde un destino verificado) |
 | Sondeo entre cuentas | repositorio de la cuenta verificada, todos los digests referenciados por él, 404 uniforme | — |
 | Abuso de coste / bloqueo | 64 digests, tope por blob, 1 por cuenta y 2 globales, timeouts por llamada, plazo total, tarea inmune al cuelgue del cliente | — |
-| Journal caído | las lecturas intentan origen y luego destino (siempre verificados); `switch`/`retire`/`rollback` fallan cerrado | — |
+| Journal caído o lento | las lecturas esperan al journal como mucho `DEFAULT_JOURNAL_TIMEOUT` (1 s por defecto, rango validado 100 ms a 10 s, `LocatedStore::with_journal_limits`); un fallo o timeout abre un *breaker* (5 s por defecto, rango 1 a 60 s) durante el cual no se pregunta al journal y se lee origen y luego destino (siempre verificados); un journal colgado cuesta un timeout por ventana, no uno por lectura; `switch`/`retire`/`rollback` fallan cerrado | durante la ventana del breaker un digest `retired` se lee primero del origen (falla y cae al destino, un viaje extra); con digest en `origin` no cambia nada. El breaker es por proceso, no compartido |
 
 ### Límites conocidos del journal (no resueltos)
 
@@ -174,6 +182,15 @@ el recuento por estado y `set=<16 hex>`.
   una caché haría que la lectura no siguiera al journal).
 - **Un solo destino** (el configurado) y dos fases de retirada; sin varios miembros por pool.
 - **El destino sigue fuera de GC/holds** (ver arriba): el journal no los adopta.
+- **Qué demuestran (y qué no) las pruebas de carrera**: las carreras con la GC y con el repair se ejecutan
+  de forma concurrente **sin forzar el entrelazado** (no hay barreras): prueban que los invariantes
+  (sin pérdida de bytes, fase coherente con el resultado de la retirada, lectura sirviendo) se cumplen
+  gane quien gane, no que se haya forzado un orden concreto. La prueba de la retirada estancada solo
+  cubre la rama de renovación con un intruso de lease **vivo** (`Conflict`, antes de apartar nada), no
+  la de fence distinto, y no cubre un zombi que se cuelga **después** de la renovación.
+- **No demostrado**: holds de propietarios transitivos vía manifiesto; el zombi en la ventana
+  renovación-efecto; scrub/repair sobre el destino (un destino corrupto tras retirar el origen no se
+  repara); varios destinos o S3.
 - **Sin purga** de la copia apartada ni de las filas del journal de digests ya borrados por la GC.
 
 ## Fuera de este tramo (decisiones de producto pendientes)

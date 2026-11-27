@@ -113,9 +113,27 @@ pub enum Relocated {
     },
     /// A hold reaches the digest: the origin was left (or put back) as it was.
     Held {
-        /// The identifier of the hold.
-        hold: String,
+        /// The identifier of the hold, only when the hold belongs to the
+        /// caller's own account (a repository or account hold of it). A hold of
+        /// another account, or a digest hold (which names no account), is
+        /// reported without its identifier: the digest is shared across
+        /// accounts and the id must not leak.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hold: Option<String>,
     },
+    /// A hold appeared while the origin copy was being moved aside **and the
+    /// origin copy could not be put back**: the origin copy is still aside (the
+    /// bytes are kept under a quarantine name), the phase is still `switched`
+    /// and the destination serves. Nothing was lost, but the origin is NOT
+    /// intact: run `rollback` once the store allows it.
+    HeldOriginAside {
+        /// The identifier of the hold, under the same rule as [`Self::Held`].
+        #[serde(skip_serializing_if = "Option::is_none")]
+        hold: Option<String>,
+    },
+    /// The holds could not be read after the origin copy was moved aside and
+    /// it could not be put back: same state as [`Self::HeldOriginAside`].
+    OriginAside,
     /// The holds could not be read, so nothing could be proven.
     HoldsUnreadable,
     /// No catalog row names the digest, so the holds cannot be assessed.
@@ -153,6 +171,8 @@ impl Relocated {
         matches!(
             self,
             Self::DestinationFailed
+                | Self::HeldOriginAside { .. }
+                | Self::OriginAside
                 | Self::OriginFailed
                 | Self::JournalFailed
                 | Self::HoldsUnreadable
@@ -311,7 +331,7 @@ impl Relocator {
     /// the place taken.
     pub async fn relocate(
         &self,
-        _place: &Reservation,
+        place: &Reservation,
         operation: Operation,
         digests: &[ContentDigest],
     ) -> Result<RelocationReport, RelocateError> {
@@ -335,7 +355,7 @@ impl Relocator {
             let result = if exceeded {
                 Relocated::Deferred
             } else {
-                self.one(operation, digest, deadline).await
+                self.one(operation, digest, &place.account, deadline).await
             };
             entries.push(Entry {
                 digest: digest.to_string(),
@@ -397,6 +417,7 @@ impl Relocator {
         &self,
         operation: Operation,
         digest: &ContentDigest,
+        account: &str,
         deadline: Instant,
     ) -> Relocated {
         // One owner per operation: two tasks of this process never share a
@@ -418,7 +439,7 @@ impl Relocator {
             }
         };
         let result = self
-            .guarded(operation, digest, &owner, &mut lease, deadline)
+            .guarded(operation, digest, account, &owner, &mut lease, deadline)
             .await;
         // Best effort: an unreleased lease just expires.
         let _ = self
@@ -431,6 +452,7 @@ impl Relocator {
         &self,
         operation: Operation,
         digest: &ContentDigest,
+        account: &str,
         owner: &str,
         lease: &mut LocationLease,
         deadline: Instant,
@@ -448,7 +470,10 @@ impl Relocator {
         };
         match operation {
             Operation::Switch => self.switch(digest, &entry, lease, deadline).await,
-            Operation::Retire => self.retire(digest, &entry, owner, lease, deadline).await,
+            Operation::Retire => {
+                self.retire(digest, &entry, account, owner, lease, deadline)
+                    .await
+            }
             Operation::Rollback => self.rollback(digest, &entry, lease, deadline).await,
         }
     }
@@ -599,6 +624,7 @@ impl Relocator {
         &self,
         digest: &ContentDigest,
         entry: &LocationEntry,
+        account: &str,
         owner: &str,
         lease: &mut LocationLease,
         deadline: Instant,
@@ -610,7 +636,11 @@ impl Relocator {
         }
         match self.covering_hold(digest, deadline).await {
             Ok(None) => {}
-            Ok(Some(hold)) => return Relocated::Held { hold: hold.id },
+            Ok(Some(hold)) => {
+                return Relocated::Held {
+                    hold: visible_id(&hold, account),
+                };
+            }
             Err(outcome) => return outcome,
         }
         let bytes = match self.destination_bytes(digest, deadline).await {
@@ -666,11 +696,17 @@ impl Relocator {
                     match self.covering_hold(digest, deadline).await {
                         Ok(None) => {}
                         other => {
-                            self.restore_origin(digest, &bytes, deadline).await;
-                            return match other {
-                                Ok(Some(hold)) => Relocated::Held { hold: hold.id },
-                                Err(outcome) => outcome,
-                                Ok(None) => Relocated::HoldsUnreadable,
+                            let restored = self.restore_origin(digest, &bytes, deadline).await;
+                            return match (other, restored) {
+                                (Ok(Some(hold)), true) => Relocated::Held {
+                                    hold: visible_id(&hold, account),
+                                },
+                                (Ok(Some(hold)), false) => Relocated::HeldOriginAside {
+                                    hold: visible_id(&hold, account),
+                                },
+                                (Err(outcome), true) => outcome,
+                                (Err(_) | Ok(None), false) => Relocated::OriginAside,
+                                (Ok(None), true) => Relocated::HoldsUnreadable,
                             };
                         }
                     }
@@ -755,4 +791,17 @@ impl Relocator {
             Err(outcome) => outcome,
         }
     }
+}
+
+/// The identifier of a hold, only if it is the caller's own: a repository or
+/// account hold of the caller's account. Holds of other accounts, and digest
+/// holds (which name no account), never leak their identifier.
+fn visible_id(hold: &ContentHold, account: &str) -> Option<String> {
+    let own = match &hold.scope {
+        HoldScope::Repository { account: a, .. } | HoldScope::Account { account: a } => {
+            a == account
+        }
+        HoldScope::Digest { .. } => false,
+    };
+    own.then(|| hold.id.clone())
 }

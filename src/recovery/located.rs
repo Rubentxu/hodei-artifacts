@@ -7,7 +7,9 @@
 //! - phase `switched` or `retired`: the destination first and, if it does not
 //!   hold verified bytes, the origin (every store verifies the digest it
 //!   returns, so a fallback can never serve other bytes);
-//! - the journal cannot be read: the origin and then the destination, for the
+//! - the journal cannot be read (error or timeout; bounded by a short timeout and
+//!   a breaker that skips the journal for a few seconds): the origin and then the
+//!   destination, for the
 //!   same reason. A read never answers with unverified bytes.
 //!
 //! Writes always go to the origin (a new blob is born there), and the reclaim
@@ -25,8 +27,19 @@ use hodei_hub::blob::{BlobWriteSession, ReadPolicy};
 use hodei_hub::reclaim::{BlobReclaim, ConditionalBlob};
 use hodei_hub::{BlobError, BlobStore};
 
-/// How long the journal may take to answer a read.
-const JOURNAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a read waits for the journal by default.
+pub const DEFAULT_JOURNAL_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// How long reads skip the journal after it failed or timed out, by default.
+pub const DEFAULT_JOURNAL_COOLDOWN: Duration = Duration::from_secs(5);
+
+/// The accepted range of the journal timeout.
+pub const JOURNAL_TIMEOUT_RANGE: std::ops::RangeInclusive<Duration> =
+    Duration::from_millis(100)..=Duration::from_secs(10);
+
+/// The accepted range of the breaker cooldown.
+pub const JOURNAL_COOLDOWN_RANGE: std::ops::RangeInclusive<Duration> =
+    Duration::from_secs(1)..=Duration::from_secs(60);
 
 /// A journal that is plugged in after the store that needs it is built (the
 /// catalog that holds the journal is opened with a probe over this very store).
@@ -97,6 +110,11 @@ pub struct LocatedStore {
     origin: Arc<dyn BlobStore>,
     destination: Arc<dyn BlobStore>,
     journal: Arc<dyn LocationJournal>,
+    journal_timeout: Duration,
+    cooldown: Duration,
+    /// While set and in the future, reads do not ask the journal (a breaker: a
+    /// hung journal costs one timeout per cooldown, not one per read).
+    open_until: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 impl LocatedStore {
@@ -110,12 +128,50 @@ impl LocatedStore {
             origin,
             destination,
             journal,
+            journal_timeout: DEFAULT_JOURNAL_TIMEOUT,
+            cooldown: DEFAULT_JOURNAL_COOLDOWN,
+            open_until: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// The same store with another journal timeout and breaker cooldown. Values
+    /// outside [`JOURNAL_TIMEOUT_RANGE`] / [`JOURNAL_COOLDOWN_RANGE`] are
+    /// refused, never clamped silently.
+    pub fn with_journal_limits(
+        mut self,
+        timeout: Duration,
+        cooldown: Duration,
+    ) -> Result<Self, &'static str> {
+        if !JOURNAL_TIMEOUT_RANGE.contains(&timeout) {
+            return Err("the journal timeout must be between 100 ms and 10 s");
+        }
+        if !JOURNAL_COOLDOWN_RANGE.contains(&cooldown) {
+            return Err("the journal cooldown must be between 1 s and 60 s");
+        }
+        self.journal_timeout = timeout;
+        self.cooldown = cooldown;
+        Ok(self)
+    }
+
+    fn breaker_open(&self) -> bool {
+        self.open_until
+            .lock()
+            .map(|until| until.is_some_and(|at| std::time::Instant::now() < at))
+            .unwrap_or(true)
+    }
+
+    fn trip(&self) {
+        if let Ok(mut until) = self.open_until.lock() {
+            *until = Some(std::time::Instant::now() + self.cooldown);
         }
     }
 
     /// The stores a read of `digest` may use, first choice first.
     async fn order(&self, digest: &ContentDigest) -> Vec<&Arc<dyn BlobStore>> {
-        match tokio::time::timeout(JOURNAL_TIMEOUT, self.journal.location_of(digest)).await {
+        if self.breaker_open() {
+            return vec![&self.origin, &self.destination];
+        }
+        match tokio::time::timeout(self.journal_timeout, self.journal.location_of(digest)).await {
             Ok(Ok(Some(entry))) if entry.phase.reads_destination() => {
                 vec![&self.destination, &self.origin]
             }
@@ -123,10 +179,12 @@ impl LocatedStore {
             Ok(Ok(None)) => vec![&self.origin],
             Ok(Ok(Some(_))) => vec![&self.origin],
             Ok(Err(error)) => {
+                self.trip();
                 tracing::error!(%error, "the location journal could not be read");
                 vec![&self.origin, &self.destination]
             }
             Err(_) => {
+                self.trip();
                 tracing::error!("the location journal timed out");
                 vec![&self.origin, &self.destination]
             }

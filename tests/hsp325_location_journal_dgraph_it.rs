@@ -165,6 +165,10 @@ struct HookedConditional {
     hook: Hook,
     /// The whole store is down: the conditional view fails as well.
     down: Arc<AtomicBool>,
+    /// The origin's `put` flag and whether the hook, once it fires, flips it:
+    /// a store that stops accepting writes right after the hold appears.
+    put_fails: Arc<AtomicBool>,
+    break_puts_after_hold: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -209,6 +213,9 @@ impl ConditionalBlob for HookedConditional {
             gc.place_hold("ops", scope, "placed mid-retirement", None)
                 .await
                 .expect("the hold is placed");
+            if self.break_puts_after_hold.load(Ordering::SeqCst) {
+                self.put_fails.store(true, Ordering::SeqCst);
+            }
         }
         self.inner
             .conditional()
@@ -237,14 +244,17 @@ struct Wrapper {
 impl Wrapper {
     fn new(inner: Arc<FileBlobStore>) -> Arc<Self> {
         let down = Arc::new(AtomicBool::new(false));
+        let put_fails = Arc::new(AtomicBool::new(false));
         Arc::new(Self {
             cond: HookedConditional {
                 inner: inner.clone(),
                 hook: Arc::new(Mutex::new(None)),
                 down: down.clone(),
+                put_fails: put_fails.clone(),
+                break_puts_after_hold: Arc::new(AtomicBool::new(false)),
             },
             inner,
-            put_fails: Arc::new(AtomicBool::new(false)),
+            put_fails,
             down,
             lies: Arc::new(AtomicBool::new(false)),
             get_delay_ms: Arc::new(AtomicU64::new(0)),
@@ -932,8 +942,13 @@ async fn a_stalled_operation_that_loses_its_lease_does_nothing_when_it_resumes()
         .await
         .expect("the live holder still advances");
 
-    // The same for a RETIREMENT: a stalled retirement whose lease was taken
-    // over must not move the origin copy when it resumes.
+    // The same for a RETIREMENT. What this proves, exactly: the intruder holds
+    // a LIVE lease when the stalled retirement resumes, so the renewal it does
+    // right before moving the origin aside is refused (the Conflict branch)
+    // and nothing is moved. It does NOT prove the fence-mismatch branch (an
+    // intruder whose lease also expired, or a released one), which the
+    // journal-level test above covers for `advance_location` only, and it does
+    // not cover a zombie that stalls AFTER the renewal (see the docs).
     journal.release_location(&intruder).await.unwrap();
     let (status, _) = relocate(&v, &alice, "rollback", &[v.a]).await;
     assert_eq!(status, StatusCode::OK);
@@ -1082,7 +1097,15 @@ async fn a_hold_of_any_scope_blocks_the_retirement_and_an_unrelated_one_does_not
         let (status, answer) = relocate(&v, &alice, "retire", &[blob]).await;
         assert_eq!(status, StatusCode::CONFLICT, "{name}: {answer}");
         assert_eq!(outcome_of(&answer, blob), "held", "{name}: {answer}");
-        assert_eq!(answer["entries"][0]["hold"], id, "{name}");
+        // The id of a hold is shown only to the account it belongs to: the
+        // repository and account holds of the caller name themselves, a
+        // digest hold (no account) stays opaque.
+        let shown = &answer["entries"][0]["hold"];
+        if name == "digest" {
+            assert!(shown.is_null(), "{name}: {answer}");
+        } else {
+            assert_eq!(shown, &id, "{name}");
+        }
         assert_eq!(in_origin(&v, blob).as_deref(), Some(blob), "{name}");
         assert_eq!(phase_name(&v, blob).await, "switched", "{name}");
         release(&v, &id).await;
@@ -1134,7 +1157,10 @@ async fn a_hold_of_any_scope_blocks_the_retirement_and_an_unrelated_one_does_not
             .await
             .unwrap()
             .into_iter()
-            .find(|h| h.reason == "placed mid-retirement")
+            .find(|h| {
+                h.reason == "placed mid-retirement"
+                    && matches!(&h.scope, HoldScope::Digest { digest } if *digest == dg(v.e))
+            })
             .expect("the hold stayed");
     release(&v, &mid.id).await;
 
@@ -1227,7 +1253,10 @@ async fn a_race_with_the_garbage_collection_loses_no_bytes() {
     let (status, _) = relocate(&v, &alice, "switch", &[v.a, v.b, v.c]).await;
     assert_eq!(status, StatusCode::OK);
 
-    // Several rounds of retire / rollback, each against a real GC sweep.
+    // Several rounds of retire / rollback, each run CONCURRENTLY with a real
+    // GC sweep. The interleaving is not forced (no barrier): it proves that
+    // the invariants hold whichever order the scheduler picked, not that a
+    // particular order (sweep between the hold read and the move) was hit.
     let trio = [v.a, v.b, v.c];
     for round in 0..3 {
         let (retired, swept) = tokio::join!(
@@ -1286,6 +1315,9 @@ async fn a_race_with_the_repair_loses_no_bytes_and_the_journal_keeps_the_reads()
     assert_eq!(status, StatusCode::OK);
 
     // The origin copy rots and the repair and the retirement run together.
+    // The interleaving is not forced: either may win, and the assertions
+    // below hold for every branch (the branch that happened is checked for
+    // consistency with the journal, not chosen).
     let only_a = [v.a];
     std::fs::write(origin_path(&v, v.a), vec![b'x'; v.a.len()]).unwrap();
     let repair_body =
@@ -1313,6 +1345,22 @@ async fn a_race_with_the_repair_loses_no_bytes_and_the_journal_keeps_the_reads()
         "{}",
         repaired.0
     );
+    // The branch that happened must agree with the journal: a retirement
+    // that reports `retired` moved the journal to `retired`; any other
+    // outcome left it in `switched`.
+    let branch = outcome_of(&retired.1, v.a).to_string();
+    let expected = if branch == "retired" {
+        "retired"
+    } else {
+        "switched"
+    };
+    assert_eq!(
+        phase_name(&v, v.a).await,
+        expected,
+        "branch {branch} (repair answered {})",
+        repaired.0
+    );
+    eprintln!("repair race: retire={branch} repair={}", repaired.0);
     // Whoever won, nothing was lost: the registry serves and the destination
     // is intact.
     serves(&v, &alice, "a.bin", v.a).await;
@@ -1602,4 +1650,264 @@ async fn the_graph_profile_wires_the_journal_from_the_configured_destination() {
     let (status, _) = call(Method::POST, "/api/v1/storage/relocate", body("rollback")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(origin.the_path_of(&dg(a)).exists(), "the origin is back");
+}
+
+#[tokio::test]
+async fn a_hold_of_another_account_blocks_without_naming_itself() {
+    let account = unique_account();
+    let other = format!("{account}x");
+    let Some(v) = mount(&account, &other, Some(Duration::from_secs(60))).await else {
+        return;
+    };
+    published(&v, &account).await;
+    seed(&v, &other, "mine").await;
+    let alice = format!("alice@{account}");
+    let mallory = format!("mallory@{other}");
+    // mallory publishes the very same bytes in her own repository, so the
+    // blob has two owners.
+    upload(&v, "mine", &mallory, "copy.bin", v.a).await;
+    migrate(&v, &alice, &[v.a]).await;
+    let (status, _) = relocate(&v, &alice, "switch", &[v.a]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let id = place(
+        &v,
+        HoldScope::Account {
+            account: other.clone(),
+        },
+    )
+    .await;
+    let (status, answer) = relocate(&v, &alice, "retire", &[v.a]).await;
+    // Safe by default: a hold of ANY owner blocks the retirement...
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert_eq!(outcome_of(&answer, v.a), "held", "{answer}");
+    assert_eq!(in_origin(&v, v.a).as_deref(), Some(v.a));
+    // ...but alice learns nothing about the other account's hold.
+    assert!(answer["entries"][0]["hold"].is_null(), "{answer}");
+    assert!(!answer.to_string().contains(&id), "the id leaked: {answer}");
+    assert!(!answer.to_string().contains(&other), "{answer}");
+
+    release(&v, &id).await;
+    let (status, answer) = relocate(&v, &alice, "retire", &[v.a]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+}
+
+#[tokio::test]
+async fn a_hold_that_appears_when_the_origin_cannot_be_put_back_is_declared() {
+    let account = unique_account();
+    let Some(v) = mount(&account, "zz", Some(Duration::from_secs(60))).await else {
+        return;
+    };
+    published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    migrate(&v, &alice, &[v.a]).await;
+    let (status, _) = relocate(&v, &alice, "switch", &[v.a]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A hold appears right after the origin was moved aside, and the origin
+    // store stops accepting writes: the copy cannot be put back.
+    v.origin
+        .cond
+        .break_puts_after_hold
+        .store(true, Ordering::SeqCst);
+    *v.origin.cond.hook.lock().unwrap() =
+        Some((v.gc.clone(), HoldScope::Digest { digest: dg(v.a) }));
+    let (status, answer) = relocate(&v, &alice, "retire", &[v.a]).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    // The result says it plainly: a hold is in force AND the origin is aside.
+    assert_eq!(outcome_of(&answer, v.a), "held_origin_aside", "{answer}");
+    assert_eq!(results(&v).last(), Some(&AuditResult::Failed));
+    // Nothing is lost: the journal stays on `switched`, the destination
+    // serves, and the origin bytes are kept aside, not deleted.
+    assert_eq!(phase_name(&v, v.a).await, "switched");
+    assert_eq!(in_origin(&v, v.a), None);
+    assert!(quarantined(&v, v.a), "the bytes are kept aside");
+    assert_eq!(in_dest(&v, v.a).as_deref(), Some(v.a));
+    serves(&v, &alice, "a.bin", v.a).await;
+
+    let mid =
+        v.gc.holds()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|h| matches!(&h.scope, HoldScope::Digest { digest } if *digest == dg(v.a)))
+            .expect("the hold stayed");
+    release(&v, &mid.id).await;
+
+    // The way back: the store recovers and the rollback restores the origin
+    // from the verified destination, hold or not.
+    v.origin.put_fails.store(false, Ordering::SeqCst);
+    v.origin
+        .cond
+        .break_puts_after_hold
+        .store(false, Ordering::SeqCst);
+    let (status, answer) = relocate(&v, &alice, "rollback", &[v.a]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(in_origin(&v, v.a).as_deref(), Some(v.a));
+    assert_eq!(phase_name(&v, v.a).await, "origin");
+    serves(&v, &alice, "a.bin", v.a).await;
+}
+
+/// A journal whose answers can be slowed down or refused.
+struct Flaky {
+    inner: Arc<DgraphCatalogStore>,
+    delay_ms: AtomicU64,
+    down: AtomicBool,
+    asked: AtomicU64,
+}
+
+impl Flaky {
+    async fn gate(&self) -> Result<(), hodei_catalog::CatalogError> {
+        self.asked.fetch_add(1, Ordering::SeqCst);
+        let delay = self.delay_ms.load(Ordering::SeqCst);
+        if delay > 0 {
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+        }
+        if self.down.load(Ordering::SeqCst) {
+            return Err(hodei_catalog::CatalogError::Unavailable {
+                detail: "the journal is down".to_string(),
+            });
+        }
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl LocationJournal for Flaky {
+    async fn location_of(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Option<hodei_catalog::LocationEntry>, hodei_catalog::CatalogError> {
+        self.gate().await?;
+        self.inner.location_of(digest).await
+    }
+    async fn acquire_location(
+        &self,
+        digest: &ContentDigest,
+        owner: &str,
+        lease_for: Duration,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<hodei_catalog::LocationLease, hodei_catalog::CatalogError> {
+        self.inner
+            .acquire_location(digest, owner, lease_for, now)
+            .await
+    }
+    async fn advance_location(
+        &self,
+        lease: &hodei_catalog::LocationLease,
+        from: Phase,
+        to: Phase,
+    ) -> Result<hodei_catalog::LocationEntry, hodei_catalog::CatalogError> {
+        self.inner.advance_location(lease, from, to).await
+    }
+    async fn release_location(
+        &self,
+        lease: &hodei_catalog::LocationLease,
+    ) -> Result<(), hodei_catalog::CatalogError> {
+        self.inner.release_location(lease).await
+    }
+    async fn digest_owners(
+        &self,
+        digest: &ContentDigest,
+    ) -> Result<Vec<(String, String)>, hodei_catalog::CatalogError> {
+        self.inner.digest_owners(digest).await
+    }
+}
+
+#[tokio::test]
+async fn a_slow_or_down_journal_degrades_reads_to_the_origin_in_bounded_time() {
+    let account = unique_account();
+    let Some(v) = mount(&account, "zz", Some(Duration::from_secs(60))).await else {
+        return;
+    };
+    published(&v, &account).await;
+    let alice = format!("alice@{account}");
+    // a: retired (only the destination holds it live); b: never moved.
+    migrate(&v, &alice, &[v.a]).await;
+    let (status, _) = relocate(&v, &alice, "switch", &[v.a]).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, answer) = relocate(&v, &alice, "retire", &[v.a]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+
+    let flaky = Arc::new(Flaky {
+        inner: v.store.clone(),
+        delay_ms: AtomicU64::new(0),
+        down: AtomicBool::new(false),
+        asked: AtomicU64::new(0),
+    });
+    let origin: Arc<dyn BlobStore> = v.origin.clone();
+    let destination: Arc<dyn BlobStore> = v.destination.clone();
+    let journal: Arc<dyn LocationJournal> = flaky.clone();
+    // The limits are validated, never clamped.
+    assert!(
+        LocatedStore::new(origin.clone(), destination.clone(), journal.clone())
+            .with_journal_limits(Duration::from_millis(10), Duration::from_secs(5))
+            .is_err()
+    );
+    assert!(
+        LocatedStore::new(origin.clone(), destination.clone(), journal.clone())
+            .with_journal_limits(Duration::from_secs(60), Duration::from_secs(5))
+            .is_err()
+    );
+    assert!(
+        LocatedStore::new(origin.clone(), destination.clone(), journal.clone())
+            .with_journal_limits(Duration::from_millis(300), Duration::from_secs(120))
+            .is_err()
+    );
+    let located = LocatedStore::new(origin, destination, journal)
+        .with_journal_limits(Duration::from_millis(300), Duration::from_secs(2))
+        .expect("limits in range");
+
+    // Healthy: follows the journal (a is read from the destination).
+    let before = v.origin.calls();
+    assert_eq!(located.get(&dg(v.a)).await.unwrap(), v.a);
+    assert_eq!(
+        v.origin.calls(),
+        before,
+        "a retired digest skips the origin"
+    );
+
+    // A journal that hangs: the first read pays one short timeout, not the
+    // hang, and still answers correctly (b from the origin, a from the
+    // destination after the origin missed).
+    flaky.delay_ms.store(5000, Ordering::SeqCst);
+    let started = std::time::Instant::now();
+    assert_eq!(located.get(&dg(v.b)).await.unwrap(), v.b);
+    assert!(
+        started.elapsed() < Duration::from_millis(1500),
+        "the first read waited {:?}",
+        started.elapsed()
+    );
+    let asked = flaky.asked.load(Ordering::SeqCst);
+    // The breaker is open: the next reads do not wait for the journal at all.
+    let started = std::time::Instant::now();
+    assert_eq!(located.get(&dg(v.a)).await.unwrap(), v.a);
+    assert_eq!(located.get(&dg(v.b)).await.unwrap(), v.b);
+    assert!(
+        started.elapsed() < Duration::from_millis(250),
+        "reads with the breaker open waited {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        flaky.asked.load(Ordering::SeqCst),
+        asked,
+        "the journal is not asked while the breaker is open"
+    );
+
+    // A journal that errors fast behaves the same way.
+    flaky.delay_ms.store(0, Ordering::SeqCst);
+    flaky.down.store(true, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    assert_eq!(located.get(&dg(v.b)).await.unwrap(), v.b);
+    assert_eq!(located.get(&dg(v.a)).await.unwrap(), v.a);
+
+    // Once the journal is back and the cooldown has passed, reads follow it
+    // again.
+    flaky.down.store(false, Ordering::SeqCst);
+    tokio::time::sleep(Duration::from_millis(2200)).await;
+    let asked = flaky.asked.load(Ordering::SeqCst);
+    let before = v.origin.calls();
+    assert_eq!(located.get(&dg(v.a)).await.unwrap(), v.a);
+    assert!(flaky.asked.load(Ordering::SeqCst) > asked, "asked again");
+    assert_eq!(v.origin.calls(), before, "back to the destination first");
 }
